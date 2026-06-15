@@ -1,0 +1,28 @@
+# Secrets
+config/config.yaml
+
+# Data
+data/
+
+# Research outputs
+reports/
+cache/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Mac
+.DS_Store

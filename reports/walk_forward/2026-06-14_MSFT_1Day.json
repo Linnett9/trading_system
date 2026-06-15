@@ -1,0 +1,88 @@
+{
+  "symbol": "MSFT",
+  "timeframe": "1Day",
+  "folds": [
+    {
+      "train_start": "2021-01-01T00:00:00",
+      "train_end": "2023-12-31T00:00:00",
+      "test_start": "2024-01-01T00:00:00",
+      "test_end": "2024-12-31T00:00:00",
+      "best_params": {
+        "ema_fast_period": 60,
+        "ema_slow_period": 300,
+        "atr_stop_multiplier": 1.0,
+        "atr_take_profit_multiplier": 2.0
+      },
+      "train_metric_name": "sharpe",
+      "train_metric_value": 1.4431956310618175,
+      "train_return": 0.05483749377909497,
+      "train_sharpe": 1.4431956310618175,
+      "train_max_drawdown": 0.019131852453401807,
+      "train_closed_trades": 23,
+      "test_return": 0,
+      "test_sharpe": 0,
+      "test_max_drawdown": 0.0,
+      "test_closed_trades": 0,
+      "benchmark_return": 0.14601531327509965,
+      "excess_return": -0.14601531327509965,
+      "passed": false,
+      "failure_reason": "closed_trades below minimum (0 < 20)"
+    },
+    {
+      "train_start": "2022-01-01T00:00:00",
+      "train_end": "2024-12-31T00:00:00",
+      "test_start": "2025-01-01T00:00:00",
+      "test_end": "2025-12-31T00:00:00",
+      "best_params": {
+        "ema_fast_period": 20,
+        "ema_slow_period": 300,
+        "atr_stop_multiplier": 1.0,
+        "atr_take_profit_multiplier": 2.0
+      },
+      "train_metric_name": "sharpe",
+      "train_metric_value": 1.7580653272629723,
+      "train_return": 0.11670260375075703,
+      "train_sharpe": 1.7580653272629723,
+      "train_max_drawdown": 0.02138535488859671,
+      "train_closed_trades": 67,
+      "test_return": 0,
+      "test_sharpe": 0,
+      "test_max_drawdown": 0.0,
+      "test_closed_trades": 0,
+      "benchmark_return": 0.16457238413760145,
+      "excess_return": -0.16457238413760145,
+      "passed": false,
+      "failure_reason": "closed_trades below minimum (0 < 20)"
+    },
+    {
+      "train_start": "2023-01-01T00:00:00",
+      "train_end": "2025-12-31T00:00:00",
+      "test_start": "2026-01-01T00:00:00",
+      "test_end": "2026-12-31T00:00:00",
+      "best_params": {
+        "ema_fast_period": 20,
+        "ema_slow_period": 180,
+        "atr_stop_multiplier": 1.0,
+        "atr_take_profit_multiplier": 2.0
+      },
+      "train_metric_name": "sharpe",
+      "train_metric_value": 1.384909095646486,
+      "train_return": 0.09774553612858705,
+      "train_sharpe": 1.384909095646486,
+      "train_max_drawdown": 0.03057992696425124,
+      "train_closed_trades": 72,
+      "test_return": 0,
+      "test_sharpe": 0,
+      "test_max_drawdown": 0.0,
+      "test_closed_trades": 0,
+      "benchmark_return": -0.173945679638851,
+      "excess_return": 0.173945679638851,
+      "passed": false,
+      "failure_reason": "closed_trades below minimum (0 < 20)"
+    }
+  ],
+  "average_test_return": 0.0,
+  "average_test_sharpe": 0.0,
+  "average_benchmark_return": 0.045547339257950036,
+  "average_excess_return": -0.045547339257950036
+}
