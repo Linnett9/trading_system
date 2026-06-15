@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from core.entities.walk_forward_result import WalkForwardResult
-from core.research.performance_metrics import composite_score
+from core.research.performance_metrics import composite_score, qualified_score
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,20 @@ class StrategyComparisonResult:
             target_trades=20,
             passed_folds=self.passed_folds,
             total_folds=len(self.walk_forward_result.folds),
+        )
+
+    @property
+    def qualified_score(self) -> float:
+        return qualified_score(
+            excess_return=self.average_excess_return,
+            sharpe=self.average_test_sharpe,
+            max_drawdown_value=self.average_max_drawdown,
+            profit_factor_value=self.average_profit_factor,
+            closed_trades=self.closed_trades,
+            target_trades=20,
+            passed_folds=self.passed_folds,
+            total_folds=len(self.walk_forward_result.folds),
+            is_benchmark_strategy=self.strategy_name == "buy_and_hold",
         )
 
     @property

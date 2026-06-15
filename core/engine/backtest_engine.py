@@ -87,7 +87,14 @@ class BacktestEngine:
             atr = indicators.atr(14)
             volatility = indicators.volatility(20)
             volatility_average = indicators.volatility(60)
+            volatility_percentile = indicators.volatility_percentile(20, 100)
             rsi = indicators.rsi(14)
+            adx = indicators.adx(14)
+            relative_volume = indicators.relative_volume(20)
+            bollinger_middle, bollinger_upper, bollinger_lower = (
+                indicators.bollinger_bands(20, 2.0)
+            )
+            bollinger_bandwidth = indicators.bollinger_bandwidth(20, 2.0)
             recent_high = indicators.highest_high(
                 channel_period,
                 exclude_latest=True,
@@ -116,7 +123,10 @@ class BacktestEngine:
                 ema_slow=ema_slow,
                 atr=atr,
                 volatility=volatility,
+                volatility_percentile=volatility_percentile,
                 rsi=rsi,
+                adx=adx,
+                relative_volume=relative_volume,
                 current_position=current_position,
                 close=candle.close,
                 recent_high=recent_high,
@@ -126,6 +136,10 @@ class BacktestEngine:
                 sma_200=sma_200,
                 previous_sma_200=previous_sma_200,
                 volatility_average=volatility_average,
+                bollinger_middle=bollinger_middle,
+                bollinger_upper=bollinger_upper,
+                bollinger_lower=bollinger_lower,
+                bollinger_bandwidth=bollinger_bandwidth,
                 market_regime=regime.market_regime,
                 volatility_regime=regime.volatility_regime,
             )

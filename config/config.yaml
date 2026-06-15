@@ -70,6 +70,291 @@ research:
   max_time_in_market: 0.95
   require_positive_excess: true
   require_sharpe_edge: true
+  relative_strength:
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - META
+      - GOOGL
+      - AMZN
+      - TSLA
+      - SPY
+      - QQQ
+      - BIL
+      - SHY
+      - IEF
+      - TLT
+      - GLD
+    top_n: 2
+    momentum_periods:
+      - 63
+      - 126
+    sma_period: 200
+    rebalance_frequency: "monthly"
+    target_exposure: 1.0
+    benchmark_symbol: "SPY"
+    transaction_cost_bps: 2.0
+    experiment_grid:
+      top_n:
+        - 1
+        - 2
+        - 3
+      rebalance_frequency:
+        - "monthly"
+        - "weekly"
+      momentum_periods:
+        - [21, 63]
+        - [63, 126]
+        - [126, 252]
+  dual_momentum:
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - META
+      - GOOGL
+      - AMZN
+      - TSLA
+      - SPY
+      - QQQ
+    etf_symbols:
+      - XLK
+      - XLY
+      - XLF
+      - XLI
+      - XLV
+      - XLE
+      - XLU
+      - XLP
+      - XLB
+      - VNQ
+      - TLT
+      - GLD
+      - SPY
+      - QQQ
+    top_n: 5
+    momentum_periods:
+      - 63
+      - 126
+    regime_symbol: "SPY"
+    regime_sma_period: 200
+    use_asset_trend_filter: true
+    asset_sma_period: 200
+    selection_mode: "all_positive"
+    weighting: "inverse_volatility"
+    max_position_weight: 0.35
+    weight_volatility_lookback: 63
+    rebalance_frequency: "monthly"
+    target_exposure: 1.0
+    target_volatility: null
+    volatility_lookback: 63
+    max_drawdown_guard: 0.20
+    drawdown_guard_cooldown: 1
+    strict_drawdown_kill_switch: true
+    risk_off_symbols: []
+    risk_off_top_n: 1
+    risk_off_momentum_periods:
+      - 63
+      - 126
+    risk_regime_mode: "scaled"
+    mixed_risk_exposure: 0.50
+    risk_off_risk_exposure: 0.25
+    fast_reentry_enabled: true
+    fast_reentry_sma_period: 100
+    fast_reentry_momentum_period: 63
+    fast_reentry_breadth_percent: 0.60
+    min_breadth_percent: 0.60
+    benchmark_symbol: "SPY"
+    transaction_cost_bps: 2.0
+    experiment_grid:
+      top_n:
+        - 5
+        - 7
+      rebalance_frequency:
+        - "monthly"
+      momentum_periods:
+        - [63, 126]
+      use_asset_trend_filter:
+        - true
+      selection_mode:
+        - "ranked"
+        - "all_positive"
+      weighting:
+        - "equal"
+        - "inverse_volatility"
+      max_position_weight:
+        - 0.25
+        - 0.35
+      min_breadth_percent:
+        - 0.40
+        - 0.50
+        - 0.60
+      target_volatility:
+        - null
+        - 0.20
+      max_drawdown_guard:
+        - 0.20
+      strict_drawdown_kill_switch:
+        - false
+        - true
+    risk_regime_experiments:
+      - name: "baseline_inverse_vol"
+        overrides:
+          risk_off_symbols: []
+          risk_regime_mode: "binary"
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: false
+      - name: "cash_risk_off"
+        overrides:
+          risk_off_symbols: []
+          risk_regime_mode: "binary"
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: false
+      - name: "defensive_assets"
+        overrides:
+          risk_off_symbols:
+            - BIL
+            - SHY
+            - IEF
+            - TLT
+            - GLD
+          risk_regime_mode: "binary"
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: false
+      - name: "scaled_exposure"
+        overrides:
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: false
+      - name: "fast_reentry"
+        overrides:
+          risk_off_symbols: []
+          risk_regime_mode: "binary"
+          fast_reentry_enabled: true
+      - name: "scaled_plus_fast_reentry"
+        overrides:
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+  multi_strategy:
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - META
+      - GOOGL
+      - AMZN
+      - TSLA
+      - SPY
+      - QQQ
+      - BIL
+      - SHY
+      - IEF
+      - TLT
+      - GLD
+    benchmark_symbol: "SPY"
+    warmup_days: 500
+    sleeves:
+      - name: "dual_momentum"
+        enabled: true
+        weight: 0.70
+        parameters:
+          top_n: 5
+          momentum_periods:
+            - 63
+            - 126
+          regime_symbol: "SPY"
+          regime_sma_period: 200
+          use_asset_trend_filter: true
+          asset_sma_period: 200
+          selection_mode: "all_positive"
+          weighting: "equal"
+          max_position_weight: 0.25
+          rebalance_frequency: "monthly"
+          target_exposure: 1.0
+          target_volatility: 0.20
+          volatility_lookback: 63
+          max_drawdown_guard: 0.20
+          drawdown_guard_cooldown: 1
+          strict_drawdown_kill_switch: true
+          risk_off_symbols: []
+          risk_off_top_n: 1
+          risk_off_momentum_periods:
+            - 63
+            - 126
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          fast_reentry_sma_period: 100
+          fast_reentry_momentum_period: 63
+          fast_reentry_breadth_percent: 0.60
+          min_breadth_percent: 0.60
+          benchmark_symbol: "SPY"
+          transaction_cost_bps: 2.0
+      - name: "relative_strength"
+        enabled: true
+        weight: 0.30
+        parameters:
+          symbols:
+            - AAPL
+            - MSFT
+            - NVDA
+            - META
+            - GOOGL
+            - AMZN
+            - TSLA
+            - SPY
+            - QQQ
+          top_n: 3
+          momentum_periods:
+            - 63
+            - 126
+          sma_period: 200
+          rebalance_frequency: "monthly"
+          target_exposure: 1.0
+          benchmark_symbol: "SPY"
+          transaction_cost_bps: 2.0
+    experiment_grid:
+      sleeve_weights:
+        - [1.0, 0.0]
+        - [0.7, 0.3]
+        - [0.5, 0.5]
+        - [0.3, 0.7]
+        - [0.0, 1.0]
+  fast_mode:
+    symbols:
+      - AAPL
+      - SPY
+    relative_strength_symbols:
+      - AAPL
+      - SPY
+    dual_momentum_symbols:
+      - AAPL
+      - SPY
+    multi_strategy_symbols:
+      - AAPL
+      - SPY
+    years: 2
+    strategies:
+      - trend_pullback
+      - ema_rsi_pullback
+      - ensemble_vote
+      - buy_and_hold
+    max_grid_values_per_parameter: 1
+    stage_one_max_combinations: 12
+    two_stage_top_n: 2
+    min_closed_trades: 5
+    optimizer_min_closed_trades: 1
+    walk_forward_folds:
+      - train_start: "2024-07-01"
+        train_end: "2025-06-30"
+        test_start: "2025-07-01"
+        test_end: "2026-06-15"
   parameter_grid:
     ema_fast_period:
       - 20
@@ -214,6 +499,12 @@ research:
         donchian_lookback:
           - 5
           - 20
+        use_volume_filter:
+          - false
+          - true
+        min_relative_volume:
+          - 1.0
+          - 1.2
         atr_stop_multiplier:
           - 2.0
           - 2.5
@@ -238,6 +529,106 @@ research:
           - 0.04
           - 0.08
         use_regime_filter:
+          - true
+          - false
+        min_adx:
+          - null
+          - 20
+        min_relative_volume:
+          - null
+          - 1.0
+        atr_stop_multiplier:
+          - 1.5
+          - 2.0
+        trailing_atr_multiplier:
+          - 2.0
+          - 3.0
+        atr_take_profit_multiplier:
+          - 6.0
+          - null
+        target_exposure:
+          - 0.40
+    - name: "ema_rsi_pullback"
+      parameter_grid:
+        ema_fast_period:
+          - 20
+          - 50
+        ema_slow_period:
+          - 200
+        rsi_pullback:
+          - 40
+          - 45
+        rsi_recover:
+          - 55
+          - 60
+        use_regime_filter:
+          - true
+          - false
+        min_relative_volume:
+          - null
+          - 1.0
+        atr_stop_multiplier:
+          - 1.5
+          - 2.0
+        trailing_atr_multiplier:
+          - 2.0
+          - 3.0
+        atr_take_profit_multiplier:
+          - 6.0
+          - null
+        target_exposure:
+          - 0.40
+    - name: "bollinger_mean_reversion"
+      parameter_grid:
+        rsi_entry:
+          - 35
+          - 40
+        rsi_exit:
+          - 50
+          - 55
+        require_sideways_regime:
+          - false
+          - true
+        min_bandwidth:
+          - null
+          - 0.03
+        max_bandwidth:
+          - null
+          - 0.20
+        atr_stop_multiplier:
+          - 1.5
+          - 2.0
+        trailing_atr_multiplier:
+          - 2.0
+          - 3.0
+        atr_take_profit_multiplier:
+          - 3.0
+          - 4.0
+        target_exposure:
+          - 0.40
+    - name: "ensemble_vote"
+      parameter_grid:
+        ensemble_min_buy_votes:
+          - 2
+          - 3
+        ensemble_min_sell_votes:
+          - 1
+          - 2
+        rsi_entry:
+          - 50
+          - 55
+        rsi_exit:
+          - 40
+          - 45
+        rsi_pullback:
+          - 40
+          - 45
+        pullback_tolerance:
+          - 0.02
+          - 0.04
+        use_regime_filter:
+          - true
+        use_breakout_vote:
           - true
           - false
         atr_stop_multiplier:

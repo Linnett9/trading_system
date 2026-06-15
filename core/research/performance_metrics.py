@@ -107,3 +107,46 @@ def composite_score(
         + trade_count_quality(closed_trades, target_trades) * 0.10
         + consistency * 0.10
     )
+
+
+def qualified_score(
+    excess_return: float,
+    sharpe: float,
+    max_drawdown_value: float,
+    profit_factor_value: float,
+    closed_trades: int,
+    target_trades: int,
+    passed_folds: int,
+    total_folds: int,
+    is_benchmark_strategy: bool = False,
+    min_profit_factor: float = 1.1,
+) -> float:
+    score = composite_score(
+        excess_return=excess_return,
+        sharpe=sharpe,
+        max_drawdown_value=max_drawdown_value,
+        profit_factor_value=profit_factor_value,
+        closed_trades=closed_trades,
+        target_trades=target_trades,
+        passed_folds=passed_folds,
+        total_folds=total_folds,
+    )
+
+    if is_benchmark_strategy:
+        if excess_return <= 0:
+            return score - 1.0
+        return score + 0.25
+
+    if excess_return <= 0:
+        score -= 1.0
+
+    if closed_trades < target_trades:
+        score -= 0.75
+
+    if passed_folds == 0:
+        score -= 0.75
+
+    if profit_factor_value < min_profit_factor:
+        score -= 0.25
+
+    return score

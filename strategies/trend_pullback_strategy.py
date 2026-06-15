@@ -4,6 +4,7 @@ from strategies.filters import (
     BullMarketFilter,
     TrendStrengthFilter,
     VolatilityFilter,
+    VolumeConfirmationFilter,
 )
 
 
@@ -18,6 +19,8 @@ class TrendPullbackStrategy(IStrategy):
         pullback_tolerance: float = 0.02,
         exit_extension: float = 0.08,
         use_regime_filter: bool = True,
+        min_adx: float | None = None,
+        min_relative_volume: float | None = None,
     ):
         self.symbol = symbol
         self.fast_period = fast_period
@@ -27,9 +30,16 @@ class TrendPullbackStrategy(IStrategy):
         self.pullback_tolerance = pullback_tolerance
         self.exit_extension = exit_extension
         self.use_regime_filter = use_regime_filter
+        self.min_adx = min_adx
+        self.min_relative_volume = min_relative_volume
         self.bull_filter = BullMarketFilter()
-        self.trend_filter = TrendStrengthFilter()
+        self.trend_filter = TrendStrengthFilter(min_adx=min_adx)
         self.volatility_filter = VolatilityFilter()
+        self.volume_filter = (
+            VolumeConfirmationFilter(min_relative_volume)
+            if min_relative_volume is not None
+            else None
+        )
 
     def generate_signal(self, context) -> Signal:
         if (
@@ -84,6 +94,10 @@ class TrendPullbackStrategy(IStrategy):
             self.bull_filter.passes(context)
             and self.trend_filter.passes(context)
             and self.volatility_filter.passes(context)
+            and (
+                self.volume_filter is None
+                or self.volume_filter.passes(context)
+            )
         )
 
     def _hold(self, context, reason):

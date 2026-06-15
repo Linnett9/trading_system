@@ -9,6 +9,7 @@ from core.research.performance_metrics import (
     sharpe_ratio,
     total_return,
     trade_count_quality,
+    qualified_score,
 )
 
 
@@ -60,3 +61,44 @@ def test_composite_score_rewards_quality_inputs():
     )
 
     assert strong > weak
+
+
+def test_qualified_score_penalizes_negative_low_trade_failures():
+    failed = qualified_score(
+        excess_return=-0.05,
+        sharpe=2,
+        max_drawdown_value=0.01,
+        profit_factor_value=2,
+        closed_trades=2,
+        target_trades=20,
+        passed_folds=0,
+        total_folds=3,
+    )
+    positive = qualified_score(
+        excess_return=0.01,
+        sharpe=0.5,
+        max_drawdown_value=0.05,
+        profit_factor_value=1.2,
+        closed_trades=20,
+        target_trades=20,
+        passed_folds=1,
+        total_folds=3,
+    )
+
+    assert positive > failed
+
+
+def test_qualified_score_uses_benchmark_strategy_path():
+    score = qualified_score(
+        excess_return=0.01,
+        sharpe=0.5,
+        max_drawdown_value=0.05,
+        profit_factor_value=0,
+        closed_trades=1,
+        target_trades=20,
+        passed_folds=1,
+        total_folds=3,
+        is_benchmark_strategy=True,
+    )
+
+    assert score > 0

@@ -37,9 +37,17 @@ def parameter_overrides(parameters: dict) -> dict:
             or key.startswith("donchian_")
             or key.startswith("pullback_")
             or key.startswith("trend_")
+            or key.startswith("bollinger_")
+            or key.startswith("ensemble_")
             or key == "use_regime_filter"
             or key == "use_volatility_filter"
+            or key == "use_volume_filter"
+            or key == "use_breakout_vote"
             or key == "require_sideways_regime"
+            or key == "min_relative_volume"
+            or key == "min_bandwidth"
+            or key == "max_bandwidth"
+            or key == "min_adx"
             or key == "name"
         ):
             overrides["strategy"][key] = value
@@ -309,9 +317,14 @@ class ParameterOptimizer:
             config=self.config,
             overrides=parameter_overrides(parameters),
         )
-        self.cache.set(cache_key, result.to_dict())
+        self.cache.set(cache_key, self._cache_payload(result))
 
         return result
+
+    def _cache_payload(self, result: BacktestResult) -> dict:
+        payload = result.to_dict()
+        payload["equity_curve"] = []
+        return payload
 
     def _candle_signature(self, candles) -> dict:
         if not candles:

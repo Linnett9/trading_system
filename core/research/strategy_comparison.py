@@ -88,6 +88,7 @@ class StrategyComparison:
         return sorted(
             results,
             key=lambda result: (
+                result.qualified_score,
                 result.composite_score,
                 result.average_excess_return,
                 result.average_test_sharpe,
@@ -102,17 +103,18 @@ class StrategyComparison:
     def to_table(self, results, limit: int | None = None):
         displayed_results = results[:limit] if limit else results
         rows = [
-            "Strategy | Symbol | Score | Excess | Sharpe | Trades | Max DD | "
+            "Strategy | Symbol | QScore | Score | Excess | Sharpe | Trades | Max DD | "
             "Profit Factor | Time In | Exposure | Cash | Pos $ | "
             "Bench Sh | Bench DD | Ex/Risk | B/S/H | Blocks | Exits | Passed"
         ]
-        rows.append("-" * 206)
+        rows.append("-" * 215)
 
         for result in displayed_results:
             total_folds = len(result.walk_forward_result.folds)
             rows.append(
                 f"{result.strategy_name:<18} | "
                 f"{result.symbol:<6} | "
+                f"{result.qualified_score:>6.2f} | "
                 f"{result.composite_score:>5.2f} | "
                 f"{result.average_excess_return * 100:>6.2f}% | "
                 f"{result.average_test_sharpe:>6.2f} | "
@@ -150,6 +152,7 @@ class StrategyComparison:
                 fieldnames=[
                     "strategy",
                     "symbol",
+                    "qualified_score",
                     "composite_score",
                     "average_excess_return",
                     "average_test_sharpe",
@@ -181,6 +184,7 @@ class StrategyComparison:
                 writer.writerow({
                     "strategy": result.strategy_name,
                     "symbol": result.symbol,
+                    "qualified_score": result.qualified_score,
                     "composite_score": result.composite_score,
                     "average_excess_return": (
                         result.average_excess_return

@@ -9,11 +9,15 @@ class DonchianBreakoutStrategy(IStrategy):
         symbol: str,
         lookback_period: int = 20,
         use_volatility_filter: bool = False,
+        use_volume_filter: bool = False,
+        min_relative_volume: float = 1.0,
         allowed_volatility_regimes=None,
     ):
         self.symbol = symbol
         self.lookback_period = lookback_period
         self.use_volatility_filter = use_volatility_filter
+        self.use_volume_filter = use_volume_filter
+        self.min_relative_volume = min_relative_volume
         self.allowed_volatility_regimes = (
             allowed_volatility_regimes or {"normal", "high"}
         )
@@ -30,6 +34,13 @@ class DonchianBreakoutStrategy(IStrategy):
             and context.volatility_regime not in self.allowed_volatility_regimes
         ):
             return self._hold(context, "Volatility regime filter blocked")
+
+        if (
+            self.use_volume_filter
+            and context.relative_volume is not None
+            and context.relative_volume < self.min_relative_volume
+        ):
+            return self._hold(context, "Volume confirmation blocked")
 
         if (
             context.current_position is None

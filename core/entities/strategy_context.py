@@ -13,7 +13,10 @@ class StrategyContext:
     ema_slow: float
     atr: Optional[float] = None
     volatility: Optional[float] = None
+    volatility_percentile: Optional[float] = None
     rsi: Optional[float] = None
+    adx: Optional[float] = None
+    relative_volume: Optional[float] = None
     current_position: Optional[str] = None
     close: Optional[float] = None
     recent_high: Optional[float] = None
@@ -23,5 +26,9 @@ class StrategyContext:
     sma_200: Optional[float] = None
     previous_sma_200: Optional[float] = None
     volatility_average: Optional[float] = None
+    bollinger_middle: Optional[float] = None
+    bollinger_upper: Optional[float] = None
+    bollinger_lower: Optional[float] = None
+    bollinger_bandwidth: Optional[float] = None
     market_regime: str = "unknown"
     volatility_regime: str = "unknown"

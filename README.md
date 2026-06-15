@@ -27,6 +27,34 @@ system.
 - Compares active strategies against a first-class buy-and-hold baseline.
 - Classifies market and volatility regime for strategy filters.
 
+## Indicators
+
+Indicators are calculated in:
+
+```text
+core/services/indicator_service.py
+```
+
+Current indicators include:
+
+- EMA
+- SMA
+- RSI
+- ATR
+- ADX
+- volatility
+- volatility percentile
+- Bollinger bands
+- Bollinger bandwidth
+- volume moving average
+- relative volume
+- Donchian high/low channels
+
+These are passed into `StrategyContext` so strategies can use them without
+calculating indicators directly. ADX, relative volume, volatility percentile,
+and Bollinger bandwidth are mainly used as filters so the bot can avoid weak
+trends, low-confirmation breakouts, and poor mean-reversion regimes.
+
 ## Main Commands
 
 Run all tests:
@@ -341,6 +369,7 @@ python main.py --mode compare-strategies
 
 This runs the configured strategy families across symbols and ranks them by:
 
+- qualified score
 - composite score
 - walk-forward excess return
 - walk-forward Sharpe
@@ -354,10 +383,26 @@ Configured strategy families currently include:
 
 - EMA crossover
 - EMA + RSI filter
+- EMA + RSI pullback
 - RSI mean reversion
+- RSI sideways mean reversion
 - Donchian breakout
+- Donchian + volatility filter
+- Bollinger mean reversion
 - Trend pullback
 - Buy-and-hold baseline
+
+`QScore` is the ranking score. It applies hard penalties for:
+
+```text
+negative excess return
+too few trades
+0 passed folds
+low profit factor
+```
+
+Buy-and-hold uses a separate benchmark scoring path, so it is not punished for
+having a small trade count.
 
 Trend pullback uses:
 
@@ -459,9 +504,8 @@ Then improve strategy logic:
 
 1. Add a trend filter: only long if close is above a long EMA.
 2. Add a volatility filter: skip entries during extreme volatility.
-3. Add volume confirmation.
-4. Add RSI confirmation for trend entries.
-5. Test alternative strategies: breakout, mean reversion, RSI, ensemble.
+3. Add RSI confirmation for trend entries.
+4. Test alternative strategies: breakout, mean reversion, RSI, ensemble.
 
 Then improve portfolio realism:
 

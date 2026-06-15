@@ -50,6 +50,24 @@ def test_load_config_adds_missing_research_defaults(tmp_path):
     assert config["strategy"]["rsi_period"] == 14
     assert config["position_sizing"]["mode"] == "fixed_fractional"
     assert config["position_sizing"]["target_exposure"] == 0.20
+    dual_momentum = config["research"]["dual_momentum"]
+    assert dual_momentum["risk_regime_mode"] == "scaled"
+    assert dual_momentum["risk_off_risk_exposure"] == 0.25
+    assert dual_momentum["fast_reentry_enabled"]
+    assert dual_momentum["min_breadth_percent"] == 0.60
+    assert dual_momentum["risk_off_symbols"] == []
+    defensive = [
+        experiment
+        for experiment in dual_momentum["risk_regime_experiments"]
+        if experiment["name"] == "defensive_assets"
+    ][0]
+    assert defensive["overrides"]["risk_off_symbols"] == [
+        "BIL",
+        "SHY",
+        "IEF",
+        "TLT",
+        "GLD",
+    ]
     assert config["reports"]["walk_forward_dir"] == "reports/walk_forward"
     assert config["reports"]["summary_dir"] == "reports/summary"
     assert config["cache"]["enabled"]

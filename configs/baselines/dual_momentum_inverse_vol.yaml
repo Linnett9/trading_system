@@ -1,0 +1,22 @@
+name: "dual_momentum_inverse_vol"
+description: "Frozen baseline for comparing risk-regime changes."
+
+strategy:
+  type: "dual_momentum"
+  selection_mode: "all_positive"
+  weighting: "inverse_volatility"
+  max_position_weight: 0.35
+  momentum_periods:
+    - 63
+    - 126
+  rebalance_frequency: "monthly"
+  use_asset_trend_filter: true
+  asset_sma_period: 200
+  min_breadth_percent: 0.60
+  max_drawdown_guard: 0.20
+  strict_drawdown_kill_switch: true
+  target_volatility: null
+  volatility_lookback: 63
+  regime_symbol: "SPY"
+  regime_sma_period: 200
+  transaction_cost_bps: 2.0

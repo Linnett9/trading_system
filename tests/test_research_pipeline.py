@@ -5,6 +5,12 @@ import pytest
 from core.entities.backtest_result import BacktestResult
 from core.entities.benchmark_result import BenchmarkResult
 from core.entities.candle import Candle
+from core.entities.optimization_result import OptimizationResult
+from core.entities.walk_forward_result import (
+    WalkForwardFoldResult,
+    WalkForwardResult,
+)
+from core.entities.strategy_comparison_result import StrategyComparisonResult
 from core.research.market_regime_analyzer import MarketRegimeAnalyzer
 from core.research.parameter_optimizer import (
     ParameterOptimizer,
@@ -23,8 +29,13 @@ from core.research.walk_forward import (
     evaluate_fold,
 )
 from strategies.ema_crossover_strategy import EMACrossoverStrategy
+from strategies.bollinger_mean_reversion_strategy import (
+    BollingerMeanReversionStrategy,
+)
 from strategies.donchian_breakout_strategy import DonchianBreakoutStrategy
+from strategies.ema_rsi_pullback_strategy import EMARSIPullbackStrategy
 from strategies.ema_rsi_filter_strategy import EMARSIFilterStrategy
+from strategies.ensemble_vote_strategy import EnsembleVoteStrategy
 from strategies.rsi_mean_reversion_strategy import RSIMeanReversionStrategy
 from strategies.rsi_strategy import RSIStrategy
 from strategies.buy_and_hold_strategy import BuyAndHoldStrategy
@@ -181,6 +192,20 @@ def test_strategy_factory_builds_volatility_filtered_donchian_strategy():
     assert strategy.use_volatility_filter
 
 
+def test_strategy_factory_builds_volume_filtered_donchian_strategy():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "donchian_breakout",
+            "use_volume_filter": True,
+            "min_relative_volume": 1.2,
+        },
+    )
+
+    assert strategy.use_volume_filter
+    assert strategy.min_relative_volume == 1.2
+
+
 def test_strategy_factory_builds_rsi_mean_reversion_strategy():
     strategy = build_strategy(
         "AAPL",
@@ -221,6 +246,62 @@ def test_strategy_factory_builds_ema_rsi_filter_strategy():
     assert strategy.rsi_entry == 55
 
 
+def test_strategy_factory_builds_ema_rsi_pullback_strategy():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "ema_rsi_pullback",
+            "ema_fast_period": 20,
+            "ema_slow_period": 200,
+            "rsi_pullback": 45,
+        },
+    )
+
+    assert isinstance(strategy, EMARSIPullbackStrategy)
+    assert strategy.rsi_pullback == 45
+
+
+def test_strategy_factory_builds_ema_rsi_pullback_with_volume_filter():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "ema_rsi_pullback",
+            "min_relative_volume": 1.1,
+        },
+    )
+
+    assert strategy.min_relative_volume == 1.1
+
+
+def test_strategy_factory_builds_bollinger_mean_reversion_strategy():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "bollinger_mean_reversion",
+            "rsi_entry": 35,
+            "require_sideways_regime": True,
+        },
+    )
+
+    assert isinstance(strategy, BollingerMeanReversionStrategy)
+    assert strategy.rsi_entry == 35
+    assert strategy.require_sideways_regime
+
+
+def test_strategy_factory_builds_bollinger_with_bandwidth_filters():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "bollinger_mean_reversion",
+            "min_bandwidth": 0.03,
+            "max_bandwidth": 0.20,
+        },
+    )
+
+    assert strategy.min_bandwidth == 0.03
+    assert strategy.max_bandwidth == 0.20
+
+
 def test_strategy_factory_builds_trend_pullback_strategy():
     strategy = build_strategy(
         "AAPL",
@@ -236,6 +317,20 @@ def test_strategy_factory_builds_trend_pullback_strategy():
     assert strategy.pullback_tolerance == 0.04
 
 
+def test_strategy_factory_builds_trend_pullback_with_adx_filter():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "trend_pullback",
+            "min_adx": 20,
+            "min_relative_volume": 1.0,
+        },
+    )
+
+    assert strategy.min_adx == 20
+    assert strategy.min_relative_volume == 1.0
+
+
 def test_strategy_factory_builds_buy_and_hold_strategy():
     strategy = build_strategy(
         "AAPL",
@@ -243,6 +338,23 @@ def test_strategy_factory_builds_buy_and_hold_strategy():
     )
 
     assert isinstance(strategy, BuyAndHoldStrategy)
+
+
+def test_strategy_factory_builds_ensemble_vote_strategy():
+    strategy = build_strategy(
+        "AAPL",
+        {
+            "name": "ensemble_vote",
+            "ensemble_min_buy_votes": 3,
+            "rsi_entry": 55,
+            "use_breakout_vote": False,
+        },
+    )
+
+    assert isinstance(strategy, EnsembleVoteStrategy)
+    assert strategy.min_buy_votes == 3
+    assert strategy.rsi_entry == 55
+    assert not strategy.use_breakout_vote
 
 
 def test_expand_grid_creates_all_parameter_combinations():
@@ -482,6 +594,39 @@ def test_quality_gates_reject_low_quality_fold():
     assert "excess_return is not positive" in reason
 
 
+def test_buy_and_hold_quality_gate_skips_trade_count_and_profit_factor():
+    result = BacktestResult(
+        starting_equity=500,
+        final_equity=550,
+        total_return=0.10,
+        max_drawdown=0.01,
+        sharpe=1.2,
+        closed_trades=1,
+        open_trades=0,
+        equity_curve=[],
+        profit_factor=0,
+    )
+    passed, reason = evaluate_fold(
+        test_result=result,
+        benchmark=BenchmarkResult(total_return=0.03, sharpe=0.5),
+        excess_return=0.07,
+        research_config={
+            "max_drawdown": 0.20,
+            "min_time_in_market": 0,
+            "max_time_in_market": 1,
+            "min_sharpe": 0,
+            "require_sharpe_edge": True,
+            "require_positive_excess": True,
+            "min_closed_trades": 20,
+            "min_profit_factor": 1.1,
+        },
+        strategy_name="buy_and_hold",
+    )
+
+    assert passed
+    assert reason == ""
+
+
 def test_walk_forward_applies_quality_gates_to_fold():
     config = make_research_config()
     config["research"].update({
@@ -562,3 +707,80 @@ def test_strategy_comparison_ranks_multiple_strategies():
     assert len(results) == 2
     assert "ema_crossover" in table
     assert "rsi_mean_reversion" in table
+
+
+def make_comparison_result(
+    strategy_name,
+    symbol,
+    excess_return,
+    sharpe,
+    trades,
+    passed,
+):
+    test_result = BacktestResult(
+        starting_equity=500,
+        final_equity=500 * (1 + excess_return + 0.02),
+        total_return=excess_return + 0.02,
+        max_drawdown=0.01,
+        sharpe=sharpe,
+        closed_trades=trades,
+        open_trades=0,
+        equity_curve=[],
+        profit_factor=1.5,
+    )
+    optimization = OptimizationResult(
+        parameters={},
+        metric_name="composite",
+        metric_value=sharpe,
+        result=test_result,
+    )
+    fold = WalkForwardFoldResult(
+        train_start=datetime(2021, 1, 1),
+        train_end=datetime(2021, 12, 31),
+        test_start=datetime(2022, 1, 1),
+        test_end=datetime(2022, 12, 31),
+        best_training_result=optimization,
+        test_result=test_result,
+        benchmark_return=0.02,
+        benchmark=BenchmarkResult(total_return=0.02, sharpe=0.5),
+        excess_return=excess_return,
+        excess_return_per_unit_risk=excess_return / 0.01,
+        passed=passed,
+    )
+
+    return StrategyComparisonResult(
+        strategy_name=strategy_name,
+        symbol=symbol,
+        walk_forward_result=WalkForwardResult(
+            symbol=symbol,
+            timeframe="1Day",
+            folds=[fold],
+        ),
+    )
+
+
+def test_strategy_comparison_ranking_prefers_positive_excess():
+    comparison = StrategyComparison(
+        config=make_research_config(),
+        candles_by_symbol={},
+    )
+    negative = make_comparison_result(
+        "rsi_mean_reversion",
+        "TSLA",
+        excess_return=-0.20,
+        sharpe=2.5,
+        trades=2,
+        passed=False,
+    )
+    positive = make_comparison_result(
+        "ema_crossover",
+        "AAPL",
+        excess_return=0.01,
+        sharpe=0.6,
+        trades=20,
+        passed=True,
+    )
+
+    ranked = comparison.rank([negative, positive])
+
+    assert ranked[0] == positive

@@ -104,6 +104,7 @@ def evaluate_fold(
     benchmark,
     excess_return,
     research_config,
+    strategy_name: str = "",
 ):
     min_closed_trades = research_config.get("min_closed_trades", 0)
     min_profit_factor = research_config.get("min_profit_factor", 0)
@@ -121,14 +122,21 @@ def evaluate_fold(
     min_sharpe = research_config.get("min_sharpe", 0)
 
     failure_reasons = []
+    is_benchmark_strategy = strategy_name == "buy_and_hold"
 
-    if test_result.closed_trades < min_closed_trades:
+    if (
+        not is_benchmark_strategy
+        and test_result.closed_trades < min_closed_trades
+    ):
         failure_reasons.append(
             f"closed_trades below minimum ({test_result.closed_trades} < "
             f"{min_closed_trades})"
         )
 
-    if test_result.profit_factor < min_profit_factor:
+    if (
+        not is_benchmark_strategy
+        and test_result.profit_factor < min_profit_factor
+    ):
         failure_reasons.append(
             f"profit_factor below minimum "
             f"({test_result.profit_factor:.2f} < {min_profit_factor:.2f})"
@@ -241,6 +249,7 @@ class WalkForwardTester:
                 benchmark,
                 excess_return,
                 research_config,
+                strategy_name=self.config.get("strategy", {}).get("name", ""),
             )
 
             fold_results.append(

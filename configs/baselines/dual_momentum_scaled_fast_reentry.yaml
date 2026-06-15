@@ -1,0 +1,30 @@
+name: "dual_momentum_scaled_fast_reentry"
+description: "Promoted dual-momentum baseline with scaled exposure and fast bull-market re-entry."
+
+strategy:
+  type: "dual_momentum"
+  selection_mode: "all_positive"
+  weighting: "inverse_volatility"
+  max_position_weight: 0.35
+  momentum_periods:
+    - 63
+    - 126
+  rebalance_frequency: "monthly"
+  use_asset_trend_filter: true
+  asset_sma_period: 200
+  min_breadth_percent: 0.60
+  max_drawdown_guard: 0.20
+  strict_drawdown_kill_switch: true
+  target_volatility: null
+  volatility_lookback: 63
+  regime_symbol: "SPY"
+  regime_sma_period: 200
+  risk_off_symbols: []
+  risk_regime_mode: "scaled"
+  mixed_risk_exposure: 0.50
+  risk_off_risk_exposure: 0.25
+  fast_reentry_enabled: true
+  fast_reentry_sma_period: 100
+  fast_reentry_momentum_period: 63
+  fast_reentry_breadth_percent: 0.60
+  transaction_cost_bps: 2.0
