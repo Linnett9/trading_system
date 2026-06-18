@@ -20,7 +20,11 @@ from core.research.parameter_optimizer import (
     valid_parameters,
 )
 from core.research.strategy_comparison import StrategyComparison
-from core.research.strategy_factory import build_strategy
+from core.research.strategy_factory import (
+    StrategyDefinition,
+    StrategyRegistry,
+    build_strategy,
+)
 from core.research.walk_forward import (
     WalkForwardTester,
     benchmark_metrics,
@@ -355,6 +359,31 @@ def test_strategy_factory_builds_ensemble_vote_strategy():
     assert strategy.min_buy_votes == 3
     assert strategy.rsi_entry == 55
     assert not strategy.use_breakout_vote
+
+
+def test_strategy_registry_can_be_extended_without_factory_changes():
+    registry = StrategyRegistry([
+        StrategyDefinition(
+            "custom_buy_and_hold",
+            lambda symbol, config: BuyAndHoldStrategy(symbol=symbol),
+        ),
+    ])
+
+    strategy = registry.build("AAPL", {"name": "custom_buy_and_hold"})
+
+    assert isinstance(strategy, BuyAndHoldStrategy)
+
+
+def test_strategy_registry_reports_available_names_for_unknown_strategy():
+    registry = StrategyRegistry([
+        StrategyDefinition(
+            "custom_buy_and_hold",
+            lambda symbol, config: BuyAndHoldStrategy(symbol=symbol),
+        ),
+    ])
+
+    with pytest.raises(ValueError, match="custom_buy_and_hold"):
+        registry.build("AAPL", {"name": "missing"})
 
 
 def test_expand_grid_creates_all_parameter_combinations():

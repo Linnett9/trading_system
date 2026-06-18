@@ -23,6 +23,16 @@ class DualMomentumSelection:
     symbols: list[str]
     scores: dict[str, float]
     risk_on: bool
+    regime_label: str = "risk-off"
+    regime_exposure: float = 0
+    exposure_target: float = 0
+    fallback_symbols: list[str] | None = None
+    breadth_passes: bool = False
+    fast_reentry: bool = False
+    drawdown_guard_active: bool = False
+    target_weights: dict[str, float] | None = None
+    chop_filter_active: bool = False
+    cooldown_symbols: list[str] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -30,6 +40,16 @@ class DualMomentumSelection:
             "symbols": self.symbols,
             "scores": self.scores,
             "risk_on": self.risk_on,
+            "regime_label": self.regime_label,
+            "regime_exposure": self.regime_exposure,
+            "exposure_target": self.exposure_target,
+            "fallback_symbols": self.fallback_symbols or [],
+            "breadth_passes": self.breadth_passes,
+            "fast_reentry": self.fast_reentry,
+            "drawdown_guard_active": self.drawdown_guard_active,
+            "target_weights": self.target_weights or {},
+            "chop_filter_active": self.chop_filter_active,
+            "cooldown_symbols": self.cooldown_symbols or [],
         }
 
 
@@ -116,6 +136,8 @@ class DualMomentumPortfolioBacktester:
         drawdown_guard_cooldown: int = 1,
         min_breadth_percent: float = 0,
         selection_mode: str = "ranked",
+        min_selection_score: float = 0,
+        max_selected_assets: int | None = None,
         weighting: str = "equal",
         max_position_weight: float | None = None,
         weight_volatility_lookback: int = 63,
@@ -127,9 +149,43 @@ class DualMomentumPortfolioBacktester:
         mixed_risk_exposure: float = 0.50,
         risk_off_risk_exposure: float = 0,
         fast_reentry_enabled: bool = False,
+        fast_reentry_symbols: list[str] | None = None,
         fast_reentry_sma_period: int = 100,
         fast_reentry_momentum_period: int = 63,
         fast_reentry_breadth_percent: float = 0.60,
+        fallback_symbols: list[str] | None = None,
+        fallback_allocation: float = 0,
+        fallback_min_risk_assets: int = 3,
+        fallback_momentum_periods: list[int] | None = None,
+        decay_exit_enabled: bool = False,
+        decay_momentum_period: int = 63,
+        rank_drop_exit_top_n: int | None = None,
+        chop_filter_enabled: bool = False,
+        chop_lookback: int = 63,
+        min_chop_momentum: float = 0.02,
+        chop_risk_exposure: float = 0.50,
+        quality_filter_enabled: bool = False,
+        quality_momentum_period: int = 21,
+        quality_sma_period: int = 50,
+        quality_require_momentum_improving: bool = False,
+        cooldown_enabled: bool = False,
+        cooldown_periods: int = 2,
+        cooldown_loss_threshold: float = -0.03,
+        leadership_filter_enabled: bool = False,
+        leadership_symbol: str = "SPY",
+        leadership_momentum_periods: list[int] | None = None,
+        benchmark_sleeve_symbols: list[str] | None = None,
+        benchmark_sleeve_allocation: float = 0,
+        benchmark_sleeve_momentum_periods: list[int] | None = None,
+        benchmark_sleeve_top_n: int = 1,
+        ranking_score_mode: str = "average_momentum",
+        enhanced_momentum_periods: list[int] | None = None,
+        enhanced_momentum_weights: list[float] | None = None,
+        relative_strength_symbol: str = "SPY",
+        relative_strength_periods: list[int] | None = None,
+        relative_strength_weight: float = 0.25,
+        volatility_penalty_weight: float = 0.05,
+        ranking_volatility_lookback: int = 63,
     ):
         self.starting_equity = starting_equity
         self.top_n = top_n
@@ -148,6 +204,8 @@ class DualMomentumPortfolioBacktester:
         self.drawdown_guard_cooldown = drawdown_guard_cooldown
         self.min_breadth_percent = min_breadth_percent
         self.selection_mode = selection_mode
+        self.min_selection_score = min_selection_score
+        self.max_selected_assets = max_selected_assets
         self.weighting = weighting
         self.max_position_weight = max_position_weight
         self.weight_volatility_lookback = weight_volatility_lookback
@@ -161,9 +219,55 @@ class DualMomentumPortfolioBacktester:
         self.mixed_risk_exposure = mixed_risk_exposure
         self.risk_off_risk_exposure = risk_off_risk_exposure
         self.fast_reentry_enabled = fast_reentry_enabled
+        self.fast_reentry_symbols = fast_reentry_symbols or []
         self.fast_reentry_sma_period = fast_reentry_sma_period
         self.fast_reentry_momentum_period = fast_reentry_momentum_period
         self.fast_reentry_breadth_percent = fast_reentry_breadth_percent
+        self.fallback_symbols = fallback_symbols or []
+        self.fallback_allocation = fallback_allocation
+        self.fallback_min_risk_assets = fallback_min_risk_assets
+        self.fallback_momentum_periods = (
+            fallback_momentum_periods or self.momentum_periods
+        )
+        self.decay_exit_enabled = decay_exit_enabled
+        self.decay_momentum_period = decay_momentum_period
+        self.rank_drop_exit_top_n = rank_drop_exit_top_n
+        self.chop_filter_enabled = chop_filter_enabled
+        self.chop_lookback = chop_lookback
+        self.min_chop_momentum = min_chop_momentum
+        self.chop_risk_exposure = chop_risk_exposure
+        self.quality_filter_enabled = quality_filter_enabled
+        self.quality_momentum_period = quality_momentum_period
+        self.quality_sma_period = quality_sma_period
+        self.quality_require_momentum_improving = (
+            quality_require_momentum_improving
+        )
+        self.cooldown_enabled = cooldown_enabled
+        self.cooldown_periods = cooldown_periods
+        self.cooldown_loss_threshold = cooldown_loss_threshold
+        self.leadership_filter_enabled = leadership_filter_enabled
+        self.leadership_symbol = leadership_symbol
+        self.leadership_momentum_periods = (
+            leadership_momentum_periods or [21, 63]
+        )
+        self.benchmark_sleeve_symbols = benchmark_sleeve_symbols or []
+        self.benchmark_sleeve_allocation = benchmark_sleeve_allocation
+        self.benchmark_sleeve_momentum_periods = (
+            benchmark_sleeve_momentum_periods or [63]
+        )
+        self.benchmark_sleeve_top_n = benchmark_sleeve_top_n
+        self.ranking_score_mode = ranking_score_mode
+        self.enhanced_momentum_periods = (
+            enhanced_momentum_periods or [21, 63, 126]
+        )
+        self.enhanced_momentum_weights = (
+            enhanced_momentum_weights or [0.20, 0.35, 0.45]
+        )
+        self.relative_strength_symbol = relative_strength_symbol
+        self.relative_strength_periods = relative_strength_periods or [21, 63]
+        self.relative_strength_weight = relative_strength_weight
+        self.volatility_penalty_weight = volatility_penalty_weight
+        self.ranking_volatility_lookback = ranking_volatility_lookback
 
     def run(
         self,
@@ -195,6 +299,7 @@ class DualMomentumPortfolioBacktester:
         peak_equity = self.starting_equity
         guard_rebalances_remaining = 0
         kill_switch_active = False
+        cooldowns: dict[str, int] = {}
 
         for timestamp in timestamps:
             prices = self._prices_at(prices_by_symbol, timestamp)
@@ -208,6 +313,7 @@ class DualMomentumPortfolioBacktester:
 
             if self._should_rebalance(timestamp, last_rebalance_key):
                 last_rebalance_key = self._rebalance_key(timestamp)
+                self._tick_cooldowns(cooldowns)
                 risk_on = self._risk_on(
                     timestamp=timestamp,
                     prices_by_symbol=prices_by_symbol,
@@ -252,6 +358,13 @@ class DualMomentumPortfolioBacktester:
                 risk_assets_allowed = (
                     risk_on and breadth_passes and not guard_active
                 )
+                chop_filter_active = (
+                    risk_assets_allowed
+                    and self._chop_filter_active(
+                        timestamp,
+                        prices_by_symbol,
+                    )
+                )
                 fast_reentry = (
                     not risk_assets_allowed
                     and not guard_active
@@ -270,37 +383,84 @@ class DualMomentumPortfolioBacktester:
                 )
 
                 if risk_assets_allowed:
-                    ranked = self._rank_symbols(timestamp, prices_by_symbol)
+                    ranked = self._rank_symbols(
+                        timestamp,
+                        prices_by_symbol,
+                        blocked_symbols=set(cooldowns),
+                    )
                     selected = self._select_symbols(ranked)
-                    regime_exposure = 1.0
+                    if chop_filter_active:
+                        regime_exposure = self.chop_risk_exposure
+                        regime_label = "chop-filter"
+                    else:
+                        regime_exposure = 1.0
+                        regime_label = "risk-on"
                 elif fast_reentry:
-                    ranked = self._rank_symbols(timestamp, prices_by_symbol)
+                    ranked = self._rank_symbols(
+                        timestamp,
+                        prices_by_symbol,
+                        blocked_symbols=set(cooldowns),
+                    )
                     selected = self._select_symbols(ranked)
                     regime_exposure = self.mixed_risk_exposure
+                    regime_label = "fast-reentry"
                 elif partial_risk:
-                    ranked = self._rank_symbols(timestamp, prices_by_symbol)
+                    ranked = self._rank_symbols(
+                        timestamp,
+                        prices_by_symbol,
+                        blocked_symbols=set(cooldowns),
+                    )
                     selected = self._select_symbols(ranked)
                     regime_exposure = self.risk_off_risk_exposure
+                    regime_label = "partial-risk"
                 elif self.risk_off_symbols:
                     ranked = self._rank_symbols(
                         timestamp,
                         prices_by_symbol,
                         allowed_symbols=set(self.risk_off_symbols),
                         momentum_periods=self.risk_off_momentum_periods,
+                        apply_quality_filter=False,
                     )
                     selected = [
                         symbol for symbol, _ in ranked[:self.risk_off_top_n]
                     ]
                     regime_exposure = 1.0
+                    regime_label = "defensive"
                 else:
                     ranked = []
                     selected = []
                     regime_exposure = 0
+                    regime_label = "cash"
 
                 target_weights = self._target_weights(
                     selected=selected,
                     timestamp=timestamp,
                     prices_by_symbol=prices_by_symbol,
+                )
+                fallback_symbols = self._fallback_symbols(
+                    selected=selected,
+                    timestamp=timestamp,
+                    prices_by_symbol=prices_by_symbol,
+                    risk_asset_mode=(
+                        risk_assets_allowed or fast_reentry or partial_risk
+                    ),
+                )
+                target_weights = self._apply_benchmark_sleeve_weights(
+                    target_weights,
+                    timestamp=timestamp,
+                    prices_by_symbol=prices_by_symbol,
+                    risk_asset_mode=(
+                        risk_assets_allowed or fast_reentry or partial_risk
+                    ),
+                )
+                target_weights = self._apply_fallback_weights(
+                    target_weights,
+                    fallback_symbols,
+                )
+                selected = list(target_weights)
+                exposure_target = (
+                    self._target_exposure_for_rebalance(returns)
+                    * regime_exposure
                 )
                 selections.append(
                     DualMomentumSelection(
@@ -308,11 +468,17 @@ class DualMomentumPortfolioBacktester:
                         symbols=selected,
                         scores=dict(ranked),
                         risk_on=risk_assets_allowed,
+                        regime_label=regime_label,
+                        regime_exposure=regime_exposure,
+                        exposure_target=exposure_target,
+                        fallback_symbols=fallback_symbols,
+                        breadth_passes=breadth_passes,
+                        fast_reentry=fast_reentry,
+                        drawdown_guard_active=guard_active,
+                        target_weights=target_weights,
+                        chop_filter_active=chop_filter_active,
+                        cooldown_symbols=sorted(cooldowns),
                     )
-                )
-                exposure_target = (
-                    self._target_exposure_for_rebalance(returns)
-                    * regime_exposure
                 )
                 (
                     cash,
@@ -321,6 +487,7 @@ class DualMomentumPortfolioBacktester:
                     bought,
                     traded_value,
                     cost,
+                    cooldown_symbols,
                 ) = self._rebalance(
                     positions=positions,
                     entry_values=entry_values,
@@ -336,7 +503,29 @@ class DualMomentumPortfolioBacktester:
                 buy_signals += bought
                 turnover_value += traded_value
                 estimated_cost += cost
+                self._apply_cooldowns(cooldowns, cooldown_symbols)
             else:
+                if self.decay_exit_enabled:
+                    (
+                        cash,
+                        pnls,
+                        sold,
+                        traded_value,
+                        cost,
+                        cooldown_symbols,
+                    ) = self._apply_decay_exits(
+                        positions=positions,
+                        entry_values=entry_values,
+                        prices=prices,
+                        timestamp=timestamp,
+                        prices_by_symbol=prices_by_symbol,
+                        cash=cash,
+                    )
+                    trade_pnls.extend(pnls)
+                    sell_signals += sold
+                    turnover_value += traded_value
+                    estimated_cost += cost
+                    self._apply_cooldowns(cooldowns, cooldown_symbols)
                 hold_signals += 1
 
             equity = self._equity(cash, positions, prices)
@@ -460,6 +649,8 @@ class DualMomentumPortfolioBacktester:
                 "drawdown_guard_cooldown": self.drawdown_guard_cooldown,
                 "min_breadth_percent": self.min_breadth_percent,
                 "selection_mode": self.selection_mode,
+                "min_selection_score": self.min_selection_score,
+                "max_selected_assets": self.max_selected_assets,
                 "weighting": self.weighting,
                 "max_position_weight": self.max_position_weight,
                 "weight_volatility_lookback": (
@@ -475,6 +666,7 @@ class DualMomentumPortfolioBacktester:
                 "mixed_risk_exposure": self.mixed_risk_exposure,
                 "risk_off_risk_exposure": self.risk_off_risk_exposure,
                 "fast_reentry_enabled": self.fast_reentry_enabled,
+                "fast_reentry_symbols": self.fast_reentry_symbols,
                 "fast_reentry_sma_period": self.fast_reentry_sma_period,
                 "fast_reentry_momentum_period": (
                     self.fast_reentry_momentum_period
@@ -482,6 +674,47 @@ class DualMomentumPortfolioBacktester:
                 "fast_reentry_breadth_percent": (
                     self.fast_reentry_breadth_percent
                 ),
+                "fallback_symbols": self.fallback_symbols,
+                "fallback_allocation": self.fallback_allocation,
+                "fallback_min_risk_assets": self.fallback_min_risk_assets,
+                "fallback_momentum_periods": self.fallback_momentum_periods,
+                "decay_exit_enabled": self.decay_exit_enabled,
+                "decay_momentum_period": self.decay_momentum_period,
+                "rank_drop_exit_top_n": self.rank_drop_exit_top_n,
+                "chop_filter_enabled": self.chop_filter_enabled,
+                "chop_lookback": self.chop_lookback,
+                "min_chop_momentum": self.min_chop_momentum,
+                "chop_risk_exposure": self.chop_risk_exposure,
+                "quality_filter_enabled": self.quality_filter_enabled,
+                "quality_momentum_period": self.quality_momentum_period,
+                "quality_sma_period": self.quality_sma_period,
+                "quality_require_momentum_improving": (
+                    self.quality_require_momentum_improving
+                ),
+                "cooldown_enabled": self.cooldown_enabled,
+                "cooldown_periods": self.cooldown_periods,
+                "cooldown_loss_threshold": self.cooldown_loss_threshold,
+                "leadership_filter_enabled": self.leadership_filter_enabled,
+                "leadership_symbol": self.leadership_symbol,
+                "leadership_momentum_periods": (
+                    self.leadership_momentum_periods
+                ),
+                "benchmark_sleeve_symbols": self.benchmark_sleeve_symbols,
+                "benchmark_sleeve_allocation": (
+                    self.benchmark_sleeve_allocation
+                ),
+                "benchmark_sleeve_momentum_periods": (
+                    self.benchmark_sleeve_momentum_periods
+                ),
+                "benchmark_sleeve_top_n": self.benchmark_sleeve_top_n,
+                "ranking_score_mode": self.ranking_score_mode,
+                "enhanced_momentum_periods": self.enhanced_momentum_periods,
+                "enhanced_momentum_weights": self.enhanced_momentum_weights,
+                "relative_strength_symbol": self.relative_strength_symbol,
+                "relative_strength_periods": self.relative_strength_periods,
+                "relative_strength_weight": self.relative_strength_weight,
+                "volatility_penalty_weight": self.volatility_penalty_weight,
+                "ranking_volatility_lookback": self.ranking_volatility_lookback,
             },
         )
 
@@ -501,6 +734,7 @@ class DualMomentumPortfolioBacktester:
         bought = 0
         traded_value = 0
         total_cost = 0
+        cooldown_symbols = []
         selected_symbols = set(selected)
 
         for symbol in list(positions):
@@ -510,7 +744,11 @@ class DualMomentumPortfolioBacktester:
             value = positions[symbol] * prices[symbol]
             cost = self._transaction_cost(value)
             cash += value - cost
-            pnls.append(value - entry_values.get(symbol, value) - cost)
+            entry_value = entry_values.get(symbol, value)
+            pnl = value - entry_value - cost
+            pnls.append(pnl)
+            if self._should_cooldown(pnl, entry_value):
+                cooldown_symbols.append(symbol)
             traded_value += value
             total_cost += cost
             sold += 1
@@ -518,7 +756,15 @@ class DualMomentumPortfolioBacktester:
             entry_values.pop(symbol, None)
 
         if not selected:
-            return cash, pnls, sold, bought, traded_value, total_cost
+            return (
+                cash,
+                pnls,
+                sold,
+                bought,
+                traded_value,
+                total_cost,
+                cooldown_symbols,
+            )
 
         for symbol in selected:
             if symbol not in prices or prices[symbol] <= 0:
@@ -567,18 +813,217 @@ class DualMomentumPortfolioBacktester:
                 total_cost += cost
 
                 if positions[symbol] <= 1e-12:
-                    pnls.append(sell_value - entry_reduction - cost)
+                    pnl = sell_value - entry_reduction - cost
+                    pnls.append(pnl)
+                    if self._should_cooldown(pnl, entry_reduction):
+                        cooldown_symbols.append(symbol)
                     del positions[symbol]
                     entry_values.pop(symbol, None)
                     sold += 1
 
-        return cash, pnls, sold, bought, traded_value, total_cost
+        return (
+            cash,
+            pnls,
+            sold,
+            bought,
+            traded_value,
+            total_cost,
+            cooldown_symbols,
+        )
+
+    def _apply_decay_exits(
+        self,
+        positions,
+        entry_values,
+        prices,
+        timestamp,
+        prices_by_symbol,
+        cash,
+    ):
+        pnls = []
+        sold = 0
+        traded_value = 0
+        total_cost = 0
+        cooldown_symbols = []
+        exit_symbols = self._decay_exit_symbols(
+            positions,
+            timestamp,
+            prices_by_symbol,
+        )
+
+        for symbol in exit_symbols:
+            if symbol not in positions or symbol not in prices:
+                continue
+
+            value = positions[symbol] * prices[symbol]
+            cost = self._transaction_cost(value)
+            cash += value - cost
+            entry_value = entry_values.get(symbol, value)
+            pnl = value - entry_value - cost
+            pnls.append(pnl)
+            if self._should_cooldown(pnl, entry_value):
+                cooldown_symbols.append(symbol)
+            traded_value += value
+            total_cost += cost
+            sold += 1
+            del positions[symbol]
+            entry_values.pop(symbol, None)
+
+        return cash, pnls, sold, traded_value, total_cost, cooldown_symbols
+
+    def _decay_exit_symbols(self, positions, timestamp, prices_by_symbol):
+        if not positions:
+            return []
+
+        ranked = self._rank_symbols(
+            timestamp=timestamp,
+            prices_by_symbol=prices_by_symbol,
+            momentum_periods=[self.decay_momentum_period],
+        )
+        top_ranked = {
+            symbol
+            for symbol, _ in (
+                ranked[:self.rank_drop_exit_top_n]
+                if self.rank_drop_exit_top_n
+                else []
+            )
+        }
+        exit_symbols = []
+
+        for symbol in positions:
+            prices = prices_by_symbol.get(symbol)
+            if not prices:
+                continue
+
+            timestamps = sorted(prices)
+            index = self._timestamp_index(timestamps, timestamp)
+            if index is None or index < self.decay_momentum_period:
+                continue
+
+            score = self._momentum_score(
+                prices,
+                timestamps,
+                index,
+                [self.decay_momentum_period],
+            )
+            if score is not None and score <= 0:
+                exit_symbols.append(symbol)
+                continue
+
+            if self.rank_drop_exit_top_n and symbol not in top_ranked:
+                exit_symbols.append(symbol)
+
+        return exit_symbols
 
     def _select_symbols(self, ranked):
-        if self.selection_mode == "all_positive":
-            return [symbol for symbol, _ in ranked]
+        eligible = [
+            (symbol, score)
+            for symbol, score in ranked
+            if score >= self.min_selection_score
+        ]
 
-        return [symbol for symbol, _ in ranked[:self.top_n]]
+        if self.selection_mode == "all_positive":
+            selected = [symbol for symbol, _ in eligible]
+            if self.max_selected_assets is not None:
+                return selected[:self.max_selected_assets]
+            return selected
+
+        selected = [symbol for symbol, _ in eligible[:self.top_n]]
+        if self.max_selected_assets is not None:
+            return selected[:self.max_selected_assets]
+        return selected
+
+    def _fallback_symbols(
+        self,
+        selected,
+        timestamp,
+        prices_by_symbol,
+        risk_asset_mode,
+    ):
+        if (
+            not risk_asset_mode
+            or self.fallback_allocation <= 0
+            or len(selected) >= self.fallback_min_risk_assets
+            or not self.fallback_symbols
+        ):
+            return []
+
+        ranked = self._rank_symbols(
+            timestamp=timestamp,
+            prices_by_symbol=prices_by_symbol,
+            allowed_symbols=set(self.fallback_symbols),
+            momentum_periods=self.fallback_momentum_periods,
+            skip_regime_symbol=False,
+            apply_quality_filter=False,
+            apply_leadership_filter=False,
+        )
+        selected_set = set(selected)
+        return [
+            symbol
+            for symbol, _ in ranked
+            if symbol not in selected_set
+        ][: max(0, self.fallback_min_risk_assets - len(selected))]
+
+    def _apply_benchmark_sleeve_weights(
+        self,
+        target_weights,
+        timestamp,
+        prices_by_symbol,
+        risk_asset_mode,
+    ):
+        if (
+            not risk_asset_mode
+            or self.benchmark_sleeve_allocation <= 0
+            or not self.benchmark_sleeve_symbols
+        ):
+            return target_weights
+
+        ranked = self._rank_symbols(
+            timestamp=timestamp,
+            prices_by_symbol=prices_by_symbol,
+            allowed_symbols=set(self.benchmark_sleeve_symbols),
+            momentum_periods=self.benchmark_sleeve_momentum_periods,
+            skip_regime_symbol=False,
+            apply_quality_filter=False,
+            apply_leadership_filter=False,
+        )
+        sleeve_symbols = [
+            symbol
+            for symbol, _ in ranked[:self.benchmark_sleeve_top_n]
+        ]
+        if not sleeve_symbols:
+            return target_weights
+
+        allocation = min(max(self.benchmark_sleeve_allocation, 0), 1)
+        scaled_weights = {
+            symbol: weight * (1 - allocation)
+            for symbol, weight in target_weights.items()
+        }
+        sleeve_weight = allocation / len(sleeve_symbols)
+        for symbol in sleeve_symbols:
+            scaled_weights[symbol] = (
+                scaled_weights.get(symbol, 0) + sleeve_weight
+            )
+
+        return scaled_weights
+
+    def _apply_fallback_weights(self, target_weights, fallback_symbols):
+        if not fallback_symbols or self.fallback_allocation <= 0:
+            return target_weights
+
+        fallback_allocation = min(max(self.fallback_allocation, 0), 1)
+        scaled_weights = {
+            symbol: weight * (1 - fallback_allocation)
+            for symbol, weight in target_weights.items()
+        }
+        fallback_weight = fallback_allocation / len(fallback_symbols)
+
+        for symbol in fallback_symbols:
+            scaled_weights[symbol] = (
+                scaled_weights.get(symbol, 0) + fallback_weight
+            )
+
+        return scaled_weights
 
     def _target_weights(self, selected, timestamp, prices_by_symbol):
         if not selected:
@@ -683,12 +1128,20 @@ class DualMomentumPortfolioBacktester:
         prices_by_symbol,
         allowed_symbols=None,
         momentum_periods=None,
+        skip_regime_symbol=True,
+        blocked_symbols=None,
+        apply_quality_filter=True,
+        apply_leadership_filter=True,
     ):
         ranked = []
         periods = momentum_periods or self.momentum_periods
+        blocked_symbols = blocked_symbols or set()
 
         for symbol, prices in prices_by_symbol.items():
-            if symbol == self.regime_symbol:
+            if skip_regime_symbol and symbol == self.regime_symbol:
+                continue
+
+            if symbol in blocked_symbols:
                 continue
 
             if allowed_symbols is not None and symbol not in allowed_symbols:
@@ -705,11 +1158,154 @@ class DualMomentumPortfolioBacktester:
             ):
                 continue
 
-            score = self._momentum_score(prices, timestamps, index, periods)
+            if (
+                apply_quality_filter
+                and not self._passes_quality_filter(prices, timestamps, index)
+            ):
+                continue
+
+            if (
+                apply_leadership_filter
+                and not self._passes_leadership_filter(
+                    symbol,
+                    prices,
+                    timestamps,
+                    index,
+                    prices_by_symbol,
+                    timestamp,
+                )
+            ):
+                continue
+
+            score = self._rank_score(
+                symbol=symbol,
+                prices=prices,
+                timestamps=timestamps,
+                index=index,
+                periods=periods,
+                prices_by_symbol=prices_by_symbol,
+                timestamp=timestamp,
+            )
             if score is not None and score > 0:
                 ranked.append((symbol, score))
 
         return sorted(ranked, key=lambda item: item[1], reverse=True)
+
+    def _rank_score(
+        self,
+        symbol,
+        prices,
+        timestamps,
+        index,
+        periods,
+        prices_by_symbol,
+        timestamp,
+    ):
+        if self.ranking_score_mode == "enhanced":
+            return self._enhanced_rank_score(
+                symbol,
+                prices,
+                timestamps,
+                index,
+                prices_by_symbol,
+                timestamp,
+            )
+
+        return self._momentum_score(prices, timestamps, index, periods)
+
+    def _enhanced_rank_score(
+        self,
+        symbol,
+        prices,
+        timestamps,
+        index,
+        prices_by_symbol,
+        timestamp,
+    ):
+        momentum_score = self._weighted_momentum_score(
+            prices,
+            timestamps,
+            index,
+            self.enhanced_momentum_periods,
+            self.enhanced_momentum_weights,
+        )
+        if momentum_score is None:
+            return None
+
+        relative_score = 0
+        benchmark_prices = prices_by_symbol.get(self.relative_strength_symbol)
+        if benchmark_prices and symbol != self.relative_strength_symbol:
+            benchmark_timestamps = sorted(benchmark_prices)
+            benchmark_index = self._timestamp_index(
+                benchmark_timestamps,
+                timestamp,
+            )
+            benchmark_score = (
+                self._weighted_momentum_score(
+                    benchmark_prices,
+                    benchmark_timestamps,
+                    benchmark_index,
+                    self.relative_strength_periods,
+                    [1 / len(self.relative_strength_periods)]
+                    * len(self.relative_strength_periods),
+                )
+                if benchmark_index is not None
+                else None
+            )
+            asset_relative_score = self._weighted_momentum_score(
+                prices,
+                timestamps,
+                index,
+                self.relative_strength_periods,
+                [1 / len(self.relative_strength_periods)]
+                * len(self.relative_strength_periods),
+            )
+            if benchmark_score is not None and asset_relative_score is not None:
+                relative_score = asset_relative_score - benchmark_score
+
+        volatility = self._realized_volatility(
+            prices,
+            timestamps,
+            index,
+            self.ranking_volatility_lookback,
+        )
+        annualized_volatility = volatility * math.sqrt(252)
+
+        return (
+            momentum_score
+            + self.relative_strength_weight * relative_score
+            - self.volatility_penalty_weight * annualized_volatility
+        )
+
+    def _weighted_momentum_score(
+        self,
+        prices,
+        timestamps,
+        index,
+        periods,
+        weights,
+    ):
+        if not periods:
+            return None
+
+        if len(weights) != len(periods):
+            weights = [1 / len(periods)] * len(periods)
+
+        weighted_score = 0
+        total_weight = 0
+        for period, weight in zip(periods, weights):
+            if index is None or index < period:
+                return None
+
+            current = prices[timestamps[index]]
+            previous = prices[timestamps[index - period]]
+            if previous <= 0:
+                return None
+
+            weighted_score += weight * ((current / previous) - 1)
+            total_weight += weight
+
+        return weighted_score / total_weight if total_weight else None
 
     def _risk_on(self, timestamp, prices_by_symbol):
         prices = prices_by_symbol.get(self.regime_symbol)
@@ -733,16 +1329,25 @@ class DualMomentumPortfolioBacktester:
         return close > sma
 
     def _fast_reentry_signal(self, timestamp, prices_by_symbol):
+        signal_symbols = self.fast_reentry_symbols or [self.regime_symbol]
         return (
-            self._regime_above_sma(
-                timestamp,
-                prices_by_symbol,
-                self.fast_reentry_sma_period,
+            any(
+                self._symbol_above_sma(
+                    symbol,
+                    timestamp,
+                    prices_by_symbol,
+                    self.fast_reentry_sma_period,
+                )
+                for symbol in signal_symbols
             )
-            or self._regime_momentum_positive(
-                timestamp,
-                prices_by_symbol,
-                self.fast_reentry_momentum_period,
+            or any(
+                self._symbol_momentum_positive(
+                    symbol,
+                    timestamp,
+                    prices_by_symbol,
+                    self.fast_reentry_momentum_period,
+                )
+                for symbol in signal_symbols
             )
             or self._breadth_passes_threshold(
                 timestamp,
@@ -751,8 +1356,30 @@ class DualMomentumPortfolioBacktester:
             )
         )
 
+    def _chop_filter_active(self, timestamp, prices_by_symbol):
+        if not self.chop_filter_enabled:
+            return False
+
+        momentum = self._regime_momentum(
+            timestamp,
+            prices_by_symbol,
+            self.chop_lookback,
+        )
+        if momentum is None:
+            return False
+
+        return momentum < self.min_chop_momentum
+
     def _regime_above_sma(self, timestamp, prices_by_symbol, period):
-        prices = prices_by_symbol.get(self.regime_symbol)
+        return self._symbol_above_sma(
+            self.regime_symbol,
+            timestamp,
+            prices_by_symbol,
+            period,
+        )
+
+    def _symbol_above_sma(self, symbol, timestamp, prices_by_symbol, period):
+        prices = prices_by_symbol.get(symbol)
         if not prices:
             return False
 
@@ -769,18 +1396,90 @@ class DualMomentumPortfolioBacktester:
         return close > sma
 
     def _regime_momentum_positive(self, timestamp, prices_by_symbol, period):
-        prices = prices_by_symbol.get(self.regime_symbol)
+        return self._symbol_momentum_positive(
+            self.regime_symbol,
+            timestamp,
+            prices_by_symbol,
+            period,
+        )
+
+    def _symbol_momentum_positive(
+        self,
+        symbol,
+        timestamp,
+        prices_by_symbol,
+        period,
+    ):
+        momentum = self._symbol_momentum(
+            symbol,
+            timestamp,
+            prices_by_symbol,
+            period,
+        )
+        return momentum is not None and momentum > 0
+
+    def _regime_momentum(self, timestamp, prices_by_symbol, period):
+        return self._symbol_momentum(
+            self.regime_symbol,
+            timestamp,
+            prices_by_symbol,
+            period,
+        )
+
+    def _symbol_momentum(self, symbol, timestamp, prices_by_symbol, period):
+        prices = prices_by_symbol.get(symbol)
         if not prices:
-            return False
+            return None
 
         timestamps = sorted(prices)
         index = self._timestamp_index(timestamps, timestamp)
         if index is None or index < period:
-            return False
+            return None
 
         previous = prices[timestamps[index - period]]
         current = prices[timestamps[index]]
-        return previous > 0 and current > previous
+        return ((current / previous) - 1) if previous > 0 else None
+
+    def _passes_leadership_filter(
+        self,
+        symbol,
+        prices,
+        timestamps,
+        index,
+        prices_by_symbol,
+        timestamp,
+    ):
+        if not self.leadership_filter_enabled:
+            return True
+
+        if symbol == self.leadership_symbol:
+            return True
+
+        benchmark_prices = prices_by_symbol.get(self.leadership_symbol)
+        if not benchmark_prices:
+            return False
+
+        benchmark_timestamps = sorted(benchmark_prices)
+        benchmark_index = self._timestamp_index(benchmark_timestamps, timestamp)
+        if benchmark_index is None:
+            return False
+
+        asset_score = self._momentum_score(
+            prices,
+            timestamps,
+            index,
+            self.leadership_momentum_periods,
+        )
+        benchmark_score = self._momentum_score(
+            benchmark_prices,
+            benchmark_timestamps,
+            benchmark_index,
+            self.leadership_momentum_periods,
+        )
+        if asset_score is None or benchmark_score is None:
+            return False
+
+        return asset_score > benchmark_score
 
     def _above_sma(self, prices, timestamps, index):
         if index < self.asset_sma_period:
@@ -796,6 +1495,69 @@ class DualMomentumPortfolioBacktester:
         ) / self.asset_sma_period
 
         return close > sma
+
+    def _passes_quality_filter(self, prices, timestamps, index):
+        if not self.quality_filter_enabled:
+            return True
+
+        required_index = max(
+            self.quality_momentum_period,
+            self.quality_sma_period,
+        )
+        if self.quality_require_momentum_improving:
+            required_index = max(
+                required_index,
+                self.quality_momentum_period * 2,
+            )
+        if index < required_index:
+            return False
+
+        close = prices[timestamps[index]]
+        previous = prices[timestamps[index - self.quality_momentum_period]]
+        if previous <= 0 or (close / previous) - 1 <= 0:
+            return False
+
+        sma_start = index - self.quality_sma_period + 1
+        sma = sum(
+            prices[timestamps[position]]
+            for position in range(sma_start, index + 1)
+        ) / self.quality_sma_period
+        if close <= sma:
+            return False
+
+        if not self.quality_require_momentum_improving:
+            return True
+
+        older = prices[timestamps[index - self.quality_momentum_period * 2]]
+        if older <= 0:
+            return False
+
+        recent_momentum = (close / previous) - 1
+        prior_momentum = (previous / older) - 1
+        return recent_momentum > prior_momentum
+
+    def _should_cooldown(self, pnl, entry_value):
+        if not self.cooldown_enabled or entry_value <= 0:
+            return False
+
+        return (pnl / entry_value) <= self.cooldown_loss_threshold
+
+    def _tick_cooldowns(self, cooldowns):
+        if not self.cooldown_enabled:
+            cooldowns.clear()
+            return
+
+        for symbol in list(cooldowns):
+            cooldowns[symbol] -= 1
+            if cooldowns[symbol] <= 0:
+                del cooldowns[symbol]
+
+    def _apply_cooldowns(self, cooldowns, symbols):
+        if not self.cooldown_enabled:
+            return
+
+        for symbol in symbols:
+            cooldowns[symbol] = max(1, self.cooldown_periods)
 
     def _breadth_passes(self, timestamp, prices_by_symbol):
         if self.min_breadth_percent <= 0:

@@ -1,5 +1,5 @@
 name: "dual_momentum_scaled_fast_reentry"
-description: "Promoted dual-momentum baseline with scaled exposure and fast bull-market re-entry."
+description: "Promoted dual-momentum baseline with scaled exposure, fast bull-market re-entry, and chop filtering."
 
 strategy:
   type: "dual_momentum"
@@ -21,10 +21,61 @@ strategy:
   regime_sma_period: 200
   risk_off_symbols: []
   risk_regime_mode: "scaled"
-  mixed_risk_exposure: 0.50
+  mixed_risk_exposure: 0.75
   risk_off_risk_exposure: 0.25
   fast_reentry_enabled: true
+  fast_reentry_symbols: []
   fast_reentry_sma_period: 100
   fast_reentry_momentum_period: 63
   fast_reentry_breadth_percent: 0.60
+  fallback_symbols:
+    - SPY
+    - QQQ
+  fallback_allocation: 0.0
+  fallback_min_risk_assets: 3
+  fallback_momentum_periods:
+    - 63
+    - 126
+  decay_exit_enabled: false
+  decay_momentum_period: 63
+  rank_drop_exit_top_n: null
+  chop_filter_enabled: true
+  chop_lookback: 63
+  min_chop_momentum: 0.02
+  chop_risk_exposure: 0.50
+  quality_filter_enabled: false
+  quality_momentum_period: 21
+  quality_sma_period: 50
+  quality_require_momentum_improving: false
+  cooldown_enabled: false
+  cooldown_periods: 2
+  cooldown_loss_threshold: -0.03
+  leadership_filter_enabled: false
+  leadership_symbol: "SPY"
+  leadership_momentum_periods:
+    - 21
+    - 63
+  benchmark_sleeve_symbols:
+    - SPY
+    - QQQ
+  benchmark_sleeve_allocation: 0.0
+  benchmark_sleeve_momentum_periods:
+    - 63
+  benchmark_sleeve_top_n: 1
+  ranking_score_mode: "average_momentum"
+  enhanced_momentum_periods:
+    - 21
+    - 63
+    - 126
+  enhanced_momentum_weights:
+    - 0.20
+    - 0.35
+    - 0.45
+  relative_strength_symbol: "SPY"
+  relative_strength_periods:
+    - 21
+    - 63
+  relative_strength_weight: 0.25
+  volatility_penalty_weight: 0.05
+  ranking_volatility_lookback: 63
   transaction_cost_bps: 2.0

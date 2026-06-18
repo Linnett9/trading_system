@@ -50,12 +50,48 @@ def test_load_config_adds_missing_research_defaults(tmp_path):
     assert config["strategy"]["rsi_period"] == 14
     assert config["position_sizing"]["mode"] == "fixed_fractional"
     assert config["position_sizing"]["target_exposure"] == 0.20
+    assert config["paper_trading"]["report_dir"] == "reports/paper"
+    assert config["paper_trading"]["min_trade_value"] == 1.0
     dual_momentum = config["research"]["dual_momentum"]
     assert dual_momentum["risk_regime_mode"] == "scaled"
+    assert dual_momentum["mixed_risk_exposure"] == 0.75
     assert dual_momentum["risk_off_risk_exposure"] == 0.25
     assert dual_momentum["fast_reentry_enabled"]
     assert dual_momentum["min_breadth_percent"] == 0.60
+    assert dual_momentum["min_selection_score"] == 0.03
+    assert dual_momentum["max_selected_assets"] == 5
     assert dual_momentum["risk_off_symbols"] == []
+    assert dual_momentum["fallback_symbols"] == ["SPY", "QQQ"]
+    assert dual_momentum["fallback_allocation"] == 0.0
+    assert dual_momentum["fallback_min_risk_assets"] == 3
+    assert not dual_momentum["decay_exit_enabled"]
+    assert dual_momentum["chop_filter_enabled"]
+    assert not dual_momentum["quality_filter_enabled"]
+    assert not dual_momentum["quality_require_momentum_improving"]
+    assert not dual_momentum["cooldown_enabled"]
+    assert not dual_momentum["leadership_filter_enabled"]
+    assert dual_momentum["benchmark_sleeve_allocation"] == 0.0
+    assert dual_momentum["benchmark_sleeve_symbols"] == ["SPY", "QQQ"]
+    assert dual_momentum["ranking_score_mode"] == "average_momentum"
+    assert dual_momentum["enhanced_momentum_periods"] == [21, 63, 126]
+    assert dual_momentum["enhanced_momentum_weights"] == [0.20, 0.35, 0.45]
+    assert dual_momentum["relative_strength_symbol"] == "SPY"
+    assert dual_momentum["relative_strength_periods"] == [21, 63]
+    assert dual_momentum["relative_strength_weight"] == 0.25
+    assert dual_momentum["volatility_penalty_weight"] == 0.05
+    assert dual_momentum["ranking_volatility_lookback"] == 63
+    assert "enhanced" in dual_momentum["experiment_grid"]["ranking_score_mode"]
+    assert dual_momentum["experiment_grid"]["chop_risk_exposure"] == [
+        0.50,
+        0.60,
+    ]
+    assert dual_momentum["experiment_grid"]["benchmark_sleeve_allocation"] == [
+        0.0,
+        0.10,
+        0.15,
+        0.20,
+        0.25,
+    ]
     defensive = [
         experiment
         for experiment in dual_momentum["risk_regime_experiments"]
@@ -68,6 +104,14 @@ def test_load_config_adds_missing_research_defaults(tmp_path):
         "TLT",
         "GLD",
     ]
+    enhanced = [
+        experiment
+        for experiment in dual_momentum["risk_regime_experiments"]
+        if experiment["name"] == "ranked_top5_enhanced_chop"
+    ][0]
+    assert enhanced["overrides"]["selection_mode"] == "ranked"
+    assert enhanced["overrides"]["ranking_score_mode"] == "enhanced"
     assert config["reports"]["walk_forward_dir"] == "reports/walk_forward"
     assert config["reports"]["summary_dir"] == "reports/summary"
+    assert config["reports"]["paper_dir"] == "reports/paper"
     assert config["cache"]["enabled"]
