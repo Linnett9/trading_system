@@ -20,6 +20,25 @@ def dual_momentum_diagnosis(result, candles_by_symbol=None):
         monthly.append({
             "month": month,
             "bot_return": bot_return,
+            "benchmark_returns": benchmark_returns(
+                month,
+                prices_by_symbol,
+            ),
+            "selected_asset_returns": selected_asset_returns(
+                month,
+                selection,
+                prices_by_symbol,
+            ),
+            "entry_momentum": entry_momentum_snapshot(
+                selection,
+                prices_by_symbol,
+            ),
+            "benchmark_relative": benchmark_relative_snapshot(
+                month,
+                bot_return,
+                selection,
+                prices_by_symbol,
+            ),
             "regime": (
                 selection.regime_label
                 if selection is not None
@@ -104,6 +123,9 @@ def dual_momentum_diagnosis(result, candles_by_symbol=None):
                 year_monthly_items,
                 reverse=False,
             ),
+            "benchmark_relative": aggregate_benchmark_relative(
+                year_monthly_items,
+            ),
             "missed_winners": aggregate_missed_winners(year_monthly_items),
         }
 
@@ -165,6 +187,136 @@ def monthly_asset_contributions(month, selection, prices_by_symbol):
             )
 
     return contributions
+
+
+def benchmark_returns(month, prices_by_symbol, symbols=("SPY", "QQQ")):
+    returns = monthly_asset_returns(month, prices_by_symbol)
+    return {
+        symbol: returns[symbol]
+        for symbol in symbols
+        if symbol in returns
+    }
+
+
+def selected_asset_returns(month, selection, prices_by_symbol):
+    if selection is None:
+        return {}
+
+    returns = monthly_asset_returns(month, prices_by_symbol)
+    return {
+        symbol: returns[symbol]
+        for symbol in selection.symbols
+        if symbol in returns
+    }
+
+
+def benchmark_relative_snapshot(
+    month,
+    bot_return,
+    selection,
+    prices_by_symbol,
+):
+    selected_returns = selected_asset_returns(
+        month,
+        selection,
+        prices_by_symbol,
+    )
+    benchmarks = benchmark_returns(month, prices_by_symbol)
+    spy_return = benchmarks.get("SPY")
+    qqq_return = benchmarks.get("QQQ")
+    selected_average = (
+        sum(selected_returns.values()) / len(selected_returns)
+        if selected_returns
+        else 0
+    )
+
+    return {
+        "selected_average_return": selected_average,
+        "bot_vs_selected_average": bot_return - selected_average,
+        "bot_vs_spy": (
+            bot_return - spy_return
+            if spy_return is not None
+            else None
+        ),
+        "bot_vs_qqq": (
+            bot_return - qqq_return
+            if qqq_return is not None
+            else None
+        ),
+        "selected_average_vs_spy": (
+            selected_average - spy_return
+            if spy_return is not None
+            else None
+        ),
+        "selected_average_vs_qqq": (
+            selected_average - qqq_return
+            if qqq_return is not None
+            else None
+        ),
+        "spy_return": spy_return,
+        "qqq_return": qqq_return,
+    }
+
+
+def entry_momentum_snapshot(
+    selection,
+    prices_by_symbol,
+    periods=(21, 63, 126),
+    benchmarks=("SPY", "QQQ"),
+):
+    if selection is None:
+        return {}
+
+    symbols = list(selection.symbols)
+    for benchmark in benchmarks:
+        if benchmark not in symbols:
+            symbols.append(benchmark)
+
+    snapshot = {}
+
+    for symbol in symbols:
+        prices = prices_by_symbol.get(symbol)
+        if not prices:
+            continue
+
+        timestamps = sorted(prices)
+        index = timestamp_index_at_or_before(timestamps, selection.timestamp)
+
+        if index is None:
+            continue
+
+        snapshot[symbol] = {
+            str(period): period_return(prices, timestamps, index, period)
+            for period in periods
+        }
+
+    return snapshot
+
+
+def timestamp_index_at_or_before(timestamps, timestamp):
+    index = None
+
+    for position, item in enumerate(timestamps):
+        if item <= timestamp:
+            index = position
+            continue
+
+        break
+
+    return index
+
+
+def period_return(prices, timestamps, index, period):
+    if index is None or index < period:
+        return None
+
+    current = prices[timestamps[index]]
+    previous = prices[timestamps[index - period]]
+
+    if previous <= 0:
+        return None
+
+    return (current / previous) - 1
 
 
 def aggregate_contributors(monthly_items, reverse=True, limit=5):
@@ -249,6 +401,30 @@ def aggregate_missed_winners(monthly_items, limit=5):
             reverse=True,
         )[:limit]
     ]
+
+
+def aggregate_benchmark_relative(monthly_items):
+    fields = (
+        "bot_vs_spy",
+        "bot_vs_qqq",
+        "selected_average_vs_spy",
+        "selected_average_vs_qqq",
+    )
+    summary = {}
+
+    for field in fields:
+        values = [
+            item["benchmark_relative"].get(field)
+            for item in monthly_items
+            if item["benchmark_relative"].get(field) is not None
+        ]
+        summary[field] = (
+            sum(values) / len(values)
+            if values
+            else None
+        )
+
+    return summary
 
 
 def top_selected_symbols(selections, limit=5):

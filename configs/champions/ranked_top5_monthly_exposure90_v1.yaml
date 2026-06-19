@@ -1,0 +1,43 @@
+champion_id: ranked_top5_monthly_exposure90_v1
+source_config_name: ranked_top5_hyst2_rank10_replace2_min7_exposure90
+frozen: true
+do_not_mutate: true
+notes: >
+  Frozen higher-return dual-momentum champion from the monthly
+  ranked_top5_hyst2_rank10_replace2_min7_exposure90 family. This is a
+  research/paper champion: historical return is stronger than the bimonthly
+  production-shaped champion, but annualized turnover remained above the
+  production threshold in the reference run.
+
+reference_metrics:
+  total_return: 2.0471
+  excess_vs_spy: 1.2824
+  excess_vs_equal_weight: 0.7989
+  sharpe: 1.32
+  max_drawdown: 0.1648
+  annualized_turnover: 8.1159
+  cost_drag: 0.0068
+  tag: near-production candidate
+  failing_constraint: turnover above 600%
+
+overrides:
+  eligible_for_paper_selector: true
+  eligible_for_production_selector: false
+  selection_mode: ranked
+  top_n: 5
+  min_selection_score: 0.03
+  max_selected_assets: 5
+  ranking_score_mode: enhanced
+  target_exposure: 0.90
+  rank_hysteresis_enabled: true
+  rank_hysteresis_margin: 2
+  rank_hysteresis_max_rank: 10
+  max_rebalance_replacements: 2
+  rebalance_min_trade_weight: 0.07
+  risk_off_symbols: []
+  risk_regime_mode: scaled
+  mixed_risk_exposure: 0.75
+  risk_off_risk_exposure: 0.25
+  fast_reentry_enabled: true
+  chop_filter_enabled: true
+  chop_risk_exposure: 0.50

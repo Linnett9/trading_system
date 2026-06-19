@@ -24,6 +24,7 @@ from application.services.relative_strength_commands import (
     run_relative_strength,
 )
 from application.services.research_commands import (
+    run_data_audit,
     run_base_backtests,
     run_optimization,
     run_walk_forward,
@@ -44,6 +45,7 @@ def parse_args():
             "optimize",
             "walk-forward",
             "compare-strategies",
+            "data-audit",
             "relative-strength",
             "dual-momentum",
             "dual-momentum-walk-forward",
@@ -99,7 +101,7 @@ def parse_args():
     )
     parser.add_argument(
         "--universe",
-        choices=["default", "etf"],
+        choices=["default", "etf", "stocks", "all"],
         default="default",
         help="Use a configured research universe preset.",
     )
@@ -107,6 +109,14 @@ def parse_args():
         "--experiments",
         action="store_true",
         help="Run the selected research mode's experiment grid.",
+    )
+    parser.add_argument(
+        "--selector-mode",
+        choices=["research", "paper", "production"],
+        help=(
+            "Override the dual-momentum walk-forward selector mode. "
+            "Defaults to the configured mode."
+        ),
     )
     parser.add_argument(
         "--decision-file",
@@ -127,6 +137,8 @@ def build_feed(config):
     return AlpacaDataFeed(
         api_key=config["alpaca"]["api_key"],
         secret_key=config["alpaca"]["secret_key"],
+        data_feed=config["backtest"].get("data_feed", "iex"),
+        adjustment=config["backtest"].get("data_adjustment", "all"),
     )
 
 
@@ -141,6 +153,10 @@ def dispatch(args, config, feed):
 
     if args.mode == "compare-strategies":
         run_strategy_comparison(config, feed, show_all=args.all_results)
+        return
+
+    if args.mode == "data-audit":
+        run_data_audit(config, feed)
         return
 
     if args.mode == "relative-strength":

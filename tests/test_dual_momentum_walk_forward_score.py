@@ -1,5 +1,12 @@
 from types import SimpleNamespace
 
+from core.research.dual_momentum_experiments import (
+    walk_forward_candidate_hard_filter,
+)
+from core.research.dual_momentum_scoring import (
+    classify_walk_forward_fold_result,
+    fold_gap_label,
+)
 from main import dual_momentum_walk_forward_summary
 
 
@@ -65,3 +72,40 @@ def test_walk_forward_summary_penalizes_low_bull_capture_and_turnover():
     assert efficient_summary["average_bull_capture"] > 1
     assert weak_summary["average_bull_capture"] < 0.60
     assert efficient_summary["score"] > weak_summary["score"]
+
+
+def test_classify_walk_forward_fold_result_does_not_require_full_period_return():
+    fold_result = SimpleNamespace(
+        result=SimpleNamespace(
+            max_drawdown=0.12,
+            sharpe=1.20,
+            total_return=0.45,
+        ),
+        annualized_turnover_percent=4.0,
+        excess_return=0.15,
+        excess_vs_equal_weight=0.08,
+    )
+
+    assert classify_walk_forward_fold_result(fold_result) == "fold pass"
+    assert fold_gap_label(fold_result) == ""
+
+
+def test_walk_forward_candidate_hard_filter_rejects_fragile_config():
+    candidate_result = SimpleNamespace(
+        result=SimpleNamespace(max_drawdown=0.20, sharpe=0.95),
+        annualized_turnover_percent=7.5,
+        excess_return=0.10,
+        excess_vs_equal_weight=0.05,
+        config={"max_position_weight": 0.30},
+        annual_returns={2024: 0.10, 2025: -0.05, 2026: -0.02},
+    )
+    assert not walk_forward_candidate_hard_filter(
+        candidate_result,
+        {
+            "walk_forward_max_in_sample_drawdown": 0.18,
+            "walk_forward_max_in_sample_turnover": 6.0,
+            "walk_forward_min_in_sample_sharpe": 1.0,
+            "walk_forward_max_negative_years": 1,
+            "walk_forward_max_position_weight": 0.28,
+        },
+    )

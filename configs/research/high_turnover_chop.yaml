@@ -1,0 +1,17 @@
+research_family_id: high_turnover_chop
+selector_usage: research-only
+notes: >
+  High-return/high-turnover chop configurations. Keep these available for
+  research comparisons, but exclude from paper/production selector pools.
+
+excluded_from_production_selector:
+  - ranked_top3_enhanced_chop
+  - ranked_top5_enhanced_chop_rank_exit_10
+  - ranked_top5_enhanced_chop_rs63_spy_2pct
+  - ranked_top5_enhanced_chop_rs63_qqq_0
+  - ranked_top7_enhanced_chop
+  - chop_benchmark_sleeve_20
+
+selection_guidance:
+  eligible_for_paper_selector: false
+  eligible_for_production_selector: false

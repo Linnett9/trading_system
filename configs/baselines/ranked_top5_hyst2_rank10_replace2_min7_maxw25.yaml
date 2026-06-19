@@ -1,0 +1,115 @@
+name: ranked_top5_hyst2_rank10_replace2_min7_maxw25
+universe: stocks
+selection_mode: ranked
+top_n: 5
+min_selection_score: 0.03
+max_selected_assets: 5
+momentum_periods:
+  - 63
+  - 126
+regime_symbol: SPY
+regime_confirmation_symbols:
+  - SPY
+regime_confirmation_mode: primary
+regime_sma_period: 200
+use_asset_trend_filter: true
+asset_sma_period: 200
+ranking_score_mode: enhanced
+enhanced_momentum_periods:
+  - 21
+  - 63
+  - 126
+enhanced_momentum_weights:
+  - 0.20
+  - 0.35
+  - 0.45
+relative_strength_symbol: SPY
+relative_strength_periods:
+  - 21
+  - 63
+relative_strength_weight: 0.25
+volatility_penalty_weight: 0.05
+ranking_volatility_lookback: 63
+rank_hysteresis_enabled: true
+rank_hysteresis_margin: 2
+rank_hysteresis_max_rank: 10
+max_rebalance_replacements: 2
+replacement_score_gap: 0.0
+rebalance_min_trade_weight: 0.07
+weighting: inverse_volatility
+max_position_weight: 0.25
+weight_volatility_lookback: 63
+rebalance_frequency: monthly
+target_exposure: 1.0
+target_volatility: null
+volatility_lookback: 63
+max_drawdown_guard: 0.20
+drawdown_guard_cooldown: 1
+strict_drawdown_kill_switch: true
+risk_off_symbols: []
+risk_off_top_n: 1
+risk_off_momentum_periods:
+  - 63
+  - 126
+risk_regime_mode: scaled
+mixed_risk_exposure: 0.75
+risk_off_risk_exposure: 0.25
+fast_reentry_enabled: true
+fast_reentry_symbols: []
+fast_reentry_sma_period: 100
+fast_reentry_momentum_period: 63
+fast_reentry_breadth_percent: 0.60
+fallback_symbols:
+  - SPY
+  - QQQ
+fallback_allocation: 0.0
+fallback_min_risk_assets: 3
+fallback_momentum_periods:
+  - 63
+  - 126
+decay_exit_enabled: false
+decay_momentum_period: 63
+rank_drop_exit_top_n: null
+rank_deterioration_exit_enabled: false
+rank_deterioration_exit_rank: null
+chop_filter_enabled: true
+chop_lookback: 63
+min_chop_momentum: 0.02
+chop_risk_exposure: 0.50
+quality_filter_enabled: false
+quality_momentum_period: 21
+quality_sma_period: 50
+quality_require_momentum_improving: false
+avoid_short_term_weakness: false
+short_term_momentum_period: 21
+short_term_momentum_floor: -0.02
+short_term_weakness_penalty_enabled: false
+short_term_weakness_penalty_period: 21
+short_term_weakness_penalty_floor: -0.02
+short_term_weakness_penalty_weight: 1.0
+cooldown_enabled: false
+cooldown_periods: 2
+cooldown_loss_threshold: -0.03
+leadership_filter_enabled: false
+leadership_symbol: SPY
+leadership_momentum_periods:
+  - 21
+  - 63
+relative_strength_filter_enabled: false
+relative_strength_filter_symbol: SPY
+relative_strength_filter_period: 63
+relative_strength_filter_min_excess: 0.0
+benchmark_sleeve_symbols:
+  - SPY
+  - QQQ
+benchmark_sleeve_allocation: 0.0
+benchmark_sleeve_momentum_periods:
+  - 63
+benchmark_sleeve_top_n: 1
+benchmark_participation_filter_enabled: false
+benchmark_participation_period: 63
+benchmark_participation_min_return: 0.03
+benchmark_participation_max_selected_excess: 0.0
+max_sector_weight: null
+benchmark_symbol: SPY
+transaction_cost_bps: 2.0

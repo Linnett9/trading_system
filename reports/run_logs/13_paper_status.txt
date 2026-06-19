@@ -1,0 +1,11 @@
+
+PAPER STATUS
+cash=0.00 | positions=5 | fills=1
+Positions:
+  AAPL   qty=0.4289
+  AMZN   qty=0.3606
+  GOOGL  qty=0.2079
+  NVDA   qty=0.3385
+  QQQ    qty=0.1925
+Latest equity snapshot: 2026-06-17T08:37:31.103489 | equity=500.00 | cash=0.00
+Paper state: reports/paper/paper_state.json

@@ -5,11 +5,12 @@ from application.services.market_data_loader import (
     latest_prices,
     latest_data_freshness,
 )
+from application.services.dual_momentum_config import active_dual_momentum_config
 from core.paper.paper_trading_engine import PaperTradingEngine
 
 
 def create_paper_decision(config, feed, build_dual_momentum_tester):
-    dual_config = config["research"].get("dual_momentum", {})
+    dual_config = active_dual_momentum_config(config)
     paper_config = config.get("paper_trading", {})
     symbols = dual_config.get("symbols", config["backtest"]["symbols"])
 

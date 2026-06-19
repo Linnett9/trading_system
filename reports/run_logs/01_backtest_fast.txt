@@ -1,0 +1,2 @@
+AAPL | return=3.20% | max_dd=3.09% | sharpe=0.79 | closed=18 | report=reports/backtests/2026-06-18_AAPL_1Day.json
+SPY | return=1.73% | max_dd=2.81% | sharpe=0.67 | closed=27 | report=reports/backtests/2026-06-18_SPY_1Day.json

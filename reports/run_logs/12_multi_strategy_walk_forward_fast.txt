@@ -1,0 +1,9 @@
+
+MULTI-STRATEGY WALK-FORWARD
+Fold | Test | Weights | Return | SPY | Ex SPY | Ex EqWt | Sharpe | DD | Trades
+--------------------------------------------------------------------------------------------------------------------------------
+   1 | 2025-07-01..2026-06-15 | relative_strength:100%       |  20.84% |  20.08% |   0.76% |   -9.24% |   1.38 |  9.13% |      1
+--------------------------------------------------------------------------------------------------------------------------------
+Average | excess_spy=0.76% | excess_eq=-9.24% | drawdown=9.13%
+
+Saved walk-forward: reports/summary/multi_strategy_walk_forward.json

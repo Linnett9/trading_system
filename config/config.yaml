@@ -10,6 +10,8 @@ backtest:
     - SPY
     - QQQ
   timeframe: "1Day"
+  data_feed: "iex"
+  data_adjustment: "all"
   years: 5
   starting_equity: 500
   warmup_bars: 200
@@ -91,11 +93,6 @@ research:
       - TSLA
       - SPY
       - QQQ
-      - BIL
-      - SHY
-      - IEF
-      - TLT
-      - GLD
     top_n: 2
     momentum_periods:
       - 63
@@ -128,6 +125,76 @@ research:
       - TSLA
       - SPY
       - QQQ
+    stock_symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - META
+      - GOOGL
+      - AMZN
+      - TSLA
+      - AVGO
+      - AMD
+      - CRM
+      - ORCL
+      - ADBE
+      - NFLX
+      - COST
+      - JPM
+      - V
+      - MA
+      - HD
+      - UNH
+      - LLY
+      - XOM
+      - CVX
+      - CAT
+      - DE
+      - GE
+      - NOW
+      - PANW
+      - WMT
+      - PG
+      - KO
+      - PEP
+      - MCD
+      - NKE
+      - DIS
+      - CMCSA
+      - TMO
+      - ABT
+      - MRK
+      - PFE
+      - ABBV
+      - JNJ
+      - BAC
+      - GS
+      - MS
+      - BLK
+      - SCHW
+      - TXN
+      - QCOM
+      - INTU
+      - IBM
+      - AMAT
+      - LRCX
+      - MU
+      - HON
+      - UPS
+      - LOW
+      - RTX
+      - LMT
+      - BA
+      - COP
+      - SLB
+      - EOG
+      - NEE
+      - DUK
+      - SO
+      - PLD
+      - AMT
+      - SPY
+      - QQQ
     etf_symbols:
       - XLK
       - XLY
@@ -148,14 +215,17 @@ research:
       - 63
       - 126
     regime_symbol: "SPY"
+    regime_confirmation_symbols:
+      - SPY
+    regime_confirmation_mode: "primary"
     regime_sma_period: 200
     use_asset_trend_filter: true
     asset_sma_period: 200
-    selection_mode: "all_positive"
+    selection_mode: "ranked"
     min_selection_score: 0.03
     max_selected_assets: 5
     weighting: "inverse_volatility"
-    max_position_weight: 0.35
+    max_position_weight: 0.28
     weight_volatility_lookback: 63
     rebalance_frequency: "monthly"
     target_exposure: 1.0
@@ -196,14 +266,32 @@ research:
     quality_momentum_period: 21
     quality_sma_period: 50
     quality_require_momentum_improving: false
+    avoid_short_term_weakness: false
+    short_term_momentum_period: 21
+    short_term_momentum_floor: -0.02
+    short_term_weakness_penalty_enabled: false
+    short_term_weakness_penalty_period: 21
+    short_term_weakness_penalty_floor: -0.02
+    short_term_weakness_penalty_weight: 1.0
     cooldown_enabled: false
     cooldown_periods: 2
     cooldown_loss_threshold: -0.03
+    rank_hysteresis_enabled: true
+    rank_hysteresis_margin: 2
+    rank_hysteresis_max_rank: 10
+    max_rebalance_replacements: 2
+    replacement_score_gap: 0.0
+    rebalance_min_trade_weight: 0.08
+    rebalance_drift_band: 0.0
     leadership_filter_enabled: false
     leadership_symbol: "SPY"
     leadership_momentum_periods:
       - 21
       - 63
+    relative_strength_filter_enabled: false
+    relative_strength_filter_symbol: "SPY"
+    relative_strength_filter_period: 63
+    relative_strength_filter_min_excess: 0.0
     benchmark_sleeve_symbols:
       - SPY
       - QQQ
@@ -211,7 +299,82 @@ research:
     benchmark_sleeve_momentum_periods:
       - 63
     benchmark_sleeve_top_n: 1
-    ranking_score_mode: "average_momentum"
+    benchmark_participation_filter_enabled: false
+    benchmark_participation_period: 63
+    benchmark_participation_min_return: 0.03
+    benchmark_participation_max_selected_excess: 0.0
+    max_sector_weight: null
+    sector_map:
+      AAPL: technology
+      MSFT: technology
+      NVDA: semiconductors
+      META: communication
+      GOOGL: communication
+      AMZN: consumer_discretionary
+      TSLA: consumer_discretionary
+      AVGO: semiconductors
+      AMD: semiconductors
+      CRM: software
+      ORCL: software
+      ADBE: software
+      NFLX: communication
+      COST: consumer_staples
+      JPM: financials
+      V: financials
+      MA: financials
+      HD: consumer_discretionary
+      UNH: healthcare
+      LLY: healthcare
+      XOM: energy
+      CVX: energy
+      CAT: industrials
+      DE: industrials
+      GE: industrials
+      NOW: software
+      PANW: software
+      WMT: consumer_staples
+      PG: consumer_staples
+      KO: consumer_staples
+      PEP: consumer_staples
+      MCD: consumer_discretionary
+      NKE: consumer_discretionary
+      DIS: communication
+      CMCSA: communication
+      TMO: healthcare
+      ABT: healthcare
+      MRK: healthcare
+      PFE: healthcare
+      ABBV: healthcare
+      JNJ: healthcare
+      BAC: financials
+      GS: financials
+      MS: financials
+      BLK: financials
+      SCHW: financials
+      TXN: semiconductors
+      QCOM: semiconductors
+      INTU: software
+      IBM: technology
+      AMAT: semiconductors
+      LRCX: semiconductors
+      MU: semiconductors
+      HON: industrials
+      UPS: industrials
+      LOW: consumer_discretionary
+      RTX: industrials
+      LMT: industrials
+      BA: industrials
+      COP: energy
+      SLB: energy
+      EOG: energy
+      NEE: utilities
+      DUK: utilities
+      SO: utilities
+      PLD: real_estate
+      AMT: real_estate
+      SPY: benchmark
+      QQQ: benchmark
+    ranking_score_mode: "enhanced"
     enhanced_momentum_periods:
       - 21
       - 63
@@ -228,8 +391,57 @@ research:
     volatility_penalty_weight: 0.05
     ranking_volatility_lookback: 63
     min_breadth_percent: 0.60
+    champion_id: "ranked_top5_monthly_exposure90_v1"
+    champion_config_path: "configs/champions/ranked_top5_monthly_exposure90_v1.yaml"
+    champion_metrics_path: "reports/champions/ranked_top5_monthly_exposure90_v1_metrics.json"
+    champion_mutation_guard_enabled: true
+    walk_forward_selector_mode: "research"
+    walk_forward_named_variants_only: true
+    walk_forward_exclude_rejected_configs: true
+    walk_forward_allowed_candidate_tags:
+      - "production candidate"
+      - "near-production candidate"
+      - "paper candidate"
+    walk_forward_excluded_name_patterns:
+      - "sector_cap"
+      - "benchmark_participation"
+      - "hyst3_rank10_replace1_min10_maxw28"
+      - "hyst2_rank10_replace1_min8_maxw28"
+      - "quarterly_min7_exposure80_maxw25_dd18"
+    walk_forward_max_in_sample_drawdown: 0.18
+    walk_forward_max_in_sample_turnover: 6.0
+    walk_forward_min_in_sample_sharpe: 1.0
+    walk_forward_paper_max_in_sample_drawdown: 0.20
+    walk_forward_paper_max_in_sample_turnover: 7.5
+    walk_forward_paper_min_in_sample_sharpe: 0.80
+    walk_forward_paper_require_positive_excess: false
+    walk_forward_production_max_in_sample_drawdown: 0.18
+    walk_forward_production_max_in_sample_turnover: 6.0
+    walk_forward_production_min_in_sample_sharpe: 1.0
+    walk_forward_production_require_positive_excess: true
+    walk_forward_max_negative_years: 1
+    walk_forward_max_position_weight: 0.28
+    breadth_scaled_exposure_enabled: false
+    breadth_exposure_tiers:
+      - [0.70, 1.00]
+      - [0.50, 0.75]
+      - [0.30, 0.50]
+    breadth_exposure_floor: 0.0
+    drawdown_recovery_scaling_enabled: false
+    drawdown_recovery_exposure_caps:
+      - [0.15, 0.50]
+      - [0.10, 0.75]
+    volatility_shock_filter_enabled: false
+    volatility_shock_symbol: "SPY"
+    volatility_shock_short_lookback: 21
+    volatility_shock_long_lookback: 126
+    volatility_shock_ratio_threshold: 2.0
+    volatility_shock_exposure_multiplier: 0.50
     benchmark_symbol: "SPY"
     transaction_cost_bps: 2.0
+    commission_bps: 0.0
+    slippage_bps: 0.0
+    spread_cost_bps: 0.0
     experiment_grid:
       top_n:
         - 5
@@ -241,6 +453,8 @@ research:
         - "monthly"
       momentum_periods:
         - [63, 126]
+      regime_confirmation_mode:
+        - "primary"
       use_asset_trend_filter:
         - true
       selection_mode:
@@ -253,6 +467,12 @@ research:
         - 0.35
       min_breadth_percent:
         - 0.60
+      breadth_scaled_exposure_enabled:
+        - false
+      drawdown_recovery_scaling_enabled:
+        - false
+      volatility_shock_filter_enabled:
+        - false
       target_volatility:
         - null
       max_drawdown_guard:
@@ -269,6 +489,10 @@ research:
         - false
       rank_drop_exit_top_n:
         - null
+      rank_deterioration_exit_enabled:
+        - false
+      rank_deterioration_exit_rank:
+        - null
       chop_filter_enabled:
         - true
       chop_risk_exposure:
@@ -280,18 +504,1745 @@ research:
         - false
       cooldown_enabled:
         - false
+      short_term_weakness_penalty_enabled:
+        - false
+      short_term_weakness_penalty_floor:
+        - -0.02
+      short_term_weakness_penalty_weight:
+        - 1.0
+      rank_hysteresis_enabled:
+        - false
+      rank_hysteresis_margin:
+        - 2
+      rank_hysteresis_max_rank:
+        - null
+      max_rebalance_replacements:
+        - null
+      replacement_score_gap:
+        - 0.0
+      rebalance_min_trade_weight:
+        - 0.0
       leadership_filter_enabled:
         - false
         - true
+      relative_strength_filter_enabled:
+        - false
+      relative_strength_filter_symbol:
+        - "SPY"
+      relative_strength_filter_period:
+        - 63
+      relative_strength_filter_min_excess:
+        - 0.0
       benchmark_sleeve_allocation:
         - 0.0
         - 0.10
         - 0.15
         - 0.20
         - 0.25
+      benchmark_participation_filter_enabled:
+        - false
+      max_sector_weight:
+        - null
       ranking_score_mode:
         - "average_momentum"
         - "enhanced"
+      relative_strength_weight:
+        - 0.25
+      transaction_cost_bps:
+        - 2.0
+      commission_bps:
+        - 0.0
+      slippage_bps:
+        - 0.0
+      spread_cost_bps:
+        - 0.0
+    experiment_variants:
+      - name: "wf_hyst2_max_replace_2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_min1"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.01
+          replacement_score_gap: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_min2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.02
+          replacement_score_gap: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_min3"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.03
+          replacement_score_gap: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_gap_50bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.005
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_gap_1pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.01
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_gap_2pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.02
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_gap_3pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_replace2_gap_5pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          replacement_score_gap: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_benchmark_participation_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          benchmark_sleeve_allocation: 0.10
+          benchmark_participation_filter_enabled: true
+          benchmark_participation_period: 63
+          benchmark_participation_min_return: 0.03
+          benchmark_participation_max_selected_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_sector_cap_50"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          max_sector_weight: 0.50
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_sector_cap_50_benchmark_participation_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          max_sector_weight: 0.50
+          benchmark_sleeve_allocation: 0.10
+          benchmark_participation_filter_enabled: true
+          benchmark_participation_period: 63
+          benchmark_participation_min_return: 0.03
+          benchmark_participation_max_selected_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_max_replace_2_quarterly"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_max_replace_2_quarterly_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min7"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_quarterly_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_quarterly_min7"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min7_exposure95"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.95
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min7_exposure90"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_min12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_gap005"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.005
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_gap010"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.01
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_hyst3_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_replace1_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_maxw25_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_min7_exposure90_band5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          rebalance_drift_band: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_benchmark_sleeve_20"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.20
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_benchmark_sleeve_5"
+        overrides:
+          eligible_for_paper_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_benchmark_sleeve_10"
+        overrides:
+          eligible_for_paper_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_rs63_spy_2pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.02
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_rs63_qqq_0"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "QQQ"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_bimonthly_min8_maxw28_exposure90"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "wf_bimonthly_min7_exposure90_dd18_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw25"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw25_band3"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw25_band5"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw25_band12"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw25_band15"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.15
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure80_dd16_maxw25_band12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.80
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "wf_hardened_bimonthly_min12_exposure85_dd16_maxw25_hold10"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_hardened_bimonthly_min10_exposure82_dd16_maxw25_hold10"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.825
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.625
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.375
+      - name: "wf_hardened_bimonthly_min10_exposure85_dd14_maxw25_hold10"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.14
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_hardened_bimonthly_min12_exposure82_dd14_maxw25_hold12"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.825
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.14
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 12
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.625
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.375
+      - name: "wf_hardened_bimonthly_min10_exposure80_dd16_maxw25_hold12"
+        overrides:
+          eligible_for_production_selector: true
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.80
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 12
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "wf_bimonthly_min7_exposure88_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.88
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.68
+          risk_off_risk_exposure: 0.18
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.43
+      - name: "wf_bimonthly_min7_exposure85_dd16_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_bimonthly_min7_exposure88_dd17_maxw26"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.26
+          target_exposure: 0.88
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.17
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.68
+          risk_off_risk_exposure: 0.18
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.43
+      - name: "wf_bimonthly_min7_exposure90_recovery_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.10, 0.60]
+            - [0.07, 0.80]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "wf_hyst2_rank10_replace2_min7_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min7_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min7_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw26"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.26
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min9"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.09
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min12_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst3_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst4_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace1_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst3_rank10_replace1_min10_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min10_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min10_maxw29"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.29
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min10_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw29"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.29
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28_exposure85"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.85
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28_exposure80"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.80
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28_dd18"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28_drawdown_recovery"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.12, 0.50]
+            - [0.08, 0.75]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_min8_maxw28_breadth_scaled"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          breadth_scaled_exposure_enabled: true
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "wf_hyst2_rank10_replace2_quarterly_min8_exposure80_dd18"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.80
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "wf_live_quarterly_min10_exposure70_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.70
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "wf_live_monthly_min10_exposure75_dd18_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.75
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.55
+          risk_off_risk_exposure: 0.10
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "wf_live_quarterly_min10_exposure70_recovery_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.70
+          rebalance_frequency: "quarterly"
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.08, 0.50]
+            - [0.05, 0.70]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "wf_hyst2_rank10_replace2_quarterly_min7_exposure80_maxw25_dd18"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.80
+          max_position_weight: 0.25
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
     risk_regime_experiments:
       - name: "baseline_inverse_vol"
         overrides:
@@ -402,6 +2353,1932 @@ research:
           fast_reentry_enabled: true
           chop_filter_enabled: true
           chop_risk_exposure: 0.50
+          relative_strength_filter_enabled: false
+      - name: "ranked_top5_enhanced_chop_rsw_0"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          relative_strength_weight: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_rsw_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          relative_strength_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_rsw_40"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          relative_strength_weight: 0.40
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_rsw_60"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          relative_strength_weight: 0.60
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_stpen_21_neg2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          short_term_weakness_penalty_enabled: true
+          short_term_weakness_penalty_period: 21
+          short_term_weakness_penalty_floor: -0.02
+          short_term_weakness_penalty_weight: 1.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_stpen_21_zero"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          short_term_weakness_penalty_enabled: true
+          short_term_weakness_penalty_period: 21
+          short_term_weakness_penalty_floor: 0.0
+          short_term_weakness_penalty_weight: 0.50
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_hysteresis_2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_hold_rank8"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 8
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_hold_rank10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_max_replace_1"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 1
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_max_replace_2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_min1"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.01
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_min2"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.02
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_min3"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_gap50"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.005
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_gap100"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.01
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_gap200"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.02
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_gap300"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_replace2_gap500"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_benchmark_participation_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          benchmark_sleeve_allocation: 0.10
+          benchmark_participation_filter_enabled: true
+          benchmark_participation_period: 63
+          benchmark_participation_min_return: 0.03
+          benchmark_participation_max_selected_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_benchmark_participation_15"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          benchmark_sleeve_allocation: 0.15
+          benchmark_participation_filter_enabled: true
+          benchmark_participation_period: 63
+          benchmark_participation_min_return: 0.03
+          benchmark_participation_max_selected_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_sector_cap_50"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          max_sector_weight: 0.50
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_sector_cap_60"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          max_sector_weight: 0.60
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_sector_cap_50_benchmark_participation_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          max_sector_weight: 0.50
+          benchmark_sleeve_allocation: 0.10
+          benchmark_participation_filter_enabled: true
+          benchmark_participation_period: 63
+          benchmark_participation_min_return: 0.03
+          benchmark_participation_max_selected_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace1_min3"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_max_replace2_quarterly"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_max_replace2_quarterly_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_maxw29"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.29
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_cost_5bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          transaction_cost_bps: 5.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_cost_10bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          transaction_cost_bps: 10.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_cost_20bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          transaction_cost_bps: 20.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_cost_50bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          transaction_cost_bps: 50.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_quarterly_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_quarterly_min7"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "quarterly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7_exposure95"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.95
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7_exposure90"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_min12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_gap005"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.005
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_gap010"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          replacement_score_gap: 0.01
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_hyst3_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_replace1_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_maxw25_min10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_min7_exposure90_band5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          target_exposure: 0.90
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          rebalance_drift_band: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min7_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.07
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min9"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.09
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw29"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.29
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_exposure85"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.85
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_exposure80"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.80
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_dd18"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_drawdown_recovery"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.12, 0.50]
+            - [0.08, 0.75]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_breadth_scaled"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          breadth_scaled_exposure_enabled: true
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_quarterly_min8_exposure80_dd18"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.80
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_live_quarterly_min10_exposure70_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.70
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_live_monthly_min10_exposure75_dd18_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.75
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.55
+          risk_off_risk_exposure: 0.10
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_live_quarterly_min10_exposure70_recovery_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.70
+          rebalance_frequency: "quarterly"
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.08, 0.50]
+            - [0.05, 0.70]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_live_quarterly_min10_exposure65_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.65
+          rebalance_frequency: "quarterly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.50
+          risk_off_risk_exposure: 0.0
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw26"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.26
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_cost_5bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          transaction_cost_bps: 5.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_cost_10bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          transaction_cost_bps: 10.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_cost_20bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          transaction_cost_bps: 20.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min8_maxw28_cost_50bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          transaction_cost_bps: 50.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min9_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.09
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min10_maxw28_exec"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min12_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst3_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst4_rank10_replace2_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 4
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace1_min8_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst3_rank10_replace1_min10_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_hyst2_rank10_replace2_min9_maxw30"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.30
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.09
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_hysteresis_3_min5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 3
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_min_trade_5pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_min_trade_weight: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_cost_5bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          transaction_cost_bps: 5.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_cost_10bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          transaction_cost_bps: 10.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_cost_20bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          transaction_cost_bps: 20.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_cost_50bps"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          transaction_cost_bps: 50.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_benchmark_sleeve_5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_benchmark_sleeve_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_benchmark_sleeve_15"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.15
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_breadth_scaled"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          breadth_scaled_exposure_enabled: true
+          breadth_exposure_tiers:
+            - [0.70, 1.00]
+            - [0.50, 0.75]
+            - [0.30, 0.50]
+          breadth_exposure_floor: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_drawdown_recovery"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.15, 0.50]
+            - [0.10, 0.75]
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_breadth_drawdown_scaled"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          breadth_scaled_exposure_enabled: true
+          drawdown_recovery_scaling_enabled: true
+          breadth_exposure_tiers:
+            - [0.70, 1.00]
+            - [0.50, 0.75]
+            - [0.30, 0.50]
+          breadth_exposure_floor: 0.0
+          drawdown_recovery_exposure_caps:
+            - [0.15, 0.50]
+            - [0.10, 0.75]
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_regime_spy_qqq_all"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          regime_confirmation_symbols:
+            - SPY
+            - QQQ
+          regime_confirmation_mode: "all"
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_vol_shock"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          volatility_shock_filter_enabled: true
+          volatility_shock_symbol: "SPY"
+          volatility_shock_short_lookback: 21
+          volatility_shock_long_lookback: 126
+          volatility_shock_ratio_threshold: 2.0
+          volatility_shock_exposure_multiplier: 0.50
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_rank_exit_10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rank_deterioration_exit_enabled: true
+          rank_deterioration_exit_rank: 10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_enhanced_chop_rs63_spy_0"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.0
+      - name: "ranked_top5_enhanced_chop_rs63_spy_2pct"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.02
+      - name: "ranked_top5_enhanced_chop_rs126_spy_0"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 126
+          relative_strength_filter_min_excess: 0.0
+      - name: "ranked_top5_enhanced_chop_rs63_qqq_0"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "QQQ"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.0
       - name: "ranked_top7_enhanced_chop"
         overrides:
           selection_mode: "ranked"
@@ -476,6 +4353,476 @@ research:
             - SPY
             - QQQ
           benchmark_sleeve_allocation: 0.20
+      - name: "chop_benchmark_sleeve_20_bimonthly"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+          benchmark_sleeve_symbols:
+            - SPY
+            - QQQ
+          benchmark_sleeve_allocation: 0.20
+      - name: "ranked_top5_rs63_spy_2pct_bimonthly"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.02
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_rs63_qqq_0_bimonthly"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          relative_strength_filter_enabled: true
+          relative_strength_filter_symbol: "QQQ"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.0
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.75
+          risk_off_risk_exposure: 0.25
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.50
+      - name: "ranked_top5_bimonthly_min8_maxw28_exposure90"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 2
+          rebalance_min_trade_weight: 0.08
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "ranked_top5_bimonthly_min7_exposure90_dd18_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.18
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw25_band3"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.03
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw25_band5"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.05
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw25_band12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw25_band15"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.15
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure80_dd16_maxw25_band12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.80
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          rebalance_drift_band: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_hardened_bimonthly_min12_exposure85_dd16_maxw25_hold10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_hardened_bimonthly_min10_exposure82_dd16_maxw25_hold10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.825
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.625
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.375
+      - name: "ranked_top5_hardened_bimonthly_min10_exposure85_dd14_maxw25_hold10"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.14
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_hardened_bimonthly_min12_exposure82_dd14_maxw25_hold12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.825
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.14
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 12
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.12
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.625
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.375
+      - name: "ranked_top5_hardened_bimonthly_min10_exposure80_dd16_maxw25_hold12"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.80
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 12
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.60
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.35
+      - name: "ranked_top5_bimonthly_min7_exposure88_dd16_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.88
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.68
+          risk_off_risk_exposure: 0.18
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.43
+      - name: "ranked_top5_bimonthly_min7_exposure85_dd16_maxw28"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.28
+          target_exposure: 0.85
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.16
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.65
+          risk_off_risk_exposure: 0.15
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.40
+      - name: "ranked_top5_bimonthly_min7_exposure88_dd17_maxw26"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.26
+          target_exposure: 0.88
+          rebalance_frequency: "bimonthly"
+          max_drawdown_guard: 0.17
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.68
+          risk_off_risk_exposure: 0.18
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.43
+      - name: "ranked_top5_bimonthly_min7_exposure90_recovery_maxw25"
+        overrides:
+          selection_mode: "ranked"
+          top_n: 5
+          min_selection_score: 0.03
+          max_selected_assets: 5
+          ranking_score_mode: "enhanced"
+          max_position_weight: 0.25
+          target_exposure: 0.90
+          rebalance_frequency: "bimonthly"
+          drawdown_recovery_scaling_enabled: true
+          drawdown_recovery_exposure_caps:
+            - [0.10, 0.60]
+            - [0.07, 0.80]
+          rank_hysteresis_enabled: true
+          rank_hysteresis_margin: 2
+          rank_hysteresis_max_rank: 10
+          max_rebalance_replacements: 1
+          rebalance_min_trade_weight: 0.10
+          risk_off_symbols: []
+          risk_regime_mode: "scaled"
+          mixed_risk_exposure: 0.70
+          risk_off_risk_exposure: 0.20
+          fast_reentry_enabled: true
+          chop_filter_enabled: true
+          chop_risk_exposure: 0.45
       - name: "chop_leadership_filter"
         overrides:
           risk_off_symbols: []
@@ -594,6 +4941,10 @@ research:
           leadership_momentum_periods:
             - 21
             - 63
+          relative_strength_filter_enabled: false
+          relative_strength_filter_symbol: "SPY"
+          relative_strength_filter_period: 63
+          relative_strength_filter_min_excess: 0.0
           benchmark_sleeve_symbols:
             - SPY
             - QQQ

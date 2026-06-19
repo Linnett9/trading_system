@@ -1,0 +1,31 @@
+champion_id: ranked_top5_bimonthly_v1
+source_config_name: ranked_top5_bimonthly_min7_exposure85_dd16_maxw25
+frozen: true
+do_not_mutate: true
+notes: >
+  Frozen production-shaped dual-momentum champion. Create a new champion_id
+  for material changes instead of editing this file in place.
+
+overrides:
+  eligible_for_production_selector: true
+  selection_mode: ranked
+  top_n: 5
+  min_selection_score: 0.03
+  max_selected_assets: 5
+  ranking_score_mode: enhanced
+  max_position_weight: 0.25
+  target_exposure: 0.85
+  rebalance_frequency: bimonthly
+  max_drawdown_guard: 0.16
+  rank_hysteresis_enabled: true
+  rank_hysteresis_margin: 2
+  rank_hysteresis_max_rank: 10
+  max_rebalance_replacements: 1
+  rebalance_min_trade_weight: 0.10
+  risk_off_symbols: []
+  risk_regime_mode: scaled
+  mixed_risk_exposure: 0.65
+  risk_off_risk_exposure: 0.15
+  fast_reentry_enabled: true
+  chop_filter_enabled: true
+  chop_risk_exposure: 0.40

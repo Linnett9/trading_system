@@ -1,0 +1,11 @@
+
+RELATIVE STRENGTH PORTFOLIO
+return=27.94% | benchmark=48.82% | excess=-20.88% | equal_weight=52.89% | ex_eq=-24.95% | sharpe=1.55 | max_dd=9.13% | closed=1 | open=1
+time_in=87.00% | exposure=87.00% | cash=13.00% | profit_factor=0.00 | turnover=320.94% | cost=0.32
+Recent selections:
+  2026-02-02 | AAPL, SPY
+  2026-03-02 | AAPL, SPY
+  2026-04-01 | AAPL
+  2026-05-01 | AAPL, SPY
+  2026-06-01 | AAPL, SPY
+Saved summary: reports/summary/relative_strength_portfolio.json

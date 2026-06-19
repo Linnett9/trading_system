@@ -1,0 +1,11 @@
+Optimizing dual momentum over 160 candidate configs for 2024-07-01..2025-06-30
+
+DUAL MOMENTUM WALK-FORWARD
+Fold | Test | Mode | Weight | TopN | Mom | VolTgt | DDGuard | Return | SPY | Ex SPY | Ex EqWt | BullCap | Sharpe | DD | Calmar
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+   1 | 2025-07-01..2026-06-15 | all_positive | equal              |    5 | 63/126  | None   | 0.2     |   5.05% |  20.08% | -15.03% |  -35.01% |  25.17% |   1.12 |  3.24% |   1.65
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+Average | excess_spy=-15.03% | excess_eq=-35.01% | drawdown=3.24% | worst_excess=-15.03% | consistency=0.00% | bull_capture=25.17% | worst_capture=25.17% | turnover=112.10% | score=-0.47
+Interpretation: not robust yet; average excess is -15.03%, worst fold is -15.03%, consistency is 0.00%, and bull capture is 25.17%.
+
+Saved walk-forward: reports/summary/dual_momentum_walk_forward.json

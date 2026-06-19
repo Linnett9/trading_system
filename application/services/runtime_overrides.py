@@ -36,8 +36,51 @@ def apply_runtime_overrides(config, args):
                 etf_symbols
             )
 
+    if args.universe == "stocks":
+        stock_symbols = (
+            config["research"]
+            .get("dual_momentum", {})
+            .get("stock_symbols", [])
+        )
+
+        if stock_symbols:
+            config["backtest"]["symbols"] = stock_symbols
+            config["research"].setdefault("relative_strength", {})[
+                "symbols"
+            ] = stock_symbols
+            config["research"].setdefault("dual_momentum", {})["symbols"] = (
+                stock_symbols
+            )
+            config["research"].setdefault("multi_strategy", {})["symbols"] = (
+                stock_symbols
+            )
+
+    if args.universe == "all":
+        dual_config = config["research"].get("dual_momentum", {})
+        combined_symbols = unique_symbols(
+            dual_config.get("stock_symbols", [])
+            + dual_config.get("etf_symbols", [])
+        )
+
+        if combined_symbols:
+            config["backtest"]["symbols"] = combined_symbols
+            config["research"].setdefault("relative_strength", {})[
+                "symbols"
+            ] = combined_symbols
+            config["research"].setdefault("dual_momentum", {})["symbols"] = (
+                combined_symbols
+            )
+            config["research"].setdefault("multi_strategy", {})["symbols"] = (
+                combined_symbols
+            )
+
     if args.years is not None:
         config["backtest"]["years"] = args.years
+
+    if getattr(args, "selector_mode", None):
+        config["research"].setdefault("dual_momentum", {})[
+            "walk_forward_selector_mode"
+        ] = args.selector_mode
 
     if args.strategies:
         config["research"]["strategy_comparison"] = [
@@ -131,6 +174,20 @@ def apply_fast_mode(config):
             research_config["parameter_grid"],
             max_grid_values,
         )
+
+
+def unique_symbols(symbols):
+    unique = []
+    seen = set()
+
+    for symbol in symbols:
+        if symbol in seen:
+            continue
+
+        seen.add(symbol)
+        unique.append(symbol)
+
+    return unique
 
 
 def limit_strategy_grids(strategy_configs, max_values):

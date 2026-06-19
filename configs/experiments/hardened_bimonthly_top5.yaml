@@ -1,0 +1,61 @@
+experiment_pack_id: hardened_bimonthly_top5
+base_champion_id: ranked_top5_bimonthly_v1
+constraints:
+  top_n: 5
+  rebalance_frequency: bimonthly
+  max_position_weight: 0.25
+  max_rebalance_replacements: 1
+  exposure_values: [0.80, 0.825, 0.85]
+  drawdown_guard_values: [0.14, 0.16, 0.18]
+  min_trade_values: [0.10, 0.12, 0.15]
+  hold_rank_values: [10, 12]
+
+variants:
+  - name: hardened_min10_exposure85_dd16_hold10
+    overrides:
+      target_exposure: 0.85
+      max_drawdown_guard: 0.16
+      rebalance_min_trade_weight: 0.10
+      rank_hysteresis_max_rank: 10
+  - name: hardened_min12_exposure85_dd16_hold10
+    overrides:
+      target_exposure: 0.85
+      max_drawdown_guard: 0.16
+      rebalance_min_trade_weight: 0.12
+      rank_hysteresis_max_rank: 10
+  - name: hardened_min10_exposure82_dd16_hold10
+    overrides:
+      target_exposure: 0.825
+      max_drawdown_guard: 0.16
+      rebalance_min_trade_weight: 0.10
+      rank_hysteresis_max_rank: 10
+  - name: hardened_min10_exposure85_dd14_hold10
+    overrides:
+      target_exposure: 0.85
+      max_drawdown_guard: 0.14
+      rebalance_min_trade_weight: 0.10
+      rank_hysteresis_max_rank: 10
+  - name: hardened_min12_exposure82_dd14_hold12
+    overrides:
+      target_exposure: 0.825
+      max_drawdown_guard: 0.14
+      rebalance_min_trade_weight: 0.12
+      rank_hysteresis_max_rank: 12
+  - name: hardened_min10_exposure80_dd16_hold12
+    overrides:
+      target_exposure: 0.80
+      max_drawdown_guard: 0.16
+      rebalance_min_trade_weight: 0.10
+      rank_hysteresis_max_rank: 12
+  - name: hardened_min15_exposure85_dd16_hold12
+    overrides:
+      target_exposure: 0.85
+      max_drawdown_guard: 0.16
+      rebalance_min_trade_weight: 0.15
+      rank_hysteresis_max_rank: 12
+  - name: hardened_min12_exposure80_dd18_hold12
+    overrides:
+      target_exposure: 0.80
+      max_drawdown_guard: 0.18
+      rebalance_min_trade_weight: 0.12
+      rank_hysteresis_max_rank: 12

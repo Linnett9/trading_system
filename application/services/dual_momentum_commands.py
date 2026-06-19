@@ -1,4 +1,5 @@
 from application.services.market_data_loader import load_candles
+from application.services.dual_momentum_config import active_dual_momentum_config
 from application.reporting.dual_momentum_reporter import (
     print_dual_momentum_diagnosis,
     print_dual_momentum_risk_regime_experiments,
@@ -20,6 +21,7 @@ from core.research.dual_momentum_experiments import (
     run_dual_momentum_experiments,
     run_dual_momentum_fold_optimization,
     save_dual_momentum_experiments,
+    save_dual_momentum_filtered_walk_forward_candidates,
     save_dual_momentum_risk_regime_experiments,
     save_dual_momentum_walk_forward,
     parse_config_date,
@@ -27,7 +29,10 @@ from core.research.dual_momentum_experiments import (
 
 
 def run_dual_momentum(config, feed, run_experiments=False):
-    dual_config = config["research"].get("dual_momentum", {})
+    dual_config = active_dual_momentum_config(
+        config,
+        use_frozen_champion=not run_experiments,
+    )
     symbols = dual_config.get("symbols", config["backtest"]["symbols"])
 
     candles_by_symbol = {
@@ -97,7 +102,7 @@ def run_dual_momentum_risk_regime_experiments(config, feed):
 
 
 def run_dual_momentum_diagnosis(config, feed):
-    dual_config = config["research"].get("dual_momentum", {})
+    dual_config = active_dual_momentum_config(config)
     symbols = dual_config.get("symbols", config["backtest"]["symbols"])
 
     candles_by_symbol = {
@@ -159,12 +164,18 @@ def run_dual_momentum_walk_forward(config, feed):
         results.append({
             "fold": fold,
             "training_result": best_training,
+            "training_results": training_results,
             "result": test_result,
         })
 
+    candidates_report_path = save_dual_momentum_filtered_walk_forward_candidates(
+        results,
+        report_dir=config["reports"]["summary_dir"],
+    )
     report_path = save_dual_momentum_walk_forward(
         results,
         report_dir=config["reports"]["summary_dir"],
     )
 
+    print(f"Saved walk-forward candidates: {candidates_report_path}")
     print_dual_momentum_walk_forward(results, report_path)

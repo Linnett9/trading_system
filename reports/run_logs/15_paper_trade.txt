@@ -1,0 +1,21 @@
+
+PAPER TRADE DECISION
+date=2026-06-01 | regime=risk-on | risk_on=True | equity=500.00 | cash=0.00 | target_exposure=100.00%
+selected=GOOGL, NVDA, AMZN, AAPL, QQQ
+Data freshness: latest=2026-06-15T04:00:00+00:00 | age=3d | limit=3d | fresh
+Why: The model selected all assets with positive momentum and passing filters. Regime is risk-on. Mode=all_positive, rank=average_momentum, weighting=inverse_volatility, momentum=[63, 126].
+Selection controls: min_score=0.03, max_assets=5.
+Note: all-positive mode can buy more than top_n because it holds every asset with positive momentum that passes filters.
+Target weights:
+  QQQ    27.78%
+  AAPL   24.97%
+  AMZN   17.77%
+  GOOGL  15.34%
+  NVDA   14.14%
+Skipped assets:
+  MSFT   score=0.0522 | outside max_selected_assets=5
+  TSLA   score=0.0022 | score 0.0022 below min_selection_score 0.0300
+Proposed orders: none
+Interpretation: paper mode only records what the bot would do; it does not place broker orders or assume fills.
+Saved decision: reports/paper/2026-06-01_decision.json
+Paper state: reports/paper/paper_state.json

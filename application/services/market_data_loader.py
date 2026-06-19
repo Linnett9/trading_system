@@ -38,9 +38,11 @@ def data_cache_path(symbol, backtest_config, cache_config):
     except OSError:
         return None
 
+    data_feed = backtest_config.get("data_feed", "default")
+    adjustment = backtest_config.get("data_adjustment", "raw")
     filename = (
         f"{symbol}_{backtest_config['timeframe']}_"
-        f"{backtest_config['years']}y.json"
+        f"{backtest_config['years']}y_{data_feed}_{adjustment}.json"
     )
     return directory / filename
 

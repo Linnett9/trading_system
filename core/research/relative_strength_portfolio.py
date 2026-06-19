@@ -1,80 +1,31 @@
-from dataclasses import dataclass
-from datetime import date
-from pathlib import Path
-import json
-
 from core.entities.backtest_result import BacktestResult
-from core.entities.capital_utilization import CapitalUtilization
 from core.entities.signal_diagnostics import SignalDiagnostics
-from core.entities.trade_analysis import TradeAnalysis
 from core.research.performance_metrics import (
     max_drawdown,
     sharpe_ratio,
     total_return,
 )
+from core.research.relative_strength.analytics import (
+    RelativeStrengthAnalyticsMixin,
+)
+from core.research.relative_strength.data import RelativeStrengthDataMixin
+from core.research.relative_strength.execution import (
+    RelativeStrengthExecutionMixin,
+)
+from core.research.relative_strength.models import (
+    RelativeStrengthPortfolioResult,
+    RelativeStrengthSelection,
+)
+from core.research.relative_strength.ranking import RelativeStrengthRankingMixin
 from core.services.portfolio_engine import EquityPoint
 
 
-@dataclass(frozen=True)
-class RelativeStrengthSelection:
-    timestamp: object
-    symbols: list[str]
-    scores: dict[str, float]
-
-    def to_dict(self) -> dict:
-        timestamp = self.timestamp
-        return {
-            "timestamp": (
-                timestamp.isoformat()
-                if hasattr(timestamp, "isoformat")
-                else str(timestamp)
-            ),
-            "symbols": self.symbols,
-            "scores": self.scores,
-        }
-
-
-@dataclass(frozen=True)
-class RelativeStrengthPortfolioResult:
-    result: BacktestResult
-    selections: list[RelativeStrengthSelection]
-    benchmark_return: float
-    excess_return: float
-    config: dict
-    equal_weight_return: float = 0
-    excess_vs_equal_weight: float = 0
-    turnover_percent: float = 0
-    rebalance_count: int = 0
-    estimated_cost: float = 0
-
-    def save_json(
-        self,
-        report_dir: str = "reports/summary",
-        filename: str = "relative_strength_portfolio.json",
-    ) -> Path:
-        directory = Path(report_dir)
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / filename
-        payload = {
-            "result": self.result.to_dict(),
-            "benchmark_return": self.benchmark_return,
-            "excess_return": self.excess_return,
-            "equal_weight_return": self.equal_weight_return,
-            "excess_vs_equal_weight": self.excess_vs_equal_weight,
-            "turnover_percent": self.turnover_percent,
-            "rebalance_count": self.rebalance_count,
-            "estimated_cost": self.estimated_cost,
-            "config": self.config,
-            "selections": [
-                selection.to_dict()
-                for selection in self.selections
-            ],
-        }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return path
-
-
-class RelativeStrengthPortfolioBacktester:
+class RelativeStrengthPortfolioBacktester(
+    RelativeStrengthAnalyticsMixin,
+    RelativeStrengthDataMixin,
+    RelativeStrengthExecutionMixin,
+    RelativeStrengthRankingMixin,
+):
 
     def __init__(
         self,
@@ -204,7 +155,6 @@ class RelativeStrengthPortfolioBacktester:
             if timestamps
             else self.starting_equity
         )
-        open_trades = len(positions)
         result = BacktestResult(
             starting_equity=self.starting_equity,
             final_equity=final_equity,
@@ -212,7 +162,7 @@ class RelativeStrengthPortfolioBacktester:
             max_drawdown=max_drawdown([point.equity for point in equity_curve]),
             sharpe=sharpe_ratio(returns),
             closed_trades=len(trade_pnls),
-            open_trades=open_trades,
+            open_trades=len(positions),
             equity_curve=equity_curve,
             profit_factor=self._profit_factor(trade_pnls),
             trade_analysis=self._trade_analysis(trade_pnls, exposure_values),
@@ -256,233 +206,3 @@ class RelativeStrengthPortfolioBacktester:
                 "transaction_cost_bps": self.transaction_cost_bps,
             },
         )
-
-    def _prices_by_symbol(self, candles_by_symbol):
-        return {
-            symbol: {
-                candle.timestamp: candle.close
-                for candle in candles
-            }
-            for symbol, candles in candles_by_symbol.items()
-            if candles
-        }
-
-    def _common_timestamps(self, prices_by_symbol):
-        if not prices_by_symbol:
-            return []
-
-        common = set.intersection(
-            *[
-                set(prices.keys())
-                for prices in prices_by_symbol.values()
-            ]
-        )
-        max_lookback = max([self.sma_period] + self.momentum_periods)
-        return sorted(common)[max_lookback:]
-
-    def _rank_symbols(self, timestamp, prices_by_symbol):
-        ranked = []
-
-        for symbol, prices in prices_by_symbol.items():
-            timestamps = sorted(prices)
-            index = self._timestamp_index(timestamps, timestamp)
-            if index is None:
-                continue
-
-            if not self._above_sma_filter(prices, timestamps, index):
-                continue
-
-            score = self._momentum_score(prices, timestamps, index)
-            if score is not None:
-                ranked.append((symbol, score))
-
-        return sorted(ranked, key=lambda item: item[1], reverse=True)
-
-    def _timestamp_index(self, timestamps, timestamp):
-        try:
-            return timestamps.index(timestamp)
-        except ValueError:
-            return None
-
-    def _above_sma_filter(self, prices, timestamps, index):
-        if index < self.sma_period:
-            return False
-
-        close = prices[timestamps[index]]
-        sma = sum(
-            prices[timestamps[position]]
-            for position in range(index - self.sma_period + 1, index + 1)
-        ) / self.sma_period
-        previous_sma = sum(
-            prices[timestamps[position]]
-            for position in range(index - self.sma_period, index)
-        ) / self.sma_period
-
-        return close > sma and sma >= previous_sma
-
-    def _momentum_score(self, prices, timestamps, index):
-        scores = []
-
-        for period in self.momentum_periods:
-            if index < period:
-                return None
-
-            current = prices[timestamps[index]]
-            previous = prices[timestamps[index - period]]
-            if previous <= 0:
-                return None
-
-            scores.append((current / previous) - 1)
-
-        return sum(scores) / len(scores) if scores else None
-
-    def _should_rebalance(self, timestamp, last_rebalance_key):
-        return self._rebalance_key(timestamp) != last_rebalance_key
-
-    def _rebalance_key(self, timestamp):
-        if self.rebalance_frequency == "weekly":
-            calendar = timestamp.isocalendar()
-            return calendar.year, calendar.week
-
-        return timestamp.year, timestamp.month
-
-    def _sell_unselected(
-        self,
-        positions,
-        entry_values,
-        selected,
-        prices,
-        cash,
-    ):
-        pnls = []
-        sold = 0
-        traded_value = 0
-        total_cost = 0
-
-        for symbol in list(positions):
-            if symbol in selected:
-                continue
-
-            value = positions[symbol] * prices[symbol]
-            cost = self._transaction_cost(value)
-            cash += value - cost
-            pnls.append(value - entry_values.get(symbol, value) - cost)
-            traded_value += value
-            total_cost += cost
-            del positions[symbol]
-            entry_values.pop(symbol, None)
-            sold += 1
-
-        return cash, pnls, sold, traded_value, total_cost
-
-    def _buy_selected(
-        self,
-        positions,
-        entry_values,
-        selected,
-        prices,
-        cash,
-        equity,
-    ):
-        if not selected:
-            return cash, 0, 0, 0
-
-        target_value = equity * self.target_exposure / len(selected)
-        bought = 0
-        traded_value = 0
-        total_cost = 0
-
-        for symbol in selected:
-            if symbol in positions:
-                continue
-
-            value = min(target_value, cash)
-            if value <= 0 or prices[symbol] <= 0:
-                continue
-
-            cost = self._transaction_cost(value)
-            investable_value = max(0, value - cost)
-            positions[symbol] = investable_value / prices[symbol]
-            entry_values[symbol] = value
-            cash -= value
-            traded_value += investable_value
-            total_cost += cost
-            bought += 1
-
-        return cash, bought, traded_value, total_cost
-
-    def _transaction_cost(self, trade_value):
-        return trade_value * (self.transaction_cost_bps / 10_000)
-
-    def _profit_factor(self, pnls):
-        gross_profit = sum(pnl for pnl in pnls if pnl > 0)
-        gross_loss = abs(sum(pnl for pnl in pnls if pnl <= 0))
-        return gross_profit / gross_loss if gross_loss else 0
-
-    def _trade_analysis(self, pnls, exposure_values):
-        wins = [pnl for pnl in pnls if pnl > 0]
-        losses = [pnl for pnl in pnls if pnl <= 0]
-        gross_profit = sum(wins)
-        gross_loss = abs(sum(losses))
-
-        return TradeAnalysis(
-            total_trades=len(pnls),
-            win_rate=len(wins) / len(pnls) if pnls else 0,
-            average_win=gross_profit / len(wins) if wins else 0,
-            average_loss=sum(losses) / len(losses) if losses else 0,
-            largest_win=max(wins) if wins else 0,
-            largest_loss=min(losses) if losses else 0,
-            expectancy=sum(pnls) / len(pnls) if pnls else 0,
-            profit_factor=(
-                gross_profit / gross_loss
-                if gross_loss
-                else 0
-            ),
-            time_in_market_percent=(
-                sum(1 for exposure in exposure_values if exposure > 0)
-                / len(exposure_values)
-                if exposure_values
-                else 0
-            ),
-        )
-
-    def _capital_utilization(self, exposure_values, position_values):
-        average_exposure = (
-            sum(exposure_values) / len(exposure_values)
-            if exposure_values
-            else 0
-        )
-        return CapitalUtilization(
-            average_position_value=(
-                sum(position_values) / len(position_values)
-                if position_values
-                else 0
-            ),
-            average_exposure_percent=average_exposure,
-            max_exposure_percent=max(exposure_values) if exposure_values else 0,
-            average_cash_percent=1 - average_exposure,
-            average_leverage=average_exposure,
-        )
-
-    def _benchmark_return(self, prices_by_symbol, timestamps):
-        if not timestamps:
-            return 0
-
-        prices = prices_by_symbol.get(self.benchmark_symbol)
-        if not prices:
-            return self._equal_weight_benchmark(prices_by_symbol, timestamps)
-
-        start = prices[timestamps[0]]
-        end = prices[timestamps[-1]]
-        return (end / start) - 1 if start else 0
-
-    def _equal_weight_benchmark(self, prices_by_symbol, timestamps):
-        returns = []
-
-        for prices in prices_by_symbol.values():
-            start = prices.get(timestamps[0])
-            end = prices.get(timestamps[-1])
-            if start:
-                returns.append((end / start) - 1)
-
-        return sum(returns) / len(returns) if returns else 0
