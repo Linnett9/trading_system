@@ -14,6 +14,12 @@ paper_trading:
   dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
   trial_end_date: "2026-06-28"
 
+# This data-only trial starts from an empty simulated portfolio.
+risk:
+  paper:
+    max_position_weight: 0.30
+    max_turnover: 0.95
+
 broker:
   adapter: "fake"
 
