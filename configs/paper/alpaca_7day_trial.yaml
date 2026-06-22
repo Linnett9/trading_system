@@ -1,0 +1,27 @@
+backtest:
+  provider: "alpaca"
+  data_feed: "iex"
+  data_adjustment: "all"
+  years: 2
+  timeframe: "1Day"
+
+paper_trading:
+  enabled: false
+  submit_orders: false
+  inspect_broker_state: false
+  report_dir: "reports/paper/alpaca_7day_trial"
+  event_log_path: "reports/paper/alpaca_7day_trial/events.jsonl"
+  dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
+  trial_end_date: "2026-06-28"
+
+broker:
+  adapter: "fake"
+
+research:
+  intraday_opening_range:
+    enabled: false
+    research_only: true
+    timeframe: "5Min"
+    opening_range_minutes: 30
+    min_relative_volume: 1.5
+    require_vwap_confirmation: true
