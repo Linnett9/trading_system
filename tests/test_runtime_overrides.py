@@ -114,6 +114,142 @@ def test_runtime_overrides_can_select_etf_universe():
     ]
 
 
+def test_runtime_overrides_can_select_stooq_test_universe():
+    config = {
+        "backtest": {"symbols": ["AAPL"], "years": 5},
+        "research": {
+            "stooq_test_symbols": ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"],
+            "strategy_comparison": [],
+            "parameter_grid": {},
+        },
+    }
+    args = SimpleNamespace(
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="stooq_test",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["symbols"] == [
+        "AAPL", "MSFT", "NVDA", "SPY", "QQQ",
+    ]
+
+
+def test_ml_research_defaults_to_its_longer_history_window():
+    config = {
+        "backtest": {"symbols": ["AAPL", "SPY"], "years": 5},
+        "ml": {
+            "research_years": 10,
+            "historical_data_provider": "stooq",
+        },
+        "research": {"strategy_comparison": [], "parameter_grid": {}},
+    }
+    args = SimpleNamespace(
+        mode="ml-research",
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="default",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["years"] == 10
+    assert updated["backtest"]["provider"] == "stooq"
+
+
+def test_stooq_30_uses_only_stocks_for_the_champion_and_imports_benchmarks():
+    config = {
+        "backtest": {"symbols": ["AAPL"], "years": 5},
+        "ml": {},
+        "research": {
+            "stooq_30_symbols": ["AAPL", "MSFT", "SPY", "QQQ"],
+            "stooq_30_investable_symbols": ["AAPL", "MSFT"],
+            "strategy_comparison": [],
+            "parameter_grid": {},
+        },
+    }
+    args = SimpleNamespace(
+        mode="import-stooq-bulk",
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="stooq_30",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["symbols"] == ["AAPL", "MSFT"]
+    assert updated["research"]["stooq_import_symbols"] == [
+        "AAPL", "MSFT", "SPY", "QQQ",
+    ]
+
+
+def test_champion_robustness_uses_configured_local_ml_provider():
+    config = {
+        "backtest": {"symbols": ["AAPL"], "years": 5},
+        "ml": {
+            "research_years": 10,
+            "historical_data_provider": "stooq_parquet",
+            "stooq_parquet_dir": "data/processed/stooq_parquet",
+        },
+        "research": {"strategy_comparison": [], "parameter_grid": {}},
+    }
+    args = SimpleNamespace(mode="champion-robustness", fast=False, symbols=None, years=None, strategies=None, grid_values=None, universe="default")
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["provider"] == "stooq_parquet"
+    assert updated["backtest"]["data_dir"] == "data/processed/stooq_parquet"
+    assert updated["backtest"]["years"] == 10
+
+
+def test_paper_dry_run_uses_configured_local_ml_provider():
+    config = {"backtest": {"symbols": ["AAPL"], "years": 5}, "ml": {"historical_data_provider": "stooq_parquet", "stooq_parquet_dir": "data/processed/stooq_parquet"}, "research": {"strategy_comparison": [], "parameter_grid": {}}}
+    args = SimpleNamespace(mode="paper-dry-run", fast=False, symbols=None, years=None, strategies=None, grid_values=None, universe="stooq_30")
+    updated = apply_runtime_overrides(config, args)
+    assert updated["backtest"]["provider"] == "stooq_parquet"
+
+
+def test_ml_smoke_test_allows_short_history_only_in_separate_output_dir():
+    config = {
+        "backtest": {"symbols": ["AAPL", "SPY"], "years": 5},
+        "ml": {
+            "research_years": 10,
+            "smoke_test_minimum_history_years": 5,
+            "historical_data_provider": "alpaca",
+            "smoke_test_output_dir": "reports/ml/smoke_test",
+            "smoke_test_cache_dir": "cache/ml/smoke_test",
+        },
+        "research": {"strategy_comparison": [], "parameter_grid": {}},
+    }
+    args = SimpleNamespace(
+        mode="ml-smoke-test",
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="default",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["ml"]["minimum_history_years"] == 5
+    assert updated["ml"]["allow_short_history_for_smoke_test"] is True
+    assert updated["ml"]["research_label"] == "SMOKE_TEST_NOT_PRODUCTION_VALIDATED"
+    assert updated["ml"]["output_dir"] == "reports/ml/smoke_test"
+    assert updated["cache"]["ml_dir"] == "cache/ml/smoke_test"
+
+
 def test_dual_momentum_candidate_configs_expand_grid():
     dual_config = {
         "top_n": 3,

@@ -139,8 +139,31 @@ def print_paper_fill(fill_record, state_path):
     print(f"Paper state: {state_path}")
 
 
-def print_paper_run(decision, fill_record, blocked_reason=None):
+def print_paper_fill_refused(state_path):
+    print("\nPAPER FILL REFUSED")
+    print(
+        "Direct paper-fill is disabled unless --confirm-fill is provided. "
+        "Prefer the safer workflow: paper-trading --dry-run, then "
+        "paper-trading --submit."
+    )
+    print(f"Paper state: {state_path}")
+
+
+def print_paper_run(
+    decision,
+    fill_record,
+    blocked_reason=None,
+    risk_checks=None,
+    post_trade_checks=None,
+    artifact_paths=None,
+    run_id=None,
+):
+    risk_checks = risk_checks or []
+    post_trade_checks = post_trade_checks or []
+    artifact_paths = artifact_paths or {}
     print("\nPAPER RUN")
+    if run_id:
+        print(f"run_id={run_id}")
 
     print(
         f"date={decision.timestamp.date()} | "
@@ -155,11 +178,35 @@ def print_paper_run(decision, fill_record, blocked_reason=None):
     selected = ", ".join(decision.selected_symbols) or "cash"
     print(f"selected={selected}")
 
+    if risk_checks:
+        status = paper_risk_status(risk_checks)
+        print(f"risk_status={status}")
+        for check in risk_checks:
+            if check.severity.value in {"WARNING", "ERROR", "CRITICAL"}:
+                print(
+                    f"  {check.severity.value:<8} {check.reason} | "
+                    f"{check.details}"
+                )
+
+    if post_trade_checks:
+        status = paper_risk_status(post_trade_checks)
+        print(f"post_trade_status={status}")
+        for check in post_trade_checks:
+            if check.severity.value in {"WARNING", "ERROR", "CRITICAL"}:
+                print(
+                    f"  {check.severity.value:<8} {check.reason} | "
+                    f"{check.details}"
+                )
+
     if blocked_reason == "stale_data":
         print(
             "Action: blocked. Data is stale and paper_trading.refuse_stale_data "
             "is enabled."
         )
+    elif blocked_reason == "risk_check_failed":
+        print("Action: blocked. One or more ERROR/CRITICAL risk checks failed.")
+    elif blocked_reason and blocked_reason.startswith("approval_"):
+        print(f"Action: blocked. Dry-run approval failed: {blocked_reason}.")
     elif fill_record is None:
         print("Action: decision saved only; auto-fill is disabled.")
     elif fill_record.get("no_orders"):
@@ -185,7 +232,34 @@ def print_paper_run(decision, fill_record, blocked_reason=None):
             )
 
     print(f"Saved decision: {decision.report_path}")
+    if artifact_paths.get("order_preview"):
+        print(f"Order preview: {artifact_paths['order_preview']}")
+    if artifact_paths.get("risk_report"):
+        print(f"Risk report: {artifact_paths['risk_report']}")
+    if artifact_paths.get("reconciliation_report"):
+        print(f"Reconciliation: {artifact_paths['reconciliation_report']}")
+    if artifact_paths.get("approval"):
+        print(f"Dry-run approval: {artifact_paths['approval']}")
+    if artifact_paths.get("journal"):
+        print(f"Journal: {artifact_paths['journal']}")
+    if artifact_paths.get("dashboard"):
+        print(f"Dashboard: {artifact_paths['dashboard']}")
+    if artifact_paths.get("event_log"):
+        print(f"Event log: {artifact_paths['event_log']}")
+    if artifact_paths.get("fill_log"):
+        print(f"Fill log: {artifact_paths['fill_log']}")
     print(f"Paper state: {decision.state_path}")
+
+
+def paper_risk_status(risk_checks):
+    severities = {check.severity.value for check in risk_checks}
+    if "CRITICAL" in severities:
+        return "CRITICAL"
+    if "ERROR" in severities:
+        return "ERROR"
+    if "WARNING" in severities:
+        return "WARNING"
+    return "PASS"
 
 
 def print_paper_status(status):
@@ -325,6 +399,16 @@ def print_paper_reset(reset):
 
     print("Interpretation: paper ledger has been reset to starting cash.")
     print(f"Paper state: {reset['state_path']}")
+
+
+def print_paper_weekly_summary(path):
+    print("\nPAPER WEEKLY SUMMARY")
+    print(f"Saved summary: {path}")
+
+
+def print_paper_promotion_checklist(path):
+    print("\nPAPER PROMOTION CHECKLIST")
+    print(f"Saved checklist: {path}")
 
 
 def print_data_freshness(data_freshness):

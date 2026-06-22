@@ -1,4 +1,18 @@
-from config.config_loader import load_config
+import pytest
+
+from config.config_loader import load_config, validate_config
+
+
+def test_environment_alpaca_credentials_override_file_values(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "environment-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "environment-secret")
+
+    config = load_config()
+
+    assert config["alpaca"] == {
+        "api_key": "environment-key",
+        "secret_key": "environment-secret",
+    }
 
 
 def test_load_config_adds_missing_research_defaults(tmp_path):
@@ -52,6 +66,10 @@ def test_load_config_adds_missing_research_defaults(tmp_path):
     assert config["position_sizing"]["target_exposure"] == 0.20
     assert config["paper_trading"]["report_dir"] == "reports/paper"
     assert config["paper_trading"]["min_trade_value"] == 1.0
+    assert config["ml"]["enabled"] is False
+    assert config["ml"]["mode"] == "research"
+    assert config["ml"]["model_type"] == "logistic_regression"
+    assert config["ml"]["random_seed"] == 42
     dual_momentum = config["research"]["dual_momentum"]
     assert dual_momentum["risk_regime_mode"] == "scaled"
     assert dual_momentum["mixed_risk_exposure"] == 0.75
@@ -115,3 +133,114 @@ def test_load_config_adds_missing_research_defaults(tmp_path):
     assert config["reports"]["summary_dir"] == "reports/summary"
     assert config["reports"]["paper_dir"] == "reports/paper"
     assert config["cache"]["enabled"]
+
+
+def test_validate_config_blocks_live_mode_without_enable_flag():
+    with pytest.raises(RuntimeError):
+        validate_config({
+            "trading": {
+                "mode": "live",
+                "live_enabled": False,
+            },
+        })
+
+
+def test_validate_config_rejects_unknown_broker_adapter():
+    with pytest.raises(RuntimeError, match="Unsupported broker.adapter"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "unknown"},
+        })
+
+
+def test_validate_config_rejects_unknown_paper_execution_adapter():
+    with pytest.raises(RuntimeError, match="Unsupported paper_trading.execution_adapter"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "paper_trading": {"execution_adapter": "telepathy"},
+            "broker": {"adapter": "fake"},
+        })
+
+
+def test_validate_config_requires_alpaca_environment(monkeypatch):
+    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="Alpaca broker selected"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "alpaca"},
+        })
+
+
+def test_validate_config_rejects_unknown_order_type():
+    with pytest.raises(RuntimeError, match="Unsupported execution.order_type"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "execution": {"order_type": "iceberg"},
+        })
+
+
+def test_validate_config_rejects_negative_quantity_precision():
+    with pytest.raises(RuntimeError, match="broker.quantity_precision"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake", "quantity_precision": -1},
+        })
+
+
+def test_validate_config_rejects_unsupported_broker_order_type():
+    with pytest.raises(RuntimeError, match="broker.supports_limit_orders=false"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "paper_trading": {"execution_adapter": "broker"},
+            "broker": {
+                "adapter": "fake",
+                "supports_limit_orders": False,
+            },
+            "execution": {"order_type": "limit"},
+        })
+
+
+def test_validate_config_rejects_unknown_ml_mode():
+    with pytest.raises(RuntimeError, match="Unsupported ml.mode"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {"mode": "production"},
+        })
+
+
+def test_validate_config_rejects_unknown_ml_model_type():
+    with pytest.raises(RuntimeError, match="Unsupported ml.model_type"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {"model_type": "transformer"},
+        })
+
+
+def test_load_config_merges_override_file_with_project_config(tmp_path):
+    override_path = tmp_path / "paper.yaml"
+    override_path.write_text(
+        "\n".join([
+            'paper_candidate_id: "candidate_a"',
+            "paper_trading:",
+            '  paper_candidate_id: "candidate_a"',
+            "trading:",
+            '  mode: "paper"',
+            "research:",
+            "  dual_momentum:",
+            '    champion_id: "candidate_a"',
+        ]),
+        encoding="utf-8",
+    )
+
+    config = load_config(str(override_path), overlay_project_config=True)
+
+    assert config["paper_candidate_id"] == "candidate_a"
+    assert config["paper_trading"]["paper_candidate_id"] == "candidate_a"
+    assert config["research"]["dual_momentum"]["champion_id"] == "candidate_a"
+    assert "alpaca" in config
+    assert "backtest" in config

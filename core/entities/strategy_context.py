@@ -30,5 +30,9 @@ class StrategyContext:
     bollinger_upper: Optional[float] = None
     bollinger_lower: Optional[float] = None
     bollinger_bandwidth: Optional[float] = None
+    session_open: Optional[float] = None
+    opening_range_high: Optional[float] = None
+    opening_range_low: Optional[float] = None
+    vwap: Optional[float] = None
     market_regime: str = "unknown"
     volatility_regime: str = "unknown"

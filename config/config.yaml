@@ -1,6 +1,8 @@
+paper_candidate_id: "ranked_top5_monthly_exposure90_v1"
+
 alpaca:
-  api_key: "PKVG3PYOPAU3RZAYZKI2DEQZO4"
-  secret_key: "BHKL9JrTYqzKtut1p7ZJUgeuPyuHV7KPwGEDNrRzEaZg"
+  api_key: ""
+  secret_key: ""
 
 backtest:
   symbols:
@@ -10,8 +12,10 @@ backtest:
     - SPY
     - QQQ
   timeframe: "1Day"
+  provider: "alpaca"
   data_feed: "iex"
   data_adjustment: "all"
+  historical_bar_limit: 10000
   years: 5
   starting_equity: 500
   warmup_bars: 200
@@ -32,6 +36,27 @@ risk:
   atr_stop_multiplier: 2.0
   atr_take_profit_multiplier: 3.0
   trailing_atr_multiplier: 3.0
+  kill_switch:
+    enabled: true
+    max_daily_loss: 0.03
+    max_weekly_loss: 0.07
+    max_drawdown_from_paper_start: 0.10
+  model_kill_switch:
+    enabled: true
+    block_stale_data: true
+    require_model_context: true
+    expected_candidate_config_hash: ""
+  paper:
+    max_position_weight: 0.25
+    max_sector_weight: 0.60
+    max_pairwise_correlation: 0.90
+    max_gross_exposure: 1.0
+    max_single_order_notional: 0.50
+    max_turnover: 0.50
+    max_orders: 10
+    post_trade_drift_tolerance: 0.005
+    min_lookback_bars: 252
+    max_latest_gap_percent: 0.40
 
 position_sizing:
   mode: "fixed_fractional"
@@ -39,17 +64,103 @@ position_sizing:
   max_exposure: 0.20
 
 paper_trading:
-  enabled: true
+  enabled: false
+  submit_orders: false
   report_dir: "reports/paper"
   min_trade_value: 1.0
   rebalance_threshold: 0.02
-  auto_fill: true
+  auto_fill: false
   refuse_stale_data: true
   max_data_age_days: 3
+  paper_candidate_id: "ranked_top5_monthly_exposure90_v1"
+  fill_log_path: "data/paper/fills.csv"
+  event_log_path: "reports/paper/events.jsonl"
+  dashboard_path: "reports/paper/dashboard.csv"
+  execution_adapter: "local_ledger"
+  inspect_broker_state: false
+
+trading:
+  mode: "paper"
+  live_enabled: false
+
+broker:
+  adapter: "fake"
+  supports_fractional: true
+  supports_market_orders: true
+  supports_limit_orders: true
+  quantity_precision: 6
+  min_order_notional: 1.0
+  asset_class: "equity"
+  trading_hours: "regular"
+  partial_fill_ratio: 1.0
+  reject_symbols: []
+  open_orders: []
+  cash_tolerance: 1.0
+  position_tolerance: 0.000001
+
+portfolio:
+  cash_buffer_percent: 0.02
+
+alerts:
+  enabled: true
+  service: "console"
+
+ml:
+  enabled: false
+  mode: "research"
+  research_years: 10
+  minimum_history_years: 9
+  history_coverage_tolerance_days: 10
+  smoke_test_minimum_history_years: 5
+  allow_short_history_for_smoke_test: false
+  research_label: "VALIDATED_9Y_RESEARCH_CURRENT_SURVIVOR_UNIVERSE"
+  smoke_test_output_dir: "reports/ml/smoke_test"
+  smoke_test_cache_dir: "cache/ml/smoke_test"
+  historical_data_provider: "stooq_parquet"
+  stooq_csv_dir: "data/raw/stooq"
+  stooq_bulk_extracted_dir: "data/raw/stooq_bulk/extracted"
+  stooq_bulk_zip_path: "data/raw/stooq_bulk/us_daily_ascii.zip"
+  stooq_parquet_dir: "data/processed/stooq_parquet"
+  sector_reference_path: "data/reference/sector_by_symbol.json"
+  sector_by_symbol: {}
+  calibration_bin_count: 10
+  rolling_base_rate_lookback_samples: 252
+  ranking_quantile_count: 5
+  prediction_target: "champion_success"
+  model_type: "logistic_regression"
+  feature_set: "price_regime_v1"
+  label_type: "champion_success"
+  train_start:
+  train_end:
+  test_start:
+  test_end:
+  prediction_horizon: 42
+  label_horizon_days: 42
+  drawdown_risk_threshold: 0.08
+  decision_threshold: 0.50
+  class_weight_balanced: true
+  comparison_models: ["logistic_regression", "random_forest", "gradient_boosting"]
+  shadow_model_type: "gradient_boosting"
+  shadow_thresholds: [0.10, 0.15, 0.20, 0.25]
+  shadow_reduced_exposures: [0.70, 0.80, 0.90]
+  shadow_transaction_cost_bps: 5.0
+  shadow_holdout_threshold: 0.20
+  shadow_holdout_reduced_exposure: 0.70
+  include_champion_state_features: true
+  test_fraction: 0.20
+  walk_forward_folds: 3
+  random_seed: 42
+  output_dir: "reports/ml"
+  benchmark_symbols: ["SPY", "QQQ"]
+  feature_lookback_days: 252
 
 execution:
   spread_bps: 2.0
   slippage_bps: 1.0
+  assumed_slippage_bps: 5.0
+  commission_bps: 1.0
+  order_type: "market"
+  limit_offset_bps: 10.0
   seed: 42
 
 reports:
@@ -57,13 +168,85 @@ reports:
   walk_forward_dir: "reports/walk_forward"
   summary_dir: "reports/summary"
   paper_dir: "reports/paper"
+  ml_dir: "reports/ml"
 
 cache:
   enabled: true
   data_dir: "cache/data"
   results_dir: "cache/results"
+  ml_dir: "cache/ml"
 
 research:
+  stooq_test_symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - SPY
+    - QQQ
+  stooq_30_symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AVGO
+    - QCOM
+    - GOOGL
+    - META
+    - NFLX
+    - AMZN
+    - TSLA
+    - HD
+    - WMT
+    - COST
+    - KO
+    - PEP
+    - PG
+    - JNJ
+    - UNH
+    - LLY
+    - MRK
+    - ABBV
+    - JPM
+    - BAC
+    - GS
+    - V
+    - MA
+    - XOM
+    - CVX
+    - CAT
+    - SPY
+    - QQQ
+  stooq_30_investable_symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - AVGO
+    - QCOM
+    - GOOGL
+    - META
+    - NFLX
+    - AMZN
+    - TSLA
+    - HD
+    - WMT
+    - COST
+    - KO
+    - PEP
+    - PG
+    - JNJ
+    - UNH
+    - LLY
+    - MRK
+    - ABBV
+    - JPM
+    - BAC
+    - GS
+    - V
+    - MA
+    - XOM
+    - CVX
+    - CAT
   optimization_metric: "composite"
   report_top_n: 10
   parallel_workers: 1

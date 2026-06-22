@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from application.services.market_data_loader import (
+    data_quality_report,
     load_candles,
     latest_prices,
     latest_data_freshness,
@@ -12,7 +13,10 @@ from core.paper.paper_trading_engine import PaperTradingEngine
 def create_paper_decision(config, feed, build_dual_momentum_tester):
     dual_config = active_dual_momentum_config(config)
     paper_config = config.get("paper_trading", {})
-    symbols = dual_config.get("symbols", config["backtest"]["symbols"])
+    symbols = list(dict.fromkeys([
+        *dual_config.get("symbols", config["backtest"]["symbols"]),
+        dual_config.get("regime_symbol", "SPY"),
+    ]))
 
     candles_by_symbol = {
         symbol: load_candles(symbol, config, feed)
@@ -24,14 +28,46 @@ def create_paper_decision(config, feed, build_dual_momentum_tester):
     prices_by_symbol = latest_prices(candles_by_symbol)
     engine = build_paper_engine(config)
 
-    return engine.create_decision(
+    decision = engine.create_decision(
         result,
         prices_by_symbol,
         data_freshness=latest_data_freshness(
             candles_by_symbol,
             max_age_days=paper_config.get("max_data_age_days", 3),
         ),
+        data_quality=data_quality_report(
+            candles_by_symbol,
+            min_lookback_bars=config.get("risk", {}).get("paper", {}).get(
+                "min_lookback_bars",
+                252,
+            ),
+            max_latest_gap_percent=config.get("risk", {}).get("paper", {}).get(
+                "max_latest_gap_percent",
+                0.40,
+            ),
+        ),
     )
+    selected = decision.selected_symbols
+    correlations = []
+    for index, left in enumerate(selected):
+        left_returns = _returns(candles_by_symbol.get(left, [])[-64:])
+        for right in selected[index + 1:]:
+            right_returns = _returns(candles_by_symbol.get(right, [])[-64:])
+            if len(left_returns) == len(right_returns) and len(left_returns) > 1:
+                correlations.append(_correlation(left_returns, right_returns))
+    decision.model_context["benchmark_available"] = bool(candles_by_symbol.get(dual_config.get("regime_symbol", "SPY")))
+    decision.model_context["max_pairwise_correlation"] = max(correlations, default=0.0)
+    return decision
+
+
+def _returns(candles):
+    return [(right.close / left.close) - 1 for left, right in zip(candles, candles[1:]) if left.close]
+
+
+def _correlation(left, right):
+    left_mean = sum(left) / len(left); right_mean = sum(right) / len(right)
+    scale = (sum((value-left_mean)**2 for value in left) * sum((value-right_mean)**2 for value in right)) ** .5
+    return sum((a-left_mean)*(b-right_mean) for a, b in zip(left, right)) / scale if scale else 0.0
 
 
 def build_paper_engine(config):
@@ -40,12 +76,23 @@ def build_paper_engine(config):
         "report_dir",
         config.get("reports", {}).get("paper_dir", "reports/paper"),
     )
+    broker_config = config.get("broker", {})
+    execution_config = config.get("execution", {})
 
     return PaperTradingEngine(
         report_dir=report_dir,
         starting_cash=config["backtest"]["starting_equity"],
         min_trade_value=paper_config.get("min_trade_value", 1.0),
         rebalance_threshold=paper_config.get("rebalance_threshold", 0.0),
+        fill_log_path=paper_config.get("fill_log_path", "data/paper/fills.csv"),
+        candidate_id=(
+            paper_config.get("paper_candidate_id")
+            or config.get("paper_candidate_id", "")
+        ),
+        supports_fractional=broker_config.get("supports_fractional", True),
+        quantity_precision=broker_config.get("quantity_precision", 6),
+        order_type=execution_config.get("order_type", "market"),
+        limit_offset_bps=execution_config.get("limit_offset_bps", 0.0),
     )
 
 

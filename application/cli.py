@@ -9,6 +9,10 @@ from application.services.paper_commands import (
     run_paper_repair,
     run_paper_reset,
     run_paper_run,
+    run_paper_trading,
+    run_paper_dry_run,
+    run_paper_weekly_summary,
+    run_paper_promotion_checklist,
 )
 from application.services.dual_momentum_commands import (
     run_dual_momentum,
@@ -30,6 +34,9 @@ from application.services.research_commands import (
     run_walk_forward,
     run_strategy_comparison,
 )
+from application.services.ml_commands import run_ml_research
+from application.services.stooq_bulk_commands import run_stooq_bulk_import
+from application.services.champion_robustness_commands import run_champion_robustness
 from config.config_loader import load_config
 
 
@@ -55,11 +62,20 @@ def parse_args():
             "paper-fill",
             "paper-status",
             "paper-report",
+            "paper-trading",
+            "paper-dry-run",
+            "paper-trial",
+            "paper-weekly-summary",
+            "paper-promotion-checklist",
             "paper-run",
             "paper-repair",
             "paper-reset",
             "multi-strategy",
             "multi-strategy-walk-forward",
+            "ml-research",
+            "ml-smoke-test",
+            "import-stooq-bulk",
+            "champion-robustness",
         ],
         default="backtest",
     )
@@ -101,7 +117,7 @@ def parse_args():
     )
     parser.add_argument(
         "--universe",
-        choices=["default", "etf", "stocks", "all"],
+        choices=["default", "etf", "stocks", "all", "stooq_test", "stooq_30"],
         default="default",
         help="Use a configured research universe preset.",
     )
@@ -127,22 +143,81 @@ def parse_args():
         action="store_true",
         help="Confirm destructive paper state reset.",
     )
+    parser.add_argument(
+        "--config",
+        default="config/config.yaml",
+        help="Config file to load. Can point at a frozen paper config.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview paper-trading orders without filling/submitting.",
+    )
+    parser.add_argument(
+        "--submit",
+        action="store_true",
+        help="Submit/fill the approved paper-trading decision.",
+    )
+    parser.add_argument(
+        "--confirm-fill",
+        action="store_true",
+        help="Confirm direct paper-fill command. Prefer paper-trading --submit.",
+    )
 
     return parser.parse_args()
 
 
 def build_feed(config):
+    provider = config["backtest"].get("provider", "alpaca").lower()
+    if provider == "stooq":
+        from infrastructure.data.stooq_data_feed import StooqDataFeed
+
+        return StooqDataFeed()
+    if provider == "stooq_csv":
+        from infrastructure.data.stooq_csv_data_feed import StooqCsvDataFeed
+
+        return StooqCsvDataFeed(
+            data_dir=config["backtest"].get("data_dir", "data/raw/stooq")
+        )
+    if provider == "stooq_parquet":
+        from infrastructure.data.stooq_parquet_data_feed import StooqParquetDataFeed
+
+        return StooqParquetDataFeed(
+            data_dir=config["backtest"].get(
+                "data_dir", "data/processed/stooq_parquet"
+            )
+        )
+    if provider != "alpaca":
+        raise ValueError(f"Unsupported historical data provider: {provider}")
+
+    alpaca_config = config.get("alpaca", {})
+    if not alpaca_config.get("api_key") or not alpaca_config.get("secret_key"):
+        raise RuntimeError(
+            "Alpaca data provider requires ALPACA_API_KEY and ALPACA_SECRET_KEY "
+            "environment variables."
+        )
+
     from infrastructure.alpaca.alpaca_data_feed import AlpacaDataFeed
 
     return AlpacaDataFeed(
-        api_key=config["alpaca"]["api_key"],
-        secret_key=config["alpaca"]["secret_key"],
+        api_key=alpaca_config["api_key"],
+        secret_key=alpaca_config["secret_key"],
         data_feed=config["backtest"].get("data_feed", "iex"),
         adjustment=config["backtest"].get("data_adjustment", "all"),
+        historical_bar_limit=int(
+            config["backtest"].get("historical_bar_limit", 10_000)
+        ),
     )
 
 
 def dispatch(args, config, feed):
+    if args.mode == "import-stooq-bulk":
+        run_stooq_bulk_import(config)
+        return
+    if args.mode == "champion-robustness":
+        run_champion_robustness(config, feed)
+        return
+
     if args.mode == "optimize":
         run_optimization(config, feed)
         return
@@ -192,7 +267,11 @@ def dispatch(args, config, feed):
         return
 
     if args.mode == "paper-fill":
-        run_paper_fill(config, decision_file=args.decision_file)
+        run_paper_fill(
+            config,
+            decision_file=args.decision_file,
+            confirm_fill=args.confirm_fill,
+        )
         return
 
     if args.mode == "paper-status":
@@ -201,6 +280,29 @@ def dispatch(args, config, feed):
 
     if args.mode == "paper-report":
         run_paper_report(config, feed)
+        return
+
+    if args.mode == "paper-trading":
+        run_paper_trading(
+            config,
+            feed,
+            dry_run=args.dry_run or not args.submit,
+            submit=args.submit,
+        )
+        return
+    if args.mode == "paper-dry-run":
+        run_paper_dry_run(config, feed)
+        return
+    if args.mode == "paper-trial":
+        run_paper_dry_run(config, feed)
+        return
+
+    if args.mode == "paper-weekly-summary":
+        run_paper_weekly_summary(config)
+        return
+
+    if args.mode == "paper-promotion-checklist":
+        run_paper_promotion_checklist(config)
         return
 
     if args.mode == "paper-run":
@@ -227,12 +329,19 @@ def dispatch(args, config, feed):
         run_multi_strategy_walk_forward(config, feed)
         return
 
+    if args.mode in {"ml-research", "ml-smoke-test"}:
+        run_ml_research(config, feed)
+        return
+
     run_base_backtests(config, feed)
 
 
 def run_cli():
     args = parse_args()
-    config = apply_runtime_overrides(load_config(), args)
-    feed = build_feed(config)
+    config = apply_runtime_overrides(
+        load_config(args.config, overlay_project_config=True),
+        args,
+    )
+    feed = None if args.mode == "import-stooq-bulk" else build_feed(config)
 
     dispatch(args, config, feed)

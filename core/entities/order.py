@@ -1,5 +1,7 @@
 # core/entities/order.py
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -11,3 +13,4 @@ class Order:
     quantity: float
     timestamp: datetime
     order_type: str = "MARKET"
+    limit_price: float | None = None

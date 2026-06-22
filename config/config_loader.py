@@ -1,10 +1,17 @@
+import os
+
 import yaml
+
+from core.entities.trading_mode import TradingMode
 
 
 DEFAULT_CONFIG = {
+    "paper_candidate_id": "",
     "backtest": {
+        "provider": "alpaca",
         "data_feed": "iex",
         "data_adjustment": "all",
+        "historical_bar_limit": 10_000,
     },
     "strategy": {
         "rsi_period": 14,
@@ -20,8 +27,123 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "report_dir": "reports/paper",
         "min_trade_value": 1.0,
+        "auto_fill": False,
+        "refuse_stale_data": True,
+        "max_data_age_days": 3,
+        "paper_candidate_id": "",
+        "fill_log_path": "data/paper/fills.csv",
+        "event_log_path": "reports/paper/events.jsonl",
+        "dashboard_path": "reports/paper/dashboard.csv",
+        "execution_adapter": "local_ledger",
+        "inspect_broker_state": False,
+    },
+    "trading": {
+        "mode": "paper",
+        "live_enabled": False,
+    },
+    "broker": {
+        "adapter": "fake",
+        "supports_fractional": True,
+        "supports_market_orders": True,
+        "supports_limit_orders": True,
+        "quantity_precision": 6,
+        "min_order_notional": 1.0,
+        "asset_class": "equity",
+        "trading_hours": "regular",
+        "partial_fill_ratio": 1.0,
+        "reject_symbols": [],
+        "open_orders": [],
+        "cash_tolerance": 1.0,
+        "position_tolerance": 1e-6,
+    },
+    "portfolio": {
+        "cash_buffer_percent": 0.02,
+    },
+    "execution": {
+        "order_type": "market",
+        "limit_offset_bps": 10.0,
+        "assumed_slippage_bps": 5.0,
+        "commission_bps": 1.0,
+    },
+    "alerts": {
+        "enabled": True,
+        "service": "console",
+    },
+    "ml": {
+        "enabled": False,
+        "mode": "research",
+        "research_years": 10,
+        "minimum_history_years": 9,
+        "history_coverage_tolerance_days": 10,
+        "smoke_test_minimum_history_years": 5,
+        "allow_short_history_for_smoke_test": False,
+        "research_label": "VALIDATED_9Y_RESEARCH_CURRENT_SURVIVOR_UNIVERSE",
+        "smoke_test_output_dir": "reports/ml/smoke_test",
+        "smoke_test_cache_dir": "cache/ml/smoke_test",
+        "historical_data_provider": "stooq_parquet",
+        "stooq_csv_dir": "data/raw/stooq",
+        "stooq_bulk_extracted_dir": "data/raw/stooq_bulk/extracted",
+        "stooq_bulk_zip_path": "data/raw/stooq_bulk/us_daily_ascii.zip",
+        "stooq_parquet_dir": "data/processed/stooq_parquet",
+        "sector_reference_path": "data/reference/sector_by_symbol.json",
+        "sector_by_symbol": {},
+        "calibration_bin_count": 10,
+        "rolling_base_rate_lookback_samples": 252,
+        "ranking_quantile_count": 5,
+        "prediction_target": "champion_success",
+        "model_type": "logistic_regression",
+        "feature_set": "price_regime_v1",
+        "label_type": "champion_success",
+        "train_start": None,
+        "train_end": None,
+        "test_start": None,
+        "test_end": None,
+        "prediction_horizon": 42,
+        "label_horizon_days": 42,
+        "drawdown_risk_threshold": 0.08,
+        "decision_threshold": 0.50,
+        "class_weight_balanced": True,
+        "comparison_models": ["logistic_regression", "random_forest", "gradient_boosting"],
+        "shadow_model_type": "gradient_boosting",
+        "shadow_thresholds": [0.10, 0.15, 0.20, 0.25],
+        "shadow_reduced_exposures": [0.70, 0.80, 0.90],
+        "shadow_transaction_cost_bps": 5.0,
+        "shadow_holdout_threshold": 0.20,
+        "shadow_holdout_reduced_exposure": 0.70,
+        "include_champion_state_features": True,
+        "test_fraction": 0.20,
+        "walk_forward_folds": 3,
+        "random_seed": 42,
+        "output_dir": "reports/ml",
+        "benchmark_symbols": ["SPY", "QQQ"],
+        "feature_lookback_days": 252,
+    },
+    "risk": {
+        "kill_switch": {
+            "enabled": True,
+            "max_daily_loss": 0.03,
+            "max_weekly_loss": 0.07,
+            "max_drawdown_from_paper_start": 0.10,
+        },
+        "model_kill_switch": {
+            "enabled": True,
+            "block_stale_data": True,
+            "require_model_context": True,
+            "expected_candidate_config_hash": "",
+        },
+        "paper": {
+            "max_position_weight": 0.30,
+            "max_gross_exposure": 1.0,
+            "max_single_order_notional": 0.50,
+            "max_turnover": 1.0,
+            "max_orders": 10,
+            "post_trade_drift_tolerance": 0.005,
+            "min_lookback_bars": 252,
+            "max_latest_gap_percent": 0.40,
+        },
     },
     "research": {
+        "stooq_test_symbols": ["AAPL", "MSFT", "NVDA", "SPY", "QQQ"],
         "optimization_metric": "composite",
         "report_top_n": 10,
         "parallel_workers": 1,
@@ -826,11 +948,13 @@ DEFAULT_CONFIG = {
         "walk_forward_dir": "reports/walk_forward",
         "summary_dir": "reports/summary",
         "paper_dir": "reports/paper",
+        "ml_dir": "reports/ml",
     },
     "cache": {
         "enabled": True,
         "data_dir": "cache/data",
         "results_dir": "cache/results",
+        "ml_dir": "cache/ml",
     },
 }
 
@@ -850,8 +974,181 @@ def merge_defaults(defaults, values):
     return merged
 
 
-def load_config(path="config/config.yaml"):
-    with open(path, "r") as f:
-        loaded = yaml.safe_load(f)
+def load_config(path="config/config.yaml", overlay_project_config=False):
+    default_path = "config/config.yaml"
 
-    return merge_defaults(DEFAULT_CONFIG, loaded)
+    if path == default_path or overlay_project_config:
+        with open(default_path, "r") as f:
+            base_loaded = yaml.safe_load(f)
+
+        config = merge_defaults(DEFAULT_CONFIG, base_loaded)
+    else:
+        config = DEFAULT_CONFIG
+
+    if path != default_path:
+        with open(path, "r") as f:
+            override_loaded = yaml.safe_load(f)
+
+        config = merge_defaults(config, override_loaded)
+
+    _apply_environment_credentials(config)
+    validate_config(config)
+    return config
+
+
+def _apply_environment_credentials(config):
+    """Keep provider credentials out of tracked configuration files."""
+    alpaca_config = config.setdefault("alpaca", {})
+    api_key = os.environ.get("ALPACA_API_KEY")
+    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    if api_key:
+        alpaca_config["api_key"] = api_key
+    if secret_key:
+        alpaca_config["secret_key"] = secret_key
+
+
+def validate_config(config):
+    trading_config = config.get("trading", {})
+    mode = trading_config.get("mode", "paper")
+    broker_config = config.get("broker", {})
+    paper_config = config.get("paper_trading", {})
+    execution_config = config.get("execution", {})
+    ml_config = config.get("ml", {})
+
+    try:
+        trading_mode = TradingMode(mode)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in TradingMode)
+        raise RuntimeError(f"Unsupported trading mode '{mode}'. Use one of: {allowed}") from exc
+
+    if (
+        trading_mode == TradingMode.LIVE
+        and not trading_config.get("live_enabled", False)
+    ):
+        raise RuntimeError(
+            "Live trading is disabled. Set trading.live_enabled=true "
+            "only after broker, risk, and monitoring checks are ready."
+        )
+
+    broker_adapter = broker_config.get("adapter", "fake")
+    allowed_brokers = {"fake", "alpaca"}
+    if broker_adapter not in allowed_brokers:
+        allowed = ", ".join(sorted(allowed_brokers))
+        raise RuntimeError(
+            f"Unsupported broker.adapter '{broker_adapter}'. Use one of: {allowed}"
+        )
+
+    execution_adapter = paper_config.get("execution_adapter", "local_ledger")
+    allowed_execution_adapters = {"local_ledger", "broker"}
+    if execution_adapter not in allowed_execution_adapters:
+        allowed = ", ".join(sorted(allowed_execution_adapters))
+        raise RuntimeError(
+            "Unsupported paper_trading.execution_adapter "
+            f"'{execution_adapter}'. Use one of: {allowed}"
+        )
+
+    if broker_adapter == "alpaca":
+        missing = [
+            name for name in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY")
+            if not config.get("alpaca", {}).get(
+                "api_key" if name == "ALPACA_API_KEY" else "secret_key"
+            )
+        ]
+        if missing:
+            raise RuntimeError(
+                "Alpaca broker selected or Alpaca data provider selected; required environment variables "
+                f"are missing: {', '.join(missing)}"
+            )
+
+    order_type = str(execution_config.get("order_type", "market")).lower()
+    if order_type not in {"market", "limit"}:
+        raise RuntimeError(
+            "Unsupported execution.order_type "
+            f"'{order_type}'. Use one of: limit, market"
+        )
+
+    quantity_precision = int(broker_config.get("quantity_precision", 6))
+    if quantity_precision < 0:
+        raise RuntimeError("broker.quantity_precision must be >= 0")
+
+    ml_mode = str(ml_config.get("mode", "research"))
+    if ml_mode not in {"research", "shadow"}:
+        raise RuntimeError(
+            f"Unsupported ml.mode '{ml_mode}'. Use one of: research, shadow"
+        )
+
+    ml_model_type = str(ml_config.get("model_type", "noop"))
+    if ml_model_type not in {
+        "noop", "logistic_regression", "random_forest", "gradient_boosting",
+    }:
+        raise RuntimeError(
+            f"Unsupported ml.model_type '{ml_model_type}'. "
+            "Available models: gradient_boosting, logistic_regression, noop, random_forest."
+        )
+
+    random_seed = int(ml_config.get("random_seed", 42))
+    if random_seed < 0:
+        raise RuntimeError("ml.random_seed must be >= 0")
+
+    label_horizon_days = int(
+        ml_config.get("label_horizon_days", ml_config.get("prediction_horizon", 42))
+    )
+    if label_horizon_days <= 0:
+        raise RuntimeError("ml.label_horizon_days must be greater than zero")
+
+    label_type = str(ml_config.get("label_type", "champion_success"))
+    if label_type not in {"risk_regime", "drawdown_risk", "champion_success"}:
+        raise RuntimeError(
+            "Unsupported ml.label_type "
+            f"'{label_type}'. Use one of: champion_success, drawdown_risk, risk_regime"
+        )
+
+    drawdown_risk_threshold = float(
+        ml_config.get("drawdown_risk_threshold", 0.08)
+    )
+    if not 0 < drawdown_risk_threshold < 1:
+        raise RuntimeError("ml.drawdown_risk_threshold must be between zero and one")
+
+    decision_threshold = float(ml_config.get("decision_threshold", 0.50))
+    if not 0 < decision_threshold < 1:
+        raise RuntimeError("ml.decision_threshold must be between zero and one")
+
+    test_fraction = float(ml_config.get("test_fraction", 0.20))
+    if not 0 < test_fraction < 1:
+        raise RuntimeError("ml.test_fraction must be between zero and one")
+
+    walk_forward_folds = int(ml_config.get("walk_forward_folds", 3))
+    if walk_forward_folds < 1:
+        raise RuntimeError("ml.walk_forward_folds must be at least one")
+
+    calibration_bin_count = int(ml_config.get("calibration_bin_count", 10))
+    if calibration_bin_count < 2:
+        raise RuntimeError("ml.calibration_bin_count must be at least two")
+
+    rolling_base_rate_lookback_samples = int(
+        ml_config.get("rolling_base_rate_lookback_samples", 252)
+    )
+    if rolling_base_rate_lookback_samples < 1:
+        raise RuntimeError(
+            "ml.rolling_base_rate_lookback_samples must be at least one"
+        )
+
+    ranking_quantile_count = int(ml_config.get("ranking_quantile_count", 5))
+    if ranking_quantile_count < 2:
+        raise RuntimeError("ml.ranking_quantile_count must be at least two")
+
+    if execution_adapter == "broker":
+        supports_market_orders = broker_config.get("supports_market_orders", True)
+        supports_limit_orders = broker_config.get("supports_limit_orders", True)
+        if order_type == "market" and not supports_market_orders:
+            raise RuntimeError(
+                "execution.order_type=market is incompatible with "
+                "broker.supports_market_orders=false"
+            )
+        if order_type == "limit" and not supports_limit_orders:
+            raise RuntimeError(
+                "execution.order_type=limit is incompatible with "
+                "broker.supports_limit_orders=false"
+            )
+
+    return config

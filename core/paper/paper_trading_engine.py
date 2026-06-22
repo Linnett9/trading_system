@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+import csv
 import json
 from pathlib import Path
 
@@ -16,6 +17,8 @@ class PaperOrder:
     price: float
     reason: str
     score: float | None = None
+    order_type: str = "MARKET"
+    limit_price: float | None = None
 
     def to_dict(self):
         return {
@@ -29,6 +32,8 @@ class PaperOrder:
             "price": self.price,
             "reason": self.reason,
             "score": self.score,
+            "order_type": self.order_type,
+            "limit_price": self.limit_price,
         }
 
 
@@ -46,6 +51,7 @@ class PaperDecision:
     selected_symbols: list[str]
     model_context: dict
     data_freshness: dict
+    data_quality: dict
     report_path: Path
     state_path: Path
 
@@ -63,6 +69,7 @@ class PaperDecision:
             "selected_symbols": self.selected_symbols,
             "model_context": self.model_context,
             "data_freshness": self.data_freshness,
+            "data_quality": self.data_quality,
             "state_path": str(self.state_path),
         }
 
@@ -74,11 +81,23 @@ class PaperTradingEngine:
         starting_cash=500,
         min_trade_value=1.0,
         rebalance_threshold=0.0,
+        fill_log_path="data/paper/fills.csv",
+        candidate_id="",
+        supports_fractional=True,
+        quantity_precision=6,
+        order_type="MARKET",
+        limit_offset_bps=0.0,
     ):
         self.report_dir = Path(report_dir)
         self.starting_cash = starting_cash
         self.min_trade_value = min_trade_value
         self.rebalance_threshold = rebalance_threshold
+        self.fill_log_path = Path(fill_log_path)
+        self.candidate_id = candidate_id
+        self.supports_fractional = supports_fractional
+        self.quantity_precision = quantity_precision
+        self.order_type = order_type.upper()
+        self.limit_offset_bps = limit_offset_bps
 
     @property
     def state_path(self):
@@ -189,6 +208,7 @@ class PaperTradingEngine:
         dual_momentum_result,
         prices_by_symbol,
         data_freshness=None,
+        data_quality=None,
     ):
         if not dual_momentum_result.selections:
             raise ValueError("Cannot paper trade without a strategy selection.")
@@ -229,6 +249,7 @@ class PaperTradingEngine:
             selected_symbols=selection.symbols,
             model_context=model_context,
             data_freshness=data_freshness or {},
+            data_quality=data_quality or {},
             report_path=report_path,
             state_path=self.state_path,
         )
@@ -281,7 +302,12 @@ class PaperTradingEngine:
                 "fills": [],
                 "cash_after": cash,
                 "positions_after": positions,
-                "equity_after": self._equity(cash, positions, prices),
+                "equity_after": float(
+                    decision.get(
+                        "equity",
+                        self._equity(cash, positions, prices),
+                    )
+                ),
             }
 
         if not decision.get("orders", []):
@@ -295,7 +321,12 @@ class PaperTradingEngine:
                 "fills": [],
                 "cash_after": cash,
                 "positions_after": positions,
-                "equity_after": self._equity(cash, positions, prices),
+                "equity_after": float(
+                    decision.get(
+                        "equity",
+                        self._equity(cash, positions, prices),
+                    )
+                ),
             }
 
         fills = []
@@ -315,6 +346,7 @@ class PaperTradingEngine:
                 "dollar_delta": dollar_delta,
                 "price": order["price"],
                 "reason": order["reason"],
+                "fees": 0,
             })
 
         equity = self._equity(cash, positions, prices)
@@ -343,7 +375,79 @@ class PaperTradingEngine:
         state["last_fill_at"] = fill_record["filled_at"]
         state["last_decision_path"] = str(path)
         self._save_state(state)
+        self._append_fill_log(fill_record, decision)
         return fill_record
+
+    def apply_external_fill_record(self, decision_path, fill_record):
+        path = Path(decision_path)
+        decision = json.loads(path.read_text(encoding="utf-8"))
+        state = self._load_state()
+        decision_key = self._decision_key(path)
+        filled_decision_paths = state.setdefault("filled_decision_paths", [])
+        if decision_key in filled_decision_paths:
+            return {
+                **fill_record,
+                "status": "already_filled",
+                "already_filled": True,
+                "fills": [],
+            }
+
+        state.setdefault("fills", []).append(fill_record)
+        state.setdefault("equity_history", []).append({
+            "timestamp": decision.get("timestamp"),
+            "equity": fill_record.get("equity_after"),
+            "cash": fill_record.get("cash_after"),
+        })
+        filled_decision_paths.append(decision_key)
+        state["starting_cash"] = float(state.get("starting_cash", self.starting_cash))
+        state["cash"] = fill_record.get("cash_after", state.get("cash", self.starting_cash))
+        state["positions"] = fill_record.get("positions_after", {})
+        state["last_fill_at"] = fill_record.get("filled_at")
+        state["last_decision_path"] = str(path)
+        self._save_state(state)
+        self._append_fill_log(fill_record, decision)
+        return fill_record
+
+    def _append_fill_log(self, fill_record, decision):
+        if not fill_record.get("fills"):
+            return
+
+        self.fill_log_path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = [
+            "timestamp",
+            "broker_order_id",
+            "symbol",
+            "side",
+            "quantity",
+            "price",
+            "fees",
+            "strategy_id",
+            "candidate_id",
+        ]
+        exists = self.fill_log_path.exists()
+        strategy_id = (
+            decision.get("model_context", {}).get("strategy")
+            or "dual_momentum"
+        )
+
+        with self.fill_log_path.open("a", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            if not exists:
+                writer.writeheader()
+            for index, fill in enumerate(fill_record["fills"], start=1):
+                writer.writerow({
+                    "timestamp": fill_record["filled_at"],
+                    "broker_order_id": (
+                        f"paper-{fill_record['decision_timestamp']}-{index}"
+                    ),
+                    "symbol": fill["symbol"],
+                    "side": fill["side"],
+                    "quantity": abs(float(fill["quantity_delta"])),
+                    "price": fill["price"],
+                    "fees": fill.get("fees", 0),
+                    "strategy_id": strategy_id,
+                    "candidate_id": self.candidate_id,
+                })
 
     def _orders(
         self,
@@ -379,6 +483,18 @@ class PaperTradingEngine:
 
             quantity_delta = dollar_delta / price
             side = "BUY" if dollar_delta > 0 else "SELL"
+            quantity_delta = self._normalized_quantity_delta(
+                quantity_delta=quantity_delta,
+                side=side,
+                current_quantity=current_quantity,
+            )
+            if abs(quantity_delta) <= 0:
+                continue
+
+            dollar_delta = quantity_delta * price
+            if abs(dollar_delta) < self.min_trade_value:
+                continue
+
             score = scores.get(symbol)
             reason = self._order_reason(
                 symbol=symbol,
@@ -397,8 +513,42 @@ class PaperTradingEngine:
                 price=price,
                 reason=reason,
                 score=score,
+                order_type=self.order_type,
+                limit_price=self._limit_price(price, side),
             ))
-        return orders
+        return sorted(
+            orders,
+            key=lambda order: (
+                0 if order.side == "SELL" else 1,
+                -abs(order.dollar_delta) if order.side == "SELL" else 0,
+                -(order.score if order.score is not None else float("-inf")),
+                -abs(order.dollar_delta) if order.side == "BUY" else 0,
+                order.symbol,
+            ),
+        )
+
+    def _normalized_quantity_delta(self, quantity_delta, side, current_quantity):
+        if self.supports_fractional:
+            return round(quantity_delta, self.quantity_precision)
+
+        whole_quantity = int(abs(quantity_delta))
+        if whole_quantity <= 0:
+            return 0
+
+        if side == "SELL":
+            whole_quantity = min(whole_quantity, int(abs(current_quantity)))
+            return -float(whole_quantity)
+
+        return float(whole_quantity)
+
+    def _limit_price(self, price, side):
+        if self.order_type != "LIMIT":
+            return None
+
+        offset = self.limit_offset_bps / 10000
+        if side == "BUY":
+            return price * (1 + offset)
+        return price * (1 - offset)
 
     def _order_reason(
         self,

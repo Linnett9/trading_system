@@ -55,6 +55,41 @@ def apply_runtime_overrides(config, args):
                 stock_symbols
             )
 
+    if args.universe == "stooq_test":
+        stooq_test_symbols = config.get("research", {}).get(
+            "stooq_test_symbols", []
+        )
+        if stooq_test_symbols:
+            config["backtest"]["symbols"] = stooq_test_symbols
+            config["research"].setdefault("relative_strength", {})["symbols"] = (
+                stooq_test_symbols
+            )
+            config["research"].setdefault("dual_momentum", {})["symbols"] = (
+                stooq_test_symbols
+            )
+            config["research"].setdefault("multi_strategy", {})["symbols"] = (
+                stooq_test_symbols
+            )
+
+    if args.universe == "stooq_30":
+        research_config = config.setdefault("research", {})
+        import_symbols = research_config.get("stooq_30_symbols", [])
+        investable_symbols = research_config.get(
+            "stooq_30_investable_symbols", import_symbols
+        )
+        if import_symbols and investable_symbols:
+            research_config["stooq_import_symbols"] = import_symbols
+            config["backtest"]["symbols"] = investable_symbols
+            research_config.setdefault("relative_strength", {})["symbols"] = (
+                investable_symbols
+            )
+            research_config.setdefault("dual_momentum", {})["symbols"] = (
+                investable_symbols
+            )
+            research_config.setdefault("multi_strategy", {})["symbols"] = (
+                investable_symbols
+            )
+
     if args.universe == "all":
         dual_config = config["research"].get("dual_momentum", {})
         combined_symbols = unique_symbols(
@@ -76,6 +111,50 @@ def apply_runtime_overrides(config, args):
 
     if args.years is not None:
         config["backtest"]["years"] = args.years
+    elif (
+        getattr(args, "mode", None) in {
+            "ml-research", "ml-smoke-test", "champion-robustness",
+        }
+        and not args.fast
+        and config.get("ml", {}).get("research_years")
+    ):
+        config["backtest"]["years"] = int(config["ml"]["research_years"])
+
+    if getattr(args, "mode", None) in {
+        "ml-research", "ml-smoke-test", "champion-robustness",
+        "paper-dry-run",
+    }:
+        historical_provider = config.get("ml", {}).get("historical_data_provider")
+        if historical_provider:
+            config["backtest"]["provider"] = historical_provider
+        if historical_provider == "stooq_csv":
+            config["backtest"]["data_dir"] = config.get("ml", {}).get(
+                "stooq_csv_dir", "data/raw/stooq"
+            )
+        if historical_provider == "stooq_parquet":
+            config["backtest"]["data_dir"] = config.get("ml", {}).get(
+                "stooq_parquet_dir", "data/processed/stooq_parquet"
+            )
+
+    if getattr(args, "mode", None) == "paper-trial":
+        config["backtest"]["provider"] = "alpaca"
+        config.setdefault("paper_trading", {})["enabled"] = False
+        config["paper_trading"]["submit_orders"] = False
+        config["paper_trading"]["inspect_broker_state"] = False
+
+    if getattr(args, "mode", None) == "ml-smoke-test":
+        ml_config = config.setdefault("ml", {})
+        ml_config["minimum_history_years"] = int(
+            ml_config.get("smoke_test_minimum_history_years", 5)
+        )
+        ml_config["allow_short_history_for_smoke_test"] = True
+        ml_config["research_label"] = "SMOKE_TEST_NOT_PRODUCTION_VALIDATED"
+        ml_config["output_dir"] = str(
+            ml_config.get("smoke_test_output_dir", "reports/ml/smoke_test")
+        )
+        config.setdefault("cache", {})["ml_dir"] = str(
+            ml_config.get("smoke_test_cache_dir", "cache/ml/smoke_test")
+        )
 
     if getattr(args, "selector_mode", None):
         config["research"].setdefault("dual_momentum", {})[

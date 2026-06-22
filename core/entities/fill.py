@@ -10,3 +10,4 @@ class Fill:
     quantity: float
     price: float
     timestamp: datetime
+    fees: float = 0.0

@@ -57,13 +57,19 @@ trends, low-confirmation breakouts, and poor mean-reversion regimes.
 
 ## Main Commands
 
+Use the project Python version first:
+
+```bash
+pyenv shell 3.11.6
+```
+
 Run all tests:
 
 ```bash
 pytest -q tests
 ```
 
-Run a normal multi-symbol backtest:
+Run a normal multi-symbol backtest for the configured classic strategy:
 
 ```bash
 python main.py --mode backtest
@@ -98,6 +104,126 @@ Show fold-level walk-forward details:
 ```bash
 python main.py --mode walk-forward --details
 ```
+
+## Dual Momentum Commands
+
+Run the current frozen dual-momentum champion:
+
+```bash
+python main.py --mode dual-momentum --universe stocks
+```
+
+The active champion is configured in:
+
+```text
+config/config.yaml
+configs/champions/
+```
+
+The current higher-return paper/research champion is:
+
+```text
+ranked_top5_monthly_exposure90_v1
+source: ranked_top5_hyst2_rank10_replace2_min7_exposure90
+```
+
+Run the full risk-regime candidate comparison:
+
+```bash
+python main.py --mode dual-momentum-risk-regimes --universe stocks
+```
+
+Run walk-forward validation using the configured selector mode:
+
+```bash
+python main.py --mode dual-momentum-walk-forward --universe stocks
+```
+
+Run walk-forward with an explicit selector mode:
+
+```bash
+python main.py --mode dual-momentum-walk-forward --universe stocks --selector-mode research
+python main.py --mode dual-momentum-walk-forward --universe stocks --selector-mode paper
+python main.py --mode dual-momentum-walk-forward --universe stocks --selector-mode production
+```
+
+Run dual-momentum diagnostics for the active champion:
+
+```bash
+python main.py --mode dual-momentum-diagnosis --universe stocks
+```
+
+Use the risk-regime and walk-forward commands to compare candidates. Use the
+plain `dual-momentum` command to run the currently frozen champion itself.
+
+## Paper Trading Commands
+
+Paper trading is currently a local paper ledger / shadow-trading workflow. It
+does not mean live broker execution.
+
+Preview the current champion's proposed paper orders:
+
+```bash
+python main.py --mode paper-trade --universe stocks
+```
+
+Inspect the paper ledger:
+
+```bash
+python main.py --mode paper-status
+```
+
+Generate a paper performance report:
+
+```bash
+python main.py --mode paper-report --universe stocks
+```
+
+Generate the paper weekly summary:
+
+```bash
+python main.py --mode paper-weekly-summary
+```
+
+Generate the live-promotion checklist:
+
+```bash
+python main.py --mode paper-promotion-checklist
+```
+
+Submit/fill the approved dry-run decision into the local paper ledger:
+
+```bash
+python main.py --mode paper-trading --universe stocks --submit
+```
+
+The submit command requires the latest dry-run approval hashes to match the
+current target portfolio and order list.
+
+Manually fill the latest paper decision only when deliberately bypassing the
+approval workflow:
+
+```bash
+python main.py --mode paper-fill --confirm-fill
+```
+
+Prefer `paper-trading --dry-run`, inspect the proposed orders and risk report,
+then use `paper-trading --submit` if the decision still looks sensible.
+
+Repair paper state using latest prices:
+
+```bash
+python main.py --mode paper-repair --universe stocks
+```
+
+Reset the paper ledger:
+
+```bash
+python main.py --mode paper-reset --confirm-reset
+```
+
+Only reset when you intentionally want to erase local paper positions and fill
+history.
 
 ## Configuration
 
