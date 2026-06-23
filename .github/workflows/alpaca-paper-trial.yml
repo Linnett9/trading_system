@@ -30,7 +30,7 @@ jobs:
             echo "The seven-day trial window has ended; no market-data request was made."
             exit 0
           fi
-          python main.py --mode paper-trial --config configs/paper/alpaca_7day_trial.yaml --universe stooq_30
+          python main.py --mode paper-trading --submit --config configs/paper/alpaca_7day_trial.yaml --universe stooq_30
       - name: Upload trial reports
         if: always()
         uses: actions/upload-artifact@v4

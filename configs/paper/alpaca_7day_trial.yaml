@@ -6,9 +6,9 @@ backtest:
   timeframe: "1Day"
 
 paper_trading:
-  enabled: false
-  submit_orders: false
-  inspect_broker_state: false
+  enabled: true
+  submit_orders: true
+  inspect_broker_state: true
   report_dir: "reports/paper/alpaca_7day_trial"
   event_log_path: "reports/paper/alpaca_7day_trial/events.jsonl"
   dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
@@ -21,7 +21,7 @@ risk:
     max_turnover: 0.95
 
 broker:
-  adapter: "fake"
+  adapter: "alpaca"
 
 research:
   intraday_opening_range:
