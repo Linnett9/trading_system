@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
-from typing import Callable
+import os
+from typing import Any, Callable
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from core.entities.broker_capabilities import BrokerCapabilities
@@ -12,7 +14,11 @@ from core.interfaces.broker import IBroker
 
 
 class AlpacaBroker(IBroker):
-    """Minimal Alpaca paper-trading broker adapter."""
+    """Minimal Alpaca paper-trading broker adapter.
+
+    Uses Alpaca's paper trading API by default:
+    https://paper-api.alpaca.markets
+    """
 
     def __init__(
         self,
@@ -20,96 +26,149 @@ class AlpacaBroker(IBroker):
         opener: Callable | None = None,
     ):
         broker_config = config or {}
-        self.api_key = broker_config.get("api_key") or broker_config.get("API_KEY")
-        self.secret_key = broker_config.get("secret_key") or broker_config.get("SECRET_KEY")
+
+        self.api_key = (
+            broker_config.get("api_key")
+            or broker_config.get("API_KEY")
+            or os.getenv("ALPACA_API_KEY")
+            or os.getenv("APCA_API_KEY_ID")
+        )
+        self.secret_key = (
+            broker_config.get("secret_key")
+            or broker_config.get("SECRET_KEY")
+            or os.getenv("ALPACA_SECRET_KEY")
+            or os.getenv("APCA_API_SECRET_KEY")
+        )
+
+        self.base_url = str(
+            broker_config.get("base_url", "https://paper-api.alpaca.markets")
+        ).rstrip("/")
+
         self._opener = opener or urlopen
         self._fills: list[Fill] = []
-        self._orders: list[dict] = []
-        self._account: dict = {"cash": 0.0, "equity": 0.0}
+        self._orders: list[dict[str, Any]] = []
+        self._account: dict[str, Any] = {
+            "cash": 0.0,
+            "equity": 0.0,
+            "buying_power": 0.0,
+        }
         self._positions: dict[str, float] = {}
-        self.capabilities = BrokerCapabilities()
-        self.base_url = broker_config.get("base_url", "https://paper-api.alpaca.markets")
+
+        self.capabilities = BrokerCapabilities(
+            supports_fractional_shares=bool(
+                broker_config.get("supports_fractional", True)
+            ),
+            supports_market_orders=bool(
+                broker_config.get("supports_market_orders", True)
+            ),
+            supports_limit_orders=bool(
+                broker_config.get("supports_limit_orders", True)
+            ),
+            min_order_size=float(broker_config.get("min_order_notional", 1.0)),
+            asset_class=str(broker_config.get("asset_class", "equity")),
+            trading_hours=str(broker_config.get("trading_hours", "regular")),
+        )
 
     def get_account(self) -> dict:
-        if not self.api_key or not self.secret_key:
-            return dict(self._account)
-
-        request = Request(
-            f"{self.base_url}/v2/account",
-            headers={
-                "APCA-API-KEY-ID": self.api_key,
-                "APCA-API-SECRET-KEY": self.secret_key,
-                "Accept": "application/json",
-            },
-        )
-        with self._opener(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        payload = self._request_json("GET", "/v2/account")
 
         account = {
-            "cash": float(payload.get("cash", 0) or 0),
-            "equity": float(payload.get("portfolio_value", payload.get("equity", 0)) or 0),
-            "buying_power": float(payload.get("buying_power", payload.get("cash", 0)) or 0),
+            "cash": self._to_float(payload.get("cash")),
+            "equity": self._to_float(
+                payload.get("portfolio_value", payload.get("equity"))
+            ),
+            "buying_power": self._to_float(
+                payload.get("buying_power", payload.get("cash"))
+            ),
             "raw": payload,
         }
         self._account = account
         return dict(account)
 
     def get_positions(self) -> dict[str, float]:
-        return dict(self._positions)
+        payload = self._request_json("GET", "/v2/positions")
+
+        positions: dict[str, float] = {}
+        if isinstance(payload, list):
+            for row in payload:
+                symbol = str(row.get("symbol", "")).upper()
+                if not symbol:
+                    continue
+                positions[symbol] = self._to_float(row.get("qty"))
+
+        self._positions = positions
+        return dict(positions)
 
     def get_open_orders(self) -> list[dict]:
-        return list(self._orders)
+        payload = self._request_json("GET", "/v2/orders?status=open")
+
+        orders = payload if isinstance(payload, list) else []
+        self._orders = list(orders)
+        return list(orders)
 
     def get_capabilities(self) -> BrokerCapabilities:
         return self.capabilities
 
     def submit_order(self, order: Order) -> Fill:
+        self._require_credentials()
+
         payload = {
-            "symbol": order.symbol,
-            "qty": str(order.quantity),
-            "side": order.side.upper(),
+            "symbol": order.symbol.upper(),
+            "qty": str(abs(float(order.quantity))),
+            "side": order.side.lower(),
             "type": "market",
             "time_in_force": "day",
-            "order_class": "simple",
         }
-        request = Request(
-            "https://paper-api.alpaca.markets/v2/orders",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "APCA-API-KEY-ID": self.api_key,
-                "APCA-API-SECRET-KEY": self.secret_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            method="POST",
+
+        response_payload = self._request_json("POST", "/v2/orders", payload)
+
+        self._orders.append(
+            {
+                "id": response_payload.get("id"),
+                "symbol": response_payload.get("symbol", order.symbol.upper()),
+                "status": response_payload.get("status", "submitted"),
+                "raw": response_payload,
+            }
         )
-        with self._opener(request, timeout=30) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
+
+        filled_qty = self._to_float(response_payload.get("filled_qty"))
+        signed_qty = filled_qty if order.side.upper() == "BUY" else -filled_qty
+
+        price = self._to_float(response_payload.get("filled_avg_price"))
+        timestamp = self._parse_timestamp(
+            response_payload.get("filled_at")
+            or response_payload.get("submitted_at")
+            or response_payload.get("created_at")
+        )
 
         fill = Fill(
-            symbol=response_payload.get("symbol", order.symbol),
-            quantity=float(response_payload.get("filled_qty", 0) or 0),
-            price=float(response_payload.get("filled_avg_price", 0) or 0),
-            timestamp=datetime.fromisoformat(
-                response_payload.get("filled_at", "2026-01-01T00:00:00Z").replace("Z", "+00:00")
-            ),
+            symbol=response_payload.get("symbol", order.symbol.upper()),
+            quantity=signed_qty,
+            price=price,
+            timestamp=timestamp,
             fees=0.0,
         )
+
         self._fills.append(fill)
-        self._orders.append({
-            "id": response_payload.get("id"),
-            "symbol": response_payload.get("symbol", order.symbol),
-            "status": response_payload.get("status", "filled"),
-        })
-        self._positions[order.symbol] = self._positions.get(order.symbol, 0.0) + fill.quantity
+
+        if filled_qty:
+            self._positions[fill.symbol] = (
+                self._positions.get(fill.symbol, 0.0) + fill.quantity
+            )
+
         return fill
 
     def cancel_order(self, order_id: str) -> dict:
+        payload = self._request_json("DELETE", f"/v2/orders/{order_id}")
+
         for order in self._orders:
             if order.get("id") == order_id:
                 order["status"] = "canceled"
-                return order
-        return {"id": order_id, "status": "not_found"}
+
+        return payload if isinstance(payload, dict) else {
+            "id": order_id,
+            "status": "canceled",
+        }
 
     def get_fills(
         self,
@@ -117,8 +176,76 @@ class AlpacaBroker(IBroker):
         end: datetime | None = None,
     ) -> list[Fill]:
         fills = list(self._fills)
+
         if start is not None:
             fills = [fill for fill in fills if fill.timestamp >= start]
+
         if end is not None:
             fills = [fill for fill in fills if fill.timestamp <= end]
+
         return fills
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
+        self._require_credentials()
+
+        data = None
+        headers = {
+            "APCA-API-KEY-ID": str(self.api_key),
+            "APCA-API-SECRET-KEY": str(self.secret_key),
+            "Accept": "application/json",
+        }
+
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        request = Request(
+            f"{self.base_url}{path}",
+            data=data,
+            headers=headers,
+            method=method,
+        )
+
+        try:
+            with self._opener(request, timeout=30) as response:
+                body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Alpaca API request failed: {method} {path} "
+                f"status={exc.code} body={error_body}"
+            ) from exc
+
+        if not body:
+            return {}
+
+        return json.loads(body)
+
+    def _require_credentials(self) -> None:
+        if not self.api_key or not self.secret_key:
+            raise RuntimeError(
+                "Missing Alpaca credentials. Expected ALPACA_API_KEY and "
+                "ALPACA_SECRET_KEY environment variables, or api_key/secret_key "
+                "in broker config."
+            )
+
+    @staticmethod
+    def _to_float(value: Any) -> float:
+        if value is None or value == "":
+            return 0.0
+        return float(value)
+
+    @staticmethod
+    def _parse_timestamp(value: Any) -> datetime:
+        if not value:
+            return datetime.now(timezone.utc)
+
+        if isinstance(value, datetime):
+            return value
+
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
