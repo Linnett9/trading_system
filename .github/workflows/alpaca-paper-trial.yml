@@ -17,20 +17,29 @@ jobs:
       ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
       ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       PYTHONDONTWRITEBYTECODE: "1"
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: python -m pip install --requirement requirements.txt
-      - name: Run Alpaca data paper trial
+
+      - name: Generate paper-trading approval
         run: |
           if [ "$(date -u +%F)" \> "2026-06-28" ]; then
             echo "The seven-day trial window has ended; no market-data request was made."
             exit 0
           fi
+          python main.py --mode paper-dry-run --config configs/paper/alpaca_7day_trial.yaml --universe stooq_30
+
+      - name: Submit approved Alpaca paper orders
+        run: |
           python main.py --mode paper-trading --submit --config configs/paper/alpaca_7day_trial.yaml --universe stooq_30
+
       - name: Upload trial reports
         if: always()
         uses: actions/upload-artifact@v4
