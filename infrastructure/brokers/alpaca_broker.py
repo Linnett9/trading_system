@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from typing import Callable
-from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from core.entities.broker_capabilities import BrokerCapabilities
@@ -29,9 +28,31 @@ class AlpacaBroker(IBroker):
         self._account: dict = {"cash": 0.0, "equity": 0.0}
         self._positions: dict[str, float] = {}
         self.capabilities = BrokerCapabilities()
+        self.base_url = broker_config.get("base_url", "https://paper-api.alpaca.markets")
 
     def get_account(self) -> dict:
-        return dict(self._account)
+        if not self.api_key or not self.secret_key:
+            return dict(self._account)
+
+        request = Request(
+            f"{self.base_url}/v2/account",
+            headers={
+                "APCA-API-KEY-ID": self.api_key,
+                "APCA-API-SECRET-KEY": self.secret_key,
+                "Accept": "application/json",
+            },
+        )
+        with self._opener(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        account = {
+            "cash": float(payload.get("cash", 0) or 0),
+            "equity": float(payload.get("portfolio_value", payload.get("equity", 0)) or 0),
+            "buying_power": float(payload.get("buying_power", payload.get("cash", 0)) or 0),
+            "raw": payload,
+        }
+        self._account = account
+        return dict(account)
 
     def get_positions(self) -> dict[str, float]:
         return dict(self._positions)

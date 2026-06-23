@@ -22,7 +22,11 @@ risk:
 
 broker:
   adapter: "alpaca"
-
+  paper: true
+  base_url: "https://paper-api.alpaca.markets"
+  starting_cash: 500
+  sleeve_cash: 500
+  min_order_notional: 1.0
 ml:
   historical_data_provider: "alpaca"
 
