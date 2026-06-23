@@ -14,8 +14,8 @@ paper_trading:
   dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
   trial_end_date: "2026-06-28"
 
-# The model uses Stooq parquet historical data for decisions.
-# The broker adapter submits accepted orders to Alpaca paper.
+# Decision data comes from Alpaca because backtest.provider is alpaca.
+# Accepted orders are submitted through the Alpaca paper broker.
 risk:
   paper:
     max_position_weight: 0.30
