@@ -15,6 +15,7 @@ from application.services.paper_service import (
     create_paper_decision,
 )
 from application.services.broker_factory import build_broker
+from core.entities.broker_capabilities import BrokerCapabilities
 from core.entities.order import Order
 from core.research.dual_momentum_factory import build_dual_momentum_tester
 from core.entities.trading_mode import TradingMode
@@ -345,19 +346,40 @@ class PaperTradingService:
             for symbol, quantity in decision.current_positions.items()
         }
         broker_cash = float(account.get("cash", 0) or 0)
+        broker_buying_power = float(account.get("buying_power", broker_cash) or 0)
         local_cash = float(decision.cash)
         cash_tolerance = float(broker_config.get("cash_tolerance", 1.0))
         position_tolerance = float(broker_config.get("position_tolerance", 1e-6))
+        min_buying_power_buffer = float(
+            broker_config.get("min_buying_power_buffer", 0.0)
+        )
+        required_notional = sum(
+            abs(float(getattr(order, "dollar_delta", 0.0)or 0.0))
+            for order in decision.orders
+            if float(getattr(order, "quantity_delta", 0.0) or 0.0) != 0
+        )
+        if required_notional <= 0:
+            required_notional = sum(
+                abs(float(order.quantity_delta))
+                * float(
+                    order.limit_price
+                    if order.limit_price is not None
+                    else getattr(order, "price", 0.0) or 0.0
+                )
+                for order in decision.orders
+                if float(order.quantity_delta) != 0
+            )
+        required_notional = max(required_notional, 0.0)
         mismatches = []
 
-        cash_delta = broker_cash - local_cash
-        if abs(cash_delta) > cash_tolerance:
+        if broker_buying_power < required_notional + min_buying_power_buffer:
             mismatches.append({
-                "reason": "cash_mismatch",
+                "reason": "insufficient_buying_power",
                 "local_cash": local_cash,
                 "broker_cash": broker_cash,
-                "delta": cash_delta,
-                "tolerance": cash_tolerance,
+                "broker_buying_power": broker_buying_power,
+                "required_notional": required_notional,
+                "buffer": min_buying_power_buffer,
             })
 
         symbols = sorted(set(local_positions) | set(broker_positions))
@@ -380,7 +402,7 @@ class PaperTradingService:
             self._fill_to_dict(fill)
             for fill in broker.get_fills()
         ]
-        capabilities = broker.get_capabilities()
+        capabilities = broker.get_capabilities() or BrokerCapabilities()
         return {
             "passed": not mismatches,
             "timestamp": datetime.utcnow().isoformat(),
@@ -388,6 +410,8 @@ class PaperTradingService:
             "broker_capabilities": capabilities.to_dict(),
             "local_cash": local_cash,
             "broker_cash": broker_cash,
+            "broker_buying_power": broker_buying_power,
+            "required_notional": required_notional,
             "local_positions": local_positions,
             "broker_positions": broker_positions,
             "open_orders": open_orders,
