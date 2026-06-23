@@ -14,8 +14,6 @@ paper_trading:
   dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
   trial_end_date: "2026-06-28"
 
-# Decision data comes from Alpaca because backtest.provider is alpaca.
-# Accepted orders are submitted through the Alpaca paper broker.
 risk:
   paper:
     max_position_weight: 0.30
@@ -23,6 +21,9 @@ risk:
 
 broker:
   adapter: "alpaca"
+
+ml:
+  historical_data_provider: "alpaca"
 
 research:
   intraday_opening_range:

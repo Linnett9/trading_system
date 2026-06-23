@@ -41,6 +41,11 @@ jobs:
 
           python main.py --mode paper-dry-run --config configs/paper/alpaca_7day_trial.yaml
 
+          echo "---- DRY RUN PLAN ----"
+          cat reports/paper/alpaca_7day_trial/dry_run_rebalance_plan.json
+          echo "---- REPORT FILES ----"
+          ls -lh reports/paper/alpaca_7day_trial/
+
           python - <<'PY'
           import json
           import sys
@@ -52,11 +57,22 @@ jobs:
               sys.exit("Dry-run plan was not created; refusing to submit orders.")
 
           plan = json.loads(path.read_text())
+
           decision = plan.get("final_decision")
           blockers = plan.get("rejected_orders") or plan.get("blockers") or []
+          data_provider = plan.get("data_provider")
+          broker_mode = plan.get("broker_mode")
+          paper_enabled = plan.get("paper_enabled")
+          paper_submit_orders = plan.get("paper_submit_orders")
+          benchmark_freshness = plan.get("benchmark_freshness", {})
 
+          print(f"Dry-run data_provider={data_provider}")
+          print(f"Dry-run broker_mode={broker_mode}")
+          print(f"Dry-run paper_enabled={paper_enabled}")
+          print(f"Dry-run paper_submit_orders={paper_submit_orders}")
           print(f"Dry-run final_decision={decision}")
           print(f"Dry-run blockers={blockers}")
+          print(f"Dry-run benchmark_freshness={benchmark_freshness}")
 
           if decision != "dry_run_only":
               sys.exit("Dry-run was blocked; refusing to submit Alpaca paper orders.")
