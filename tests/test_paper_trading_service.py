@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
 
-from core.paper.paper_trading_engine import PaperOrder
+from core.paper.paper_trading_engine import PaperOrder, PaperTradingEngine
 from application.services.paper_trading_service import PaperTradingService
 
 
@@ -386,3 +386,66 @@ def test_run_with_broker_execution_adapter_submits_orders(monkeypatch, tmp_path)
     assert Path(tmp_path / "fills.csv").exists()
     assert result.reconciliation_report_path is not None
     assert result.reconciliation_report_path.exists()
+
+
+def test_sync_broker_state_uses_sleeve_cash_and_imports_positions(tmp_path):
+    engine = PaperTradingEngine(
+        report_dir=tmp_path,
+        starting_cash=500,
+    )
+
+    sync = engine.sync_broker_state(
+        account={
+            "cash": 99552.07,
+            "equity": 100000.0,
+            "buying_power": 399469.3,
+        },
+        positions={"AAPL": 0.382076, "QQQ": 0.17501},
+        prices_by_symbol={"AAPL": 293.32, "QQQ": 710.6},
+        sleeve_cash=500,
+        source="alpaca",
+    )
+
+    state = json.loads((tmp_path / "paper_state.json").read_text(encoding="utf-8"))
+    expected_position_value = (0.382076 * 293.32) + (0.17501 * 710.6)
+
+    assert sync["positions"] == {"AAPL": 0.382076, "QQQ": 0.17501}
+    assert sync["cash"] == 500 - expected_position_value
+    assert state["positions"] == {"AAPL": 0.382076, "QQQ": 0.17501}
+    assert state["cash"] == 500 - expected_position_value
+    assert state["last_broker_sync"]["cash_source"] == (
+        "sleeve_cash_minus_broker_position_value"
+    )
+
+
+def test_broker_reconciliation_skips_account_cash_mismatch_for_sleeve(tmp_path):
+    service = PaperTradingService(
+        config={
+            "paper_trading": {
+                "execution_adapter": "broker",
+                "report_dir": str(tmp_path),
+            },
+            "broker": {
+                "adapter": "fake",
+                "starting_cash": 99552.07,
+                "positions": {"AAPL": 0.382076},
+                "sleeve_cash": 500,
+                "cash_reconciliation": "sleeve",
+                "position_tolerance": 0.000001,
+            },
+        },
+        feed=None,
+    )
+    decision = SimpleNamespace(
+        timestamp=datetime(2026, 6, 1),
+        cash=387.92025668,
+        current_positions={"AAPL": 0.382076},
+        orders=[],
+    )
+
+    reconciliation = service._broker_reconciliation(decision)
+
+    assert reconciliation["passed"] is True
+    assert reconciliation["cash_reconciliation"] == "sleeve"
+    assert reconciliation["mismatches"] == []
+

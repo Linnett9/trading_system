@@ -1,40 +1,41 @@
 backtest:
-  provider: "alpaca"
-  data_feed: "iex"
-  data_adjustment: "all"
+  provider: alpaca
+  data_feed: iex
+  data_adjustment: all
   years: 2
-  timeframe: "1Day"
-
+  timeframe: 1Day
 paper_trading:
   enabled: true
   submit_orders: true
-  execution_adapter: "broker"
+  execution_adapter: broker
   inspect_broker_state: true
-  report_dir: "reports/paper/alpaca_7day_trial"
-  event_log_path: "reports/paper/alpaca_7day_trial/events.jsonl"
-  dashboard_path: "reports/paper/alpaca_7day_trial/dashboard.csv"
-  trial_end_date: "2026-06-28"
-
+  report_dir: reports/paper/alpaca_7day_trial
+  event_log_path: reports/paper/alpaca_7day_trial/events.jsonl
+  dashboard_path: reports/paper/alpaca_7day_trial/dashboard.csv
+  trial_end_date: '2026-06-28'
+  broker_state_source: broker
+  sync_broker_state_before_decision: true
 risk:
   paper:
-    max_position_weight: 0.30
+    max_position_weight: 0.3
     max_turnover: 0.95
-
 broker:
-  adapter: "alpaca"
+  adapter: alpaca
   paper: true
-  base_url: "https://paper-api.alpaca.markets"
+  base_url: https://paper-api.alpaca.markets
   starting_cash: 500
   sleeve_cash: 500
   min_order_notional: 1.0
+  cash_reconciliation: sleeve
+  cash_tolerance: 1.0
+  position_tolerance: 1.0e-06
 ml:
-  historical_data_provider: "alpaca"
-
+  historical_data_provider: alpaca
 research:
   intraday_opening_range:
     enabled: false
     research_only: true
-    timeframe: "5Min"
+    timeframe: 5Min
     opening_range_minutes: 30
     min_relative_volume: 1.5
     require_vwap_confirmation: true

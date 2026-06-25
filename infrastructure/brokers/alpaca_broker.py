@@ -37,6 +37,7 @@ class AlpacaBroker(IBroker):
             broker_config.get("secret_key")
             or broker_config.get("SECRET_KEY")
             or os.getenv("ALPACA_SECRET_KEY")
+            or os.getenv("ALPACA_SECRET")
             or os.getenv("APCA_API_SECRET_KEY")
         )
 
@@ -112,24 +113,26 @@ class AlpacaBroker(IBroker):
     def submit_order(self, order: Order) -> Fill:
         self._require_credentials()
 
-        payload = {
-            "symbol": order.symbol.upper(),
-            "qty": str(abs(float(order.quantity))),
-            "side": order.side.lower(),
-            "type": "market",
-            "time_in_force": "day",
-        }
-
+        payload = self._order_payload(order)
         response_payload = self._request_json("POST", "/v2/orders", payload)
 
-        self._orders.append(
-            {
-                "id": response_payload.get("id"),
-                "symbol": response_payload.get("symbol", order.symbol.upper()),
-                "status": response_payload.get("status", "submitted"),
-                "raw": response_payload,
-            }
-        )
+        broker_order = {
+            "id": response_payload.get("id"),
+            "symbol": response_payload.get("symbol", order.symbol.upper()),
+            "side": response_payload.get("side", order.side.lower()),
+            "type": response_payload.get("type", payload["type"]),
+            "status": response_payload.get("status", "submitted"),
+            "requested_qty": response_payload.get(
+                "qty",
+                str(abs(float(order.quantity))),
+            ),
+            "filled_qty": response_payload.get("filled_qty", "0"),
+            "filled_avg_price": response_payload.get("filled_avg_price"),
+            "submitted_at": response_payload.get("submitted_at"),
+            "filled_at": response_payload.get("filled_at"),
+            "raw": response_payload,
+        }
+        self._orders.append(broker_order)
 
         filled_qty = self._to_float(response_payload.get("filled_qty"))
         signed_qty = filled_qty if order.side.upper() == "BUY" else -filled_qty
@@ -149,9 +152,10 @@ class AlpacaBroker(IBroker):
             fees=0.0,
         )
 
-        self._fills.append(fill)
-
+        # Only record actual fills locally. An accepted/submitted Alpaca order
+        # can return filled_qty=0, which should not be treated as a real fill.
         if filled_qty:
+            self._fills.append(fill)
             self._positions[fill.symbol] = (
                 self._positions.get(fill.symbol, 0.0) + fill.quantity
             )
@@ -184,6 +188,27 @@ class AlpacaBroker(IBroker):
             fills = [fill for fill in fills if fill.timestamp <= end]
 
         return fills
+
+    def _order_payload(self, order: Order) -> dict[str, Any]:
+        order_type = str(order.order_type or "MARKET").lower()
+
+        if order_type not in {"market", "limit"}:
+            raise RuntimeError(f"Unsupported Alpaca order type: {order.order_type}")
+
+        payload = {
+            "symbol": order.symbol.upper(),
+            "qty": str(abs(float(order.quantity))),
+            "side": order.side.lower(),
+            "type": order_type,
+            "time_in_force": "day",
+        }
+
+        if order_type == "limit":
+            if order.limit_price is None or float(order.limit_price) <= 0:
+                raise RuntimeError("Limit order requires a positive limit_price.")
+            payload["limit_price"] = str(float(order.limit_price))
+
+        return payload
 
     def _request_json(
         self,

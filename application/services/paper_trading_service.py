@@ -66,43 +66,60 @@ class PaperTradingService:
         self._validate_mode()
         paper_config = self.config.get("paper_trading", {})
         submission_disabled = submit and not paper_config.get("submit_orders", True)
+
         if submission_disabled:
             submit = False
+
         candidate_id = (
             paper_config.get("paper_candidate_id")
             or self.config.get("paper_candidate_id", "")
         )
         run_id = self._run_id(candidate_id)
+
         decision = create_paper_decision(
             self.config,
             self.feed,
             build_dual_momentum_tester,
         )
+
         reproducibility = self._reproducibility_metadata(candidate_id)
         blocked_reason = self._blocked_reason(decision)
+
         if submission_disabled:
             blocked_reason = "paper_submission_disabled"
+
         risk_checks = pre_trade_risk_checks(decision, self.config)
-        risk_checks.extend(portfolio_kill_switch_checks(
-            current_equity=float(decision.equity),
-            equity_history=self._equity_history(),
-            config=self.config,
-        ))
-        risk_checks.extend(model_kill_switch_checks(
-            decision=decision,
-            config=self.config,
-            reproducibility=reproducibility,
-        ))
+
+        risk_checks.extend(
+            portfolio_kill_switch_checks(
+                current_equity=float(decision.equity),
+                equity_history=self._equity_history(),
+                config=self.config,
+            )
+        )
+
+        risk_checks.extend(
+            model_kill_switch_checks(
+                decision=decision,
+                config=self.config,
+                reproducibility=reproducibility,
+            )
+        )
+
         if risk_blocks_submission(risk_checks):
             blocked_reason = blocked_reason or "risk_check_failed"
+
         if submit or paper_config.get("inspect_broker_state", False):
             blocked_reason = blocked_reason or self._broker_blocked_reason(decision)
+
         order_preview_path = self._save_order_preview(decision)
+
         risk_report_path = self._save_risk_report(
             decision,
             risk_checks,
             reproducibility,
         )
+
         approval_path = None
         fill_record = None
         post_trade_checks = []
@@ -111,11 +128,13 @@ class PaperTradingService:
 
         if submit or paper_config.get("inspect_broker_state", False):
             broker_reconciliation = self._broker_reconciliation(decision)
+
             if broker_reconciliation is not None:
                 reconciliation_report_path = self._save_broker_reconciliation_report(
                     decision,
                     broker_reconciliation,
                 )
+
                 if not broker_reconciliation["passed"]:
                     blocked_reason = (
                         blocked_reason
@@ -123,6 +142,7 @@ class PaperTradingService:
                     )
 
         target_hash, order_hash = self._decision_hashes(decision)
+
         if dry_run:
             approval_path = self._save_dry_run_approval(
                 decision=decision,
@@ -136,10 +156,12 @@ class PaperTradingService:
 
         if should_fill:
             engine = build_paper_engine(self.config)
+
             if not decision.orders:
                 fill_record = engine.fill_latest_decision(decision.report_path)
             else:
                 approval_error = self._approval_error(target_hash, order_hash)
+
                 if approval_error:
                     blocked_reason = approval_error
                 elif paper_config.get("execution_adapter", "local_ledger") == "broker":
@@ -156,6 +178,7 @@ class PaperTradingService:
                 fill_record,
                 self.config,
             )
+
             reconciliation_report_path = self._save_reconciliation_report(
                 decision,
                 fill_record,
@@ -172,6 +195,7 @@ class PaperTradingService:
             post_trade_checks=post_trade_checks,
             blocked_reason=blocked_reason,
         )
+
         dashboard_path = self._append_dashboard(
             run_id=run_id,
             decision=decision,
@@ -180,6 +204,7 @@ class PaperTradingService:
             post_trade_checks=post_trade_checks,
             blocked_reason=blocked_reason,
         )
+
         metrics_summary_path = self._save_metrics_summary(
             run_id=run_id,
             candidate_id=candidate_id,
@@ -190,6 +215,7 @@ class PaperTradingService:
             blocked_reason=blocked_reason,
             reproducibility=reproducibility,
         )
+
         event_log_path = self._append_event_log(
             run_id=run_id,
             candidate_id=candidate_id,
@@ -210,6 +236,7 @@ class PaperTradingService:
                 "metrics_summary": metrics_summary_path,
             },
         )
+
         self._send_alerts(
             run_id=run_id,
             blocked_reason=blocked_reason,
@@ -247,6 +274,7 @@ class PaperTradingService:
         post_trade_checks: list[Any],
     ) -> None:
         alert_config = self.config.get("alerts", {})
+
         if not alert_config.get("enabled", True):
             return
 
@@ -306,24 +334,31 @@ class PaperTradingService:
 
     def _broker_blocked_reason(self, decision: Any) -> str | None:
         paper_config = self.config.get("paper_trading", {})
+
         if paper_config.get("execution_adapter", "local_ledger") != "broker":
             return None
 
         broker = self._build_broker_for_decision(decision)
+
         try:
             account = broker.get_account()
         except Exception as exc:
             return f"broker_account_state_unreadable:{exc}"
+
         if not account:
             return "broker_account_state_unreadable"
+
         open_orders = broker.get_open_orders()
         open_symbols = {
             str(order.get("symbol"))
             for order in open_orders
-            if order.get("status", "open") in {"open", "accepted", "new", "pending"}
+            if str(order.get("status", "open")).lower()
+            in {"open", "accepted", "new", "pending", "pending_new", "submitted"}
         }
+
         order_symbols = {order.symbol for order in decision.orders}
         conflicts = sorted(open_symbols & order_symbols)
+
         if conflicts:
             return "broker_open_order_conflict:" + ",".join(conflicts)
 
@@ -331,20 +366,24 @@ class PaperTradingService:
 
     def _broker_reconciliation(self, decision: Any) -> dict[str, Any] | None:
         paper_config = self.config.get("paper_trading", {})
+
         if paper_config.get("execution_adapter", "local_ledger") != "broker":
             return None
 
         broker_config = self.config.get("broker", {})
         broker = self._build_broker_for_decision(decision)
         account = broker.get_account()
+
         broker_positions = {
             symbol: float(quantity)
             for symbol, quantity in broker.get_positions().items()
         }
+
         local_positions = {
             symbol: float(quantity)
             for symbol, quantity in decision.current_positions.items()
         }
+
         broker_cash = float(account.get("cash", 0) or 0)
         broker_buying_power = float(account.get("buying_power", broker_cash) or 0)
         local_cash = float(decision.cash)
@@ -353,11 +392,19 @@ class PaperTradingService:
         min_buying_power_buffer = float(
             broker_config.get("min_buying_power_buffer", 0.0)
         )
+        cash_reconciliation = str(
+            broker_config.get(
+                "cash_reconciliation",
+                "sleeve" if broker_config.get("sleeve_cash") is not None else "account",
+            )
+        ).lower()
+
         required_notional = sum(
-            abs(float(getattr(order, "dollar_delta", 0.0)or 0.0))
+            abs(float(getattr(order, "dollar_delta", 0.0) or 0.0))
             for order in decision.orders
             if float(getattr(order, "quantity_delta", 0.0) or 0.0) != 0
         )
+
         if required_notional <= 0:
             required_notional = sum(
                 abs(float(order.quantity_delta))
@@ -369,40 +416,63 @@ class PaperTradingService:
                 for order in decision.orders
                 if float(order.quantity_delta) != 0
             )
+
         required_notional = max(required_notional, 0.0)
         mismatches = []
 
+        if (
+            cash_reconciliation == "account"
+            and abs(broker_cash - local_cash) > cash_tolerance
+        ):
+            mismatches.append(
+                {
+                    "reason": "cash_mismatch",
+                    "local_cash": local_cash,
+                    "broker_cash": broker_cash,
+                    "delta": broker_cash - local_cash,
+                    "tolerance": cash_tolerance,
+                }
+            )
+
         if broker_buying_power < required_notional + min_buying_power_buffer:
-            mismatches.append({
-                "reason": "insufficient_buying_power",
-                "local_cash": local_cash,
-                "broker_cash": broker_cash,
-                "broker_buying_power": broker_buying_power,
-                "required_notional": required_notional,
-                "buffer": min_buying_power_buffer,
-            })
+            mismatches.append(
+                {
+                    "reason": "insufficient_buying_power",
+                    "local_cash": local_cash,
+                    "broker_cash": broker_cash,
+                    "broker_buying_power": broker_buying_power,
+                    "required_notional": required_notional,
+                    "buffer": min_buying_power_buffer,
+                }
+            )
 
         symbols = sorted(set(local_positions) | set(broker_positions))
+
         for symbol in symbols:
             local_quantity = local_positions.get(symbol, 0.0)
             broker_quantity = broker_positions.get(symbol, 0.0)
             quantity_delta = broker_quantity - local_quantity
+
             if abs(quantity_delta) > position_tolerance:
-                mismatches.append({
-                    "reason": "position_mismatch",
-                    "symbol": symbol,
-                    "local_quantity": local_quantity,
-                    "broker_quantity": broker_quantity,
-                    "delta": quantity_delta,
-                    "tolerance": position_tolerance,
-                })
+                mismatches.append(
+                    {
+                        "reason": "position_mismatch",
+                        "symbol": symbol,
+                        "local_quantity": local_quantity,
+                        "broker_quantity": broker_quantity,
+                        "delta": quantity_delta,
+                        "tolerance": position_tolerance,
+                    }
+                )
 
         open_orders = broker.get_open_orders()
         recent_fills = [
             self._fill_to_dict(fill)
             for fill in broker.get_fills()
         ]
+
         capabilities = broker.get_capabilities() or BrokerCapabilities()
+
         return {
             "passed": not mismatches,
             "timestamp": datetime.utcnow().isoformat(),
@@ -411,6 +481,8 @@ class PaperTradingService:
             "local_cash": local_cash,
             "broker_cash": broker_cash,
             "broker_buying_power": broker_buying_power,
+            "cash_reconciliation": cash_reconciliation,
+            "broker_sleeve_cash": broker_config.get("sleeve_cash"),
             "required_notional": required_notional,
             "local_positions": local_positions,
             "broker_positions": broker_positions,
@@ -421,54 +493,110 @@ class PaperTradingService:
 
     def _submit_with_broker(self, decision: Any) -> dict[str, Any]:
         broker = self._build_broker_for_decision(decision)
-        fills = []
+        fills: list[dict[str, Any]] = []
+        submitted_orders: list[dict[str, Any]] = []
 
         for paper_order in decision.orders:
+            requested_quantity = abs(float(paper_order.quantity_delta))
+
             order = Order(
                 symbol=paper_order.symbol,
                 side=paper_order.side,
-                quantity=abs(paper_order.quantity_delta),
+                quantity=requested_quantity,
                 timestamp=datetime.utcnow(),
                 order_type=paper_order.order_type,
                 limit_price=paper_order.limit_price,
             )
+
             fill = broker.submit_order(order)
-            fills.append({
-                "symbol": fill.symbol,
-                "side": paper_order.side,
-                "quantity_delta": fill.quantity,
-                "dollar_delta": fill.quantity * fill.price,
-                "price": fill.price,
-                "fees": fill.fees,
-                "requested_quantity": abs(paper_order.quantity_delta),
-                "filled_quantity": abs(fill.quantity),
-                "unfilled_quantity": max(
-                    abs(paper_order.quantity_delta) - abs(fill.quantity),
-                    0,
-                ),
-                "order_type": paper_order.order_type,
-                "limit_price": paper_order.limit_price,
-                "reason": paper_order.reason,
-            })
+
+            filled_quantity = abs(float(getattr(fill, "quantity", 0.0) or 0.0))
+            unfilled_quantity = max(requested_quantity - filled_quantity, 0.0)
+
+            submitted_orders.append(
+                {
+                    "symbol": paper_order.symbol,
+                    "side": paper_order.side,
+                    "requested_quantity": requested_quantity,
+                    "filled_quantity": filled_quantity,
+                    "unfilled_quantity": unfilled_quantity,
+                    "order_type": paper_order.order_type,
+                    "limit_price": paper_order.limit_price,
+                    "reason": paper_order.reason,
+                }
+            )
+
+            # Alpaca may accept/submit an order without filling it immediately.
+            # Only record an actual fill when the broker reports non-zero quantity.
+            if filled_quantity > 0:
+                fills.append(
+                    {
+                        "symbol": fill.symbol,
+                        "side": paper_order.side,
+                        "quantity_delta": fill.quantity,
+                        "dollar_delta": fill.quantity * fill.price,
+                        "price": fill.price,
+                        "fees": fill.fees,
+                        "requested_quantity": requested_quantity,
+                        "filled_quantity": filled_quantity,
+                        "unfilled_quantity": unfilled_quantity,
+                        "order_type": paper_order.order_type,
+                        "limit_price": paper_order.limit_price,
+                        "reason": paper_order.reason,
+                    }
+                )
 
         account = broker.get_account()
+        positions_after = broker.get_positions()
+        open_orders_after = broker.get_open_orders()
+
+        open_order_statuses = {
+            "open",
+            "accepted",
+            "new",
+            "pending",
+            "pending_new",
+            "partially_filled",
+            "submitted",
+        }
+
+        open_orders_remaining = [
+            order for order in open_orders_after
+            if str(order.get("status", "")).lower() in open_order_statuses
+        ]
+
+        if fills and open_orders_remaining:
+            status = "partial"
+        elif fills:
+            status = "filled"
+        elif submitted_orders:
+            status = "submitted"
+        else:
+            status = "submitted"
+
         fill_record = {
-            "status": "filled",
+            "status": status,
             "already_filled": False,
             "no_orders": False,
-            "filled_at": datetime.utcnow().isoformat(),
+            "filled_at": (
+                datetime.utcnow().isoformat()
+                if status in {"filled", "partial"}
+                else None
+            ),
             "decision_path": str(decision.report_path),
             "decision_timestamp": decision.timestamp.isoformat(),
             "fills": fills,
+            "submitted_orders": submitted_orders,
             "cash_after": account.get("cash"),
-            "positions_after": broker.get_positions(),
+            "positions_after": positions_after,
             "equity_after": account.get("equity"),
             "broker_adapter": self.config.get("broker", {}).get("adapter", "fake"),
-            "open_orders_after": broker.get_open_orders(),
+            "open_orders_after": open_orders_after,
         }
+
         engine = build_paper_engine(self.config)
         return engine.apply_external_fill_record(decision.report_path, fill_record)
-
+    
     def _build_broker_for_decision(self, decision: Any) -> Any:
         return build_broker(self.config, prices=self._decision_prices(decision))
 

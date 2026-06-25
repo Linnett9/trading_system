@@ -36,6 +36,8 @@ DEFAULT_CONFIG = {
         "dashboard_path": "reports/paper/dashboard.csv",
         "execution_adapter": "local_ledger",
         "inspect_broker_state": False,
+        "broker_state_source": "local",
+        "sync_broker_state_before_decision": False,
     },
     "trading": {
         "mode": "paper",
@@ -55,6 +57,8 @@ DEFAULT_CONFIG = {
         "open_orders": [],
         "cash_tolerance": 1.0,
         "position_tolerance": 1e-6,
+        "cash_reconciliation": "account",
+        "sleeve_cash": None,
     },
     "portfolio": {
         "cash_buffer_percent": 0.02,
@@ -999,8 +1003,15 @@ def load_config(path="config/config.yaml", overlay_project_config=False):
 def _apply_environment_credentials(config):
     """Keep provider credentials out of tracked configuration files."""
     alpaca_config = config.setdefault("alpaca", {})
-    api_key = os.environ.get("ALPACA_API_KEY")
-    secret_key = os.environ.get("ALPACA_SECRET_KEY")
+    api_key = (
+        os.environ.get("ALPACA_API_KEY")
+        or os.environ.get("APCA_API_KEY_ID")
+    )
+    secret_key = (
+        os.environ.get("ALPACA_SECRET_KEY")
+        or os.environ.get("ALPACA_SECRET")
+        or os.environ.get("APCA_API_SECRET_KEY")
+    )
     if api_key:
         alpaca_config["api_key"] = api_key
     if secret_key:
@@ -1047,6 +1058,28 @@ def validate_config(config):
             f"'{execution_adapter}'. Use one of: {allowed}"
         )
 
+    broker_state_source = str(
+        paper_config.get("broker_state_source", "local")
+    ).lower()
+    allowed_broker_state_sources = {"local", "broker"}
+    if broker_state_source not in allowed_broker_state_sources:
+        allowed = ", ".join(sorted(allowed_broker_state_sources))
+        raise RuntimeError(
+            "Unsupported paper_trading.broker_state_source "
+            f"'{broker_state_source}'. Use one of: {allowed}"
+        )
+
+    cash_reconciliation = str(
+        broker_config.get("cash_reconciliation", "account")
+    ).lower()
+    allowed_cash_reconciliation = {"account", "sleeve", "off"}
+    if cash_reconciliation not in allowed_cash_reconciliation:
+        allowed = ", ".join(sorted(allowed_cash_reconciliation))
+        raise RuntimeError(
+            "Unsupported broker.cash_reconciliation "
+            f"'{cash_reconciliation}'. Use one of: {allowed}"
+        )
+
     if broker_adapter == "alpaca":
         missing = [
             name for name in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY")
@@ -1057,7 +1090,8 @@ def validate_config(config):
         if missing:
             raise RuntimeError(
                 "Alpaca broker selected or Alpaca data provider selected; required environment variables "
-                f"are missing: {', '.join(missing)}"
+                f"are missing: {', '.join(missing)}. "
+                "Accepted aliases include APCA_API_KEY_ID, ALPACA_SECRET, and APCA_API_SECRET_KEY."
             )
 
     order_type = str(execution_config.get("order_type", "market")).lower()

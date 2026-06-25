@@ -7,6 +7,7 @@ from application.services.market_data_loader import (
     latest_data_freshness,
 )
 from application.services.dual_momentum_config import active_dual_momentum_config
+from application.services.broker_factory import build_broker
 from core.paper.paper_trading_engine import PaperTradingEngine
 
 
@@ -27,6 +28,7 @@ def create_paper_decision(config, feed, build_dual_momentum_tester):
     result = tester.run(candles_by_symbol)
     prices_by_symbol = latest_prices(candles_by_symbol)
     engine = build_paper_engine(config)
+    _sync_broker_state_before_decision(config, engine, prices_by_symbol)
 
     decision = engine.create_decision(
         result,
@@ -58,6 +60,43 @@ def create_paper_decision(config, feed, build_dual_momentum_tester):
     decision.model_context["benchmark_available"] = bool(candles_by_symbol.get(dual_config.get("regime_symbol", "SPY")))
     decision.model_context["max_pairwise_correlation"] = max(correlations, default=0.0)
     return decision
+
+
+def _sync_broker_state_before_decision(config, engine, prices_by_symbol):
+    paper_config = config.get("paper_trading", {})
+    broker_config = config.get("broker", {})
+
+    if paper_config.get("execution_adapter", "local_ledger") != "broker":
+        return None
+
+    broker_state_source = str(
+        paper_config.get("broker_state_source", "local")
+    ).lower()
+    sync_enabled = bool(
+        paper_config.get("sync_broker_state_before_decision", False)
+        or broker_state_source == "broker"
+    )
+
+    if not sync_enabled:
+        return None
+
+    broker = build_broker(config, prices=prices_by_symbol)
+    account = broker.get_account()
+    positions = broker.get_positions()
+
+    sleeve_cash = broker_config.get("sleeve_cash")
+    if sleeve_cash is None and str(
+        broker_config.get("cash_reconciliation", "")
+    ).lower() == "sleeve":
+        sleeve_cash = config.get("backtest", {}).get("starting_equity")
+
+    return engine.sync_broker_state(
+        account=account,
+        positions=positions,
+        prices_by_symbol=prices_by_symbol,
+        sleeve_cash=sleeve_cash,
+        source=str(broker_config.get("adapter", "broker")),
+    )
 
 
 def _returns(candles):

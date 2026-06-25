@@ -144,11 +144,18 @@ class PaperTradingEngine:
         prices_by_symbol = prices_by_symbol or {}
         before_fills = len(state.get("fills", []))
         before_equity = len(state.get("equity_history", []))
+
+        # Preserve both real fills and broker-submission audit records.
         fills = [
             fill
             for fill in state.get("fills", [])
-            if fill.get("fills")
+            if (
+                fill.get("fills")
+                or fill.get("submitted_orders")
+                or fill.get("status") in {"submitted", "partial", "filled"}
+            )
         ]
+
         positions = {
             symbol: float(quantity)
             for symbol, quantity in state.get("positions", {}).items()
@@ -160,6 +167,7 @@ class PaperTradingEngine:
             if float(item.get("equity", 0) or 0) > 0
         ]
         equity = self._equity(cash, positions, prices_by_symbol)
+
         if prices_by_symbol:
             equity_history.append({
                 "timestamp": datetime.utcnow().isoformat(),
@@ -176,6 +184,7 @@ class PaperTradingEngine:
         state.setdefault("filled_decision_paths", [])
         state["last_repair_at"] = datetime.utcnow().isoformat()
         self._save_state(state)
+
         return {
             "state_path": str(self.state_path),
             "removed_empty_fills": before_fills - len(fills),
@@ -201,6 +210,112 @@ class PaperTradingEngine:
             "state_path": str(self.state_path),
             "cash": self.starting_cash,
             "positions": {},
+        }
+
+    def sync_broker_state(
+        self,
+        account,
+        positions,
+        prices_by_symbol=None,
+        sleeve_cash=None,
+        source="broker",
+    ):
+        """Import broker positions into the local paper ledger.
+
+        This is intentionally a ledger sync, not an order/fill. It is used when
+        a real paper broker is the source of truth before the next decision is
+        generated. For sleeve-style paper trials, pass sleeve_cash so the local
+        ledger keeps the strategy's $500 sleeve separate from the broker's full
+        paper-account cash balance.
+        """
+        state = self._load_state()
+        prices_by_symbol = prices_by_symbol or {}
+
+        clean_positions = {
+            str(symbol).upper(): float(quantity)
+            for symbol, quantity in (positions or {}).items()
+            if abs(float(quantity or 0.0)) > 1e-10
+        }
+
+        broker_cash = self._float_or_none((account or {}).get("cash"))
+        broker_equity = self._float_or_none(
+            (account or {}).get("equity")
+            if (account or {}).get("equity") is not None
+            else (account or {}).get("portfolio_value")
+        )
+        broker_buying_power = self._float_or_none(
+            (account or {}).get("buying_power")
+        )
+
+        position_value = sum(
+            quantity * float(prices_by_symbol.get(symbol, 0.0) or 0.0)
+            for symbol, quantity in clean_positions.items()
+        )
+
+        if sleeve_cash is not None:
+            local_starting_cash = float(sleeve_cash)
+            local_cash = local_starting_cash - position_value
+            cash_source = "sleeve_cash_minus_broker_position_value"
+        elif broker_cash is not None:
+            local_starting_cash = float(
+                state.get("starting_cash", self.starting_cash)
+            )
+            local_cash = float(broker_cash)
+            cash_source = "broker_cash"
+        else:
+            local_starting_cash = float(
+                state.get("starting_cash", self.starting_cash)
+            )
+            local_cash = float(state.get("cash", self.starting_cash))
+            cash_source = "existing_local_cash"
+
+        local_equity = self._equity(local_cash, clean_positions, prices_by_symbol)
+        unpriced_positions = sorted(
+            symbol for symbol in clean_positions
+            if float(prices_by_symbol.get(symbol, 0.0) or 0.0) <= 0
+        )
+
+        state.setdefault("fills", [])
+        state.setdefault("equity_history", [])
+        state.setdefault("filled_decision_paths", [])
+        state["starting_cash"] = local_starting_cash
+        state["cash"] = local_cash
+        state["positions"] = clean_positions
+        state["last_broker_sync_at"] = datetime.utcnow().isoformat()
+        state["last_broker_sync_source"] = source
+        state["last_broker_sync"] = {
+            "source": source,
+            "cash_source": cash_source,
+            "broker_cash": broker_cash,
+            "broker_equity": broker_equity,
+            "broker_buying_power": broker_buying_power,
+            "sleeve_cash": (
+                float(sleeve_cash) if sleeve_cash is not None else None
+            ),
+            "position_value": position_value,
+            "local_cash": local_cash,
+            "local_equity": local_equity,
+            "positions": clean_positions,
+            "unpriced_positions": unpriced_positions,
+        }
+        state["equity_history"].append({
+            "timestamp": state["last_broker_sync_at"],
+            "equity": local_equity,
+            "cash": local_cash,
+            "source": "broker_sync",
+        })
+
+        self._save_state(state)
+
+        return {
+            "state_path": str(self.state_path),
+            "cash": local_cash,
+            "positions": clean_positions,
+            "equity": local_equity,
+            "position_value": position_value,
+            "unpriced_positions": unpriced_positions,
+            "source": source,
+            "cash_source": cash_source,
         }
 
     def create_decision(
@@ -257,6 +372,7 @@ class PaperTradingEngine:
             json.dumps(decision.to_dict(), indent=2),
             encoding="utf-8",
         )
+
         if not self.state_path.exists():
             self._save_state({
                 "starting_cash": self.starting_cash,
@@ -266,6 +382,7 @@ class PaperTradingEngine:
                 "created_at": datetime.utcnow().isoformat(),
                 "note": "Initial paper state. Orders are not auto-filled.",
             })
+
         return decision
 
     def fill_latest_decision(self, decision_path=None):
@@ -275,6 +392,7 @@ class PaperTradingEngine:
             if decision_path
             else self._latest_decision_path()
         )
+
         if path is None:
             raise FileNotFoundError("No paper decision file found to fill.")
 
@@ -291,6 +409,7 @@ class PaperTradingEngine:
             order["symbol"]: float(order["price"])
             for order in decision.get("orders", [])
         }
+
         if decision_key in filled_decision_paths:
             return {
                 "status": "already_filled",
@@ -311,7 +430,7 @@ class PaperTradingEngine:
             }
 
         if not decision.get("orders", []):
-            return {
+            fill_record = {
                 "status": "no_orders",
                 "already_filled": False,
                 "no_orders": True,
@@ -328,6 +447,10 @@ class PaperTradingEngine:
                     )
                 ),
             }
+            filled_decision_paths.append(decision_key)
+            state["last_decision_path"] = str(path)
+            self._save_state(state)
+            return fill_record
 
         fills = []
 
@@ -337,8 +460,10 @@ class PaperTradingEngine:
             dollar_delta = float(order["dollar_delta"])
             cash -= dollar_delta
             positions[symbol] = positions.get(symbol, 0) + quantity_delta
+
             if abs(positions[symbol]) < 1e-10:
                 positions.pop(symbol)
+
             fills.append({
                 "symbol": symbol,
                 "side": order["side"],
@@ -376,6 +501,7 @@ class PaperTradingEngine:
         state["last_decision_path"] = str(path)
         self._save_state(state)
         self._append_fill_log(fill_record, decision)
+
         return fill_record
 
     def apply_external_fill_record(self, decision_path, fill_record):
@@ -384,6 +510,7 @@ class PaperTradingEngine:
         state = self._load_state()
         decision_key = self._decision_key(path)
         filled_decision_paths = state.setdefault("filled_decision_paths", [])
+
         if decision_key in filled_decision_paths:
             return {
                 **fill_record,
@@ -393,19 +520,50 @@ class PaperTradingEngine:
             }
 
         state.setdefault("fills", []).append(fill_record)
-        state.setdefault("equity_history", []).append({
-            "timestamp": decision.get("timestamp"),
-            "equity": fill_record.get("equity_after"),
-            "cash": fill_record.get("cash_after"),
-        })
-        filled_decision_paths.append(decision_key)
+
+        equity_after = fill_record.get("equity_after")
+        cash_after = fill_record.get("cash_after")
+        positions_after = fill_record.get("positions_after")
+
+        if equity_after is not None:
+            state.setdefault("equity_history", []).append({
+                "timestamp": decision.get("timestamp"),
+                "equity": equity_after,
+                "cash": cash_after,
+            })
+
+        status = str(fill_record.get("status", "")).lower()
+
+        # Only mark a decision as completed when the broker-side rebalance is
+        # truly complete. Submitted/partial orders are audit records, not final
+        # completed fills.
+        if status in {"filled", "no_orders"}:
+            filled_decision_paths.append(decision_key)
+
         state["starting_cash"] = float(state.get("starting_cash", self.starting_cash))
-        state["cash"] = fill_record.get("cash_after", state.get("cash", self.starting_cash))
-        state["positions"] = fill_record.get("positions_after", {})
-        state["last_fill_at"] = fill_record.get("filled_at")
+
+        if cash_after is not None:
+            state["cash"] = cash_after
+        else:
+            state.setdefault("cash", self.starting_cash)
+
+        if positions_after is not None:
+            state["positions"] = positions_after
+        else:
+            state.setdefault("positions", {})
+
+        if fill_record.get("filled_at"):
+            state["last_fill_at"] = fill_record.get("filled_at")
+
         state["last_decision_path"] = str(path)
+
+        if status in {"submitted", "partial"}:
+            state["last_open_order_decision_path"] = str(path)
+            state["last_open_order_status"] = status
+
         self._save_state(state)
         self._append_fill_log(fill_record, decision)
+
         return fill_record
 
     def _append_fill_log(self, fill_record, decision):
@@ -432,13 +590,16 @@ class PaperTradingEngine:
 
         with self.fill_log_path.open("a", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
+
             if not exists:
                 writer.writeheader()
+
             for index, fill in enumerate(fill_record["fills"], start=1):
                 writer.writerow({
-                    "timestamp": fill_record["filled_at"],
+                    "timestamp": fill_record.get("filled_at"),
                     "broker_order_id": (
-                        f"paper-{fill_record['decision_timestamp']}-{index}"
+                        fill.get("broker_order_id")
+                        or f"paper-{fill_record['decision_timestamp']}-{index}"
                     ),
                     "symbol": fill["symbol"],
                     "side": fill["side"],
@@ -463,8 +624,10 @@ class PaperTradingEngine:
     ):
         orders = []
         symbols = sorted(set(positions) | set(target_weights))
+
         for symbol in symbols:
             price = prices_by_symbol.get(symbol)
+
             if price is None or price <= 0:
                 continue
 
@@ -473,11 +636,13 @@ class PaperTradingEngine:
             current_weight = current_value / equity if equity else 0
             target_weight = target_weights.get(symbol, 0) * exposure_target
             drift_weight = target_weight - current_weight
+
             if abs(drift_weight) < rebalance_threshold:
                 continue
 
             target_value = equity * target_weight
             dollar_delta = target_value - current_value
+
             if abs(dollar_delta) < self.min_trade_value:
                 continue
 
@@ -488,10 +653,12 @@ class PaperTradingEngine:
                 side=side,
                 current_quantity=current_quantity,
             )
+
             if abs(quantity_delta) <= 0:
                 continue
 
             dollar_delta = quantity_delta * price
+
             if abs(dollar_delta) < self.min_trade_value:
                 continue
 
@@ -502,6 +669,7 @@ class PaperTradingEngine:
                 score=score,
                 model_context=model_context,
             )
+
             orders.append(PaperOrder(
                 symbol=symbol,
                 side=side,
@@ -516,6 +684,7 @@ class PaperTradingEngine:
                 order_type=self.order_type,
                 limit_price=self._limit_price(price, side),
             ))
+
         return sorted(
             orders,
             key=lambda order: (
@@ -532,6 +701,7 @@ class PaperTradingEngine:
             return round(quantity_delta, self.quantity_precision)
 
         whole_quantity = int(abs(quantity_delta))
+
         if whole_quantity <= 0:
             return 0
 
@@ -546,8 +716,10 @@ class PaperTradingEngine:
             return None
 
         offset = self.limit_offset_bps / 10000
+
         if side == "BUY":
             return price * (1 + offset)
+
         return price * (1 - offset)
 
     def _order_reason(
@@ -562,6 +734,7 @@ class PaperTradingEngine:
 
         selection_mode = model_context.get("selection_mode")
         ranking_mode = model_context.get("ranking_score_mode")
+
         if selection_mode == "all_positive":
             reason = "positive momentum asset in all-positive mode"
         else:
@@ -580,6 +753,7 @@ class PaperTradingEngine:
     def _model_context(self, dual_momentum_result, selection):
         config = dual_momentum_result.config
         target_weight_sum = sum((selection.target_weights or {}).values())
+
         return {
             "strategy": "dual_momentum",
             "selection_mode": config.get("selection_mode"),
@@ -616,6 +790,7 @@ class PaperTradingEngine:
             return "The model moved to cash because risk conditions failed."
 
         mode = config.get("selection_mode")
+
         if mode == "all_positive":
             universe_reason = (
                 "all assets with positive momentum and passing filters"
@@ -629,16 +804,20 @@ class PaperTradingEngine:
             f"The model selected {universe_reason}.",
             f"Regime is {selection.regime_label}.",
         ]
+
         if getattr(selection, "chop_filter_active", False):
             pieces.append(
                 "Chop filter reduced exposure because broad momentum is weak."
             )
+
         if getattr(selection, "fast_reentry", False):
             pieces.append(
                 "Fast re-entry allowed partial risk after recovery signals."
             )
+
         if getattr(selection, "drawdown_guard_active", False):
             pieces.append("Drawdown guard is active.")
+
         return " ".join(pieces)
 
     def _skipped_assets(self, config, selection):
@@ -651,6 +830,7 @@ class PaperTradingEngine:
             key=lambda item: item[1],
             reverse=True,
         )
+
         for rank, (symbol, score) in enumerate(ranked_scores, start=1):
             if symbol in selected:
                 continue
@@ -670,6 +850,7 @@ class PaperTradingEngine:
                 "score": score,
                 "reason": reason,
             })
+
         return skipped
 
     def _equity(self, cash, positions, prices_by_symbol):
@@ -677,6 +858,14 @@ class PaperTradingEngine:
             quantity * prices_by_symbol.get(symbol, 0)
             for symbol, quantity in positions.items()
         )
+
+    def _float_or_none(self, value):
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _load_state(self):
         try:
