@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import ctypes.util
 from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
+import platform
 from statistics import mean
 from typing import Any
 
@@ -291,6 +293,8 @@ def build_meta_dataset_rows(
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     rows = []
     missing_counts = {model: 0 for model in source_predictions}
+    auxiliary_prediction_columns_by_model: dict[str, list[str]] = {}
+    ignored_leakage_columns_by_model: dict[str, list[str]] = {}
     duplicate_feature_ids = len(expanded_rows) - len({row["feature_id"] for row in expanded_rows})
     expanded_by_id = {row["feature_id"]: row for row in expanded_rows}
     all_feature_ids = sorted(
@@ -323,6 +327,19 @@ def build_meta_dataset_rows(
             row[f"{model}_calibrated_probability"] = (
                 prediction.get("calibrated_probability") or prediction["raw_probability"]
             )
+            auxiliary_features, ignored_columns = _source_prediction_feature_values(
+                model,
+                prediction,
+            )
+            auxiliary_prediction_columns_by_model.setdefault(model, [])
+            ignored_leakage_columns_by_model.setdefault(model, [])
+            for name, value in auxiliary_features.items():
+                row[name] = value
+                if name not in auxiliary_prediction_columns_by_model[model]:
+                    auxiliary_prediction_columns_by_model[model].append(name)
+            for name in ignored_columns:
+                if name not in ignored_leakage_columns_by_model[model]:
+                    ignored_leakage_columns_by_model[model].append(name)
         for name in (
             "variant_top_n",
             "variant_universe_symbol_count",
@@ -351,6 +368,14 @@ def build_meta_dataset_rows(
             "artifact_generated_at",
         ),
         "missing_prediction_counts_by_model": missing_counts,
+        "auxiliary_prediction_columns_by_model": {
+            model: sorted(columns)
+            for model, columns in auxiliary_prediction_columns_by_model.items()
+        },
+        "ignored_leakage_columns_by_model": {
+            model: sorted(columns)
+            for model, columns in ignored_leakage_columns_by_model.items()
+        },
         "duplicate_feature_id_count": duplicate_feature_ids,
         "same_date_leakage_check": _same_date_leakage_check(rows),
         "meta_training_uses_in_sample_base_predictions": False,
@@ -522,6 +547,7 @@ def _fit_meta_model(
             random_state=random_seed,
         )
     elif normalized == "lightgbm":
+        _ensure_lightgbm_runtime_available()
         try:
             from lightgbm import LGBMClassifier
         except ImportError as exc:
@@ -541,6 +567,18 @@ def _fit_meta_model(
 
     estimator.fit(matrix, labels)
     return MetaLearnerModel(normalized, feature_names, estimator=estimator)
+
+
+def _ensure_lightgbm_runtime_available() -> None:
+    if platform.system() != "Darwin":
+        return
+    if ctypes.util.find_library("omp") or ctypes.util.find_library("libomp"):
+        return
+    raise RuntimeError(
+        "LightGBM meta learner requested but macOS libomp is not available. "
+        "Install it with 'brew install libomp' or remove lightgbm from "
+        "ml.meta_model_types."
+    )
 
 
 def _feature_matrix(
@@ -596,11 +634,58 @@ def _feature_values(row: dict[str, str]) -> dict[str, float]:
     for name, value in row.items():
         if name in ignored:
             continue
+        if _is_leakage_column(name):
+            continue
         try:
             values[name] = float(value)
         except (TypeError, ValueError):
             continue
     return values
+
+
+def _source_prediction_feature_values(
+    model: str,
+    prediction: dict[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    values: dict[str, str] = {}
+    ignored_columns: list[str] = []
+    for name, value in prediction.items():
+        if name.startswith("predicted_"):
+            if _is_allowed_source_prediction_feature(name):
+                values[f"{model}_{name}"] = value
+            else:
+                ignored_columns.append(name)
+            continue
+        if name.startswith("actual_") or _is_leakage_column(name):
+            ignored_columns.append(name)
+    return values, ignored_columns
+
+
+def _is_allowed_source_prediction_feature(name: str) -> bool:
+    return (
+        name.startswith("predicted_")
+        and not _is_leakage_column(name)
+        and name not in {"predicted_class", "predicted_label"}
+    )
+
+
+def _is_leakage_column(name: str) -> bool:
+    normalized = name.lower()
+    if normalized.startswith("actual_"):
+        return True
+    if normalized.startswith("predicted_") or "_predicted_" in normalized:
+        return False
+    return any(
+        token in normalized
+        for token in (
+            "future_",
+            "forward_return_",
+            "max_adverse_excursion",
+            "max_favourable_excursion",
+            "label_start",
+            "label_end",
+        )
+    ) and not normalized.startswith("predicted_")
 
 
 def _compare_meta_learners(

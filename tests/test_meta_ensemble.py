@@ -10,6 +10,7 @@ import pytest
 from core.research.ml.meta_ensemble import (
     build_meta_dataset_rows,
     _compare_meta_learners,
+    _feature_values,
     _load_source_predictions,
     _overlay_summary,
     _promotion_gate_report,
@@ -45,6 +46,39 @@ def test_meta_ensemble_joins_predictions_by_feature_id_and_audits_leakage():
     assert not audit["meta_training_uses_in_sample_base_predictions"]
     assert "dlinear_raw_probability" in rows[0]
     assert "patchtst_raw_probability" in rows[0]
+
+
+def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakage():
+    expanded_rows = [_expanded("a", "2024-01-01")]
+    prediction = _prediction("a", "2024-01-01", "holdout", 1)
+    prediction.update({
+        "predicted_forward_return_5d": "0.012",
+        "predicted_future_volatility": "0.18",
+        "actual_forward_return_5d": "0.99",
+        "actual_future_drawdown": "-0.45",
+        "future_drawdown": "-0.45",
+    })
+    sources = {
+        "multitask_transformer": {"a": prediction},
+        "dlinear": {"a": _prediction("a", "2024-01-01", "holdout", 1)},
+    }
+
+    rows, audit = build_meta_dataset_rows(expanded_rows, sources)
+    features = _feature_values(rows[0])
+
+    assert rows[0]["multitask_transformer_predicted_forward_return_5d"] == "0.012"
+    assert rows[0]["multitask_transformer_predicted_future_volatility"] == "0.18"
+    assert "multitask_transformer_predicted_forward_return_5d" in features
+    assert "multitask_transformer_predicted_future_volatility" in features
+    assert all("actual_" not in name for name in features)
+    assert "future_drawdown" not in features
+    assert audit["auxiliary_prediction_columns_by_model"]["multitask_transformer"] == [
+        "multitask_transformer_predicted_forward_return_5d",
+        "multitask_transformer_predicted_future_volatility",
+    ]
+    assert "actual_forward_return_5d" in audit[
+        "ignored_leakage_columns_by_model"
+    ]["multitask_transformer"]
 
 
 def test_meta_ensemble_refuses_mixed_prediction_artifact_dataset_hashes(tmp_path):
