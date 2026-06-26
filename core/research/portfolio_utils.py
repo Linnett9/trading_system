@@ -46,6 +46,10 @@ def rebalance_key(timestamp, frequency):
         calendar = timestamp.isocalendar()
         return calendar.year, calendar.week
 
+    if frequency == "biweekly":
+        calendar = timestamp.isocalendar()
+        return calendar.year, (calendar.week - 1) // 2
+
     if frequency == "quarterly":
         quarter = ((timestamp.month - 1) // 3) + 1
         return timestamp.year, quarter

@@ -103,6 +103,7 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         features,
         labels,
         random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
     )
     train_probabilities = model.predict_proba(features)
     holdout_probabilities = model.predict_proba(holdout_features)
@@ -157,6 +158,7 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         reduced_exposure=reduced_exposure,
         reduce_when=reduce_when,
         random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
         calibration_bin_count=int(ml_config.get("calibration_bin_count", 10)),
     )
     walk_forward_path.write_text(
@@ -391,8 +393,10 @@ def _load_source_predictions(source_dirs: list[Path]) -> tuple[dict[str, dict[st
     for source_dir in source_dirs:
         path = source_dir / "prediction_artifacts.csv"
         if not path.exists():
-            warnings.append(f"missing_prediction_artifact:{path}")
-            continue
+            raise RuntimeError(
+                "Missing prediction artifact CSV: "
+                f"{path}. Rerun ml-research for {source_dir}."
+            )
         metadata_path = source_dir / "prediction_artifacts.json"
         validation_result = validate_prediction_artifacts(path, metadata_path)
         if validation_result.legacy_warnings:
@@ -505,6 +509,7 @@ def _fit_meta_model(
     features: list[dict[str, float]],
     labels: list[int],
     random_seed: int,
+    sklearn_n_jobs: int = 1,
 ) -> MetaLearnerModel:
     normalized = _normalize_meta_model_type(model_type)
     feature_names = sorted(features[0]) if features else []
@@ -543,6 +548,7 @@ def _fit_meta_model(
             min_samples_leaf=12,
             class_weight="balanced",
             random_state=random_seed,
+            n_jobs=sklearn_n_jobs,
         )
     elif normalized == "gradient_boosting":
         from sklearn.ensemble import GradientBoostingClassifier
@@ -569,6 +575,7 @@ def _fit_meta_model(
             colsample_bytree=0.8,
             random_state=random_seed,
             verbose=-1,
+            n_jobs=sklearn_n_jobs,
         )
     else:
         raise RuntimeError(f"Unsupported ml.meta_model_type '{model_type}'")
@@ -705,6 +712,7 @@ def _compare_meta_learners(
     reduce_when: str,
     random_seed: int,
     calibration_bin_count: int,
+    sklearn_n_jobs: int = 1,
     all_rows: list[dict[str, str]] | None = None,
     walk_forward_folds: int = 3,
     promotion_config: dict[str, Any] | None = None,
@@ -722,6 +730,7 @@ def _compare_meta_learners(
                 train_features,
                 train_labels,
                 random_seed=random_seed,
+                sklearn_n_jobs=sklearn_n_jobs,
             )
             train_probabilities = model.predict_proba(train_features)
             probabilities = model.predict_proba(holdout_features)
@@ -750,6 +759,7 @@ def _compare_meta_learners(
                 reduce_when=reduce_when,
                 random_seed=random_seed,
                 calibration_bin_count=calibration_bin_count,
+                sklearn_n_jobs=sklearn_n_jobs,
             )
             promotion_gates = _promotion_gate_report(
                 metrics=classification_metrics(holdout_labels, predictions),
@@ -961,6 +971,7 @@ def _walk_forward_meta_evaluation(
     reduce_when: str,
     random_seed: int,
     calibration_bin_count: int,
+    sklearn_n_jobs: int = 1,
 ) -> dict[str, Any]:
     unique_dates = sorted({row["rebalance_date"] for row in rows if row.get("rebalance_date")})
     if len(unique_dates) < 2:
@@ -997,6 +1008,7 @@ def _walk_forward_meta_evaluation(
             train_features,
             train_labels,
             random_seed=random_seed + fold_index,
+            sklearn_n_jobs=sklearn_n_jobs,
         )
         probabilities = model.predict_proba(test_features)
         predictions = [int(value >= threshold) for value in probabilities]

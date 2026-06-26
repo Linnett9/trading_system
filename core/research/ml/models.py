@@ -143,9 +143,10 @@ class LogisticRegressionMLModel(IMLModel):
 class TreeClassifierMLModel(IMLModel):
     """Constrained tree baseline for nonlinear research comparisons."""
 
-    def __init__(self, model_type: str, random_seed: int = 42):
+    def __init__(self, model_type: str, random_seed: int = 42, n_jobs: int = 1):
         self.model_type = model_type
         self.random_seed = random_seed
+        self.n_jobs = int(n_jobs)
         self.feature_names: list[str] = []
         self.model: Any = None
 
@@ -165,6 +166,7 @@ class TreeClassifierMLModel(IMLModel):
                 min_samples_leaf=12,
                 class_weight="balanced",
                 random_state=self.random_seed,
+                n_jobs=self.n_jobs,
             )
         else:
             self.model = GradientBoostingClassifier(
@@ -252,7 +254,12 @@ def build_ml_model(
         )
 
     if model_type in {"random_forest", "gradient_boosting"}:
-        return TreeClassifierMLModel(model_type=model_type, random_seed=random_seed)
+        config = model_config or {}
+        return TreeClassifierMLModel(
+            model_type=model_type,
+            random_seed=random_seed,
+            n_jobs=int(config.get("sklearn_n_jobs", 1)),
+        )
 
     if model_type == "transformer":
         from core.research.ml.transformer_model import TransformerSequenceMLModel

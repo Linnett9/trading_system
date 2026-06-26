@@ -6,3 +6,6 @@ cache_dir: cache/ml/benchmark
 report_dir: reports/ml/benchmark
 batch_workers: 4
 model_threads: 2
+torch_num_threads: 2
+sklearn_n_jobs: 2
+feature_workers: 1

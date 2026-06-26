@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
+import yaml
 
 from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.meta_ensemble import (
@@ -18,6 +19,35 @@ from core.research.ml.meta_ensemble import (
     _threshold_sweep,
     _walk_forward_meta_evaluation,
 )
+
+
+EXPECTED_META_SOURCE_DIRS = [
+    "reports/ml/logistic_regression_should_reduce_exposure",
+    "reports/ml/random_forest_should_reduce_exposure",
+    "reports/ml/gradient_boosting_should_reduce_exposure",
+    "reports/ml/dlinear_should_reduce_exposure",
+    "reports/ml/patchtst_should_reduce_exposure",
+    "reports/ml/transformer_should_reduce_exposure",
+    "reports/ml/itransformer_should_reduce_exposure",
+    "reports/ml/momentum_transformer_should_reduce_exposure",
+    "reports/ml/multitask_transformer_should_reduce_exposure",
+    "reports/ml/market_context_encoder_should_reduce_exposure",
+    "reports/ml/news_analysis_transformer_should_reduce_exposure",
+    "reports/ml/tft_should_reduce_exposure",
+]
+
+
+def test_meta_ensemble_config_includes_all_v1_model_source_dirs():
+    payload = yaml.safe_load(
+        Path("configs/research/regime_transformer_meta_ensemble_v1.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    source_dirs = payload["ml"]["source_prediction_dirs"]
+
+    assert source_dirs == EXPECTED_META_SOURCE_DIRS
+    assert len(source_dirs) == 12
+    assert all("champion" not in source_dir for source_dir in source_dirs)
 
 
 def test_meta_ensemble_joins_predictions_by_feature_id_and_audits_leakage():
@@ -90,6 +120,14 @@ def test_meta_ensemble_refuses_mixed_prediction_artifact_dataset_hashes(tmp_path
 
     with pytest.raises(RuntimeError, match="different dataset hashes"):
         _load_source_predictions([first_dir, second_dir])
+
+
+def test_meta_ensemble_refuses_missing_prediction_artifact_source(tmp_path):
+    source_dir = tmp_path / "missing_model"
+    source_dir.mkdir()
+
+    with pytest.raises(RuntimeError, match="Missing prediction artifact CSV"):
+        _load_source_predictions([source_dir])
 
 
 def test_meta_ensemble_refuses_csv_metadata_dataset_hash_mismatch(tmp_path):

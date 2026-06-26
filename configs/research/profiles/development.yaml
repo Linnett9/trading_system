@@ -5,4 +5,7 @@ output_suffix: development
 cache_dir: cache/ml/development
 report_dir: reports/ml/development
 batch_workers: 2
-model_threads: 2
+model_threads: 4
+torch_num_threads: 4
+sklearn_n_jobs: 4
+feature_workers: 1

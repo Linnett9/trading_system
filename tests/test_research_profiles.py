@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from application.services.research_profiles import (
     apply_research_profile,
     load_research_profile,
 )
+
+
+EXPECTED_META_SOURCE_DIRS = [
+    "reports/ml/logistic_regression_should_reduce_exposure",
+    "reports/ml/random_forest_should_reduce_exposure",
+    "reports/ml/gradient_boosting_should_reduce_exposure",
+    "reports/ml/dlinear_should_reduce_exposure",
+    "reports/ml/patchtst_should_reduce_exposure",
+    "reports/ml/transformer_should_reduce_exposure",
+    "reports/ml/itransformer_should_reduce_exposure",
+    "reports/ml/momentum_transformer_should_reduce_exposure",
+    "reports/ml/multitask_transformer_should_reduce_exposure",
+    "reports/ml/market_context_encoder_should_reduce_exposure",
+    "reports/ml/news_analysis_transformer_should_reduce_exposure",
+    "reports/ml/tft_should_reduce_exposure",
+]
 
 
 def test_research_profile_loading():
@@ -101,6 +121,36 @@ def test_research_profile_rewrites_meta_ensemble_paths():
     ]
 
 
+def test_development_profile_rewrites_all_meta_ensemble_source_dirs():
+    config = yaml.safe_load(
+        Path("configs/research/regime_transformer_meta_ensemble_v1.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    config.update({
+        "backtest": {"years": 10},
+        "cache": {"ml_dir": "cache/ml"},
+        "reports": {"ml_dir": "reports/ml"},
+        "research": {"dual_momentum": {}},
+    })
+
+    profiled = apply_research_profile(config, "development")
+
+    assert config["ml"]["source_prediction_dirs"] == EXPECTED_META_SOURCE_DIRS
+    assert profiled["ml"]["source_prediction_dirs"] == [
+        f"reports/ml/development/{Path(source_dir).name}"
+        for source_dir in EXPECTED_META_SOURCE_DIRS
+    ]
+    assert all(
+        source_dir.startswith("reports/ml/development/")
+        for source_dir in profiled["ml"]["source_prediction_dirs"]
+    )
+    assert all(
+        "champion" not in source_dir
+        for source_dir in profiled["ml"]["source_prediction_dirs"]
+    )
+
+
 def test_research_profile_sets_batch_runtime_options():
     config = {
         "backtest": {"years": 10},
@@ -120,3 +170,28 @@ def test_research_profile_sets_batch_runtime_options():
     assert profiled["ml_research_batch"]["max_workers"] == 4
     assert profiled["ml_research_batch"]["model_threads"] == 2
     assert profiled["ml_research_batch"]["profile"] == "benchmark"
+
+
+def test_research_profiles_apply_ml_parallelism_values():
+    config = {
+        "backtest": {"years": 10},
+        "cache": {"ml_dir": "cache/ml"},
+        "reports": {"ml_dir": "reports/ml"},
+        "research": {"dual_momentum": {}},
+        "ml": {"expanded_rebalance_dataset": {}},
+        "ml_research_batch": {"config_paths": [], "max_workers": 1, "model_threads": 1},
+    }
+
+    development = apply_research_profile(config, "development")
+    benchmark = apply_research_profile(config, "benchmark")
+
+    assert development["ml"]["num_workers"] == 2
+    assert development["ml"]["model_threads"] == 2
+    assert development["ml"]["torch_num_threads"] == 2
+    assert development["ml"]["sklearn_n_jobs"] == 2
+    assert development["ml"]["feature_workers"] == 1
+    assert benchmark["ml"]["num_workers"] == 4
+    assert benchmark["ml"]["model_threads"] == 2
+    assert benchmark["ml"]["torch_num_threads"] == 2
+    assert benchmark["ml"]["sklearn_n_jobs"] == 2
+    assert benchmark["ml"]["feature_workers"] == 1

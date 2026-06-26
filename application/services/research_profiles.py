@@ -54,6 +54,15 @@ def apply_research_profile(config: dict[str, Any], profile_name: str | None) -> 
     ml_config["research_years"] = int(profile["research_years"])
     ml_config["profile"] = profile_name
     ml_config["profile_output_suffix"] = str(profile["output_suffix"])
+    ml_config["num_workers"] = int(profile["batch_workers"])
+    ml_config["model_threads"] = int(profile["model_threads"])
+    ml_config["torch_num_threads"] = int(
+        profile.get("torch_num_threads", profile["model_threads"])
+    )
+    ml_config["sklearn_n_jobs"] = int(
+        profile.get("sklearn_n_jobs", profile["model_threads"])
+    )
+    ml_config["feature_workers"] = int(profile.get("feature_workers", 1))
     ml_config["expanded_rebalance_dataset_path"] = str(
         cache_dir / "expanded_rebalance_dataset.csv"
     )

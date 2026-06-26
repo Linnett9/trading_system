@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.research.ml.leaderboard import write_leaderboard
+from core.research.ml.leaderboard import write_leaderboard, write_source_leaderboard
 
 
 def test_leaderboard_writes_json_and_markdown(tmp_path):
@@ -134,3 +134,68 @@ def test_leaderboard_writes_json_and_markdown(tmp_path):
     assert "expected_calibration_error" in markdown
     assert "overlay_sample_count" in markdown
     assert "selected_overlay" in markdown
+
+
+def test_source_leaderboard_preserves_existing_meta_rows(tmp_path):
+    source = tmp_path / "patchtst"
+    source.mkdir()
+    _write_source_run(source, "patchtst")
+    existing = {
+        "leaderboard": [
+            {"model": "champion_baseline"},
+            {"model": "old_source_model"},
+            {
+                "model": "meta_ensemble_logistic",
+                "selection_role": "configured_meta_model",
+                "selected_model": "meta_ensemble_logistic",
+            },
+            {
+                "model": "selected_overlay",
+                "selection_role": "selected_overlay",
+                "selected_model": "meta_ensemble_lightgbm",
+            },
+        ]
+    }
+    (tmp_path / "leaderboard.json").write_text(json.dumps(existing), encoding="utf-8")
+
+    write_source_leaderboard(
+        tmp_path / "leaderboard.json",
+        tmp_path / "leaderboard.md",
+        [source],
+    )
+
+    payload = json.loads((tmp_path / "leaderboard.json").read_text())
+    models = [row["model"] for row in payload["leaderboard"]]
+    markdown = (tmp_path / "leaderboard.md").read_text()
+
+    assert "champion_baseline" in models
+    assert "patchtst" in models
+    assert "old_source_model" not in models
+    assert "meta_ensemble_logistic" in models
+    assert "selected_overlay" in models
+    assert "patchtst" in markdown
+
+
+def _write_source_run(path, model_type: str) -> None:
+    (path / "metrics.json").write_text(json.dumps({
+        "model_type": model_type,
+        "metrics": {"accuracy": 0.6, "balanced_accuracy": 0.61},
+    }))
+    (path / "probability_calibration.json").write_text(json.dumps({
+        "brier_score": 0.2,
+        "brier_skill_score": 0.1,
+        "expected_calibration_error": 0.08,
+    }))
+    (path / "calibrated_probability_calibration.json").write_text(json.dumps({
+        "best_method_by_brier": "raw",
+    }))
+    (path / "holdout_shadow_overlay.json").write_text(json.dumps({
+        "result": {
+            "base_total_return": 0.1,
+            "overlay_total_return": 0.12,
+            "base_max_drawdown": -0.2,
+            "overlay_max_drawdown": -0.15,
+            "overlay_turnover": 1.0,
+            "reduced_exposure_days": 5,
+        }
+    }))

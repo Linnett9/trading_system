@@ -138,6 +138,11 @@ DEFAULT_CONFIG = {
         "walk_forward_folds": 3,
         "random_seed": 42,
         "output_dir": "reports/ml",
+        "num_workers": 1,
+        "model_threads": 1,
+        "torch_num_threads": 1,
+        "sklearn_n_jobs": 1,
+        "feature_workers": 1,
         "benchmark_symbols": ["SPY", "QQQ"],
         "feature_lookback_days": 252,
         "sequence_length": 63,
@@ -1315,6 +1320,16 @@ def validate_config(config):
     sequence_length = int(ml_config.get("sequence_length", 63))
     if sequence_length < 2:
         raise RuntimeError("ml.sequence_length must be at least 2")
+
+    for runtime_key in (
+        "num_workers",
+        "model_threads",
+        "torch_num_threads",
+        "sklearn_n_jobs",
+        "feature_workers",
+    ):
+        if int(ml_config.get(runtime_key, 1)) < 1:
+            raise RuntimeError(f"ml.{runtime_key} must be at least one")
 
     transformer_d_model = int(ml_config.get("transformer_d_model", 32))
     transformer_heads = int(ml_config.get("transformer_heads", 4))

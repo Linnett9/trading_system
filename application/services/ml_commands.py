@@ -3,7 +3,6 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
-import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -14,15 +13,12 @@ from core.research.ml.data_inventory import build_data_inventory
 from core.research.ml.universe_builder import build_universe_files
 from core.research.ml.meta_ensemble import run_meta_ensemble
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
+from core.research.ml.leaderboard import write_source_leaderboard
 from core.research.ml.model_contract_audit import write_model_contract_audit
-
-
-_THREAD_ENV_VARS = (
-    "OMP_NUM_THREADS",
-    "MKL_NUM_THREADS",
-    "OPENBLAS_NUM_THREADS",
-    "VECLIB_MAXIMUM_THREADS",
-    "NUMEXPR_NUM_THREADS",
+from core.research.ml.runtime_parallelism import (
+    apply_runtime_parallelism,
+    apply_worker_thread_environment,
+    format_runtime_settings,
 )
 
 
@@ -43,13 +39,19 @@ class MLResearchBatchResult:
 
 
 def run_ml_research(config, feed=None):
+    runtime_settings = apply_runtime_parallelism(config)
     result = MLExperimentRunner(config, feed=feed).run()
+    leaderboard_markdown_path, leaderboard_json_path = _update_source_leaderboard(
+        config,
+        result.output_dir,
+    )
     print("\nML RESEARCH")
     print(
         "mode=research | "
         f"label={config.get('ml', {}).get('research_label', 'UNSPECIFIED_RESEARCH')} | "
         "trading_impact=none"
     )
+    print(f"Runtime: {format_runtime_settings(runtime_settings)}")
     print(f"Output dir: {result.output_dir}")
     print(f"Metrics: {result.metrics_path}")
     print(f"Predictions: {result.predictions_path}")
@@ -79,6 +81,8 @@ def run_ml_research(config, feed=None):
     )
     print(f"Baseline model comparison: {result.baseline_model_comparison_path}")
     print(f"Ranking diagnostics: {result.ranking_diagnostics_path}")
+    print(f"Leaderboard: {leaderboard_markdown_path}")
+    print(f"Leaderboard JSON: {leaderboard_json_path}")
 
 
 def run_ml_research_batch(
@@ -88,9 +92,10 @@ def run_ml_research_batch(
     worker_fn: Callable[[str, int, str], MLResearchBatchResult] | None = None,
 ) -> list[MLResearchBatchResult]:
     batch_config = config.get("ml_research_batch", {})
+    runtime_settings = apply_runtime_parallelism(config)
     items = validate_ml_research_batch_config(config)
-    max_workers = int(batch_config.get("max_workers", 1))
-    model_threads = int(batch_config.get("model_threads", 1))
+    max_workers = int(batch_config.get("max_workers", runtime_settings.num_workers))
+    model_threads = int(batch_config.get("model_threads", runtime_settings.model_threads))
     fail_fast = bool(batch_config.get("fail_fast", True))
     shared_dataset_path = str(_expanded_rebalance_dataset_path(config))
     profile_name = str(config.get("research_profile", {}).get("name", "") or "")
@@ -101,6 +106,7 @@ def run_ml_research_batch(
     print(f"Configs: {len(items)}")
     print(f"Workers: {max_workers}")
     print(f"Model threads: {model_threads}")
+    print(f"Runtime: {format_runtime_settings(runtime_settings)}")
     print(f"Shared expanded dataset: {shared_dataset_path}")
 
     results: list[MLResearchBatchResult] = []
@@ -131,6 +137,12 @@ def run_ml_research_batch(
             print(f"{status}: {result.config_path} -> {result.output_dir}")
             if result.error:
                 print(f"  error: {result.error}")
+            if result.success:
+                leaderboard_markdown_path, _ = _update_source_leaderboard(
+                    config,
+                    Path(result.output_dir),
+                )
+                print(f"  leaderboard: {leaderboard_markdown_path}")
             if fail_fast and not result.success:
                 for pending in futures:
                     pending.cancel()
@@ -216,13 +228,17 @@ def _run_ml_research_batch_worker(
     expanded_dataset_path: str,
     profile_name: str = "",
 ) -> MLResearchBatchResult:
-    for name in _THREAD_ENV_VARS:
-        os.environ[name] = str(model_threads)
+    apply_worker_thread_environment(model_threads)
 
     config = apply_research_profile(
         load_config(config_path, overlay_project_config=True),
         profile_name or None,
     )
+    ml_config = config.setdefault("ml", {})
+    ml_config.setdefault("model_threads", model_threads)
+    ml_config.setdefault("torch_num_threads", model_threads)
+    ml_config.setdefault("sklearn_n_jobs", model_threads)
+    apply_runtime_parallelism(config)
     output_dir = Path(config.get("ml", {}).get("output_dir", "reports/ml"))
     worker_config = _batch_worker_config(config, expanded_dataset_path)
     try:
@@ -337,12 +353,14 @@ def run_ml_build_universes(config):
 
 
 def run_ml_expanded_rebalance_dataset(config, feed):
+    runtime_settings = apply_runtime_parallelism(config)
     dataset_path, audit_path, row_count = MLExperimentRunner(
         config,
         feed=feed,
     ).build_expanded_rebalance_dataset()
     print("\nML EXPANDED REBALANCE DATASET")
     print("mode=research | trading_impact=none")
+    print(f"Runtime: {format_runtime_settings(runtime_settings)}")
     print(f"Rows: {row_count}")
     print(f"Dataset: {dataset_path}")
     print(f"Audit: {audit_path}")
@@ -395,6 +413,43 @@ def run_ml_run_inventory(config):
         print(f"{source_dir}: {status}")
 
 
+def run_ml_clean_incomplete_runs(config):
+    report_dir = Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
+    incomplete = incomplete_ml_run_dirs(report_dir)
+    print("\nML INCOMPLETE RUNS")
+    print("mode=research | trading_impact=none")
+    if not incomplete:
+        print("No incomplete run directories found.")
+        return
+    for path in incomplete:
+        print(path)
+    print("No files were deleted. Remove listed directories manually if desired.")
+
+
+def incomplete_ml_run_dirs(report_dir: Path) -> list[Path]:
+    return [
+        path
+        for path in _artifact_child_dirs(report_dir)
+        if path.name != "regime_transformer_meta_ensemble_v1"
+        and _is_incomplete_run_dir(path)
+    ]
+
+
+def _is_incomplete_run_dir(path: Path) -> bool:
+    required_files = (
+        "metrics.json",
+        "metadata.json",
+        "dataset_audit.json",
+        "prediction_artifacts.csv",
+        "prediction_artifacts.json",
+    )
+    if not any(child.is_file() for child in path.iterdir()):
+        return False
+    if not all((path / name).exists() for name in required_files):
+        return True
+    return not _is_valid_source_artifact_dir(path)
+
+
 def run_ml_model_contract_audit(config):
     output_dir = config.get("reports", {}).get(
         "ml_dir",
@@ -405,6 +460,59 @@ def run_ml_model_contract_audit(config):
     print("mode=research | trading_impact=none")
     print(f"Markdown: {markdown_path}")
     print(f"JSON: {json_path}")
+
+
+def _update_source_leaderboard(
+    config: dict[str, Any],
+    completed_output_dir: Path,
+) -> tuple[Path, Path]:
+    report_dir = _leaderboard_report_dir(config, completed_output_dir)
+    leaderboard_dir = report_dir / "regime_transformer_meta_ensemble_v1"
+    source_dirs = _valid_source_leaderboard_dirs(report_dir)
+    if completed_output_dir not in source_dirs and _is_valid_source_artifact_dir(
+        completed_output_dir
+    ):
+        source_dirs.append(completed_output_dir)
+    source_dirs = sorted(set(source_dirs))
+    markdown_path = leaderboard_dir / "leaderboard.md"
+    json_path = leaderboard_dir / "leaderboard.json"
+    write_source_leaderboard(json_path, markdown_path, source_dirs)
+    return markdown_path, json_path
+
+
+def _leaderboard_report_dir(
+    config: dict[str, Any],
+    completed_output_dir: Path,
+) -> Path:
+    return Path(
+        str(
+            config.get("reports", {}).get(
+                "ml_dir",
+                completed_output_dir.parent,
+            )
+        )
+    )
+
+
+def _valid_source_leaderboard_dirs(report_dir: Path) -> list[Path]:
+    return [
+        child
+        for child in _artifact_child_dirs(report_dir)
+        if child.name != "regime_transformer_meta_ensemble_v1"
+        and _is_valid_source_artifact_dir(child)
+    ]
+
+
+def _is_valid_source_artifact_dir(path: Path) -> bool:
+    csv_path = path / "prediction_artifacts.csv"
+    metadata_path = path / "prediction_artifacts.json"
+    if not csv_path.exists() or not metadata_path.exists():
+        return False
+    try:
+        result = validate_prediction_artifact_dirs([path])[0]
+    except RuntimeError:
+        return False
+    return not result.legacy_warnings
 
 
 def _artifact_source_dirs(

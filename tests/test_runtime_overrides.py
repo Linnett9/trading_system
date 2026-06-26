@@ -1,10 +1,73 @@
+import os
 from types import SimpleNamespace
 
+import pytest
+
+from core.research.ml.runtime_parallelism import (
+    apply_runtime_parallelism,
+    runtime_settings_from_config,
+)
 from main import (
     apply_runtime_overrides,
     dual_momentum_candidate_configs,
     limited_grid,
 )
+
+
+def test_ml_runtime_parallelism_settings_from_config():
+    settings = runtime_settings_from_config({
+        "ml": {
+            "num_workers": 2,
+            "model_threads": 3,
+            "torch_num_threads": 4,
+            "sklearn_n_jobs": 5,
+            "feature_workers": 6,
+        }
+    })
+
+    assert settings.num_workers == 2
+    assert settings.model_threads == 3
+    assert settings.torch_num_threads == 4
+    assert settings.sklearn_n_jobs == 5
+    assert settings.feature_workers == 6
+
+
+def test_apply_ml_runtime_parallelism_sets_thread_env(monkeypatch):
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = apply_runtime_parallelism({"ml": {"model_threads": 2}})
+
+    assert settings.model_threads == 2
+    assert settings.torch_num_threads == 2
+    assert settings.sklearn_n_jobs == 2
+    assert settings.feature_workers == 1
+    assert settings.num_workers == 1
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        assert os.environ[name] == "2"
+
+
+def test_apply_ml_runtime_parallelism_sets_torch_threads_when_available():
+    torch = pytest.importorskip("torch")
+
+    previous = torch.get_num_threads()
+    try:
+        apply_runtime_parallelism({"ml": {"model_threads": 1, "torch_num_threads": 1}})
+        assert torch.get_num_threads() == 1
+    finally:
+        torch.set_num_threads(previous)
 
 
 def test_limited_grid_keeps_first_n_values():
@@ -162,6 +225,58 @@ def test_ml_research_defaults_to_its_longer_history_window():
 
     assert updated["backtest"]["years"] == 10
     assert updated["backtest"]["provider"] == "stooq"
+
+
+def test_ml_expanded_rebalance_dataset_uses_ml_research_years():
+    config = {
+        "backtest": {"symbols": ["AAPL", "SPY"], "years": 5},
+        "ml": {
+            "research_years": 10,
+            "historical_data_provider": "stooq_parquet",
+            "stooq_parquet_dir": "data/processed/stooq_parquet",
+        },
+        "research": {"strategy_comparison": [], "parameter_grid": {}},
+    }
+    args = SimpleNamespace(
+        mode="ml-expanded-rebalance-dataset",
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="default",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["years"] == 10
+    assert updated["backtest"]["provider"] == "stooq_parquet"
+    assert updated["backtest"]["data_dir"] == "data/processed/stooq_parquet"
+
+
+def test_ml_expanded_rebalance_dataset_falls_back_to_backtest_years():
+    config = {
+        "backtest": {"symbols": ["AAPL", "SPY"], "years": 5},
+        "ml": {
+            "historical_data_provider": "stooq_parquet",
+            "stooq_parquet_dir": "data/processed/stooq_parquet",
+        },
+        "research": {"strategy_comparison": [], "parameter_grid": {}},
+    }
+    args = SimpleNamespace(
+        mode="ml-expanded-rebalance-dataset",
+        fast=False,
+        symbols=None,
+        years=None,
+        strategies=None,
+        grid_values=None,
+        universe="default",
+    )
+
+    updated = apply_runtime_overrides(config, args)
+
+    assert updated["backtest"]["years"] == 5
+    assert updated["backtest"]["provider"] == "stooq_parquet"
 
 
 def test_stooq_30_uses_only_stocks_for_the_champion_and_imports_benchmarks():

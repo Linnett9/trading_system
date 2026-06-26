@@ -200,6 +200,19 @@ def test_artifact_schema_version_constant_is_v1():
     assert ARTIFACT_SCHEMA_VERSION == "ml_prediction_artifact_v1"
 
 
+def test_random_forest_receives_sklearn_n_jobs_runtime_setting():
+    model = build_ml_model(
+        "random_forest",
+        random_seed=7,
+        model_config={"sklearn_n_jobs": 2},
+    )
+
+    model.fit(_rows(72), _labels(72))
+
+    assert model.n_jobs == 2
+    assert model.model.n_jobs == 2
+
+
 def _rows(count: int) -> list[dict[str, float]]:
     return [
         {

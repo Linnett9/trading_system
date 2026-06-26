@@ -78,6 +78,34 @@ def write_leaderboard(
     markdown_path.write_text(_markdown(rows), encoding="utf-8")
 
 
+def write_source_leaderboard(
+    json_path: Path,
+    markdown_path: Path,
+    source_dirs: list[Path],
+) -> None:
+    """Write a leaderboard from completed source model runs only.
+
+    If a Meta Ensemble leaderboard already exists, keep its meta/selection rows
+    and refresh the source model rows. This lets individual model reruns update
+    the shared leaderboard without erasing a later meta-ensemble comparison.
+    """
+    rows = [_champion_row()]
+    for source_dir in source_dirs:
+        row = _source_row(source_dir)
+        if row is not None:
+            rows.append(row)
+    rows.extend(_existing_meta_rows(json_path))
+    payload = {
+        "leaderboard": rows,
+        "research_only": True,
+        "trading_impact": "none",
+        "production_validated": False,
+    }
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    markdown_path.write_text(_markdown(rows), encoding="utf-8")
+
+
 def _champion_row() -> dict[str, Any]:
     return {
         "model": "champion_baseline",
@@ -108,6 +136,24 @@ def _champion_row() -> dict[str, Any]:
         "trading_impact": "none",
         "production_validated": False,
     }
+
+
+def _existing_meta_rows(json_path: Path) -> list[dict[str, Any]]:
+    if not json_path.exists():
+        return []
+    payload = _read_json(json_path)
+    rows = payload.get("leaderboard", [])
+    if not isinstance(rows, list):
+        return []
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and (
+            str(row.get("model", "")).startswith("meta_ensemble")
+            or bool(row.get("selection_role"))
+        )
+    ]
 
 
 def _source_row(source_dir: Path) -> dict[str, Any] | None:
