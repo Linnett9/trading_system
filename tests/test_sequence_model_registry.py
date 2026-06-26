@@ -195,3 +195,35 @@ def test_multitask_transformer_sequence_length_uses_specific_config():
     )
 
     assert model.sequence_length == 16
+
+
+def test_build_market_context_encoder_from_registry():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "market_context_encoder",
+        random_seed=7,
+        model_config={
+            "sequence_length": 16,
+            "market_context_hidden_size": 16,
+            "market_context_epochs": 2,
+            "market_context_batch_size": 16,
+        },
+    )
+    model.fit(_rows(), _labels())
+    probabilities = model.predict_proba(_rows(40))
+    assert len(probabilities) == 40
+    assert all(0.0 <= value <= 1.0 for value in probabilities)
+
+
+def test_market_context_encoder_sequence_length_uses_specific_config():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "market_context_encoder",
+        random_seed=7,
+        model_config={
+            "sequence_length": 63,
+            "market_context_sequence_length": 16,
+        },
+    )
+
+    assert model.sequence_length == 16

@@ -452,9 +452,40 @@ def build_ml_model(
             regression_weights=regression_weights,
         )
 
+    if model_type == "market_context_encoder":
+        from core.research.ml.market_context_encoder_model import (
+            MarketContextEncoderMLModel,
+        )
+
+        config = model_config or {}
+        return MarketContextEncoderMLModel(
+            sequence_length=int(
+                config.get(
+                    "market_context_sequence_length",
+                    config.get("sequence_length", 63),
+                )
+            ),
+            hidden_size=int(config.get("market_context_hidden_size", 32)),
+            epochs=int(config.get("market_context_epochs", 20)),
+            batch_size=int(config.get("market_context_batch_size", 32)),
+            learning_rate=float(config.get("market_context_learning_rate", 0.001)),
+            weight_decay=float(config.get("market_context_weight_decay", 0.0001)),
+            dropout=float(config.get("market_context_dropout", 0.10)),
+            random_seed=random_seed,
+            device=str(
+                config.get("market_context_device", config.get("transformer_device", "cpu"))
+            ),
+            risk_multiplier_floor=float(
+                config.get("market_context_risk_multiplier_floor", 0.25)
+            ),
+            risk_multiplier_ceiling=float(
+                config.get("market_context_risk_multiplier_ceiling", 1.25)
+            ),
+        )
+
     raise RuntimeError(
         f"Unsupported ml.model_type '{model_type}'. "
         "Available models: dlinear, gradient_boosting, logistic_regression, "
-        "itransformer, momentum_transformer, multitask_transformer, noop, "
-        "patchtst, random_forest, transformer."
+        "itransformer, market_context_encoder, momentum_transformer, "
+        "multitask_transformer, noop, patchtst, random_forest, transformer."
     )

@@ -228,6 +228,16 @@ DEFAULT_CONFIG = {
         "multitask_transformer_learning_rate": 0.001,
         "multitask_transformer_weight_decay": 0.0001,
         "multitask_transformer_device": "cpu",
+        "market_context_sequence_length": 63,
+        "market_context_hidden_size": 32,
+        "market_context_epochs": 20,
+        "market_context_batch_size": 32,
+        "market_context_learning_rate": 0.001,
+        "market_context_weight_decay": 0.0001,
+        "market_context_dropout": 0.10,
+        "market_context_device": "cpu",
+        "market_context_risk_multiplier_floor": 0.25,
+        "market_context_risk_multiplier_ceiling": 1.25,
     },
     "risk": {
         "kill_switch": {
@@ -1228,6 +1238,7 @@ def validate_config(config):
         "patchtst",
         "dlinear",
         "itransformer",
+        "market_context_encoder",
         "momentum_transformer",
         "multitask_transformer",
         "meta_ensemble",
@@ -1235,7 +1246,7 @@ def validate_config(config):
         raise RuntimeError(
             f"Unsupported ml.model_type '{ml_model_type}'. "
             "Available models: dlinear, gradient_boosting, logistic_regression, "
-            "itransformer, meta_ensemble, momentum_transformer, "
+            "itransformer, market_context_encoder, meta_ensemble, momentum_transformer, "
             "multitask_transformer, noop, patchtst, random_forest, transformer."
         )
 
@@ -1425,6 +1436,27 @@ def validate_config(config):
         weight_key = f"multitask_{target}_weight"
         if float(ml_config.get(weight_key, 0.0)) < 0:
             raise RuntimeError(f"ml.{weight_key} must be >= 0")
+
+    market_context_sequence_length = int(
+        ml_config.get("market_context_sequence_length", ml_config.get("sequence_length", 63))
+    )
+    if market_context_sequence_length < 2:
+        raise RuntimeError("ml.market_context_sequence_length must be at least 2")
+    if int(ml_config.get("market_context_hidden_size", 32)) < 4:
+        raise RuntimeError("ml.market_context_hidden_size must be at least 4")
+    market_context_floor = float(
+        ml_config.get("market_context_risk_multiplier_floor", 0.25)
+    )
+    market_context_ceiling = float(
+        ml_config.get("market_context_risk_multiplier_ceiling", 1.25)
+    )
+    if market_context_floor <= 0:
+        raise RuntimeError("ml.market_context_risk_multiplier_floor must be positive")
+    if market_context_ceiling < market_context_floor:
+        raise RuntimeError(
+            "ml.market_context_risk_multiplier_ceiling must be >= "
+            "ml.market_context_risk_multiplier_floor"
+        )
 
     random_seed = int(ml_config.get("random_seed", 42))
     if random_seed < 0:

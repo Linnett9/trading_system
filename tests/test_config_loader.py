@@ -322,6 +322,31 @@ def test_validate_config_rejects_unknown_multitask_target():
         })
 
 
+def test_market_context_encoder_research_config_validates():
+    config = load_config(
+        "configs/research/market_context_encoder_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "market_context_encoder"
+    assert config["ml"]["shadow_model_type"] == "market_context_encoder"
+    assert config["ml"]["comparison_models"] == ["market_context_encoder"]
+    assert config["ml"]["overlay_comparison_models"] == ["market_context_encoder"]
+
+
+def test_validate_config_rejects_invalid_market_context_multiplier_bounds():
+    with pytest.raises(RuntimeError, match="market_context_risk_multiplier_ceiling"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "market_context_encoder",
+                "market_context_risk_multiplier_floor": 1.25,
+                "market_context_risk_multiplier_ceiling": 0.25,
+            },
+        })
+
+
 def test_validate_config_rejects_invalid_momentum_transformer_multiplier_bounds():
     with pytest.raises(RuntimeError, match="momentum_transformer_size_multiplier_ceiling"):
         validate_config({

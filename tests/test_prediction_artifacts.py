@@ -276,6 +276,48 @@ def test_multitask_transformer_runner_writes_prediction_artifacts_with_provenanc
     assert result.model_path.name == "model.pt"
 
 
+def test_market_context_encoder_runner_writes_prediction_artifacts_with_provenance(tmp_path):
+    pytest.importorskip("torch")
+    report_dir = tmp_path / "reports"
+    cache_dir = tmp_path / "cache"
+    candles_by_symbol = {
+        symbol: _candles(symbol, 400, start_price)
+        for symbol, start_price in (("SPY", 100.0), ("QQQ", 200.0), ("AAPL", 150.0))
+    }
+    runner = MLExperimentRunner(
+        {
+            "backtest": {
+                "years": 2,
+                "timeframe": "1Day",
+                "starting_equity": 10_000.0,
+            },
+            "cache": {"enabled": False, "ml_dir": str(cache_dir)},
+            "reports": {"ml_dir": str(report_dir)},
+            "research": {"dual_momentum": {"symbols": ["AAPL", "SPY", "QQQ"]}},
+            "ml": {
+                "model_type": "market_context_encoder",
+                "output_dir": str(report_dir),
+                "comparison_models": ["noop"],
+                "overlay_comparison_models": ["noop"],
+                "shadow_model_type": "noop",
+                "minimum_history_years": 1,
+                "walk_forward_folds": 1,
+                "sequence_length": 8,
+                "market_context_sequence_length": 8,
+                "market_context_hidden_size": 8,
+                "market_context_epochs": 1,
+                "market_context_batch_size": 8,
+            },
+        },
+        feed=_StaticFeed(candles_by_symbol),
+    )
+
+    result = runner.run()
+
+    _assert_prediction_artifact_provenance(result)
+    assert result.model_path.name == "model.pt"
+
+
 def _assert_prediction_artifact_provenance(result) -> None:
     with result.dataset_path.open("r", encoding="utf-8", newline="") as handle:
         expected_dataset_rows = len(list(csv.DictReader(handle)))

@@ -325,6 +325,7 @@ class MLExperimentRunner:
             "patchtst",
             "dlinear",
             "itransformer",
+            "market_context_encoder",
             "momentum_transformer",
             "multitask_transformer",
         }:
