@@ -2,6 +2,9 @@ backtest:
   provider: stooq_parquet
   data_dir: data/processed/stooq_parquet
 
+cache:
+  ml_dir: cache/ml/multitask_transformer_32_symbol_smoke
+
 ml:
   enabled: true
   mode: research
@@ -13,6 +16,9 @@ ml:
   research_label: EXPANDED_REBALANCE_CURRENT_32_MULTITASK_SMOKE_RESEARCH_ONLY
   minimum_history_years: 4
   output_dir: reports/ml/multitask_transformer_32_symbol_smoke
+  cache_feature_rows: true
+  cache_expanded_rebalance_dataset: true
+  expanded_rebalance_dataset_path: cache/ml/multitask_transformer_32_symbol_smoke/expanded_rebalance_dataset.csv
   benchmark_symbols:
     - SPY
     - QQQ

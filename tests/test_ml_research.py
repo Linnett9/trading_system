@@ -329,6 +329,46 @@ def test_ml_experiment_runner_caches_historical_features(tmp_path):
     assert audit["leakage_check_passed"] is True
 
 
+def test_ml_experiment_runner_reuses_valid_feature_cache(tmp_path, monkeypatch):
+    candles_by_symbol = {
+        symbol: _candles(symbol, 400, start_price)
+        for symbol, start_price in (("SPY", 100.0), ("QQQ", 200.0), ("AAPL", 150.0))
+    }
+    config = {
+        "backtest": {
+            "years": 2,
+            "timeframe": "1Day",
+            "starting_equity": 10_000.0,
+            "symbols": ["AAPL", "SPY", "QQQ"],
+        },
+        "cache": {"enabled": False, "ml_dir": str(tmp_path / "cache")},
+        "reports": {"ml_dir": str(tmp_path / "reports")},
+        "ml": {
+            "model_type": "noop",
+            "output_dir": str(tmp_path / "reports"),
+            "comparison_models": ["noop"],
+            "shadow_model_type": "noop",
+            "cache_feature_rows": True,
+        },
+    }
+
+    first = MLExperimentRunner(config, feed=_StaticFeed(candles_by_symbol)).run()
+    metadata_path = first.features_path.with_suffix(".csv.metadata.json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata["cache_type"] == "historical_feature_rows"
+    assert metadata["row_count"] == 148
+
+    def fail_build(self, candles_by_symbol):
+        raise AssertionError("feature cache was not reused")
+
+    monkeypatch.setattr(HistoricalFeatureBuilder, "build", fail_build)
+
+    second = MLExperimentRunner(config, feed=_StaticFeed(candles_by_symbol)).run()
+
+    assert second.features_path == first.features_path
+
+
 def test_strict_ml_research_rejects_short_history(tmp_path):
     candles_by_symbol = {
         symbol: _candles(symbol, 400, start_price)

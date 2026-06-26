@@ -66,8 +66,9 @@ class HistoricalFeatureBuilder:
                 dropped_rows += 1
                 continue
 
+            window_dates = common_dates[index - self.lookback_days : index + 1]
             histories = {
-                symbol: [close_by_symbol[symbol][day] for day in common_dates[: index + 1]]
+                symbol: [close_by_symbol[symbol][day] for day in window_dates]
                 for symbol in close_by_symbol
             }
             rows.append(self._feature_row(feature_date, histories))

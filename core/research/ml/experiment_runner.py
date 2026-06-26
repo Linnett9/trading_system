@@ -441,7 +441,26 @@ class MLExperimentRunner:
             benchmark_symbols=tuple(str(symbol) for symbol in benchmark_symbols),
             lookback_days=int(ml_config.get("feature_lookback_days", 252)),
         )
-        feature_result = builder.build(candles_by_symbol)
+        feature_cache_path = self._features_path()
+        feature_cache_key = self._feature_cache_key(
+            symbols,
+            benchmark_symbols,
+            builder.lookback_days,
+            candles_by_symbol,
+        )
+        cached_feature_result = self._load_cached_feature_rows(
+            feature_cache_path,
+            feature_cache_key,
+        )
+        if cached_feature_result is not None:
+            feature_result = cached_feature_result
+        else:
+            feature_result = builder.build(candles_by_symbol)
+            self._write_cached_feature_rows(
+                feature_cache_path,
+                feature_result,
+                feature_cache_key,
+            )
         if (
             ml_config.get("include_champion_state_features", True)
             and self.config.get("research", {}).get("dual_momentum")
@@ -678,6 +697,19 @@ class MLExperimentRunner:
                 date_range=date_range,
             )
 
+        expanded_cache_key = self._expanded_rebalance_cache_key(
+            feature_result,
+            candles_by_symbol,
+        )
+        if bool(ml_config.get("cache_expanded_rebalance_dataset", False)):
+            cached = self._load_cached_expanded_rebalance_rows(
+                cache_path,
+                expanded_cache_key,
+                feature_result.dropped_rows,
+            )
+            if cached is not None:
+                return cached
+
         benchmark = str(self.config.get("ml", {}).get("benchmark_symbols", ["SPY"])[0])
         rows, audit = build_expanded_rebalance_rows(
             self.config,
@@ -695,6 +727,23 @@ class MLExperimentRunner:
         )
         write_rebalance_dataset(cache_path, rows)
         write_expanded_rebalance_audit(audit_path, audit)
+        if bool(ml_config.get("cache_expanded_rebalance_dataset", False)):
+            self._write_cache_metadata(
+                cache_path,
+                expanded_cache_key,
+                {
+                    "cache_type": "expanded_rebalance_dataset",
+                    "row_count": len(rows),
+                    "date_range": (
+                        [str(rows[0]["feature_date"]), str(rows[-1]["feature_date"])]
+                        if rows
+                        else None
+                    ),
+                    "audit_path": str(audit_path),
+                    "research_only": True,
+                    "trading_impact": "none",
+                },
+            )
         date_range = None
         if rows:
             date_range = (str(rows[0]["feature_date"]), str(rows[-1]["feature_date"]))
@@ -703,6 +752,174 @@ class MLExperimentRunner:
             dropped_rows=feature_result.dropped_rows,
             date_range=date_range,
         )
+
+    def _load_cached_feature_rows(
+        self,
+        path: Path,
+        cache_key: str,
+    ) -> MLFeatureBuildResult | None:
+        if not bool(self.config.get("ml", {}).get("cache_feature_rows", False)):
+            return None
+        metadata = self._read_cache_metadata(path)
+        if metadata.get("cache_key") != cache_key or not path.exists():
+            return None
+        rows = self._read_csv_rows(path)
+        date_range = None
+        if rows:
+            date_range = (
+                str(rows[0].get("feature_date", "")),
+                str(rows[-1].get("feature_date", "")),
+            )
+        return MLFeatureBuildResult(
+            rows=rows,
+            dropped_rows=int(metadata.get("dropped_rows_insufficient_lookback", 0)),
+            date_range=date_range,
+        )
+
+    def _write_cached_feature_rows(
+        self,
+        path: Path,
+        feature_result: MLFeatureBuildResult,
+        cache_key: str,
+    ) -> None:
+        if not bool(self.config.get("ml", {}).get("cache_feature_rows", False)):
+            return
+        write_feature_rows(path, feature_result.rows)
+        self._write_cache_metadata(
+            path,
+            cache_key,
+            {
+                "cache_type": "historical_feature_rows",
+                "row_count": len(feature_result.rows),
+                "date_range": feature_result.date_range,
+                "dropped_rows_insufficient_lookback": feature_result.dropped_rows,
+                "research_only": True,
+                "trading_impact": "none",
+            },
+        )
+
+    def _load_cached_expanded_rebalance_rows(
+        self,
+        path: Path,
+        cache_key: str,
+        dropped_rows: int,
+    ) -> MLFeatureBuildResult | None:
+        metadata = self._read_cache_metadata(path)
+        if metadata.get("cache_key") != cache_key or not path.exists():
+            return None
+        rows = self._read_csv_rows(path)
+        date_range = None
+        if rows:
+            date_range = (
+                str(rows[0].get("feature_date", "")),
+                str(rows[-1].get("feature_date", "")),
+            )
+        return MLFeatureBuildResult(
+            rows=rows,
+            dropped_rows=dropped_rows,
+            date_range=date_range,
+        )
+
+    def _feature_cache_key(
+        self,
+        symbols: list[str],
+        benchmark_symbols: tuple[Any, ...],
+        lookback_days: int,
+        candles_by_symbol: dict[str, list[Any]],
+    ) -> str:
+        return self._hash_payload({
+            "cache_version": 1,
+            "cache_type": "historical_feature_rows",
+            "symbols": sorted(str(symbol).upper() for symbol in symbols),
+            "benchmark_symbols": [str(symbol).upper() for symbol in benchmark_symbols],
+            "lookback_days": int(lookback_days),
+            "history": self._candles_cache_summary(candles_by_symbol),
+            "feature_builder": "HistoricalFeatureBuilder",
+        })
+
+    def _expanded_rebalance_cache_key(
+        self,
+        feature_result: MLFeatureBuildResult,
+        candles_by_symbol: dict[str, list[Any]],
+    ) -> str:
+        ml_config = self.config.get("ml", {})
+        return self._hash_payload({
+            "cache_version": 1,
+            "cache_type": "expanded_rebalance_dataset",
+            "label_type": self.experiment_config.label_type,
+            "label_horizon_days": self.experiment_config.label_horizon_days,
+            "expanded_rebalance_dataset": ml_config.get(
+                "expanded_rebalance_dataset", {}
+            ),
+            "benchmark_symbols": ml_config.get("benchmark_symbols", ["SPY", "QQQ"]),
+            "sector_reference_path": ml_config.get("sector_reference_path"),
+            "sector_by_symbol": ml_config.get("sector_by_symbol", {}),
+            "feature_rows_hash": self._rows_hash(feature_result.rows),
+            "feature_row_count": len(feature_result.rows),
+            "feature_date_range": feature_result.date_range,
+            "history": self._candles_cache_summary(candles_by_symbol),
+        })
+
+    def _candles_cache_summary(
+        self,
+        candles_by_symbol: dict[str, list[Any]],
+    ) -> dict[str, dict[str, Any]]:
+        summary: dict[str, dict[str, Any]] = {}
+        for symbol, candles in sorted(candles_by_symbol.items()):
+            ordered = sorted(candles, key=lambda item: item.timestamp)
+            summary[symbol] = {
+                "count": len(ordered),
+                "start": (
+                    ordered[0].timestamp.date().isoformat()
+                    if ordered
+                    else None
+                ),
+                "end": (
+                    ordered[-1].timestamp.date().isoformat()
+                    if ordered
+                    else None
+                ),
+                "first_close": float(ordered[0].close) if ordered else None,
+                "last_close": float(ordered[-1].close) if ordered else None,
+            }
+        return summary
+
+    def _read_cache_metadata(self, path: Path) -> dict[str, Any]:
+        metadata_path = self._cache_metadata_path(path)
+        if not metadata_path.exists():
+            return {}
+        try:
+            return json.loads(metadata_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _write_cache_metadata(
+        self,
+        path: Path,
+        cache_key: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        metadata_path = self._cache_metadata_path(path)
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            **metadata,
+            "cache_key": cache_key,
+            "config_hash": self._hash_payload(self.config),
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _cache_metadata_path(path: Path) -> Path:
+        return path.with_suffix(path.suffix + ".metadata.json")
+
+    @staticmethod
+    def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            return list(csv.DictReader(handle))
+
+    def _rows_hash(self, rows: list[dict[str, Any]]) -> str:
+        return self._hash_payload(rows)
 
     def _write_rebalance_dataset(
         self,
