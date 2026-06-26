@@ -238,6 +238,22 @@ DEFAULT_CONFIG = {
         "market_context_device": "cpu",
         "market_context_risk_multiplier_floor": 0.25,
         "market_context_risk_multiplier_ceiling": 1.25,
+        "sentiment_features_enabled": False,
+        "sentiment_feature_version": "sentiment_v1",
+        "sentiment_min_reliability_tier": 2,
+        "sentiment_lookback_windows": [1, 5, 10, 21],
+        "sentiment_require_first_seen_timestamp": True,
+        "news_transformer_sequence_length": 63,
+        "news_transformer_d_model": 32,
+        "news_transformer_heads": 4,
+        "news_transformer_layers": 1,
+        "news_transformer_feedforward": 64,
+        "news_transformer_dropout": 0.10,
+        "news_transformer_epochs": 20,
+        "news_transformer_batch_size": 32,
+        "news_transformer_learning_rate": 0.001,
+        "news_transformer_weight_decay": 0.0001,
+        "news_transformer_device": "cpu",
     },
     "risk": {
         "kill_switch": {
@@ -1241,13 +1257,15 @@ def validate_config(config):
         "market_context_encoder",
         "momentum_transformer",
         "multitask_transformer",
+        "news_analysis_transformer",
         "meta_ensemble",
     }:
         raise RuntimeError(
             f"Unsupported ml.model_type '{ml_model_type}'. "
             "Available models: dlinear, gradient_boosting, logistic_regression, "
             "itransformer, market_context_encoder, meta_ensemble, momentum_transformer, "
-            "multitask_transformer, noop, patchtst, random_forest, transformer."
+            "multitask_transformer, news_analysis_transformer, noop, patchtst, "
+            "random_forest, transformer."
         )
 
     allowed_meta_model_types = {
@@ -1457,6 +1475,27 @@ def validate_config(config):
             "ml.market_context_risk_multiplier_ceiling must be >= "
             "ml.market_context_risk_multiplier_floor"
         )
+
+    news_sequence_length = int(
+        ml_config.get("news_transformer_sequence_length", ml_config.get("sequence_length", 63))
+    )
+    if news_sequence_length < 2:
+        raise RuntimeError("ml.news_transformer_sequence_length must be at least 2")
+    news_d_model = int(ml_config.get("news_transformer_d_model", 32))
+    news_heads = int(ml_config.get("news_transformer_heads", 4))
+    if news_heads < 1:
+        raise RuntimeError("ml.news_transformer_heads must be at least one")
+    if news_d_model % news_heads != 0:
+        raise RuntimeError(
+            "ml.news_transformer_d_model must be divisible by ml.news_transformer_heads"
+        )
+    if int(ml_config.get("sentiment_min_reliability_tier", 2)) < 1:
+        raise RuntimeError("ml.sentiment_min_reliability_tier must be at least 1")
+    sentiment_windows = ml_config.get("sentiment_lookback_windows", [1, 5, 10, 21])
+    if not isinstance(sentiment_windows, list) or not sentiment_windows:
+        raise RuntimeError("ml.sentiment_lookback_windows must be a non-empty list")
+    if any(int(window) <= 0 for window in sentiment_windows):
+        raise RuntimeError("ml.sentiment_lookback_windows values must be positive")
 
     random_seed = int(ml_config.get("random_seed", 42))
     if random_seed < 0:

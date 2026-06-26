@@ -347,6 +347,32 @@ def test_validate_config_rejects_invalid_market_context_multiplier_bounds():
         })
 
 
+def test_news_analysis_transformer_research_config_validates():
+    config = load_config(
+        "configs/research/news_analysis_transformer_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "news_analysis_transformer"
+    assert config["ml"]["shadow_model_type"] == "news_analysis_transformer"
+    assert config["ml"]["comparison_models"] == ["news_analysis_transformer"]
+    assert config["ml"]["overlay_comparison_models"] == ["news_analysis_transformer"]
+    assert config["ml"]["sentiment_lookback_windows"] == [1, 5, 10, 21]
+
+
+def test_validate_config_rejects_invalid_news_transformer_head_dimensions():
+    with pytest.raises(RuntimeError, match="news_transformer_d_model"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "news_analysis_transformer",
+                "news_transformer_d_model": 10,
+                "news_transformer_heads": 4,
+            },
+        })
+
+
 def test_validate_config_rejects_invalid_momentum_transformer_multiplier_bounds():
     with pytest.raises(RuntimeError, match="momentum_transformer_size_multiplier_ceiling"):
         validate_config({

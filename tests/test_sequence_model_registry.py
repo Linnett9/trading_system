@@ -227,3 +227,40 @@ def test_market_context_encoder_sequence_length_uses_specific_config():
     )
 
     assert model.sequence_length == 16
+
+
+def test_build_news_analysis_transformer_from_registry():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "news_analysis_transformer",
+        random_seed=7,
+        model_config={
+            "sequence_length": 16,
+            "news_transformer_d_model": 16,
+            "news_transformer_heads": 4,
+            "news_transformer_layers": 1,
+            "news_transformer_feedforward": 32,
+            "news_transformer_epochs": 2,
+            "news_transformer_batch_size": 16,
+        },
+    )
+    model.fit(_rows(), _labels())
+    probabilities = model.predict_proba(_rows(40))
+    assert len(probabilities) == 40
+    assert all(0.0 <= value <= 1.0 for value in probabilities)
+
+
+def test_news_analysis_transformer_sequence_length_uses_specific_config():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "news_analysis_transformer",
+        random_seed=7,
+        model_config={
+            "sequence_length": 63,
+            "news_transformer_sequence_length": 16,
+            "news_transformer_d_model": 16,
+            "news_transformer_heads": 4,
+        },
+    )
+
+    assert model.sequence_length == 16

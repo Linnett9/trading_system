@@ -318,6 +318,51 @@ def test_market_context_encoder_runner_writes_prediction_artifacts_with_provenan
     assert result.model_path.name == "model.pt"
 
 
+def test_news_analysis_transformer_runner_writes_prediction_artifacts_with_provenance(tmp_path):
+    pytest.importorskip("torch")
+    report_dir = tmp_path / "reports"
+    cache_dir = tmp_path / "cache"
+    candles_by_symbol = {
+        symbol: _candles(symbol, 400, start_price)
+        for symbol, start_price in (("SPY", 100.0), ("QQQ", 200.0), ("AAPL", 150.0))
+    }
+    runner = MLExperimentRunner(
+        {
+            "backtest": {
+                "years": 2,
+                "timeframe": "1Day",
+                "starting_equity": 10_000.0,
+            },
+            "cache": {"enabled": False, "ml_dir": str(cache_dir)},
+            "reports": {"ml_dir": str(report_dir)},
+            "research": {"dual_momentum": {"symbols": ["AAPL", "SPY", "QQQ"]}},
+            "ml": {
+                "model_type": "news_analysis_transformer",
+                "output_dir": str(report_dir),
+                "comparison_models": ["noop"],
+                "overlay_comparison_models": ["noop"],
+                "shadow_model_type": "noop",
+                "minimum_history_years": 1,
+                "walk_forward_folds": 1,
+                "sequence_length": 8,
+                "news_transformer_sequence_length": 8,
+                "news_transformer_d_model": 8,
+                "news_transformer_heads": 2,
+                "news_transformer_layers": 1,
+                "news_transformer_feedforward": 16,
+                "news_transformer_epochs": 1,
+                "news_transformer_batch_size": 8,
+            },
+        },
+        feed=_StaticFeed(candles_by_symbol),
+    )
+
+    result = runner.run()
+
+    _assert_prediction_artifact_provenance(result)
+    assert result.model_path.name == "model.pt"
+
+
 def _assert_prediction_artifact_provenance(result) -> None:
     with result.dataset_path.open("r", encoding="utf-8", newline="") as handle:
         expected_dataset_rows = len(list(csv.DictReader(handle)))

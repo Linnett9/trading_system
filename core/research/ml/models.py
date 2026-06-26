@@ -483,9 +483,38 @@ def build_ml_model(
             ),
         )
 
+    if model_type == "news_analysis_transformer":
+        from core.research.ml.news_analysis_transformer_model import (
+            NewsAnalysisTransformerMLModel,
+        )
+
+        config = model_config or {}
+        return NewsAnalysisTransformerMLModel(
+            sequence_length=int(
+                config.get(
+                    "news_transformer_sequence_length",
+                    config.get("sequence_length", 63),
+                )
+            ),
+            d_model=int(config.get("news_transformer_d_model", 32)),
+            nhead=int(config.get("news_transformer_heads", 4)),
+            num_layers=int(config.get("news_transformer_layers", 1)),
+            dim_feedforward=int(config.get("news_transformer_feedforward", 64)),
+            dropout=float(config.get("news_transformer_dropout", 0.10)),
+            epochs=int(config.get("news_transformer_epochs", 20)),
+            batch_size=int(config.get("news_transformer_batch_size", 32)),
+            learning_rate=float(config.get("news_transformer_learning_rate", 0.001)),
+            weight_decay=float(config.get("news_transformer_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(
+                config.get("news_transformer_device", config.get("transformer_device", "cpu"))
+            ),
+        )
+
     raise RuntimeError(
         f"Unsupported ml.model_type '{model_type}'. "
         "Available models: dlinear, gradient_boosting, logistic_regression, "
         "itransformer, market_context_encoder, momentum_transformer, "
-        "multitask_transformer, noop, patchtst, random_forest, transformer."
+        "multitask_transformer, news_analysis_transformer, noop, patchtst, "
+        "random_forest, transformer."
     )

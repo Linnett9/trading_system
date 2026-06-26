@@ -328,6 +328,7 @@ class MLExperimentRunner:
             "market_context_encoder",
             "momentum_transformer",
             "multitask_transformer",
+            "news_analysis_transformer",
         }:
             return "model.pt"
         return "model.joblib"
