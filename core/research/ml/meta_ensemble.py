@@ -10,6 +10,7 @@ import platform
 from statistics import mean
 from typing import Any
 
+from core.research.ml.artifact_validator import validate_prediction_artifacts
 from core.research.ml.calibration import (
     build_probability_calibration,
     compare_calibration_methods,
@@ -393,6 +394,13 @@ def _load_source_predictions(source_dirs: list[Path]) -> tuple[dict[str, dict[st
             warnings.append(f"missing_prediction_artifact:{path}")
             continue
         metadata_path = source_dir / "prediction_artifacts.json"
+        validation_result = validate_prediction_artifacts(path, metadata_path)
+        if validation_result.legacy_warnings:
+            raise RuntimeError(
+                "Prediction artifact is legacy or schema-incomplete: "
+                f"{source_dir}: {', '.join(validation_result.legacy_warnings)}. "
+                "Rerun ml-research so prediction_artifacts.csv/json are regenerated."
+            )
         metadata = _read_prediction_artifact_metadata(metadata_path)
         dataset_hash = str(metadata.get("dataset_hash") or metadata.get("data_hash") or "")
         if not dataset_hash:

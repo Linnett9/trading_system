@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.meta_ensemble import (
     build_meta_dataset_rows,
     _compare_meta_learners,
@@ -414,15 +415,22 @@ def _write_prediction_artifact_dir(
     dataset_hash = metadata_dataset_hash if csv_dataset_hash is None else csv_dataset_hash
     rows = [
         {
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "profile": "test",
+            "model_name": model_type,
             "date": "2024-01-01",
+            "prediction_date": "2024-01-01",
+            "symbol": "",
             "rebalance_date": "2024-01-01",
             "feature_id": "feature-a",
             "variant_id": "variant",
+            "config_path": "configs/research/test.yaml",
             "model_type": model_type,
             "label_type": "should_reduce_exposure",
             "split": "out_of_fold",
             "fold": "1",
             "actual_label": "0",
+            "predicted_probability": "0.4",
             "raw_probability": "0.4",
             "calibrated_probability": "",
             "prediction": "0",
@@ -435,15 +443,22 @@ def _write_prediction_artifact_dir(
             "research_label": "should_reduce_exposure",
         },
         {
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "profile": "test",
+            "model_name": model_type,
             "date": "2024-01-08",
+            "prediction_date": "2024-01-08",
+            "symbol": "",
             "rebalance_date": "2024-01-08",
             "feature_id": "feature-b",
             "variant_id": "variant",
+            "config_path": "configs/research/test.yaml",
             "model_type": model_type,
             "label_type": "should_reduce_exposure",
             "split": "holdout",
             "fold": "holdout",
             "actual_label": "1",
+            "predicted_probability": "0.7",
             "raw_probability": "0.7",
             "calibrated_probability": "",
             "prediction": "1",
@@ -463,8 +478,12 @@ def _write_prediction_artifact_dir(
     (path / "prediction_artifacts.json").write_text(
         json.dumps(
             {
+                "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+                "profile": "test",
+                "model_name": model_type,
                 "model_type": model_type,
                 "label_type": "should_reduce_exposure",
+                "config_path": "configs/research/test.yaml",
                 "dataset_hash": metadata_dataset_hash,
                 "data_hash": metadata_dataset_hash,
                 "source_dataset_row_count": 100,

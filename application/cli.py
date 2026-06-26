@@ -40,8 +40,10 @@ from application.services.ml_commands import (
     run_ml_data_inventory,
     run_ml_expanded_rebalance_dataset,
     run_ml_research_batch,
+    run_ml_run_inventory,
     run_ml_meta_ensemble,
     run_ml_research,
+    run_ml_validate_artifacts,
 )
 from application.services.stooq_bulk_commands import run_stooq_bulk_import
 from application.services.champion_robustness_commands import run_champion_robustness
@@ -82,6 +84,8 @@ def parse_args():
             "multi-strategy-walk-forward",
             "ml-research",
             "ml-research-batch",
+            "ml-run-inventory",
+            "ml-validate-artifacts",
             "ml-smoke-test",
             "ml-data-inventory",
             "ml-build-universes",
@@ -273,6 +277,12 @@ def dispatch(args, config, feed):
     if args.mode == "ml-build-universes":
         run_ml_build_universes(config)
         return
+    if args.mode == "ml-run-inventory":
+        run_ml_run_inventory(config)
+        return
+    if args.mode == "ml-validate-artifacts":
+        run_ml_validate_artifacts(config)
+        return
     if args.mode == "ml-meta-ensemble":
         run_ml_meta_ensemble(config)
         return
@@ -420,6 +430,8 @@ def run_cli():
         "import-stooq-bulk",
         "ml-data-inventory",
         "ml-build-universes",
+        "ml-run-inventory",
+        "ml-validate-artifacts",
         "ml-meta-ensemble",
         "ml-research-batch",
     }

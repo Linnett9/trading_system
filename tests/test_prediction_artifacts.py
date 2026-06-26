@@ -6,6 +6,11 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifact_validator import (
+    validate_prediction_artifact_dirs,
+    validate_prediction_artifacts,
+)
 from core.entities.candle import Candle
 from core.research.ml.datasets import MLDataset
 from core.research.ml.experiment_runner import MLExperimentRunner
@@ -45,6 +50,13 @@ def test_prediction_artifacts_include_standard_columns(tmp_path):
     metadata = json.loads((tmp_path / "prediction_artifacts.json").read_text())
 
     assert rows
+    assert rows[0]["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
+    assert "profile" in rows[0]
+    assert rows[0]["model_name"] == "logistic_regression"
+    assert "config_path" in rows[0]
+    assert rows[0]["prediction_date"] == rows[0]["date"]
+    assert "symbol" in rows[0]
+    assert rows[0]["predicted_probability"] == rows[0]["raw_probability"]
     assert "feature_id" in rows[0]
     assert "variant_id" in rows[0]
     assert "raw_probability" in rows[0]
@@ -53,6 +65,8 @@ def test_prediction_artifacts_include_standard_columns(tmp_path):
     assert rows[0]["test_sample_count"] == str(split.test.sample_count)
     assert rows[0]["generated_at"]
     assert rows[0]["dataset_hash"]
+    assert metadata["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
+    assert metadata["model_name"] == "logistic_regression"
     assert metadata["validation_method"] == "rolling_walk_forward_out_of_fold_plus_holdout"
     assert metadata["trading_impact"] == "none"
     assert metadata["source_dataset_row_count"] == 12
@@ -61,6 +75,58 @@ def test_prediction_artifacts_include_standard_columns(tmp_path):
     assert metadata["generated_at"]
     assert metadata["dataset_hash"] == rows[0]["dataset_hash"]
     assert metadata["data_hash"] == metadata["dataset_hash"]
+    validation = validate_prediction_artifacts(
+        tmp_path / "prediction_artifacts.csv",
+        tmp_path / "prediction_artifacts.json",
+    )
+    assert validation.dataset_hash == metadata["dataset_hash"]
+    assert validation.legacy_warnings == ()
+
+
+def test_prediction_artifact_validator_flags_legacy_csv(tmp_path):
+    csv_path = tmp_path / "prediction_artifacts.csv"
+    metadata_path = tmp_path / "prediction_artifacts.json"
+    csv_path.write_text(
+        "feature_id,model_type,split,dataset_hash\n"
+        "a,dlinear,holdout,dataset-a\n",
+        encoding="utf-8",
+    )
+    metadata_path.write_text(
+        json.dumps({"dataset_hash": "dataset-a"}),
+        encoding="utf-8",
+    )
+
+    result = validate_prediction_artifacts(csv_path, metadata_path)
+
+    assert result.legacy_warnings
+    assert any("legacy_prediction_artifact" in item for item in result.legacy_warnings)
+
+
+def test_prediction_artifact_validator_rejects_missing_dataset_hash(tmp_path):
+    csv_path = tmp_path / "prediction_artifacts.csv"
+    metadata_path = tmp_path / "prediction_artifacts.json"
+    csv_path.write_text(
+        "feature_id,model_type,split,dataset_hash\n"
+        "a,dlinear,holdout,\n",
+        encoding="utf-8",
+    )
+    metadata_path.write_text(
+        json.dumps({"dataset_hash": "dataset-a"}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="missing dataset_hash"):
+        validate_prediction_artifacts(csv_path, metadata_path)
+
+
+def test_prediction_artifact_validator_rejects_mixed_hashes(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_minimal_modern_artifact(first, "dlinear", "hash-a")
+    _write_minimal_modern_artifact(second, "patchtst", "hash-b")
+
+    with pytest.raises(RuntimeError, match="different dataset hashes"):
+        validate_prediction_artifact_dirs([first, second])
 
 
 def test_prediction_artifacts_overwrite_with_new_dataset_hash_when_dataset_changes(tmp_path):
@@ -228,6 +294,11 @@ def test_momentum_transformer_runner_writes_prediction_artifacts_with_provenance
 
     _assert_prediction_artifact_provenance(result)
     assert result.model_path.name == "model.pt"
+    fieldnames, rows = _prediction_artifact_rows(result)
+    assert "predicted_trend_score" in fieldnames
+    assert "predicted_regime_score" in fieldnames
+    assert "predicted_size_multiplier" in fieldnames
+    assert any(row["predicted_size_multiplier"] != "" for row in rows)
 
 
 def test_multitask_transformer_runner_writes_prediction_artifacts_with_provenance(tmp_path):
@@ -331,6 +402,9 @@ def test_market_context_encoder_runner_writes_prediction_artifacts_with_provenan
 
     _assert_prediction_artifact_provenance(result)
     assert result.model_path.name == "model.pt"
+    fieldnames, rows = _prediction_artifact_rows(result)
+    assert "predicted_context_risk_multiplier" in fieldnames
+    assert any(row["predicted_context_risk_multiplier"] != "" for row in rows)
 
 
 def test_news_analysis_transformer_runner_writes_prediction_artifacts_with_provenance(tmp_path):
@@ -420,6 +494,12 @@ def test_temporal_fusion_transformer_runner_writes_prediction_artifacts_with_pro
 
     _assert_prediction_artifact_provenance(result)
     assert result.model_path.name == "model.pt"
+    fieldnames, rows = _prediction_artifact_rows(result)
+    assert "predicted_forward_return_5d" in fieldnames
+    assert "predicted_forward_return_10d" in fieldnames
+    assert "predicted_future_volatility" in fieldnames
+    assert "predicted_future_drawdown" in fieldnames
+    assert any(row["predicted_future_volatility"] != "" for row in rows)
 
 
 def _assert_prediction_artifact_provenance(result) -> None:
@@ -434,11 +514,23 @@ def _assert_prediction_artifact_provenance(result) -> None:
     )
 
     assert "dataset_hash" in fieldnames
+    assert "artifact_schema_version" in fieldnames
+    assert "profile" in fieldnames
+    assert "model_name" in fieldnames
+    assert "config_path" in fieldnames
+    assert "prediction_date" in fieldnames
+    assert "symbol" in fieldnames
+    assert "predicted_probability" in fieldnames
     assert "source_dataset_row_count" in fieldnames
     assert "train_sample_count" in fieldnames
     assert "test_sample_count" in fieldnames
     assert "generated_at" in fieldnames
     assert artifact_rows
+    assert {row["artifact_schema_version"] for row in artifact_rows} == {
+        ARTIFACT_SCHEMA_VERSION
+    }
+    assert all(row["prediction_date"] for row in artifact_rows)
+    assert all(row["predicted_probability"] for row in artifact_rows)
     assert all(row["dataset_hash"] for row in artifact_rows)
     assert {row["source_dataset_row_count"] for row in artifact_rows} == {
         str(expected_dataset_rows)
@@ -447,10 +539,56 @@ def _assert_prediction_artifact_provenance(result) -> None:
     assert all(row["test_sample_count"] for row in artifact_rows)
     assert all(row["generated_at"] for row in artifact_rows)
     assert metadata["dataset_hash"] == artifact_rows[0]["dataset_hash"]
+    assert metadata["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
     assert metadata["source_dataset_row_count"] == expected_dataset_rows
     assert metadata["train_sample_count"]
     assert metadata["test_sample_count"]
     assert metadata["generated_at"]
+
+
+def _prediction_artifact_rows(result) -> tuple[list[str], list[dict[str, str]]]:
+    with result.prediction_artifacts_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def _write_minimal_modern_artifact(
+    path,
+    model_type: str,
+    dataset_hash: str,
+) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    row = {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "profile": "test",
+        "model_name": model_type,
+        "model_type": model_type,
+        "config_path": "configs/research/test.yaml",
+        "dataset_hash": dataset_hash,
+        "source_dataset_row_count": "1",
+        "train_sample_count": "1",
+        "prediction_date": "2024-01-01",
+        "symbol": "",
+        "rebalance_date": "2024-01-01",
+        "actual_label": "0",
+        "predicted_probability": "0.5",
+        "feature_id": "feature-a",
+        "split": "holdout",
+    }
+    with (path / "prediction_artifacts.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+    (path / "prediction_artifacts.json").write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+                "model_type": model_type,
+                "dataset_hash": dataset_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _dataset(sample_count: int) -> MLDataset:

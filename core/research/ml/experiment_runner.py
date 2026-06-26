@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.calibration import (
     build_probability_calibration,
@@ -353,8 +354,64 @@ class MLExperimentRunner:
                 for row in predictions
             ]
             return probabilities, auxiliary_predictions
+        component_predictions = self._model_component_predictions(model, dataset.features)
+        if component_predictions is not None:
+            probabilities = [
+                self._component_probability(row)
+                for row in component_predictions
+            ]
+            auxiliary_predictions = [
+                self._safe_component_auxiliary_predictions(row)
+                for row in component_predictions
+            ]
+            return probabilities, auxiliary_predictions
         probabilities = model.predict_proba(dataset.features)
         return probabilities, [{} for _ in probabilities]
+
+    def _model_component_predictions(
+        self,
+        model: Any,
+        features: list[dict[str, float]],
+    ) -> list[dict[str, float]] | None:
+        for method_name in (
+            "predict_components",
+            "predict_context",
+            "predict_tft_outputs",
+            "predict_news_components",
+        ):
+            method = getattr(model, method_name, None)
+            if callable(method):
+                return method(features)
+        return None
+
+    def _component_probability(self, row: dict[str, float]) -> float:
+        for name in (
+            "probability_should_reduce_exposure",
+            "market_regime_probability_risk_off",
+            "news_probability_should_reduce_exposure",
+        ):
+            if name in row:
+                return float(row[name])
+        return 0.5
+
+    def _safe_component_auxiliary_predictions(
+        self,
+        row: dict[str, float],
+    ) -> dict[str, float]:
+        values: dict[str, float] = {}
+        direct_mappings = {
+            "trend_score": "predicted_trend_score",
+            "regime_score": "predicted_regime_score",
+            "size_multiplier": "predicted_size_multiplier",
+            "rank_score": "predicted_rank_score",
+            "risk_multiplier": "predicted_context_risk_multiplier",
+        }
+        for key, value in row.items():
+            if key.startswith("predicted_"):
+                values[key] = float(value)
+            elif key in direct_mappings:
+                values[direct_mappings[key]] = float(value)
+        return values
 
     def _multitask_enabled(self) -> bool:
         ml_config = self.config.get("ml", {})
@@ -2020,15 +2077,22 @@ class MLExperimentRunner:
         auxiliary_fieldnames = self._prediction_artifact_auxiliary_fieldnames(rows)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = [
+            "artifact_schema_version",
+            "profile",
+            "model_name",
             "date",
+            "prediction_date",
+            "symbol",
             "rebalance_date",
             "feature_id",
             "variant_id",
+            "config_path",
             "model_type",
             "label_type",
             "split",
             "fold",
             "actual_label",
+            "predicted_probability",
             "raw_probability",
             "calibrated_probability",
             "prediction",
@@ -2046,9 +2110,13 @@ class MLExperimentRunner:
             writer.writeheader()
             writer.writerows(rows)
         metadata_path.write_text(json.dumps({
+            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+            "profile": self.config.get("ml", {}).get("profile", ""),
+            "model_name": self._prediction_artifact_model_name(),
             "model_type": self.experiment_config.model_type,
             "label_type": self.experiment_config.label_type,
             "feature_set": self.experiment_config.feature_set,
+            "config_path": self.config.get("ml", {}).get("config_path", ""),
             "config_hash": self._hash_payload(self.config),
             "data_hash": provenance["dataset_hash"],
             "dataset_hash": provenance["dataset_hash"],
@@ -2121,15 +2189,22 @@ class MLExperimentRunner:
                 else dataset.feature_dates[index]
             )
             row = {
+                "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+                "profile": self.config.get("ml", {}).get("profile", ""),
+                "model_name": self._prediction_artifact_model_name(),
                 "date": dataset.feature_dates[index],
+                "prediction_date": dataset.feature_dates[index],
+                "symbol": metadata.get("symbol", ""),
                 "rebalance_date": metadata.get("rebalance_date", dataset.feature_dates[index]),
                 "feature_id": feature_id,
                 "variant_id": metadata.get("variant_id", ""),
+                "config_path": self.config.get("ml", {}).get("config_path", ""),
                 "model_type": self.experiment_config.model_type,
                 "label_type": self.experiment_config.label_type,
                 "split": split_name,
                 "fold": fold,
                 "actual_label": dataset.labels[index],
+                "predicted_probability": float(probability),
                 "raw_probability": float(probability),
                 "calibrated_probability": "",
                 "prediction": int(
@@ -2155,6 +2230,14 @@ class MLExperimentRunner:
             rows.append(row)
         return rows
 
+    def _prediction_artifact_model_name(self) -> str:
+        ml_config = self.config.get("ml", {})
+        return str(
+            ml_config.get("model_name")
+            or ml_config.get("research_label")
+            or self.experiment_config.model_type
+        )
+
     def _prediction_artifact_auxiliary_values(
         self,
         dataset: MLDataset,
@@ -2173,6 +2256,9 @@ class MLExperimentRunner:
                 values[prediction_key] = ""
             actual_value = actuals.get(target) if actuals else None
             values[actual_key] = "" if actual_value is None else float(actual_value)
+        for key, value in auxiliary_prediction.items():
+            if key.startswith("predicted_") and key not in values:
+                values[key] = float(value)
         return values
 
     @staticmethod

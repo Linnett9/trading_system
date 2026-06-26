@@ -13,6 +13,7 @@ from core.research.ml.experiment_runner import MLExperimentRunner
 from core.research.ml.data_inventory import build_data_inventory
 from core.research.ml.universe_builder import build_universe_files
 from core.research.ml.meta_ensemble import run_meta_ensemble
+from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
 
 
 _THREAD_ENV_VARS = (
@@ -355,3 +356,64 @@ def run_ml_meta_ensemble(config):
     print(f"Meta audit: {result.audit_path}")
     print(f"Metrics: {result.metrics_path}")
     print(f"Leaderboard: {result.leaderboard_path}")
+
+
+def run_ml_validate_artifacts(config):
+    source_dirs = _artifact_source_dirs(config)
+    results = validate_prediction_artifact_dirs(source_dirs)
+    print("\nML ARTIFACT VALIDATION")
+    print("mode=research | trading_impact=none")
+    for result in results:
+        status = "legacy" if result.legacy_warnings else "ok"
+        print(
+            f"{status}: {result.csv_path.parent} | "
+            f"rows={result.row_count} | dataset_hash={result.dataset_hash}"
+        )
+        for warning in result.legacy_warnings:
+            print(f"  warning: {warning}")
+
+
+def run_ml_run_inventory(config):
+    print("\nML RUN INVENTORY")
+    print("mode=research | trading_impact=none")
+    for source_dir in _artifact_source_dirs(config, require_exists=False):
+        csv_path = source_dir / "prediction_artifacts.csv"
+        metadata_path = source_dir / "prediction_artifacts.json"
+        status = "missing"
+        if csv_path.exists() and metadata_path.exists():
+            try:
+                result = validate_prediction_artifact_dirs([source_dir])[0]
+            except RuntimeError as exc:
+                status = f"invalid: {exc}"
+            else:
+                status = (
+                    "legacy"
+                    if result.legacy_warnings
+                    else f"complete rows={result.row_count} hash={result.dataset_hash}"
+                )
+        print(f"{source_dir}: {status}")
+
+
+def _artifact_source_dirs(
+    config: dict[str, Any],
+    *,
+    require_exists: bool = True,
+) -> list[Path]:
+    ml_config = config.get("ml", {})
+    raw_dirs = ml_config.get("source_prediction_dirs") or [ml_config.get("output_dir")]
+    source_dirs = [Path(str(path)) for path in raw_dirs if path]
+    if not source_dirs:
+        report_dir = Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
+        source_dirs = [
+            path
+            for path in sorted(report_dir.iterdir())
+            if path.is_dir()
+        ] if report_dir.exists() else []
+    if require_exists:
+        missing = [path for path in source_dirs if not path.exists()]
+        if missing:
+            raise RuntimeError(
+                "Prediction artifact directories do not exist: "
+                + ", ".join(str(path) for path in missing)
+            )
+    return source_dirs
