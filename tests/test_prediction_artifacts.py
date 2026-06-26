@@ -284,9 +284,11 @@ def test_multitask_transformer_runner_writes_prediction_artifacts_with_provenanc
 
     assert "predicted_forward_return_5d" in fieldnames
     assert "actual_forward_return_5d" in fieldnames
+    assert fieldnames.count("actual_label") == 1
     assert any(row["predicted_forward_return_5d"] != "" for row in rows)
     assert metadata["auxiliary_targets"] == ["forward_return_5d"]
     assert metadata["auxiliary_prediction_columns"] == ["predicted_forward_return_5d"]
+    assert metadata["auxiliary_actual_columns"] == ["actual_forward_return_5d"]
 
 
 def test_market_context_encoder_runner_writes_prediction_artifacts_with_provenance(tmp_path):

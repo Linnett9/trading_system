@@ -2182,6 +2182,8 @@ class MLExperimentRunner:
         names: list[str] = []
         for row in rows:
             for name in row:
+                if name == "actual_label":
+                    continue
                 if (name.startswith("predicted_") or name.startswith("actual_")) and name not in names:
                     names.append(name)
         return sorted(names)
