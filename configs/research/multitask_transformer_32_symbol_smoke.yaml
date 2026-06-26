@@ -58,13 +58,10 @@ ml:
   expanded_rebalance_dataset:
     rebalance_frequencies:
       - monthly
-      - biweekly
     top_n_values:
       - 3
-      - 5
     weightings:
       - equal
-      - inverse_volatility
     universe_paths:
       - data/reference/universes/current_32.yaml
     reduce_drawdown_threshold: 0.08
