@@ -143,6 +143,15 @@ def test_artifact_source_dirs_discovers_report_child_run_dirs(tmp_path):
     assert source_dirs == [first, second]
 
 
+def test_research_batch_includes_traditional_baseline_configs():
+    batch_path = Path("configs/research/ml_research_batch.yaml")
+    text = batch_path.read_text(encoding="utf-8")
+
+    assert "configs/research/logistic_regression_should_reduce_exposure.yaml" in text
+    assert "configs/research/random_forest_should_reduce_exposure.yaml" in text
+    assert "configs/research/gradient_boosting_should_reduce_exposure.yaml" in text
+
+
 def _batch_config(
     shared_cache: Path,
     config_paths: list[Path],

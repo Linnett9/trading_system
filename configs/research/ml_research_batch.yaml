@@ -1,5 +1,8 @@
 ml_research_batch:
   config_paths:
+    - configs/research/logistic_regression_should_reduce_exposure.yaml
+    - configs/research/random_forest_should_reduce_exposure.yaml
+    - configs/research/gradient_boosting_should_reduce_exposure.yaml
     - configs/research/dlinear_should_reduce_exposure.yaml
     - configs/research/patchtst_should_reduce_exposure.yaml
     - configs/research/transformer_should_reduce_exposure.yaml
