@@ -5,6 +5,10 @@ ml_research_batch:
     - configs/research/transformer_should_reduce_exposure.yaml
     - configs/research/itransformer_should_reduce_exposure.yaml
     - configs/research/momentum_transformer_should_reduce_exposure.yaml
+    - configs/research/multitask_transformer_should_reduce_exposure.yaml
+    - configs/research/market_context_encoder_should_reduce_exposure.yaml
+    - configs/research/news_analysis_transformer_should_reduce_exposure.yaml
+    - configs/research/tft_should_reduce_exposure.yaml
   max_workers: 4
   model_threads: 2
   fail_fast: false
