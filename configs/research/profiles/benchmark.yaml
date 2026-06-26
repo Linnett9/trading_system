@@ -1,0 +1,8 @@
+research_years: 10
+universe: us_liquid_500
+max_symbols: 500
+output_suffix: benchmark
+cache_dir: cache/ml/benchmark
+report_dir: reports/ml/benchmark
+batch_workers: 4
+model_threads: 2

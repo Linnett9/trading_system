@@ -25,21 +25,25 @@ class HistoricalFeatureBuilder:
 
     def __init__(
         self,
-        benchmark_symbols: tuple[str, str] = ("SPY", "QQQ"),
+        benchmark_symbols: tuple[str, ...] = ("SPY", "QQQ"),
         lookback_days: int = FEATURE_LOOKBACK_DAYS,
     ):
         if lookback_days < FEATURE_LOOKBACK_DAYS:
             raise ValueError(
                 f"lookback_days must be at least {FEATURE_LOOKBACK_DAYS}"
             )
-        self.spy_symbol, self.qqq_symbol = benchmark_symbols
+        if len(benchmark_symbols) < 2:
+            raise ValueError("benchmark_symbols must contain at least SPY and QQQ")
+        self.benchmark_symbols = tuple(str(symbol).upper() for symbol in benchmark_symbols)
+        self.spy_symbol = self.benchmark_symbols[0]
+        self.qqq_symbol = self.benchmark_symbols[1]
         self.lookback_days = lookback_days
 
     def build(
         self,
         candles_by_symbol: dict[str, list[Candle]],
     ) -> MLFeatureBuildResult:
-        required_symbols = {self.spy_symbol, self.qqq_symbol}
+        required_symbols = set(self.benchmark_symbols)
         missing_symbols = sorted(required_symbols - set(candles_by_symbol))
         if missing_symbols:
             raise ValueError(
@@ -92,7 +96,7 @@ class HistoricalFeatureBuilder:
         if not universe:
             universe = [spy]
 
-        return {
+        row = {
             "feature_date": feature_date.isoformat(),
             "spy_return_1m": self._return(spy, 21),
             "spy_return_3m": self._return(spy, 63),
@@ -118,6 +122,23 @@ class HistoricalFeatureBuilder:
                 [self._return(prices, 21) for prices in universe]
             ),
         }
+        for symbol in self.benchmark_symbols:
+            safe_symbol = self._safe_feature_symbol(symbol)
+            if safe_symbol in {"spy", "qqq"}:
+                continue
+            prices = histories[symbol]
+            row.update({
+                f"{safe_symbol}_return_1m": self._return(prices, 21),
+                f"{safe_symbol}_return_3m": self._return(prices, 63),
+                f"{safe_symbol}_return_6m": self._return(prices, 126),
+                f"{safe_symbol}_distance_sma_200": self._distance_from_sma(prices, 200),
+                f"{safe_symbol}_realized_volatility_21d": (
+                    self._realized_volatility(prices, 21)
+                ),
+                f"{safe_symbol}_max_drawdown_63d": self._max_drawdown(prices, 63),
+                f"{safe_symbol}_above_sma_200": float(prices[-1] > mean(prices[-200:])),
+            })
+        return row
 
     def _close_by_date(self, candles: list[Candle]) -> dict[date, float]:
         closes: dict[date, float] = {}
@@ -164,6 +185,12 @@ class HistoricalFeatureBuilder:
 
     def _dispersion(self, values: list[float]) -> float:
         return pstdev(values) if len(values) > 1 else 0.0
+
+    def _safe_feature_symbol(self, symbol: str) -> str:
+        return "".join(
+            character.lower() if character.isalnum() else "_"
+            for character in symbol
+        ).strip("_")
 
 
 def write_feature_rows(path: Path, rows: list[dict[str, float | str]]) -> None:

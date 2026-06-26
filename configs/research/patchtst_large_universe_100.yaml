@@ -1,0 +1,34 @@
+ml:
+  enabled: true
+  mode: research
+  model_type: patchtst
+  shadow_model_type: patchtst
+  label_type: champion_success
+  prediction_target: champion_success
+  feature_set: price_regime_v1
+  output_dir: reports/ml/patchtst_large_universe_100
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  sequence_length: 126
+  patchtst_sequence_length: 126
+  patchtst_patch_length: 16
+  patchtst_patch_stride: 8
+  patchtst_d_model: 64
+  patchtst_heads: 4
+  patchtst_layers: 2
+  patchtst_feedforward: 128
+  patchtst_dropout: 0.15
+  patchtst_epochs: 30
+  patchtst_batch_size: 32
+  patchtst_learning_rate: 0.001
+  patchtst_weight_decay: 0.0005
+  patchtst_pos_weight: auto
+  comparison_models:
+    - patchtst
+  overlay_comparison_models:
+    - patchtst
+
+research:
+  dual_momentum:
+    universe_path: data/reference/universes/us_liquid_100.yaml

@@ -1,0 +1,10 @@
+ml_research_batch:
+  config_paths:
+    - configs/research/dlinear_should_reduce_exposure.yaml
+    - configs/research/patchtst_should_reduce_exposure.yaml
+    - configs/research/transformer_should_reduce_exposure.yaml
+    - configs/research/itransformer_should_reduce_exposure.yaml
+    - configs/research/momentum_transformer_should_reduce_exposure.yaml
+  max_workers: 4
+  model_threads: 2
+  fail_fast: false

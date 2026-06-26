@@ -1,0 +1,17 @@
+ml:
+  mode: research
+  model_type: meta_ensemble
+  ensemble_name: regime_transformer_meta_ensemble_v1
+  label_type: should_reduce_exposure
+  feature_set: expanded_rebalance_v1
+  output_dir: reports/ml/regime_transformer_meta_ensemble_v1
+  expanded_rebalance_dataset_path: cache/ml/expanded_rebalance_dataset.csv
+  meta_dataset_path: cache/ml/meta_ensemble_dataset.csv
+  source_prediction_dirs:
+    - reports/ml/dlinear_should_reduce_exposure
+    - reports/ml/patchtst_should_reduce_exposure
+    - reports/ml/transformer_should_reduce_exposure
+  meta_model_type: logistic_regression
+  decision_threshold: 0.50
+  decision_thresholds: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
+  reduced_exposures: [0.70, 0.80, 0.90]

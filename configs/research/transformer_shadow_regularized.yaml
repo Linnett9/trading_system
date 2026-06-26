@@ -1,0 +1,45 @@
+# Research-only regularized transformer shadow experiment.
+# Goal: reduce overconfident probabilities from the first transformer run.
+
+ml:
+  enabled: true
+  mode: research
+  model_type: transformer
+  shadow_model_type: transformer
+  label_type: champion_success
+  prediction_horizon: 42
+  label_horizon_days: 42
+  output_dir: reports/ml/transformer_shadow_regularized
+
+  sequence_length: 63
+  transformer_d_model: 16
+  transformer_heads: 4
+  transformer_layers: 1
+  transformer_feedforward: 32
+  transformer_dropout: 0.25
+  transformer_epochs: 12
+  transformer_batch_size: 32
+  transformer_learning_rate: 0.0005
+  transformer_weight_decay: 0.001
+  transformer_device: cpu
+
+  walk_forward_folds: 3
+  decision_threshold: 0.50
+  comparison_models:
+    - logistic_regression
+    - random_forest
+    - gradient_boosting
+    - transformer
+
+  shadow_thresholds: [0.20, 0.30, 0.40, 0.50]
+  shadow_reduced_exposures: [0.70, 0.80, 0.90]
+  shadow_holdout_threshold: 0.30
+  shadow_holdout_reduced_exposure: 0.70
+  shadow_transaction_cost_bps: 5.0
+
+  overlay_comparison_models:
+    - logistic_regression
+    - gradient_boosting
+    - transformer
+  overlay_comparison_thresholds: [0.20, 0.30, 0.40, 0.50]
+  overlay_comparison_reduced_exposures: [0.70, 0.80, 0.90]

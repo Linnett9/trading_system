@@ -89,6 +89,25 @@ DEFAULT_CONFIG = {
         "stooq_bulk_extracted_dir": "data/raw/stooq_bulk/extracted",
         "stooq_bulk_zip_path": "data/raw/stooq_bulk/us_daily_ascii.zip",
         "stooq_parquet_dir": "data/processed/stooq_parquet",
+        "parquet_dir": "data/processed/stooq_parquet",
+        "inventory_output_dir": "reports/ml",
+        "universe_output_dir": "data/reference/universes",
+        "min_history_years": 9,
+        "max_latest_gap_days": 14,
+        "min_average_dollar_volume_252d": 50_000_000,
+        "expanded_rebalance_audit_path": "reports/ml/expanded_rebalance_dataset_audit.json",
+        "expanded_rebalance_dataset": {
+            "rebalance_frequencies": ["monthly", "biweekly", "weekly"],
+            "top_n_values": [3, 5, 7],
+            "weightings": ["equal", "inverse_volatility"],
+            "universe_paths": [
+                "data/reference/universes/current_32.yaml",
+                "data/reference/universes/us_liquid_100.yaml",
+            ],
+            "reduce_drawdown_threshold": 0.08,
+            "reduce_excess_return_threshold": -0.01,
+            "reduce_volatility_adjusted_threshold": -0.10,
+        },
         "sector_reference_path": "data/reference/sector_by_symbol.json",
         "sector_by_symbol": {},
         "calibration_bin_count": 10,
@@ -121,6 +140,94 @@ DEFAULT_CONFIG = {
         "output_dir": "reports/ml",
         "benchmark_symbols": ["SPY", "QQQ"],
         "feature_lookback_days": 252,
+        "sequence_length": 63,
+        "transformer_d_model": 32,
+        "transformer_heads": 4,
+        "transformer_layers": 2,
+        "transformer_feedforward": 64,
+        "transformer_dropout": 0.10,
+        "transformer_epochs": 20,
+        "transformer_batch_size": 32,
+        "transformer_learning_rate": 0.001,
+        "transformer_weight_decay": 0.0001,
+        "transformer_device": "cpu",
+        "dlinear_sequence_length": 126,
+        "dlinear_epochs": 50,
+        "dlinear_batch_size": 32,
+        "dlinear_learning_rate": 0.001,
+        "dlinear_weight_decay": 0.001,
+        "dlinear_device": "cpu",
+        "dlinear_pos_weight": "auto",
+        "patchtst_sequence_length": 126,
+        "patchtst_patch_length": 16,
+        "patchtst_patch_stride": 8,
+        "patchtst_d_model": 64,
+        "patchtst_heads": 4,
+        "patchtst_layers": 2,
+        "patchtst_feedforward": 128,
+        "patchtst_dropout": 0.10,
+        "patchtst_epochs": 30,
+        "patchtst_batch_size": 32,
+        "patchtst_learning_rate": 0.001,
+        "patchtst_weight_decay": 0.0001,
+        "patchtst_device": "cpu",
+        "patchtst_pos_weight": "auto",
+        "itransformer_sequence_length": 126,
+        "itransformer_d_model": 64,
+        "itransformer_heads": 4,
+        "itransformer_layers": 2,
+        "itransformer_feedforward": 128,
+        "itransformer_dropout": 0.10,
+        "itransformer_epochs": 30,
+        "itransformer_batch_size": 32,
+        "itransformer_learning_rate": 0.001,
+        "itransformer_weight_decay": 0.0001,
+        "itransformer_device": "cpu",
+        "itransformer_pos_weight": "auto",
+        "momentum_transformer_sequence_length": 126,
+        "momentum_transformer_d_model": 64,
+        "momentum_transformer_heads": 4,
+        "momentum_transformer_layers": 2,
+        "momentum_transformer_feedforward": 128,
+        "momentum_transformer_dropout": 0.10,
+        "momentum_transformer_epochs": 30,
+        "momentum_transformer_batch_size": 32,
+        "momentum_transformer_learning_rate": 0.001,
+        "momentum_transformer_weight_decay": 0.0001,
+        "momentum_transformer_device": "cpu",
+        "momentum_transformer_pos_weight": "auto",
+        "momentum_transformer_size_multiplier_floor": 0.25,
+        "momentum_transformer_size_multiplier_ceiling": 1.25,
+        "multitask_enabled": False,
+        "multitask_primary_target": "should_reduce_exposure",
+        "multitask_regression_targets": [
+            "forward_return_5d",
+            "forward_return_10d",
+            "future_volatility",
+            "future_drawdown",
+            "max_adverse_excursion",
+            "max_favourable_excursion",
+        ],
+        "multitask_classification_weight": 1.0,
+        "multitask_regression_loss": "huber",
+        "multitask_huber_delta": 1.0,
+        "multitask_forward_return_5d_weight": 0.20,
+        "multitask_forward_return_10d_weight": 0.20,
+        "multitask_future_volatility_weight": 0.15,
+        "multitask_future_drawdown_weight": 0.20,
+        "multitask_max_adverse_excursion_weight": 0.15,
+        "multitask_max_favourable_excursion_weight": 0.10,
+        "multitask_transformer_sequence_length": 63,
+        "multitask_transformer_d_model": 32,
+        "multitask_transformer_heads": 4,
+        "multitask_transformer_layers": 2,
+        "multitask_transformer_feedforward": 64,
+        "multitask_transformer_dropout": 0.10,
+        "multitask_transformer_epochs": 20,
+        "multitask_transformer_batch_size": 32,
+        "multitask_transformer_learning_rate": 0.001,
+        "multitask_transformer_weight_decay": 0.0001,
+        "multitask_transformer_device": "cpu",
     },
     "risk": {
         "kill_switch": {
@@ -1113,12 +1220,211 @@ def validate_config(config):
 
     ml_model_type = str(ml_config.get("model_type", "noop"))
     if ml_model_type not in {
-        "noop", "logistic_regression", "random_forest", "gradient_boosting",
+        "noop",
+        "logistic_regression",
+        "random_forest",
+        "gradient_boosting",
+        "transformer",
+        "patchtst",
+        "dlinear",
+        "itransformer",
+        "momentum_transformer",
+        "multitask_transformer",
+        "meta_ensemble",
     }:
         raise RuntimeError(
             f"Unsupported ml.model_type '{ml_model_type}'. "
-            "Available models: gradient_boosting, logistic_regression, noop, random_forest."
+            "Available models: dlinear, gradient_boosting, logistic_regression, "
+            "itransformer, meta_ensemble, momentum_transformer, "
+            "multitask_transformer, noop, patchtst, random_forest, transformer."
         )
+
+    allowed_meta_model_types = {
+        "logistic",
+        "logistic_regression",
+        "ridge",
+        "ridge_logistic",
+        "random_forest",
+        "gradient_boosting",
+        "gbm",
+        "lightgbm",
+    }
+    meta_model_type = str(ml_config.get("meta_model_type", "logistic_regression"))
+    if meta_model_type not in allowed_meta_model_types:
+        raise RuntimeError(
+            f"Unsupported ml.meta_model_type '{meta_model_type}'. "
+            "Available meta learners: logistic_regression, ridge_logistic, "
+            "random_forest, gradient_boosting, lightgbm."
+        )
+    for value in ml_config.get("meta_model_types", []):
+        if str(value) not in allowed_meta_model_types:
+            raise RuntimeError(
+                f"Unsupported ml.meta_model_types value '{value}'. "
+                "Available meta learners: logistic_regression, ridge_logistic, "
+                "random_forest, gradient_boosting, lightgbm."
+            )
+
+    sequence_length = int(ml_config.get("sequence_length", 63))
+    if sequence_length < 2:
+        raise RuntimeError("ml.sequence_length must be at least 2")
+
+    transformer_d_model = int(ml_config.get("transformer_d_model", 32))
+    transformer_heads = int(ml_config.get("transformer_heads", 4))
+    if transformer_heads < 1:
+        raise RuntimeError("ml.transformer_heads must be at least one")
+    if transformer_d_model % transformer_heads != 0:
+        raise RuntimeError(
+            "ml.transformer_d_model must be divisible by ml.transformer_heads"
+        )
+
+    dlinear_sequence_length = int(
+        ml_config.get("dlinear_sequence_length", ml_config.get("sequence_length", 126))
+    )
+    if dlinear_sequence_length < 2:
+        raise RuntimeError("ml.dlinear_sequence_length must be at least 2")
+
+    patchtst_sequence_length = int(
+        ml_config.get("patchtst_sequence_length", ml_config.get("sequence_length", 126))
+    )
+    if patchtst_sequence_length < 2:
+        raise RuntimeError("ml.patchtst_sequence_length must be at least 2")
+
+    patchtst_patch_length = int(ml_config.get("patchtst_patch_length", 16))
+    patchtst_patch_stride = int(ml_config.get("patchtst_patch_stride", 8))
+    patchtst_d_model = int(ml_config.get("patchtst_d_model", 64))
+    patchtst_heads = int(ml_config.get("patchtst_heads", 4))
+
+    if patchtst_patch_length < 1:
+        raise RuntimeError("ml.patchtst_patch_length must be at least 1")
+
+    if patchtst_patch_stride < 1:
+        raise RuntimeError("ml.patchtst_patch_stride must be at least 1")
+
+    if patchtst_patch_length > patchtst_sequence_length:
+        raise RuntimeError(
+            "ml.patchtst_patch_length must be <= ml.patchtst_sequence_length"
+        )
+
+    if patchtst_heads < 1:
+        raise RuntimeError("ml.patchtst_heads must be at least one")
+
+    if patchtst_d_model % patchtst_heads != 0:
+        raise RuntimeError(
+            "ml.patchtst_d_model must be divisible by ml.patchtst_heads"
+        )
+
+    itransformer_sequence_length = int(
+        ml_config.get("itransformer_sequence_length", ml_config.get("sequence_length", 126))
+    )
+    if itransformer_sequence_length < 2:
+        raise RuntimeError("ml.itransformer_sequence_length must be at least 2")
+
+    itransformer_d_model = int(ml_config.get("itransformer_d_model", 64))
+    itransformer_heads = int(ml_config.get("itransformer_heads", 4))
+    if itransformer_heads < 1:
+        raise RuntimeError("ml.itransformer_heads must be at least one")
+    if itransformer_d_model % itransformer_heads != 0:
+        raise RuntimeError(
+            "ml.itransformer_d_model must be divisible by ml.itransformer_heads"
+        )
+
+    momentum_transformer_sequence_length = int(
+        ml_config.get(
+            "momentum_transformer_sequence_length",
+            ml_config.get("sequence_length", 126),
+        )
+    )
+    if momentum_transformer_sequence_length < 2:
+        raise RuntimeError("ml.momentum_transformer_sequence_length must be at least 2")
+
+    momentum_transformer_d_model = int(
+        ml_config.get("momentum_transformer_d_model", 64)
+    )
+    momentum_transformer_heads = int(
+        ml_config.get("momentum_transformer_heads", 4)
+    )
+    if momentum_transformer_heads < 1:
+        raise RuntimeError("ml.momentum_transformer_heads must be at least one")
+    if momentum_transformer_d_model % momentum_transformer_heads != 0:
+        raise RuntimeError(
+            "ml.momentum_transformer_d_model must be divisible by "
+            "ml.momentum_transformer_heads"
+        )
+    momentum_size_floor = float(
+        ml_config.get("momentum_transformer_size_multiplier_floor", 0.25)
+    )
+    momentum_size_ceiling = float(
+        ml_config.get("momentum_transformer_size_multiplier_ceiling", 1.25)
+    )
+    if momentum_size_floor <= 0:
+        raise RuntimeError("ml.momentum_transformer_size_multiplier_floor must be positive")
+    if momentum_size_ceiling < momentum_size_floor:
+        raise RuntimeError(
+            "ml.momentum_transformer_size_multiplier_ceiling must be >= "
+            "ml.momentum_transformer_size_multiplier_floor"
+        )
+
+    multitask_sequence_length = int(
+        ml_config.get(
+            "multitask_transformer_sequence_length",
+            ml_config.get("sequence_length", 63),
+        )
+    )
+    if multitask_sequence_length < 2:
+        raise RuntimeError("ml.multitask_transformer_sequence_length must be at least 2")
+
+    multitask_d_model = int(ml_config.get("multitask_transformer_d_model", 32))
+    multitask_heads = int(ml_config.get("multitask_transformer_heads", 4))
+    if multitask_heads < 1:
+        raise RuntimeError("ml.multitask_transformer_heads must be at least one")
+    if multitask_d_model % multitask_heads != 0:
+        raise RuntimeError(
+            "ml.multitask_transformer_d_model must be divisible by "
+            "ml.multitask_transformer_heads"
+        )
+
+    allowed_multitask_targets = {
+        "forward_return_5d",
+        "forward_return_10d",
+        "future_volatility",
+        "future_drawdown",
+        "max_adverse_excursion",
+        "max_favourable_excursion",
+    }
+    multitask_primary_target = str(
+        ml_config.get("multitask_primary_target", "should_reduce_exposure")
+    )
+    if multitask_primary_target != "should_reduce_exposure":
+        raise RuntimeError(
+            "ml.multitask_primary_target must be should_reduce_exposure"
+        )
+    multitask_targets = ml_config.get("multitask_regression_targets", [])
+    if not isinstance(multitask_targets, list):
+        raise RuntimeError("ml.multitask_regression_targets must be a list")
+    for target in multitask_targets:
+        if str(target) not in allowed_multitask_targets:
+            raise RuntimeError(
+                f"Unsupported ml.multitask_regression_targets value '{target}'. "
+                "Allowed targets: forward_return_5d, forward_return_10d, "
+                "future_volatility, future_drawdown, max_adverse_excursion, "
+                "max_favourable_excursion."
+            )
+    multitask_classification_weight = float(
+        ml_config.get("multitask_classification_weight", 1.0)
+    )
+    if multitask_classification_weight <= 0:
+        raise RuntimeError("ml.multitask_classification_weight must be positive")
+    multitask_regression_loss = str(
+        ml_config.get("multitask_regression_loss", "huber")
+    )
+    if multitask_regression_loss not in {"huber", "mse"}:
+        raise RuntimeError("ml.multitask_regression_loss must be one of: huber, mse")
+    if float(ml_config.get("multitask_huber_delta", 1.0)) <= 0:
+        raise RuntimeError("ml.multitask_huber_delta must be positive")
+    for target in allowed_multitask_targets:
+        weight_key = f"multitask_{target}_weight"
+        if float(ml_config.get(weight_key, 0.0)) < 0:
+            raise RuntimeError(f"ml.{weight_key} must be >= 0")
 
     random_seed = int(ml_config.get("random_seed", 42))
     if random_seed < 0:
@@ -1131,10 +1437,16 @@ def validate_config(config):
         raise RuntimeError("ml.label_horizon_days must be greater than zero")
 
     label_type = str(ml_config.get("label_type", "champion_success"))
-    if label_type not in {"risk_regime", "drawdown_risk", "champion_success"}:
+    if label_type not in {
+        "risk_regime",
+        "drawdown_risk",
+        "champion_success",
+        "should_reduce_exposure",
+    }:
         raise RuntimeError(
             "Unsupported ml.label_type "
-            f"'{label_type}'. Use one of: champion_success, drawdown_risk, risk_regime"
+            f"'{label_type}'. Use one of: champion_success, drawdown_risk, "
+            "risk_regime, should_reduce_exposure"
         )
 
     drawdown_risk_threshold = float(

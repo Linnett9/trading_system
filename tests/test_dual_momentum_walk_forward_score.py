@@ -17,6 +17,7 @@ def make_fold(
     total_return=None,
     benchmark_return=0.10,
     turnover=3.0,
+    sharpe=1.2,
 ):
     return {
         "result": SimpleNamespace(
@@ -26,6 +27,7 @@ def make_fold(
             annualized_turnover_percent=turnover,
             result=SimpleNamespace(
                 max_drawdown=drawdown,
+                sharpe=sharpe,
                 total_return=(
                     total_return
                     if total_return is not None

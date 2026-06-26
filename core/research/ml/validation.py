@@ -36,7 +36,11 @@ def chronological_holdout(
     all_indices = list(range(dataset.sample_count))
     if test_start is None:
         test_size = max(1, int(dataset.sample_count * test_fraction))
-        test_indices = all_indices[-test_size:]
+        resolved_start = dataset.feature_dates[all_indices[-test_size]]
+        test_indices = [
+            index for index in all_indices
+            if dataset.feature_dates[index] >= resolved_start
+        ]
     else:
         test_indices = [
             index for index in all_indices
@@ -79,6 +83,10 @@ def _slice_dataset(dataset: MLDataset, indices: list[int]) -> MLDataset:
         feature_dates=[dataset.feature_dates[index] for index in indices],
         label_start_dates=[dataset.label_start_dates[index] for index in indices],
         label_end_dates=[dataset.label_end_dates[index] for index in indices],
+        feature_ids=[dataset.feature_ids[index] for index in indices]
+        if dataset.feature_ids else [],
+        metadata=[dataset.metadata[index] for index in indices]
+        if dataset.metadata else [],
     )
 
 

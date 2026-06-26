@@ -1,0 +1,61 @@
+ml:
+  enabled: true
+  mode: research
+  model_type: dlinear
+  shadow_model_type: dlinear
+  label_type: champion_success
+  prediction_target: champion_success
+  feature_set: price_regime_v1
+  output_dir: reports/ml/dlinear_32_symbol_universe
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  sequence_length: 126
+  dlinear_sequence_length: 126
+  dlinear_epochs: 80
+  dlinear_batch_size: 32
+  dlinear_learning_rate: 0.001
+  dlinear_weight_decay: 0.005
+  dlinear_pos_weight: auto
+  comparison_models:
+    - dlinear
+  overlay_comparison_models:
+    - dlinear
+  shadow_thresholds: [0.2, 0.3, 0.4, 0.5]
+  shadow_reduced_exposures: [0.7, 0.8, 0.9]
+
+research:
+  dual_momentum:
+    symbols:
+      - AAPL
+      - ABBV
+      - AMD
+      - AMZN
+      - AVGO
+      - BAC
+      - CAT
+      - COST
+      - CVX
+      - GOOGL
+      - GS
+      - HD
+      - JNJ
+      - JPM
+      - KO
+      - LLY
+      - MA
+      - META
+      - MRK
+      - MSFT
+      - NFLX
+      - NVDA
+      - PEP
+      - PG
+      - QCOM
+      - QQQ
+      - SPY
+      - TSLA
+      - UNH
+      - V
+      - WMT
+      - XOM

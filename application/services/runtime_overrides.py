@@ -113,7 +113,10 @@ def apply_runtime_overrides(config, args):
         config["backtest"]["years"] = args.years
     elif (
         getattr(args, "mode", None) in {
-            "ml-research", "ml-smoke-test", "champion-robustness",
+            "ml-research",
+            "ml-smoke-test",
+            "ml-expanded-rebalance-dataset",
+            "champion-robustness",
         }
         and not args.fast
         and config.get("ml", {}).get("research_years")
@@ -121,7 +124,10 @@ def apply_runtime_overrides(config, args):
         config["backtest"]["years"] = int(config["ml"]["research_years"])
 
     if getattr(args, "mode", None) in {
-        "ml-research", "ml-smoke-test", "champion-robustness",
+        "ml-research",
+        "ml-smoke-test",
+        "ml-expanded-rebalance-dataset",
+        "champion-robustness",
         "paper-dry-run",
     }:
         historical_provider = config.get("ml", {}).get("historical_data_provider")

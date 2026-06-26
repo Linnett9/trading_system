@@ -6,21 +6,32 @@ from types import SimpleNamespace
 import pytest
 
 from core.entities.candle import Candle
+from core.research.portfolio_utils import rebalance_key
 from core.research.ml.drawdown_review import build_drawdown_event_review
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.experiment_runner import MLExperimentRunner
 from core.research.ml.features import HistoricalFeatureBuilder, add_champion_state_features
-from core.research.ml.labels import DrawdownRiskLabelBuilder, RiskRegimeLabelBuilder
+from core.research.ml.labels import (
+    DrawdownRiskLabelBuilder,
+    RiskRegimeLabelBuilder,
+    ShouldReduceExposureLabelBuilder,
+)
 from core.research.ml.models import LogisticRegressionMLModel, NoOpMLModel
 from core.research.ml.rule_overlay import (
     run_drawdown_risk_diagnostics,
     run_rule_exposure_study,
 )
 from core.research.ml.validation import chronological_holdout, rolling_walk_forward
-from core.research.ml.datasets import MLDataset
+from core.research.ml.datasets import MLDataset, build_dataset
 from core.research.ml.history_coverage import assess_history_coverage
-from core.research.ml.rebalance_dataset import build_champion_rebalance_rows
-from core.research.ml.calibration import build_probability_calibration
+from core.research.ml.rebalance_dataset import (
+    build_champion_rebalance_rows,
+    build_expanded_rebalance_rows,
+)
+from core.research.ml.calibration import (
+    build_probability_calibration,
+    compare_calibration_methods,
+)
 from core.research.ml.sector_reference import load_sector_by_symbol
 from core.research.ml.diagnostics import (
     build_ranking_diagnostics,
@@ -91,6 +102,7 @@ def test_ml_experiment_runner_writes_research_artifacts(tmp_path):
     assert result.walk_forward_probability_calibration_path.exists()
     assert result.baseline_model_comparison_path.exists()
     assert result.ranking_diagnostics_path.exists()
+    assert result.html_report_path.exists()
 
     metrics = json.loads(result.metrics_path.read_text(encoding="utf-8"))
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
@@ -120,6 +132,25 @@ def test_probability_calibration_reports_reliability_and_brier_skill():
     assert calibration["expected_calibration_error"] == pytest.approx(0.15)
     assert calibration["bins"][0]["observed_positive_rate"] == 0.0
     assert calibration["bins"][1]["observed_positive_rate"] == 1.0
+
+
+def test_calibration_comparison_scores_raw_platt_isotonic_and_temperature():
+    comparison = compare_calibration_methods(
+        train_labels=[0, 0, 1, 1],
+        train_probabilities=[0.10, 0.30, 0.70, 0.90],
+        test_labels=[0, 1],
+        test_probabilities=[0.20, 0.80],
+        bin_count=2,
+    )
+
+    assert set(comparison["methods"]) == {
+        "raw",
+        "platt",
+        "isotonic",
+        "temperature_scaling",
+    }
+    assert comparison["best_method_by_brier"] in comparison["methods"]
+    assert comparison["methods"]["raw"]["calibration"]["brier_score"] == pytest.approx(0.04)
 
 
 def test_rolling_base_rate_uses_only_matured_labels():
@@ -224,6 +255,37 @@ def test_historical_feature_builder_uses_only_prices_available_on_feature_date()
     assert original_row["feature_date"] == "2024-10-26"
     assert "spy_return_12m_ex_latest_month" in original_row
     assert "breadth_above_sma_200" in original_row
+
+
+def test_historical_feature_builder_adds_dynamic_context_features():
+    candles_by_symbol = {
+        symbol: _candles(symbol, 300, start_price)
+        for symbol, start_price in (
+            ("SPY", 100.0),
+            ("QQQ", 200.0),
+            ("IWM", 150.0),
+            ("AAPL", 175.0),
+        )
+    }
+    builder = HistoricalFeatureBuilder(benchmark_symbols=("SPY", "QQQ", "IWM"))
+
+    row = builder.build(candles_by_symbol).rows[-1]
+
+    assert "spy_return_12m_ex_latest_month" in row
+    assert "qqq_return_1m" in row
+    assert "iwm_return_1m" in row
+    assert "iwm_return_3m" in row
+    assert "iwm_return_6m" in row
+    assert "iwm_distance_sma_200" in row
+    assert "iwm_realized_volatility_21d" in row
+    assert "iwm_max_drawdown_63d" in row
+    assert "iwm_above_sma_200" in row
+
+
+def test_biweekly_rebalance_key_groups_two_week_periods():
+    assert rebalance_key(datetime(2024, 1, 1), "biweekly") == (2024, 0)
+    assert rebalance_key(datetime(2024, 1, 8), "biweekly") == (2024, 0)
+    assert rebalance_key(datetime(2024, 1, 15), "biweekly") == (2024, 1)
 
 
 def test_ml_experiment_runner_caches_historical_features(tmp_path):
@@ -592,6 +654,168 @@ def test_rebalance_dataset_adds_selection_risk_features():
     assert rows[0]["selection_weight_herfindahl"] == 0.5
     assert rows[0]["selection_average_pairwise_correlation_63d"] == 1.0
     assert rows[0]["selection_sector_concentration"] == 1.0
+
+
+def test_expanded_rebalance_audit_reports_effective_research_years(monkeypatch):
+    candles_by_symbol = {
+        "AAPL": _candles("AAPL", 20, 100.0),
+        "MSFT": _candles("MSFT", 20, 110.0),
+        "SPY": _candles("SPY", 20, 100.0),
+    }
+    feature_date = candles_by_symbol["SPY"][5].timestamp.date().isoformat()
+    feature_rows = [{
+        "feature_date": feature_date,
+        "spy_distance_sma_200": 0.01,
+        "spy_realized_volatility_21d": 0.10,
+        "spy_realized_volatility_63d": 0.12,
+        "spy_max_drawdown_63d": -0.02,
+        "spy_max_drawdown_126d": -0.03,
+        "breadth_above_sma_200": 0.70,
+    }]
+    config = {
+        "backtest": {"years": 10},
+        "ml": {
+            "research_years": 10,
+            "expanded_rebalance_dataset": {
+                "rebalance_frequencies": ["monthly"],
+                "top_n_values": [2],
+                "weightings": ["equal"],
+                "universe_paths": ["missing-universe.yaml"],
+            },
+        },
+        "research": {
+            "dual_momentum": {"symbols": ["AAPL", "MSFT"]},
+        },
+    }
+
+    class FakeTester:
+        def run(self, candles):
+            dates = [candle.timestamp for candle in candles_by_symbol["SPY"]]
+            return SimpleNamespace(
+                selections=[
+                    SimpleNamespace(
+                        timestamp=dates[5],
+                        symbols=["AAPL", "MSFT"],
+                        scores={"AAPL": 0.5, "MSFT": 0.4},
+                        exposure_target=1.0,
+                        target_weights={"AAPL": 0.5, "MSFT": 0.5},
+                        risk_on=True,
+                        breadth_passes=True,
+                        drawdown_guard_active=False,
+                        chop_filter_active=False,
+                        regime_label="risk-on",
+                    )
+                ],
+                result=SimpleNamespace(
+                    equity_curve=[
+                        SimpleNamespace(timestamp=timestamp, equity=100.0 + index)
+                        for index, timestamp in enumerate(dates)
+                    ]
+                ),
+            )
+
+    monkeypatch.setattr(
+        "core.research.ml.rebalance_dataset.build_dual_momentum_tester",
+        lambda config, variant_config: FakeTester(),
+    )
+
+    rows, audit = build_expanded_rebalance_rows(
+        config,
+        feature_rows,
+        candles_by_symbol,
+        benchmark_symbol="SPY",
+        horizon_days=2,
+    )
+
+    assert len(rows) == 1
+    assert audit["backtest_years"] == 10
+    assert audit["ml_research_years"] == 10
+    assert audit["effective_research_years"] == 10
+
+
+def test_should_reduce_exposure_label_uses_expanded_rebalance_outcomes():
+    rows = [
+        {
+            "feature_id": "variant_2024-01-31_0",
+            "feature_date": "2024-01-31",
+            "label_start_date": "2024-02-01",
+            "label_end_date": "2024-03-13",
+            "future_max_drawdown": -0.09,
+            "forward_return_5d": -0.02,
+            "forward_return_10d": -0.04,
+            "future_volatility": 0.12,
+            "future_drawdown": -0.09,
+            "max_adverse_excursion": -0.10,
+            "max_favourable_excursion": 0.03,
+            "champion_excess_return": 0.02,
+            "volatility_adjusted_excess_return": 0.10,
+            "should_reduce_exposure": 1,
+        },
+        {
+            "feature_id": "variant_2024-02-29_0",
+            "feature_date": "2024-02-29",
+            "label_start_date": "2024-03-01",
+            "label_end_date": "2024-04-11",
+            "future_max_drawdown": -0.02,
+            "champion_excess_return": 0.03,
+            "volatility_adjusted_excess_return": 0.15,
+            "should_reduce_exposure": 0,
+        },
+    ]
+
+    result = ShouldReduceExposureLabelBuilder().build(rows)
+
+    assert result.label_name == "should_reduce_exposure"
+    assert [row["should_reduce_exposure"] for row in result.rows] == [1, 0]
+    assert result.rows[0]["feature_id"] == "variant_2024-01-31_0"
+    assert result.rows[0]["forward_return_5d"] == -0.02
+    assert result.rows[0]["future_drawdown"] == -0.09
+    assert result.rows[0]["max_favourable_excursion"] == 0.03
+
+
+def test_dataset_can_align_multiple_variant_rows_on_same_feature_date():
+    feature_rows = [
+        {
+            "feature_id": "a_2024-01-31",
+            "feature_date": "2024-01-31",
+            "variant_id": "a",
+            "selected_symbols": "AAPL,MSFT",
+            "numeric_signal": 1.5,
+        },
+        {
+            "feature_id": "b_2024-01-31",
+            "feature_date": "2024-01-31",
+            "variant_id": "b",
+            "selected_symbols": "NVDA,SPY",
+            "numeric_signal": -0.5,
+        },
+    ]
+    label_rows = [
+        {
+            "feature_id": "a_2024-01-31",
+            "feature_date": "2024-01-31",
+            "label_start_date": "2024-02-01",
+            "label_end_date": "2024-03-13",
+            "should_reduce_exposure": 1,
+        },
+        {
+            "feature_id": "b_2024-01-31",
+            "feature_date": "2024-01-31",
+            "label_start_date": "2024-02-01",
+            "label_end_date": "2024-03-13",
+            "should_reduce_exposure": 0,
+        },
+    ]
+
+    dataset = build_dataset(
+        feature_rows,
+        label_rows,
+        label_name="should_reduce_exposure",
+    )
+
+    assert dataset.sample_count == 2
+    assert dataset.labels == [1, 0]
+    assert dataset.features == [{"numeric_signal": 1.5}, {"numeric_signal": -0.5}]
 
 
 def _stress_row(index: int) -> dict[str, str]:

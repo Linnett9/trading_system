@@ -1,0 +1,36 @@
+ml:
+  enabled: true
+  mode: research
+  model_type: patchtst
+  shadow_model_type: patchtst
+  label_type: drawdown_risk
+  prediction_target: drawdown_risk
+  drawdown_risk_threshold: 0.10
+  feature_set: price_regime_v1
+  output_dir: reports/ml/patchtst_drawdown_risk
+  sequence_length: 126
+  patchtst_sequence_length: 126
+  patchtst_patch_length: 16
+  patchtst_patch_stride: 8
+  patchtst_d_model: 64
+  patchtst_heads: 4
+  patchtst_layers: 2
+  patchtst_feedforward: 128
+  patchtst_dropout: 0.20
+  patchtst_epochs: 40
+  patchtst_batch_size: 32
+  patchtst_learning_rate: 0.0007
+  patchtst_weight_decay: 0.001
+  patchtst_pos_weight: auto
+  comparison_models:
+    - logistic_regression
+    - random_forest
+    - gradient_boosting
+    - dlinear
+  overlay_comparison_models:
+    - logistic_regression
+    - gradient_boosting
+    - dlinear
+    - patchtst
+  shadow_thresholds: [0.65, 0.7, 0.75, 0.8]
+  shadow_reduced_exposures: [0.6, 0.7, 0.8]

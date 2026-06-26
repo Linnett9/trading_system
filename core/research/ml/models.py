@@ -93,6 +93,7 @@ class LogisticRegressionMLModel(IMLModel):
         self.feature_names = sorted(x_train[0])
         if len(set(y_train)) < 2:
             raise ValueError("Logistic regression requires both label classes in training")
+
         LogisticRegression, _ = _scikit_learn_dependencies()
         self.model = LogisticRegression(
             C=1.0 / self.l2_penalty,
@@ -112,10 +113,12 @@ class LogisticRegressionMLModel(IMLModel):
         return self.model.predict_proba(self._matrix(x))[:, 1].tolist()
 
     def feature_importances(self) -> dict[str, float]:
+        if self.model is None:
+            return {}
         return {
             name: abs(float(coefficient))
             for name, coefficient in zip(self.feature_names, self.model.coef_[0])
-        } if self.model is not None else {}
+        }
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,8 +154,10 @@ class TreeClassifierMLModel(IMLModel):
             return
         if len(set(y_train)) < 2:
             raise ValueError("Tree classifier requires both label classes in training")
+
         RandomForestClassifier, GradientBoostingClassifier, _ = _tree_dependencies()
         self.feature_names = sorted(x_train[0])
+
         if self.model_type == "random_forest":
             self.model = RandomForestClassifier(
                 n_estimators=300,
@@ -169,6 +174,7 @@ class TreeClassifierMLModel(IMLModel):
                 min_samples_leaf=12,
                 random_state=self.random_seed,
             )
+
         self.model.fit(self._matrix(x_train), y_train)
 
     def predict(self, x: list[dict[str, float]]) -> list[int]:
@@ -180,10 +186,12 @@ class TreeClassifierMLModel(IMLModel):
         return self.model.predict_proba(self._matrix(x))[:, 1].tolist()
 
     def feature_importances(self) -> dict[str, float]:
+        if self.model is None:
+            return {}
         return {
             name: float(importance)
             for name, importance in zip(self.feature_names, self.model.feature_importances_)
-        } if self.model is not None else {}
+        }
 
     def save(self, path: Path) -> None:
         _, _, joblib = _tree_dependencies()
@@ -230,17 +238,223 @@ def build_ml_model(
     model_type: str,
     random_seed: int = 42,
     class_weight: str | None = None,
+    model_config: dict[str, Any] | None = None,
 ) -> IMLModel:
+    model_type = model_type.strip().lower()
+
     if model_type in {"noop", "no_op"}:
         return NoOpMLModel()
+
     if model_type == LogisticRegressionMLModel.model_type:
         return LogisticRegressionMLModel(
             random_seed=random_seed,
             class_weight=class_weight,
         )
+
     if model_type in {"random_forest", "gradient_boosting"}:
         return TreeClassifierMLModel(model_type=model_type, random_seed=random_seed)
+
+    if model_type == "transformer":
+        from core.research.ml.transformer_model import TransformerSequenceMLModel
+
+        config = model_config or {}
+        return TransformerSequenceMLModel(
+            sequence_length=int(config.get("sequence_length", 63)),
+            d_model=int(config.get("transformer_d_model", 32)),
+            nhead=int(config.get("transformer_heads", 4)),
+            num_layers=int(config.get("transformer_layers", 2)),
+            dim_feedforward=int(config.get("transformer_feedforward", 64)),
+            dropout=float(config.get("transformer_dropout", 0.10)),
+            epochs=int(config.get("transformer_epochs", 20)),
+            batch_size=int(config.get("transformer_batch_size", 32)),
+            learning_rate=float(config.get("transformer_learning_rate", 0.001)),
+            weight_decay=float(config.get("transformer_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(config.get("transformer_device", "cpu")),
+        )
+
+    if model_type == "patchtst":
+        from core.research.ml.patchtst_model import PatchTSTSequenceMLModel
+
+        config = model_config or {}
+        return PatchTSTSequenceMLModel(
+            sequence_length=int(
+                config.get("patchtst_sequence_length", config.get("sequence_length", 126))
+            ),
+            patch_length=int(config.get("patchtst_patch_length", 16)),
+            patch_stride=int(config.get("patchtst_patch_stride", 8)),
+            d_model=int(config.get("patchtst_d_model", 64)),
+            nhead=int(config.get("patchtst_heads", 4)),
+            num_layers=int(config.get("patchtst_layers", 2)),
+            dim_feedforward=int(config.get("patchtst_feedforward", 128)),
+            dropout=float(config.get("patchtst_dropout", 0.10)),
+            epochs=int(config.get("patchtst_epochs", 30)),
+            batch_size=int(config.get("patchtst_batch_size", 32)),
+            learning_rate=float(config.get("patchtst_learning_rate", 0.001)),
+            weight_decay=float(config.get("patchtst_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(
+                config.get("patchtst_device", config.get("transformer_device", "cpu"))
+            ),
+            pos_weight=config.get("patchtst_pos_weight", "auto"),
+        )
+
+    if model_type == "dlinear":
+        from core.research.ml.dlinear_model import DLinearSequenceMLModel
+
+        config = model_config or {}
+        return DLinearSequenceMLModel(
+            sequence_length=int(
+                config.get("dlinear_sequence_length", config.get("sequence_length", 126))
+            ),
+            epochs=int(config.get("dlinear_epochs", 50)),
+            batch_size=int(config.get("dlinear_batch_size", 32)),
+            learning_rate=float(config.get("dlinear_learning_rate", 0.001)),
+            weight_decay=float(config.get("dlinear_weight_decay", 0.001)),
+            random_seed=random_seed,
+            device=str(
+                config.get("dlinear_device", config.get("transformer_device", "cpu"))
+            ),
+            pos_weight=config.get("dlinear_pos_weight", "auto"),
+        )
+
+    if model_type == "itransformer":
+        from core.research.ml.itransformer_model import ITransformerSequenceMLModel
+
+        config = model_config or {}
+        return ITransformerSequenceMLModel(
+            sequence_length=int(
+                config.get("itransformer_sequence_length", config.get("sequence_length", 126))
+            ),
+            d_model=int(config.get("itransformer_d_model", 64)),
+            nhead=int(config.get("itransformer_heads", 4)),
+            num_layers=int(config.get("itransformer_layers", 2)),
+            dim_feedforward=int(config.get("itransformer_feedforward", 128)),
+            dropout=float(config.get("itransformer_dropout", 0.10)),
+            epochs=int(config.get("itransformer_epochs", 30)),
+            batch_size=int(config.get("itransformer_batch_size", 32)),
+            learning_rate=float(config.get("itransformer_learning_rate", 0.001)),
+            weight_decay=float(config.get("itransformer_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(
+                config.get("itransformer_device", config.get("transformer_device", "cpu"))
+            ),
+            pos_weight=config.get("itransformer_pos_weight", "auto"),
+        )
+
+    if model_type == "momentum_transformer":
+        from core.research.ml.momentum_transformer_model import (
+            MomentumTransformerSequenceMLModel,
+        )
+
+        config = model_config or {}
+        return MomentumTransformerSequenceMLModel(
+            sequence_length=int(
+                config.get(
+                    "momentum_transformer_sequence_length",
+                    config.get("sequence_length", 126),
+                )
+            ),
+            d_model=int(config.get("momentum_transformer_d_model", 64)),
+            nhead=int(config.get("momentum_transformer_heads", 4)),
+            num_layers=int(config.get("momentum_transformer_layers", 2)),
+            dim_feedforward=int(config.get("momentum_transformer_feedforward", 128)),
+            dropout=float(config.get("momentum_transformer_dropout", 0.10)),
+            epochs=int(config.get("momentum_transformer_epochs", 30)),
+            batch_size=int(config.get("momentum_transformer_batch_size", 32)),
+            learning_rate=float(config.get("momentum_transformer_learning_rate", 0.001)),
+            weight_decay=float(config.get("momentum_transformer_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(
+                config.get(
+                    "momentum_transformer_device",
+                    config.get("transformer_device", "cpu"),
+                )
+            ),
+            pos_weight=config.get("momentum_transformer_pos_weight", "auto"),
+            size_multiplier_floor=float(
+                config.get("momentum_transformer_size_multiplier_floor", 0.25)
+            ),
+            size_multiplier_ceiling=float(
+                config.get("momentum_transformer_size_multiplier_ceiling", 1.25)
+            ),
+        )
+
+    if model_type == "multitask_transformer":
+        from core.research.ml.multitask_transformer_model import (
+            DEFAULT_REGRESSION_TARGETS,
+            MultiTaskTransformerSequenceMLModel,
+        )
+
+        config = model_config or {}
+        regression_targets = list(
+            config.get("multitask_regression_targets", DEFAULT_REGRESSION_TARGETS)
+        )
+        nested_loss = config.get("multitask_loss", {})
+        nested_weights = (
+            nested_loss.get("regression_weights", {})
+            if isinstance(nested_loss, dict)
+            else {}
+        )
+        regression_weights = {
+            target: float(
+                config.get(
+                    f"multitask_{target}_weight",
+                    nested_weights.get(target, 0.2),
+                )
+            )
+            for target in regression_targets
+        }
+        classification_weight = (
+            nested_loss.get("classification_weight", 1.0)
+            if isinstance(nested_loss, dict)
+            else 1.0
+        )
+        regression_loss = (
+            nested_loss.get("regression_loss", config.get("multitask_regression_loss", "huber"))
+            if isinstance(nested_loss, dict)
+            else config.get("multitask_regression_loss", "huber")
+        )
+        huber_delta = (
+            nested_loss.get("huber_delta", config.get("multitask_huber_delta", 1.0))
+            if isinstance(nested_loss, dict)
+            else config.get("multitask_huber_delta", 1.0)
+        )
+        return MultiTaskTransformerSequenceMLModel(
+            sequence_length=int(
+                config.get(
+                    "multitask_transformer_sequence_length",
+                    config.get("sequence_length", 63),
+                )
+            ),
+            d_model=int(config.get("multitask_transformer_d_model", 32)),
+            nhead=int(config.get("multitask_transformer_heads", 4)),
+            num_layers=int(config.get("multitask_transformer_layers", 2)),
+            dim_feedforward=int(config.get("multitask_transformer_feedforward", 64)),
+            dropout=float(config.get("multitask_transformer_dropout", 0.10)),
+            epochs=int(config.get("multitask_transformer_epochs", 20)),
+            batch_size=int(config.get("multitask_transformer_batch_size", 32)),
+            learning_rate=float(config.get("multitask_transformer_learning_rate", 0.001)),
+            weight_decay=float(config.get("multitask_transformer_weight_decay", 0.0001)),
+            random_seed=random_seed,
+            device=str(
+                config.get(
+                    "multitask_transformer_device",
+                    config.get("transformer_device", "cpu"),
+                )
+            ),
+            regression_targets=regression_targets,
+            classification_weight=float(
+                config.get("multitask_classification_weight", classification_weight)
+            ),
+            regression_loss=str(regression_loss),
+            huber_delta=float(huber_delta),
+            regression_weights=regression_weights,
+        )
+
     raise RuntimeError(
         f"Unsupported ml.model_type '{model_type}'. "
-        "Available models: gradient_boosting, logistic_regression, noop, random_forest."
+        "Available models: dlinear, gradient_boosting, logistic_regression, "
+        "itransformer, momentum_transformer, multitask_transformer, noop, "
+        "patchtst, random_forest, transformer."
     )

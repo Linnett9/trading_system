@@ -22,6 +22,7 @@ def simulate_shadow_overlay(
     reduced_exposure: float,
     rebalance_dates: set[str] | None = None,
     transaction_cost_bps: float = 0.0,
+    reduce_when: str = "below_threshold",
 ) -> ShadowOverlayResult | None:
     dates = sorted(date for date in probabilities_by_date if date in equity_by_date)
     if len(dates) < 2:
@@ -44,9 +45,10 @@ def simulate_shadow_overlay(
         current_equity = equity_by_date[current_date]
         base_return = (current_equity / previous_equity) - 1.0
         if rebalance_dates is None or previous_date in rebalance_dates:
+            probability = probabilities_by_date[previous_date]
             next_multiplier = (
                 reduced_exposure
-                if probabilities_by_date[previous_date] < threshold
+                if should_reduce_exposure(probability, threshold, reduce_when)
                 else 1.0
             )
             turnover = abs(next_multiplier - active_multiplier)
@@ -76,4 +78,33 @@ def simulate_shadow_overlay(
         evaluated_days=len(dates) - 1,
         overlay_turnover=overlay_turnover,
         estimated_cost=estimated_cost,
+    )
+
+
+def should_reduce_exposure(
+    probability: float,
+    threshold: float,
+    reduce_when: str,
+) -> bool:
+    if reduce_when == "above_or_equal_threshold":
+        return float(probability) >= float(threshold)
+    if reduce_when == "below_threshold":
+        return float(probability) < float(threshold)
+    raise ValueError(f"Unsupported overlay reduce_when rule: {reduce_when}")
+
+
+def overlay_decision_rule(label_type: str) -> tuple[str, str]:
+    if label_type == "should_reduce_exposure":
+        return (
+            "above_or_equal_threshold",
+            "reduce_exposure_when_should_reduce_exposure_probability_gte_threshold",
+        )
+    if label_type == "drawdown_risk":
+        return (
+            "above_or_equal_threshold",
+            "reduce_exposure_when_drawdown_risk_probability_gte_threshold",
+        )
+    return (
+        "below_threshold",
+        "reduce_exposure_when_champion_success_probability_lt_threshold",
     )

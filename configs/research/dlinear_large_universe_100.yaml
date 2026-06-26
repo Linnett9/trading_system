@@ -1,0 +1,27 @@
+ml:
+  enabled: true
+  mode: research
+  model_type: dlinear
+  shadow_model_type: dlinear
+  label_type: champion_success
+  prediction_target: champion_success
+  feature_set: price_regime_v1
+  output_dir: reports/ml/dlinear_large_universe_100
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  sequence_length: 126
+  dlinear_sequence_length: 126
+  dlinear_epochs: 80
+  dlinear_batch_size: 32
+  dlinear_learning_rate: 0.001
+  dlinear_weight_decay: 0.005
+  dlinear_pos_weight: auto
+  comparison_models:
+    - dlinear
+  overlay_comparison_models:
+    - dlinear
+
+research:
+  dual_momentum:
+    universe_path: data/reference/universes/us_liquid_100.yaml

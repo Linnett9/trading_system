@@ -217,8 +217,133 @@ def test_validate_config_rejects_unknown_ml_model_type():
         validate_config({
             "trading": {"mode": "paper", "live_enabled": False},
             "broker": {"adapter": "fake"},
-            "ml": {"model_type": "transformer"},
+            "ml": {"model_type": "crystal_ball"},
         })
+
+
+def test_patchtst_champion_config_runs_only_patchtst_model():
+    config = load_config(
+        "configs/research/patchtst_champion_success.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "patchtst"
+    assert config["ml"]["shadow_model_type"] == "patchtst"
+    assert config["ml"]["comparison_models"] == ["patchtst"]
+    assert config["ml"]["overlay_comparison_models"] == ["patchtst"]
+
+
+def test_itransformer_research_config_validates():
+    config = load_config(
+        "configs/research/itransformer_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "itransformer"
+    assert config["ml"]["shadow_model_type"] == "itransformer"
+    assert config["ml"]["comparison_models"] == ["itransformer"]
+    assert config["ml"]["overlay_comparison_models"] == ["itransformer"]
+
+
+def test_validate_config_rejects_invalid_itransformer_head_dimensions():
+    with pytest.raises(RuntimeError, match="itransformer_d_model"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "itransformer",
+                "itransformer_d_model": 10,
+                "itransformer_heads": 4,
+            },
+        })
+
+
+def test_momentum_transformer_research_config_validates():
+    config = load_config(
+        "configs/research/momentum_transformer_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "momentum_transformer"
+    assert config["ml"]["shadow_model_type"] == "momentum_transformer"
+    assert config["ml"]["comparison_models"] == ["momentum_transformer"]
+    assert config["ml"]["overlay_comparison_models"] == ["momentum_transformer"]
+
+
+def test_validate_config_rejects_invalid_momentum_transformer_head_dimensions():
+    with pytest.raises(RuntimeError, match="momentum_transformer_d_model"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "momentum_transformer",
+                "momentum_transformer_d_model": 10,
+                "momentum_transformer_heads": 4,
+            },
+        })
+
+
+def test_multitask_transformer_research_config_validates():
+    config = load_config(
+        "configs/research/multitask_transformer_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "multitask_transformer"
+    assert config["ml"]["shadow_model_type"] == "multitask_transformer"
+    assert config["ml"]["comparison_models"] == ["multitask_transformer"]
+    assert config["ml"]["overlay_comparison_models"] == ["multitask_transformer"]
+    assert config["ml"]["multitask_enabled"]
+    assert "forward_return_5d" in config["ml"]["multitask_regression_targets"]
+
+
+def test_validate_config_rejects_invalid_multitask_transformer_head_dimensions():
+    with pytest.raises(RuntimeError, match="multitask_transformer_d_model"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "multitask_transformer",
+                "multitask_transformer_d_model": 10,
+                "multitask_transformer_heads": 4,
+            },
+        })
+
+
+def test_validate_config_rejects_unknown_multitask_target():
+    with pytest.raises(RuntimeError, match="multitask_regression_targets"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "multitask_transformer",
+                "multitask_regression_targets": ["tomorrow_close"],
+            },
+        })
+
+
+def test_validate_config_rejects_invalid_momentum_transformer_multiplier_bounds():
+    with pytest.raises(RuntimeError, match="momentum_transformer_size_multiplier_ceiling"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "momentum_transformer",
+                "momentum_transformer_size_multiplier_floor": 1.25,
+                "momentum_transformer_size_multiplier_ceiling": 0.25,
+            },
+        })
+
+
+def test_load_config_accepts_ml_inventory_and_universe_defaults():
+    config = load_config()
+
+    assert config["ml"]["parquet_dir"] == "data/processed/stooq_parquet"
+    assert config["ml"]["inventory_output_dir"] == "reports/ml"
+    assert config["ml"]["universe_output_dir"] == "data/reference/universes"
+    assert config["ml"]["min_history_years"] == 9
+    assert config["ml"]["max_latest_gap_days"] == 14
+    assert config["ml"]["min_average_dollar_volume_252d"] == 50_000_000
 
 
 def test_load_config_merges_override_file_with_project_config(tmp_path):

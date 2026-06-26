@@ -1,0 +1,8 @@
+research_years: 5
+universe: current_32
+max_symbols: 32
+output_suffix: development
+cache_dir: cache/ml/development
+report_dir: reports/ml/development
+batch_workers: 2
+model_threads: 2

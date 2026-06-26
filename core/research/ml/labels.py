@@ -160,13 +160,52 @@ class ChampionSuccessLabelBuilder:
         return MLLabelBuildResult(rows, dropped, "champion_success")
 
 
+class ShouldReduceExposureLabelBuilder:
+    """Use expanded strategy-outcome rows to label risk-reduction periods."""
+
+    label_name = "should_reduce_exposure"
+
+    def build(self, feature_rows: list[dict[str, float | str]]) -> MLLabelBuildResult:
+        rows = []
+        dropped = 0
+        for feature in feature_rows:
+            if "should_reduce_exposure" not in feature:
+                dropped += 1
+                continue
+            rows.append({
+                "feature_id": str(feature.get("feature_id", feature["feature_date"])),
+                "feature_date": str(feature["feature_date"]),
+                "label_start_date": str(feature["label_start_date"]),
+                "label_end_date": str(feature["label_end_date"]),
+                "should_reduce_exposure": int(feature["should_reduce_exposure"]),
+                "forward_return_5d": _optional_float(feature, "forward_return_5d"),
+                "forward_return_10d": _optional_float(feature, "forward_return_10d"),
+                "future_volatility": float(feature.get("future_volatility", 0.0)),
+                "future_drawdown": float(
+                    feature.get("future_drawdown", feature["future_max_drawdown"])
+                ),
+                "future_max_drawdown": float(feature["future_max_drawdown"]),
+                "max_adverse_excursion": float(
+                    feature.get("max_adverse_excursion", feature["future_max_drawdown"])
+                ),
+                "max_favourable_excursion": float(
+                    feature.get("max_favourable_excursion", 0.0)
+                ),
+                "champion_excess_return": float(feature["champion_excess_return"]),
+                "volatility_adjusted_excess_return": float(
+                    feature["volatility_adjusted_excess_return"]
+                ),
+            })
+        return MLLabelBuildResult(rows, dropped, self.label_name)
+
+
 def write_label_rows(
     path: Path,
     rows: list[dict[str, int | float | str]],
     label_name: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
+    fieldnames = list(rows[0]) if rows else [
         "feature_date",
         "label_start_date",
         "label_end_date",
@@ -175,6 +214,7 @@ def write_label_rows(
             "risk_regime": "future_return",
             "drawdown_risk": "future_max_drawdown",
             "champion_success": "champion_excess_return",
+            "should_reduce_exposure": "future_max_drawdown",
         }[label_name],
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -190,3 +230,8 @@ def _maximum_drawdown(prices: list[float]) -> float:
         peak = max(peak, price)
         maximum_drawdown = min(maximum_drawdown, (price / peak) - 1.0)
     return maximum_drawdown
+
+
+def _optional_float(row: dict[str, float | str], key: str) -> float | None:
+    value = row.get(key)
+    return float(value) if value is not None else None
