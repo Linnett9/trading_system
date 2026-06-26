@@ -58,6 +58,10 @@ class HistoricalFeatureBuilder:
         common_dates = sorted(
             set.intersection(*(set(closes) for closes in close_by_symbol.values()))
         )
+        close_series_by_symbol = {
+            symbol: [closes[day] for day in common_dates]
+            for symbol, closes in close_by_symbol.items()
+        }
         rows: list[dict[str, float | str]] = []
         dropped_rows = 0
 
@@ -66,10 +70,11 @@ class HistoricalFeatureBuilder:
                 dropped_rows += 1
                 continue
 
-            window_dates = common_dates[index - self.lookback_days : index + 1]
+            window_start = index - self.lookback_days
+            window_end = index + 1
             histories = {
-                symbol: [close_by_symbol[symbol][day] for day in window_dates]
-                for symbol in close_by_symbol
+                symbol: prices[window_start:window_end]
+                for symbol, prices in close_series_by_symbol.items()
             }
             rows.append(self._feature_row(feature_date, histories))
 

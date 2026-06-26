@@ -1,6 +1,8 @@
 backtest:
   provider: stooq_parquet
   data_dir: data/processed/stooq_parquet
+  years: 5
+  timeframe: 1Day
 
 cache:
   ml_dir: cache/ml/multitask_transformer_32_symbol_smoke
