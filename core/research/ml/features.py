@@ -115,14 +115,16 @@ class HistoricalFeatureBuilder:
             "spy_realized_volatility_63d": self._realized_volatility(spy, 63),
             "spy_max_drawdown_63d": self._max_drawdown(spy, 63),
             "spy_max_drawdown_126d": self._max_drawdown(spy, 126),
-            "spy_above_sma_200": float(spy[-1] > mean(spy[-200:])),
+            "spy_above_sma_200": float(spy[-1] > self._mean(spy[-200:])),
             "qqq_return_1m": self._return(qqq, 21),
             "qqq_return_3m": self._return(qqq, 63),
             "qqq_return_6m": self._return(qqq, 126),
             "breadth_above_sma_200": self._fraction_above_sma(universe, 200),
             "breadth_above_sma_100": self._fraction_above_sma(universe, 100),
             "breadth_positive_6m_momentum": self._fraction_positive_return(universe, 126),
-            "universe_return_1m_mean": mean(self._return(prices, 21) for prices in universe),
+            "universe_return_1m_mean": self._mean(
+                [self._return(prices, 21) for prices in universe]
+            ),
             "universe_return_1m_median": median(self._return(prices, 21) for prices in universe),
             "universe_return_1m_dispersion": self._dispersion(
                 [self._return(prices, 21) for prices in universe]
@@ -142,7 +144,9 @@ class HistoricalFeatureBuilder:
                     self._realized_volatility(prices, 21)
                 ),
                 f"{safe_symbol}_max_drawdown_63d": self._max_drawdown(prices, 63),
-                f"{safe_symbol}_above_sma_200": float(prices[-1] > mean(prices[-200:])),
+                f"{safe_symbol}_above_sma_200": float(
+                    prices[-1] > self._mean(prices[-200:])
+                ),
             })
         return row
 
@@ -161,7 +165,7 @@ class HistoricalFeatureBuilder:
         return (prices[-22] / prices[-253]) - 1.0
 
     def _distance_from_sma(self, prices: list[float], days: int) -> float:
-        average = mean(prices[-days:])
+        average = self._mean(prices[-days:])
         return (prices[-1] / average) - 1.0
 
     def _realized_volatility(self, prices: list[float], days: int) -> float:
@@ -180,17 +184,26 @@ class HistoricalFeatureBuilder:
         return max_drawdown
 
     def _fraction_above_sma(self, histories: list[list[float]], days: int) -> float:
-        return mean(float(prices[-1] > mean(prices[-days:])) for prices in histories)
+        return self._mean([
+            float(prices[-1] > self._mean(prices[-days:]))
+            for prices in histories
+        ])
 
     def _fraction_positive_return(
         self,
         histories: list[list[float]],
         days: int,
     ) -> float:
-        return mean(float(self._return(prices, days) > 0) for prices in histories)
+        return self._mean([
+            float(self._return(prices, days) > 0)
+            for prices in histories
+        ])
 
     def _dispersion(self, values: list[float]) -> float:
         return pstdev(values) if len(values) > 1 else 0.0
+
+    def _mean(self, values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
 
     def _safe_feature_symbol(self, symbol: str) -> str:
         return "".join(
