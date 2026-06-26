@@ -254,6 +254,24 @@ DEFAULT_CONFIG = {
         "news_transformer_learning_rate": 0.001,
         "news_transformer_weight_decay": 0.0001,
         "news_transformer_device": "cpu",
+        "tft_encoder_length": 64,
+        "tft_prediction_horizons": [5, 10],
+        "tft_hidden_size": 64,
+        "tft_attention_heads": 4,
+        "tft_lstm_layers": 1,
+        "tft_dropout": 0.15,
+        "tft_epochs": 30,
+        "tft_batch_size": 64,
+        "tft_learning_rate": 0.001,
+        "tft_weight_decay": 0.0005,
+        "tft_device": "cpu",
+        "tft_known_future_features": [
+            "day_of_week",
+            "month",
+            "is_month_end",
+            "rebalance_frequency",
+            "days_until_next_rebalance",
+        ],
     },
     "risk": {
         "kill_switch": {
@@ -1258,6 +1276,7 @@ def validate_config(config):
         "momentum_transformer",
         "multitask_transformer",
         "news_analysis_transformer",
+        "temporal_fusion_transformer",
         "meta_ensemble",
     }:
         raise RuntimeError(
@@ -1265,7 +1284,7 @@ def validate_config(config):
             "Available models: dlinear, gradient_boosting, logistic_regression, "
             "itransformer, market_context_encoder, meta_ensemble, momentum_transformer, "
             "multitask_transformer, news_analysis_transformer, noop, patchtst, "
-            "random_forest, transformer."
+            "random_forest, temporal_fusion_transformer, transformer."
         )
 
     allowed_meta_model_types = {
@@ -1496,6 +1515,41 @@ def validate_config(config):
         raise RuntimeError("ml.sentiment_lookback_windows must be a non-empty list")
     if any(int(window) <= 0 for window in sentiment_windows):
         raise RuntimeError("ml.sentiment_lookback_windows values must be positive")
+
+    tft_encoder_length = int(ml_config.get("tft_encoder_length", ml_config.get("sequence_length", 64)))
+    if tft_encoder_length < 2:
+        raise RuntimeError("ml.tft_encoder_length must be at least 2")
+    tft_hidden_size = int(ml_config.get("tft_hidden_size", 64))
+    tft_attention_heads = int(ml_config.get("tft_attention_heads", 4))
+    if tft_attention_heads < 1:
+        raise RuntimeError("ml.tft_attention_heads must be at least one")
+    if tft_hidden_size % tft_attention_heads != 0:
+        raise RuntimeError(
+            "ml.tft_hidden_size must be divisible by ml.tft_attention_heads"
+        )
+    tft_horizons = ml_config.get("tft_prediction_horizons", [5, 10])
+    if not isinstance(tft_horizons, list) or not tft_horizons:
+        raise RuntimeError("ml.tft_prediction_horizons must be a non-empty list")
+    if any(int(horizon) <= 0 for horizon in tft_horizons):
+        raise RuntimeError("ml.tft_prediction_horizons values must be positive")
+    allowed_known_future_features = {
+        "day_of_week",
+        "month",
+        "quarter",
+        "is_month_end",
+        "is_quarter_end",
+        "rebalance_frequency",
+        "days_until_next_rebalance",
+        "days_since_last_rebalance",
+    }
+    known_future_features = ml_config.get("tft_known_future_features", [])
+    if not isinstance(known_future_features, list):
+        raise RuntimeError("ml.tft_known_future_features must be a list")
+    for feature in known_future_features:
+        if str(feature) not in allowed_known_future_features:
+            raise RuntimeError(
+                f"Unsupported ml.tft_known_future_features value '{feature}'."
+            )
 
     random_seed = int(ml_config.get("random_seed", 42))
     if random_seed < 0:

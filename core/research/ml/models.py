@@ -511,10 +511,36 @@ def build_ml_model(
             ),
         )
 
+    if model_type == "temporal_fusion_transformer":
+        from core.research.ml.temporal_fusion_transformer_model import (
+            DEFAULT_KNOWN_FUTURE_FEATURES,
+            TemporalFusionTransformerMLModel,
+        )
+
+        config = model_config or {}
+        return TemporalFusionTransformerMLModel(
+            sequence_length=int(
+                config.get("tft_encoder_length", config.get("sequence_length", 64))
+            ),
+            hidden_size=int(config.get("tft_hidden_size", 64)),
+            attention_heads=int(config.get("tft_attention_heads", 4)),
+            num_layers=int(config.get("tft_layers", config.get("tft_lstm_layers", 1))),
+            dropout=float(config.get("tft_dropout", 0.15)),
+            epochs=int(config.get("tft_epochs", 30)),
+            batch_size=int(config.get("tft_batch_size", 64)),
+            learning_rate=float(config.get("tft_learning_rate", 0.001)),
+            weight_decay=float(config.get("tft_weight_decay", 0.0005)),
+            random_seed=random_seed,
+            device=str(config.get("tft_device", config.get("transformer_device", "cpu"))),
+            known_future_features=list(
+                config.get("tft_known_future_features", DEFAULT_KNOWN_FUTURE_FEATURES)
+            ),
+        )
+
     raise RuntimeError(
         f"Unsupported ml.model_type '{model_type}'. "
         "Available models: dlinear, gradient_boosting, logistic_regression, "
         "itransformer, market_context_encoder, momentum_transformer, "
         "multitask_transformer, news_analysis_transformer, noop, patchtst, "
-        "random_forest, transformer."
+        "random_forest, temporal_fusion_transformer, transformer."
     )

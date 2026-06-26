@@ -329,6 +329,7 @@ class MLExperimentRunner:
             "momentum_transformer",
             "multitask_transformer",
             "news_analysis_transformer",
+            "temporal_fusion_transformer",
         }:
             return "model.pt"
         return "model.joblib"

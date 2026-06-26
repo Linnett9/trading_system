@@ -264,3 +264,39 @@ def test_news_analysis_transformer_sequence_length_uses_specific_config():
     )
 
     assert model.sequence_length == 16
+
+
+def test_build_temporal_fusion_transformer_from_registry():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "temporal_fusion_transformer",
+        random_seed=7,
+        model_config={
+            "sequence_length": 16,
+            "tft_encoder_length": 16,
+            "tft_hidden_size": 16,
+            "tft_attention_heads": 4,
+            "tft_epochs": 2,
+            "tft_batch_size": 16,
+        },
+    )
+    model.fit(_rows(), _labels())
+    probabilities = model.predict_proba(_rows(40))
+    assert len(probabilities) == 40
+    assert all(0.0 <= value <= 1.0 for value in probabilities)
+
+
+def test_temporal_fusion_transformer_sequence_length_uses_specific_config():
+    pytest.importorskip("torch")
+    model = build_ml_model(
+        "temporal_fusion_transformer",
+        random_seed=7,
+        model_config={
+            "sequence_length": 63,
+            "tft_encoder_length": 16,
+            "tft_hidden_size": 16,
+            "tft_attention_heads": 4,
+        },
+    )
+
+    assert model.sequence_length == 16

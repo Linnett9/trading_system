@@ -373,6 +373,44 @@ def test_validate_config_rejects_invalid_news_transformer_head_dimensions():
         })
 
 
+def test_temporal_fusion_transformer_research_config_validates():
+    config = load_config(
+        "configs/research/tft_should_reduce_exposure.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "temporal_fusion_transformer"
+    assert config["ml"]["shadow_model_type"] == "temporal_fusion_transformer"
+    assert config["ml"]["comparison_models"] == ["temporal_fusion_transformer"]
+    assert config["ml"]["overlay_comparison_models"] == ["temporal_fusion_transformer"]
+    assert "day_of_week" in config["ml"]["tft_known_future_features"]
+
+
+def test_validate_config_rejects_invalid_tft_head_dimensions():
+    with pytest.raises(RuntimeError, match="tft_hidden_size"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "temporal_fusion_transformer",
+                "tft_hidden_size": 10,
+                "tft_attention_heads": 4,
+            },
+        })
+
+
+def test_validate_config_rejects_unknown_tft_known_future_feature():
+    with pytest.raises(RuntimeError, match="tft_known_future_features"):
+        validate_config({
+            "trading": {"mode": "paper", "live_enabled": False},
+            "broker": {"adapter": "fake"},
+            "ml": {
+                "model_type": "temporal_fusion_transformer",
+                "tft_known_future_features": ["future_close"],
+            },
+        })
+
+
 def test_validate_config_rejects_invalid_momentum_transformer_multiplier_bounds():
     with pytest.raises(RuntimeError, match="momentum_transformer_size_multiplier_ceiling"):
         validate_config({
