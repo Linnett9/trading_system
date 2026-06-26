@@ -70,6 +70,32 @@ def test_build_sequence_dataset_does_not_cross_variant_groups():
     assert sequence_dataset.sequence_group_ids == ["variant_a", "variant_b"]
 
 
+def test_build_sequence_dataset_groups_symbol_rows_by_symbol():
+    dataset = MLDataset(
+        features=[
+            {"return_1m": index / 100.0, "volatility": 0.1}
+            for index in range(6)
+        ],
+        labels=[0, 1, 0, 1, 0, 1],
+        feature_dates=[f"2024-01-{index + 1:02d}" for index in range(6)],
+        label_start_dates=[f"2024-02-{index + 1:02d}" for index in range(6)],
+        label_end_dates=[f"2024-03-{index + 1:02d}" for index in range(6)],
+        metadata=[
+            {"symbol": "AAPL", "variant_id": "shared"},
+            {"symbol": "MSFT", "variant_id": "shared"},
+            {"symbol": "AAPL", "variant_id": "shared"},
+            {"symbol": "MSFT", "variant_id": "shared"},
+            {"symbol": "AAPL", "variant_id": "shared"},
+            {"symbol": "MSFT", "variant_id": "shared"},
+        ],
+    )
+
+    sequence_dataset = build_sequence_dataset(dataset, sequence_length=3)
+
+    assert sequence_dataset.sample_count == 2
+    assert sequence_dataset.sequence_group_ids == ["AAPL", "MSFT"]
+
+
 def test_transformer_sequence_context_keeps_training_windows_inside_variants():
     pytest.importorskip("torch")
     dataset = MLDataset(

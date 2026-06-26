@@ -148,10 +148,11 @@ class MLExperimentRunner:
             class_weight=self._class_weight(),
             model_config=self.config.get("ml", {}),
         )
-        self._set_model_sequence_context(model, split.train)
-        model.fit(split.train.features, split.train.labels)
-        self._set_model_sequence_context(model, split.test)
-        probabilities = model.predict_proba(split.test.features)
+        self._fit_research_model(model, split.train)
+        probabilities, auxiliary_predictions = self._predict_research_model(
+            model,
+            split.test,
+        )
         predictions = self._predictions_from_probabilities(probabilities)
 
         output_dir = Path(self.experiment_config.output_dir)
@@ -252,6 +253,7 @@ class MLExperimentRunner:
             dataset,
             split,
             probabilities,
+            auxiliary_predictions,
             dataset_hash=str(prediction_artifact_provenance["dataset_hash"]),
             source_dataset_row_count=int(
                 prediction_artifact_provenance["source_dataset_row_count"]
@@ -316,6 +318,75 @@ class MLExperimentRunner:
         setter = getattr(model, "set_sequence_context", None)
         if callable(setter):
             setter(metadata=dataset.metadata, feature_dates=dataset.feature_dates)
+
+    def _fit_research_model(self, model: Any, dataset: MLDataset) -> None:
+        self._set_model_sequence_context(model, dataset)
+        fit_multitask = getattr(model, "fit_multitask", None)
+        if callable(fit_multitask) and self._multitask_enabled():
+            fit_multitask(
+                dataset.features,
+                dataset.labels,
+                self._auxiliary_targets_for_dataset(dataset),
+            )
+            return
+        model.fit(dataset.features, dataset.labels)
+
+    def _predict_research_model(
+        self,
+        model: Any,
+        dataset: MLDataset,
+    ) -> tuple[list[float], list[dict[str, float]]]:
+        self._set_model_sequence_context(model, dataset)
+        predict_multitask = getattr(model, "predict_multitask", None)
+        if callable(predict_multitask) and self._multitask_enabled():
+            predictions = predict_multitask(dataset.features)
+            probabilities = [
+                float(row.get("probability_should_reduce_exposure", 0.5))
+                for row in predictions
+            ]
+            auxiliary_predictions = [
+                {
+                    key: float(value)
+                    for key, value in row.items()
+                    if key.startswith("predicted_")
+                }
+                for row in predictions
+            ]
+            return probabilities, auxiliary_predictions
+        probabilities = model.predict_proba(dataset.features)
+        return probabilities, [{} for _ in probabilities]
+
+    def _multitask_enabled(self) -> bool:
+        ml_config = self.config.get("ml", {})
+        return bool(
+            ml_config.get("multitask_enabled", False)
+            or self.experiment_config.model_type == "multitask_transformer"
+        )
+
+    def _multitask_regression_targets(self) -> list[str]:
+        configured = self.config.get("ml", {}).get("multitask_regression_targets", [])
+        return [str(value) for value in configured]
+
+    def _auxiliary_targets_for_dataset(
+        self,
+        dataset: MLDataset,
+    ) -> dict[str, list[float | None]]:
+        targets = self._multitask_regression_targets()
+        if not targets:
+            return {}
+        return {
+            target: [
+                (
+                    dataset.auxiliary_targets[index].get(target)
+                    if dataset.auxiliary_targets
+                    and index < len(dataset.auxiliary_targets)
+                    and dataset.auxiliary_targets[index]
+                    else None
+                )
+                for index in range(dataset.sample_count)
+            ]
+            for target in targets
+        }
 
     def _model_filename(self) -> str:
         if self.experiment_config.model_type == "noop":
@@ -1669,6 +1740,7 @@ class MLExperimentRunner:
         dataset: MLDataset,
         split: ChronologicalSplit,
         holdout_probabilities: list[float],
+        holdout_auxiliary_predictions: list[dict[str, float]] | None = None,
         *,
         dataset_hash: str | None = None,
         source_dataset_row_count: int | None = None,
@@ -1703,12 +1775,16 @@ class MLExperimentRunner:
                 class_weight=self._class_weight(),
                 model_config=self.config.get("ml", {}),
             )
-            model.fit(fold.split.train.features, fold.split.train.labels)
-            probabilities = model.predict_proba(fold.split.test.features)
+            self._fit_research_model(model, fold.split.train)
+            probabilities, auxiliary_predictions = self._predict_research_model(
+                model,
+                fold.split.test,
+            )
             rows.extend(
                 self._prediction_artifact_rows(
                     fold.split.test,
                     probabilities,
+                    auxiliary_predictions,
                     split_name="out_of_fold",
                     fold=fold.fold_number,
                     provenance=provenance,
@@ -1718,11 +1794,13 @@ class MLExperimentRunner:
             self._prediction_artifact_rows(
                 split.test,
                 holdout_probabilities,
+                holdout_auxiliary_predictions,
                 split_name="holdout",
                 fold="holdout",
                 provenance=provenance,
             )
         )
+        auxiliary_fieldnames = self._prediction_artifact_auxiliary_fieldnames(rows)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = [
             "date",
@@ -1744,6 +1822,7 @@ class MLExperimentRunner:
             "generated_at",
             "dataset_hash",
             "research_label",
+            *auxiliary_fieldnames,
         ]
         with csv_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -1763,6 +1842,13 @@ class MLExperimentRunner:
             "git_commit": self._git_commit(),
             "validation_method": "rolling_walk_forward_out_of_fold_plus_holdout",
             "row_count": len(rows),
+            "auxiliary_targets": self._multitask_regression_targets(),
+            "auxiliary_prediction_columns": [
+                name for name in auxiliary_fieldnames if name.startswith("predicted_")
+            ],
+            "auxiliary_actual_columns": [
+                name for name in auxiliary_fieldnames if name.startswith("actual_")
+            ],
             "trading_impact": "none",
             "research_only": True,
         }, indent=2), encoding="utf-8")
@@ -1802,12 +1888,14 @@ class MLExperimentRunner:
         self,
         dataset: MLDataset,
         probabilities: list[float],
+        auxiliary_predictions: list[dict[str, float]] | None,
         split_name: str,
         fold: int | str,
         provenance: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         rows = []
         provenance = provenance or {}
+        auxiliary_predictions = auxiliary_predictions or [{} for _ in probabilities]
         for index, probability in enumerate(probabilities):
             metadata = dataset.metadata[index] if dataset.metadata else {}
             feature_id = (
@@ -1815,7 +1903,7 @@ class MLExperimentRunner:
                 if dataset.feature_ids
                 else dataset.feature_dates[index]
             )
-            rows.append({
+            row = {
                 "date": dataset.feature_dates[index],
                 "rebalance_date": metadata.get("rebalance_date", dataset.feature_dates[index]),
                 "feature_id": feature_id,
@@ -1839,8 +1927,47 @@ class MLExperimentRunner:
                 "generated_at": provenance.get("generated_at", ""),
                 "dataset_hash": provenance.get("dataset_hash", ""),
                 "research_label": self.research_label,
-            })
+            }
+            row.update(
+                self._prediction_artifact_auxiliary_values(
+                    dataset,
+                    index,
+                    auxiliary_predictions[index] if index < len(auxiliary_predictions) else {},
+                )
+            )
+            rows.append(row)
         return rows
+
+    def _prediction_artifact_auxiliary_values(
+        self,
+        dataset: MLDataset,
+        index: int,
+        auxiliary_prediction: dict[str, float],
+    ) -> dict[str, float | str]:
+        values: dict[str, float | str] = {}
+        targets = self._multitask_regression_targets()
+        actuals = dataset.auxiliary_targets[index] if dataset.auxiliary_targets else {}
+        for target in targets:
+            prediction_key = f"predicted_{target}"
+            actual_key = f"actual_{target}"
+            if prediction_key in auxiliary_prediction:
+                values[prediction_key] = float(auxiliary_prediction[prediction_key])
+            else:
+                values[prediction_key] = ""
+            actual_value = actuals.get(target) if actuals else None
+            values[actual_key] = "" if actual_value is None else float(actual_value)
+        return values
+
+    @staticmethod
+    def _prediction_artifact_auxiliary_fieldnames(
+        rows: list[dict[str, Any]],
+    ) -> list[str]:
+        names: list[str] = []
+        for row in rows:
+            for name in row:
+                if (name.startswith("predicted_") or name.startswith("actual_")) and name not in names:
+                    names.append(name)
+        return sorted(names)
 
     def _write_feature_importance(
         self,
@@ -1922,6 +2049,7 @@ class MLExperimentRunner:
             "feature_dates": dataset.feature_dates,
             "label_start_dates": dataset.label_start_dates,
             "label_end_dates": dataset.label_end_dates,
+            "auxiliary_targets": dataset.auxiliary_targets,
         })
 
     def _hash_payload(self, payload: Any) -> str:

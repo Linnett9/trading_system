@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from core.research.ml.models import IMLModel
+from core.research.ml.sequence_dataset import (
+    build_sequence_indices,
+    sequence_group_ids_from_metadata,
+)
 from core.research.ml.transformer_model import _torch_dependencies
 
 
@@ -116,6 +120,7 @@ class MultiTaskTransformerSequenceMLModel(IMLModel):
         self.target_stds: dict[str, float] = {name: 1.0 for name in self.regression_targets}
         self.prior_probability = 0.5
         self.model: Any = None
+        self._sequence_group_ids: list[str] = []
         self.training_summary = MultiTaskTransformerTrainingSummary(
             False,
             0,
@@ -123,6 +128,17 @@ class MultiTaskTransformerSequenceMLModel(IMLModel):
             0.5,
             list(self.regression_targets),
             {name: 0 for name in self.regression_targets},
+        )
+
+    def set_sequence_context(
+        self,
+        metadata: list[dict[str, str]] | None = None,
+        feature_dates: list[str] | None = None,
+    ) -> None:
+        del feature_dates
+        self._sequence_group_ids = sequence_group_ids_from_metadata(
+            metadata,
+            len(metadata or []),
         )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
@@ -485,9 +501,12 @@ class MultiTaskTransformerSequenceMLModel(IMLModel):
         targets: list[int] = []
         regression_values: list[list[float]] = []
         regression_mask: list[list[float]] = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
+        for indices in build_sequence_indices(
+            self._context_group_ids(len(matrix)),
+            self.sequence_length,
+        ):
+            end_index = indices[-1]
+            sequences.append([matrix[index] for index in indices])
             targets.append(int(labels[end_index]))
             values: list[float] = []
             mask: list[float] = []
@@ -530,11 +549,18 @@ class MultiTaskTransformerSequenceMLModel(IMLModel):
         matrix = [self._row_vector(row) for row in rows]
         sequences: list[list[list[float]]] = []
         end_indices: list[int] = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
-            end_indices.append(end_index)
+        for indices in build_sequence_indices(
+            self._context_group_ids(len(matrix)),
+            self.sequence_length,
+        ):
+            sequences.append([matrix[index] for index in indices])
+            end_indices.append(indices[-1])
         return sequences, end_indices
+
+    def _context_group_ids(self, sample_count: int) -> list[str]:
+        if len(self._sequence_group_ids) == sample_count:
+            return list(self._sequence_group_ids)
+        return ["global" for _ in range(sample_count)]
 
     def _prior_prediction_row(self) -> dict[str, float]:
         row = {"probability_should_reduce_exposure": float(self.prior_probability)}

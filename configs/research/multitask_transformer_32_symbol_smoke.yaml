@@ -1,0 +1,64 @@
+backtest:
+  provider: stooq_parquet
+  data_dir: data/processed/stooq_parquet
+
+ml:
+  enabled: true
+  mode: research
+  model_type: multitask_transformer
+  shadow_model_type: multitask_transformer
+  label_type: should_reduce_exposure
+  prediction_target: should_reduce_exposure
+  feature_set: expanded_rebalance_v1
+  research_label: EXPANDED_REBALANCE_CURRENT_32_MULTITASK_SMOKE_RESEARCH_ONLY
+  minimum_history_years: 4
+  output_dir: reports/ml/multitask_transformer_32_symbol_smoke
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  sequence_length: 12
+  multitask_enabled: true
+  multitask_primary_target: should_reduce_exposure
+  multitask_regression_targets:
+    - forward_return_5d
+    - forward_return_10d
+    - future_volatility
+    - future_drawdown
+  multitask_classification_weight: 1.0
+  multitask_regression_loss: huber
+  multitask_huber_delta: 1.0
+  multitask_forward_return_5d_weight: 0.25
+  multitask_forward_return_10d_weight: 0.25
+  multitask_future_volatility_weight: 0.20
+  multitask_future_drawdown_weight: 0.20
+  multitask_transformer_sequence_length: 12
+  multitask_transformer_d_model: 16
+  multitask_transformer_heads: 2
+  multitask_transformer_layers: 1
+  multitask_transformer_feedforward: 32
+  multitask_transformer_dropout: 0.15
+  multitask_transformer_epochs: 3
+  multitask_transformer_batch_size: 16
+  multitask_transformer_learning_rate: 0.001
+  multitask_transformer_weight_decay: 0.0005
+  multitask_transformer_device: cpu
+  comparison_models:
+    - multitask_transformer
+  overlay_comparison_models:
+    - multitask_transformer
+  expanded_rebalance_audit_path: reports/ml/multitask_transformer_32_symbol_smoke/expanded_rebalance_dataset_audit.json
+  expanded_rebalance_dataset:
+    rebalance_frequencies:
+      - monthly
+      - biweekly
+    top_n_values:
+      - 3
+      - 5
+    weightings:
+      - equal
+      - inverse_volatility
+    universe_paths:
+      - data/reference/universes/current_32.yaml
+    reduce_drawdown_threshold: 0.08
+    reduce_excess_return_threshold: -0.01
+    reduce_volatility_adjusted_threshold: -0.10

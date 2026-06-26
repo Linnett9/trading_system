@@ -87,6 +87,8 @@ def _slice_dataset(dataset: MLDataset, indices: list[int]) -> MLDataset:
         if dataset.feature_ids else [],
         metadata=[dataset.metadata[index] for index in indices]
         if dataset.metadata else [],
+        auxiliary_targets=[dataset.auxiliary_targets[index] for index in indices]
+        if dataset.auxiliary_targets else [],
     )
 
 

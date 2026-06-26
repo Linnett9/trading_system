@@ -118,3 +118,35 @@ def test_multitask_transformer_single_task_fit_remains_runner_compatible():
 
     assert len(probabilities) == 12
     assert all(0.0 <= value <= 1.0 for value in probabilities)
+
+
+def test_multitask_transformer_sequence_context_stays_inside_groups():
+    pytest.importorskip("torch")
+    rows = _rows(8)
+    labels = _labels(8)
+    metadata = [
+        {"variant_id": "variant_a"},
+        {"variant_id": "variant_b"},
+        {"variant_id": "variant_a"},
+        {"variant_id": "variant_b"},
+        {"variant_id": "variant_a"},
+        {"variant_id": "variant_b"},
+        {"variant_id": "variant_a"},
+        {"variant_id": "variant_b"},
+    ]
+    model = MultiTaskTransformerSequenceMLModel(
+        sequence_length=3,
+        d_model=8,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=16,
+        epochs=1,
+        batch_size=4,
+        random_seed=7,
+        regression_targets=["forward_return_5d"],
+    )
+
+    model.set_sequence_context(metadata=metadata, feature_dates=[])
+    model.fit_multitask(rows, labels, {"forward_return_5d": [0.01] * 8})
+
+    assert model.training_summary.sequence_count == 4

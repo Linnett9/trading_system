@@ -297,6 +297,20 @@ def test_multitask_transformer_research_config_validates():
     assert "forward_return_5d" in config["ml"]["multitask_regression_targets"]
 
 
+def test_multitask_transformer_32_symbol_smoke_config_validates():
+    config = load_config(
+        "configs/research/multitask_transformer_32_symbol_smoke.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["ml"]["model_type"] == "multitask_transformer"
+    assert config["ml"]["output_dir"] == "reports/ml/multitask_transformer_32_symbol_smoke"
+    assert config["ml"]["multitask_transformer_epochs"] == 3
+    assert config["ml"]["expanded_rebalance_dataset"]["universe_paths"] == [
+        "data/reference/universes/current_32.yaml"
+    ]
+
+
 def test_validate_config_rejects_invalid_multitask_transformer_head_dimensions():
     with pytest.raises(RuntimeError, match="multitask_transformer_d_model"):
         validate_config({

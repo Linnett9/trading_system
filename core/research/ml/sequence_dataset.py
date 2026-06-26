@@ -106,7 +106,14 @@ def sequence_group_ids_from_metadata(
     group_ids: list[str] = []
     for index in range(sample_count):
         row = metadata[index] if index < len(metadata) else {}
-        group_ids.append(str(row.get("variant_id") or row.get("sequence_group_id") or "global"))
+        group_ids.append(
+            str(
+                row.get("symbol")
+                or row.get("variant_id")
+                or row.get("sequence_group_id")
+                or "global"
+            )
+        )
     return group_ids
 
 

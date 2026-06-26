@@ -818,6 +818,48 @@ def test_dataset_can_align_multiple_variant_rows_on_same_feature_date():
     assert dataset.features == [{"numeric_signal": 1.5}, {"numeric_signal": -0.5}]
 
 
+def test_dataset_preserves_multitask_auxiliary_targets_without_feature_leakage():
+    feature_rows = [
+        {
+            "feature_id": "a_2024-01-31",
+            "feature_date": "2024-01-31",
+            "variant_id": "a",
+            "numeric_signal": 1.5,
+            "forward_return_5d": 99.0,
+            "future_drawdown": -99.0,
+        }
+    ]
+    label_rows = [
+        {
+            "feature_id": "a_2024-01-31",
+            "feature_date": "2024-01-31",
+            "label_start_date": "2024-02-01",
+            "label_end_date": "2024-03-13",
+            "should_reduce_exposure": 1,
+            "forward_return_5d": -0.02,
+            "future_drawdown": -0.09,
+        }
+    ]
+
+    dataset = build_dataset(
+        feature_rows,
+        label_rows,
+        label_name="should_reduce_exposure",
+    )
+
+    assert dataset.features == [{"numeric_signal": 1.5}]
+    assert dataset.auxiliary_targets == [
+        {
+            "forward_return_5d": -0.02,
+            "forward_return_10d": None,
+            "future_volatility": None,
+            "future_drawdown": -0.09,
+            "max_adverse_excursion": None,
+            "max_favourable_excursion": None,
+        }
+    ]
+
+
 def _stress_row(index: int) -> dict[str, str]:
     return {
         "exposure_target": "0.85",

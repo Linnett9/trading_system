@@ -274,6 +274,19 @@ def test_multitask_transformer_runner_writes_prediction_artifacts_with_provenanc
 
     _assert_prediction_artifact_provenance(result)
     assert result.model_path.name == "model.pt"
+    with result.prediction_artifacts_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+    metadata = json.loads(
+        result.prediction_artifacts_metadata_path.read_text(encoding="utf-8")
+    )
+
+    assert "predicted_forward_return_5d" in fieldnames
+    assert "actual_forward_return_5d" in fieldnames
+    assert any(row["predicted_forward_return_5d"] != "" for row in rows)
+    assert metadata["auxiliary_targets"] == ["forward_return_5d"]
+    assert metadata["auxiliary_prediction_columns"] == ["predicted_forward_return_5d"]
 
 
 def test_market_context_encoder_runner_writes_prediction_artifacts_with_provenance(tmp_path):

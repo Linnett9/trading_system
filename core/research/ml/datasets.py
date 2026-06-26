@@ -5,6 +5,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+MULTITASK_AUXILIARY_TARGET_COLUMNS = [
+    "forward_return_5d",
+    "forward_return_10d",
+    "future_volatility",
+    "future_drawdown",
+    "max_adverse_excursion",
+    "max_favourable_excursion",
+]
+
 
 @dataclass(frozen=True)
 class MLDataset:
@@ -15,6 +24,7 @@ class MLDataset:
     label_end_dates: list[str]
     feature_ids: list[str] = field(default_factory=list)
     metadata: list[dict[str, str]] = field(default_factory=list)
+    auxiliary_targets: list[dict[str, float | None]] = field(default_factory=list)
 
     @property
     def sample_count(self) -> int:
@@ -60,7 +70,15 @@ def build_dataset(
             "metadata": {
                 "rebalance_date": str(feature_row.get("rebalance_date", feature_date)),
                 "variant_id": str(feature_row.get("variant_id", "")),
+                "symbol": str(feature_row.get("symbol", "")),
+                "selected_symbols": str(feature_row.get("selected_symbols", "")),
+                "variant_universe": str(feature_row.get("variant_universe", "")),
+                "variant_rebalance_frequency": str(
+                    feature_row.get("variant_rebalance_frequency", "")
+                ),
+                "variant_weighting": str(feature_row.get("variant_weighting", "")),
             },
+            "auxiliary_targets": _auxiliary_target_values(label_row),
         })
 
     samples.sort(key=lambda item: (item["feature_date"], item["feature_id"]))
@@ -73,7 +91,22 @@ def build_dataset(
         label_end_dates=[sample["label_end_date"] for sample in samples],
         feature_ids=[sample["feature_id"] for sample in samples],
         metadata=[sample["metadata"] for sample in samples],
+        auxiliary_targets=[sample["auxiliary_targets"] for sample in samples],
     )
+
+
+def _auxiliary_target_values(row: dict[str, Any]) -> dict[str, float | None]:
+    values: dict[str, float | None] = {}
+    for name in MULTITASK_AUXILIARY_TARGET_COLUMNS:
+        raw_value = row.get(name)
+        if raw_value is None or raw_value == "":
+            values[name] = None
+            continue
+        try:
+            values[name] = float(raw_value)
+        except (TypeError, ValueError):
+            values[name] = None
+    return values
 
 
 def _numeric_feature_values(row: dict[str, float | str]) -> dict[str, float]:
@@ -85,6 +118,7 @@ def _numeric_feature_values(row: dict[str, float | str]) -> dict[str, float]:
         "rebalance_date",
         "outcome_end_date",
         "selected_symbols",
+        "symbol",
         "regime_label",
         "variant_id",
         "variant_rebalance_frequency",
