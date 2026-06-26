@@ -148,7 +148,9 @@ class MLExperimentRunner:
             class_weight=self._class_weight(),
             model_config=self.config.get("ml", {}),
         )
+        self._set_model_sequence_context(model, split.train)
         model.fit(split.train.features, split.train.labels)
+        self._set_model_sequence_context(model, split.test)
         probabilities = model.predict_proba(split.test.features)
         predictions = self._predictions_from_probabilities(probabilities)
 
@@ -309,6 +311,11 @@ class MLExperimentRunner:
             test_start=self.experiment_config.test_start,
             test_end=self.experiment_config.test_end,
         )
+
+    def _set_model_sequence_context(self, model: Any, dataset: MLDataset) -> None:
+        setter = getattr(model, "set_sequence_context", None)
+        if callable(setter):
+            setter(metadata=dataset.metadata, feature_dates=dataset.feature_dates)
 
     def _model_filename(self) -> str:
         if self.experiment_config.model_type == "noop":

@@ -43,6 +43,72 @@ def test_build_sequence_dataset_aligns_label_with_last_row():
     assert sequence_dataset.feature_names == ["return_1m", "volatility"]
 
 
+def test_build_sequence_dataset_does_not_cross_variant_groups():
+    dataset = MLDataset(
+        features=[
+            {"return_1m": index / 100.0, "volatility": 0.1}
+            for index in range(6)
+        ],
+        labels=[0, 1, 0, 1, 0, 1],
+        feature_dates=[f"2024-01-{index + 1:02d}" for index in range(6)],
+        label_start_dates=[f"2024-02-{index + 1:02d}" for index in range(6)],
+        label_end_dates=[f"2024-03-{index + 1:02d}" for index in range(6)],
+        metadata=[
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+        ],
+    )
+
+    sequence_dataset = build_sequence_dataset(dataset, sequence_length=3)
+
+    assert sequence_dataset.sample_count == 2
+    assert sequence_dataset.feature_dates == ["2024-01-05", "2024-01-06"]
+    assert sequence_dataset.sequence_group_ids == ["variant_a", "variant_b"]
+
+
+def test_transformer_sequence_context_keeps_training_windows_inside_variants():
+    pytest.importorskip("torch")
+    dataset = MLDataset(
+        features=[
+            {"return_1m": index / 100.0, "volatility": (index % 3) / 10.0}
+            for index in range(8)
+        ],
+        labels=[0, 1, 0, 1, 0, 1, 1, 0],
+        feature_dates=[f"2024-01-{index + 1:02d}" for index in range(8)],
+        label_start_dates=[f"2024-02-{index + 1:02d}" for index in range(8)],
+        label_end_dates=[f"2024-03-{index + 1:02d}" for index in range(8)],
+        metadata=[
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+            {"variant_id": "variant_a"},
+            {"variant_id": "variant_b"},
+        ],
+    )
+    model = TransformerSequenceMLModel(
+        sequence_length=3,
+        d_model=8,
+        nhead=2,
+        num_layers=1,
+        dim_feedforward=16,
+        epochs=1,
+        batch_size=4,
+        random_seed=7,
+    )
+
+    model.set_sequence_context(metadata=dataset.metadata, feature_dates=dataset.feature_dates)
+    model.fit(dataset.features, dataset.labels)
+
+    assert model.training_summary.sequence_count == 4
+
+
 def test_transformer_model_returns_one_probability_per_input_row(tmp_path: Path):
     pytest.importorskip("torch")
     dataset = _dataset()

@@ -22,6 +22,7 @@ class SequenceMLDataset:
     label_end_dates: list[str]
     feature_names: list[str]
     sequence_length: int
+    sequence_group_ids: list[str]
 
     @property
     def sample_count(self) -> int:
@@ -49,27 +50,33 @@ def build_sequence_dataset(
 
     if dataset.sample_count == 0:
         names = list(feature_names or [])
-        return SequenceMLDataset([], [], [], [], [], names, sequence_length)
+        return SequenceMLDataset([], [], [], [], [], names, sequence_length, [])
 
     names = list(feature_names or sorted(dataset.features[0]))
     rows = [
         [float(row.get(name, 0.0) or 0.0) for name in names]
         for row in dataset.features
     ]
+    group_ids = sequence_group_ids_from_metadata(
+        dataset.metadata,
+        dataset.sample_count,
+    )
 
     sequences: list[list[list[float]]] = []
     labels: list[int] = []
     feature_dates: list[str] = []
     label_start_dates: list[str] = []
     label_end_dates: list[str] = []
+    sequence_group_ids: list[str] = []
 
-    for end_index in range(sequence_length - 1, dataset.sample_count):
-        start_index = end_index - sequence_length + 1
-        sequences.append(rows[start_index : end_index + 1])
+    for indices in build_sequence_indices(group_ids, sequence_length):
+        end_index = indices[-1]
+        sequences.append([rows[index] for index in indices])
         labels.append(int(dataset.labels[end_index]))
         feature_dates.append(dataset.feature_dates[end_index])
         label_start_dates.append(dataset.label_start_dates[end_index])
         label_end_dates.append(dataset.label_end_dates[end_index])
+        sequence_group_ids.append(group_ids[end_index])
 
     return SequenceMLDataset(
         sequences=sequences,
@@ -79,4 +86,46 @@ def build_sequence_dataset(
         label_end_dates=label_end_dates,
         feature_names=names,
         sequence_length=sequence_length,
+        sequence_group_ids=sequence_group_ids,
     )
+
+
+def sequence_group_ids_from_metadata(
+    metadata: Sequence[dict[str, str]] | None,
+    sample_count: int,
+) -> list[str]:
+    """Return stable sequence-group IDs for row-adjacent sequence models.
+
+    Expanded rebalance research datasets contain multiple universes/variants on
+    the same rebalance date. A sequence model should learn chronology within a
+    variant, not a synthetic path formed by the global CSV sort order.
+    """
+
+    if not metadata:
+        return ["global" for _ in range(sample_count)]
+    group_ids: list[str] = []
+    for index in range(sample_count):
+        row = metadata[index] if index < len(metadata) else {}
+        group_ids.append(str(row.get("variant_id") or row.get("sequence_group_id") or "global"))
+    return group_ids
+
+
+def build_sequence_indices(
+    group_ids: Sequence[str],
+    sequence_length: int,
+) -> list[list[int]]:
+    if sequence_length < 2:
+        raise ValueError("sequence_length must be at least 2")
+
+    grouped_indices: dict[str, list[int]] = {}
+    for index, group_id in enumerate(group_ids):
+        grouped_indices.setdefault(str(group_id), []).append(index)
+
+    sequences: list[list[int]] = []
+    for indices in grouped_indices.values():
+        if len(indices) < sequence_length:
+            continue
+        for end_offset in range(sequence_length - 1, len(indices)):
+            sequences.append(indices[end_offset - sequence_length + 1 : end_offset + 1])
+    sequences.sort(key=lambda item: item[-1])
+    return sequences
