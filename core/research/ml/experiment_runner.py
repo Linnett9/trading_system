@@ -2270,6 +2270,8 @@ class MLExperimentRunner:
             for name in row:
                 if name == "actual_label":
                     continue
+                if name == "predicted_probability":
+                    continue
                 if (name.startswith("predicted_") or name.startswith("actual_")) and name not in names:
                     names.append(name)
         return sorted(names)

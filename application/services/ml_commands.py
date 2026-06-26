@@ -14,6 +14,7 @@ from core.research.ml.data_inventory import build_data_inventory
 from core.research.ml.universe_builder import build_universe_files
 from core.research.ml.meta_ensemble import run_meta_ensemble
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
+from core.research.ml.model_contract_audit import write_model_contract_audit
 
 
 _THREAD_ENV_VARS = (
@@ -394,21 +395,43 @@ def run_ml_run_inventory(config):
         print(f"{source_dir}: {status}")
 
 
+def run_ml_model_contract_audit(config):
+    output_dir = config.get("reports", {}).get(
+        "ml_dir",
+        config.get("ml", {}).get("output_dir", "reports/ml"),
+    )
+    markdown_path, json_path = write_model_contract_audit(output_dir)
+    print("\nML MODEL CONTRACT AUDIT")
+    print("mode=research | trading_impact=none")
+    print(f"Markdown: {markdown_path}")
+    print(f"JSON: {json_path}")
+
+
 def _artifact_source_dirs(
     config: dict[str, Any],
     *,
     require_exists: bool = True,
 ) -> list[Path]:
     ml_config = config.get("ml", {})
-    raw_dirs = ml_config.get("source_prediction_dirs") or [ml_config.get("output_dir")]
-    source_dirs = [Path(str(path)) for path in raw_dirs if path]
+    explicit_dirs = ml_config.get("source_prediction_dirs")
+    if explicit_dirs:
+        source_dirs = [Path(str(path)) for path in explicit_dirs if path]
+    else:
+        output_dir = Path(
+            str(
+                ml_config.get(
+                    "output_dir",
+                    config.get("reports", {}).get("ml_dir", "reports/ml"),
+                )
+            )
+        )
+        if (output_dir / "prediction_artifacts.csv").exists():
+            source_dirs = [output_dir]
+        else:
+            source_dirs = _artifact_child_dirs(output_dir)
     if not source_dirs:
         report_dir = Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
-        source_dirs = [
-            path
-            for path in sorted(report_dir.iterdir())
-            if path.is_dir()
-        ] if report_dir.exists() else []
+        source_dirs = _artifact_child_dirs(report_dir)
     if require_exists:
         missing = [path for path in source_dirs if not path.exists()]
         if missing:
@@ -417,3 +440,13 @@ def _artifact_source_dirs(
                 + ", ".join(str(path) for path in missing)
             )
     return source_dirs
+
+
+def _artifact_child_dirs(path: Path) -> list[Path]:
+    if not path.exists():
+        return []
+    return [
+        child
+        for child in sorted(path.iterdir())
+        if child.is_dir()
+    ]

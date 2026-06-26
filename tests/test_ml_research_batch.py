@@ -9,6 +9,7 @@ import pytest
 from application.services import ml_commands
 from application.services.ml_commands import (
     MLResearchBatchResult,
+    _artifact_source_dirs,
     run_ml_research_batch,
     validate_ml_research_batch_config,
 )
@@ -122,6 +123,24 @@ def test_ml_research_batch_service_does_not_import_operational_modules():
     assert "paper_commands" not in source
     assert "broker" not in source
     assert "execution" not in source
+
+
+def test_artifact_source_dirs_discovers_report_child_run_dirs(tmp_path):
+    report_dir = tmp_path / "reports" / "ml"
+    first = report_dir / "dlinear"
+    second = report_dir / "patchtst"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+
+    source_dirs = _artifact_source_dirs(
+        {
+            "reports": {"ml_dir": str(report_dir)},
+            "ml": {"output_dir": str(report_dir)},
+        },
+        require_exists=False,
+    )
+
+    assert source_dirs == [first, second]
 
 
 def _batch_config(

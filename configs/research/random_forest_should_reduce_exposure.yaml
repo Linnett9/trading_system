@@ -1,0 +1,41 @@
+backtest:
+  provider: stooq_parquet
+  data_dir: data/processed/stooq_parquet
+
+ml:
+  enabled: true
+  mode: research
+  model_type: random_forest
+  shadow_model_type: random_forest
+  label_type: should_reduce_exposure
+  prediction_target: should_reduce_exposure
+  feature_set: expanded_rebalance_v1
+  research_label: RANDOM_FOREST_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY
+  minimum_history_years: 4
+  output_dir: reports/ml/random_forest_should_reduce_exposure
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  comparison_models:
+    - random_forest
+  overlay_comparison_models:
+    - random_forest
+  expanded_rebalance_audit_path: reports/ml/expanded_rebalance_dataset_audit.json
+  expanded_rebalance_dataset:
+    rebalance_frequencies:
+      - monthly
+      - biweekly
+      - weekly
+    top_n_values:
+      - 3
+      - 5
+      - 7
+    weightings:
+      - equal
+      - inverse_volatility
+    universe_paths:
+      - data/reference/universes/current_32.yaml
+      - data/reference/universes/us_liquid_100.yaml
+    reduce_drawdown_threshold: 0.08
+    reduce_excess_return_threshold: -0.01
+    reduce_volatility_adjusted_threshold: -0.10

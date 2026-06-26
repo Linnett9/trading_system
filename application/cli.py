@@ -39,6 +39,7 @@ from application.services.ml_commands import (
     run_ml_build_universes,
     run_ml_data_inventory,
     run_ml_expanded_rebalance_dataset,
+    run_ml_model_contract_audit,
     run_ml_research_batch,
     run_ml_run_inventory,
     run_ml_meta_ensemble,
@@ -84,6 +85,7 @@ def parse_args():
             "multi-strategy-walk-forward",
             "ml-research",
             "ml-research-batch",
+            "ml-model-contract-audit",
             "ml-run-inventory",
             "ml-validate-artifacts",
             "ml-smoke-test",
@@ -280,6 +282,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-run-inventory":
         run_ml_run_inventory(config)
         return
+    if args.mode == "ml-model-contract-audit":
+        run_ml_model_contract_audit(config)
+        return
     if args.mode == "ml-validate-artifacts":
         run_ml_validate_artifacts(config)
         return
@@ -430,6 +435,7 @@ def run_cli():
         "import-stooq-bulk",
         "ml-data-inventory",
         "ml-build-universes",
+        "ml-model-contract-audit",
         "ml-run-inventory",
         "ml-validate-artifacts",
         "ml-meta-ensemble",
