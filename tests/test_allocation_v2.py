@@ -170,6 +170,48 @@ def test_allocation_v2_writes_ranked_research_only_outputs(tmp_path):
     }
 
 
+def test_selected_optimizer_exposure_path_is_persisted(tmp_path):
+    rows = [
+        _row("2024-01-01", 0.02, return_10d=0.03, drawdown=-0.02, volatility=0.10),
+        _row("2024-01-08", -0.01, return_10d=-0.02, drawdown=-0.08, volatility=0.20),
+        _row("2024-01-15", 0.03, return_10d=0.04, drawdown=-0.01, volatility=0.08),
+        _row("2024-01-22", 0.01, return_10d=0.01, drawdown=-0.03, volatility=0.12),
+    ]
+    selection_rows = [
+        _row("2023-12-01", 0.01, return_10d=0.02, drawdown=-0.02, volatility=0.10),
+        _row("2023-12-08", -0.02, return_10d=-0.03, drawdown=-0.10, volatility=0.30),
+        _row("2023-12-15", 0.02, return_10d=0.03, drawdown=-0.01, volatility=0.08),
+        _row("2023-12-22", 0.01, return_10d=0.01, drawdown=-0.03, volatility=0.12),
+    ]
+
+    paths = write_allocation_v2_reports(
+        output_dir=tmp_path,
+        rows=rows,
+        meta_probabilities=[0.2, 0.8, 0.3, 0.4],
+        diagnostics={},
+        config={
+            "allocation_optimizer": {
+                "enabled": True,
+                "sampler": "random",
+                "candidate_count": 3,
+            }
+        },
+        selection_rows=selection_rows,
+        selection_meta_probabilities=[0.2, 0.8, 0.3, 0.4],
+    )
+
+    exposure_path = json.loads(
+        paths.selected_optimizer_exposure_path_json.read_text(encoding="utf-8")
+    )
+
+    assert paths.selected_optimizer_exposure_path_csv.exists()
+    assert exposure_path["mode"] == "selected_optimizer_exposure_path_research_only"
+    assert exposure_path["row_count"] == 4
+    assert exposure_path["rows"][0]["rebalance_date"] == "2024-01-01"
+    assert "net_return" in exposure_path["rows"][0]
+    assert "drawdown" in exposure_path["rows"][0]
+
+
 def test_missing_auxiliary_columns_skip_only_affected_policies(tmp_path):
     rows = [
         {

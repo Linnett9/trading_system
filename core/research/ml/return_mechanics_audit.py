@@ -71,6 +71,7 @@ def write_return_mechanics_audit(config: dict[str, Any]) -> ReturnMechanicsAudit
     meta_rows = _read_csv(paths["meta_dataset"])
     expanded_rows = _read_csv(paths["expanded_dataset"])
     auxiliary_rows = _read_csv(paths["meta_auxiliary_predictions"])
+    selected_optimizer_path = _read_json(paths["selected_optimizer_exposure_path_json"])
 
     reported_metrics = _reported_metrics_by_candidate(comparison, optimizer)
     series_by_candidate = _load_shadow_series(
@@ -78,7 +79,10 @@ def write_return_mechanics_audit(config: dict[str, Any]) -> ReturnMechanicsAudit
         comparison,
         default_cost_bps=default_cost_bps,
     )
-    optimizer_series = _reconstruct_optimizer_series(
+    optimizer_series = _load_selected_optimizer_series(
+        selected_optimizer_path,
+        optimizer,
+    ) or _reconstruct_optimizer_series(
         config=config,
         optimizer=optimizer,
         meta_rows=meta_rows,
@@ -171,6 +175,12 @@ def _artifact_paths(config: dict[str, Any], output_dir: Path) -> dict[str, Path]
         "grid_search": output_dir / "allocation_policy_grid_search.json",
         "optimizer_results": output_dir / "allocation_optimizer_results.json",
         "optimizer_report": output_dir / "allocation_optimizer_report.md",
+        "selected_optimizer_exposure_path_json": (
+            output_dir / "selected_optimizer_exposure_path.json"
+        ),
+        "selected_optimizer_exposure_path_csv": (
+            output_dir / "selected_optimizer_exposure_path.csv"
+        ),
         "shadow_overlay": output_dir / "allocation_shadow_overlay.json",
         "meta_audit": output_dir / "meta_dataset_audit.json",
         "meta_dataset": Path(
@@ -230,6 +240,47 @@ def _load_shadow_series(
                 "reported_metrics": comparison_metrics.get(str(candidate_name), {}),
             }
     return output
+
+
+def _load_selected_optimizer_series(
+    payload: dict[str, Any],
+    optimizer: dict[str, Any],
+) -> dict[str, Any] | None:
+    rows = payload.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        return None
+    selected = optimizer.get("selected_policy")
+    metrics = {}
+    if isinstance(selected, dict):
+        raw_metrics = selected.get("frozen_holdout_metrics") or selected.get(
+            "holdout_metrics"
+        )
+        if isinstance(raw_metrics, dict):
+            metrics = raw_metrics
+    candidate_name = str(
+        metrics.get("policy_name")
+        or f"selected_{payload.get('sampler_used', 'unknown')}_optimizer_diagnostic_policy"
+    )
+    return {
+        "candidate_name": candidate_name,
+        "policy_kind": "optimizer_diagnostic",
+        "forecast_source": metrics.get("forecast_source"),
+        "required_prediction_columns": metrics.get("required_prediction_columns", []),
+        "transaction_cost_bps": _number(
+            rows[0].get("transaction_cost_bps")
+        ) or _number(metrics.get("transaction_cost_bps")) or 5.0,
+        "period_source": "selected_optimizer_exposure_path_exact",
+        "exact_period_path": True,
+        "rows": [
+            {
+                "date": row.get("rebalance_date"),
+                "baseline_return": row.get("period_return"),
+                "exposure": row.get("exposure"),
+            }
+            for row in rows
+        ],
+        "reported_metrics": metrics,
+    }
 
 
 def _reconstruct_optimizer_series(

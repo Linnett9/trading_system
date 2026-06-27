@@ -14,7 +14,9 @@ RESEARCH_METADATA = {
     "production_validated": False,
 }
 RANKING_BASIS = [
-    "total_return_desc",
+    "canonical_rows_before_period_grid_only_rows",
+    "canonical_continuous_return_desc_when_available",
+    "diagnostic_period_grid_return_desc",
     "max_drawdown_asc",
     "sharpe_desc",
     "sortino_desc",
@@ -45,6 +47,8 @@ def write_trading_research_leaderboard(
     allocation = _read_json(allocation_comparison_path)
     optimizer = _read_json(optimizer_results_path)
     auxiliary = _read_json(auxiliary_metrics_path)
+    canonical = _read_json(output_dir / "canonical_continuous_equity_replay.json")
+    concentration = _read_json(output_dir / "profit_concentration_audit.json")
 
     classification_rows = _classification_rows(classification)
     trading_rows = [
@@ -54,6 +58,14 @@ def write_trading_research_leaderboard(
     optimizer_row = _optimizer_trading_row(optimizer)
     if optimizer_row is not None:
         trading_rows.append(optimizer_row)
+    trading_rows.extend(_canonical_only_rows(canonical, trading_rows))
+    _augment_with_canonical_metrics(trading_rows, canonical, concentration)
+    canonical_ranking_available = any(
+        _number(row.get("canonical_continuous_return")) is not None
+        for row in trading_rows
+    )
+    for row in trading_rows:
+        row["canonical_ranking_available"] = canonical_ranking_available
 
     ranked_rows = [
         {"rank": rank, **row}
@@ -62,6 +74,7 @@ def write_trading_research_leaderboard(
     payload = {
         "mode": "trading_research_leaderboard",
         "ranking_basis": RANKING_BASIS,
+        "canonical_ranking_available": canonical_ranking_available,
         "classification_metrics_role": "diagnostics_only",
         "leaderboard": ranked_rows,
         "classification_diagnostics": _classification_diagnostics(
@@ -76,6 +89,12 @@ def write_trading_research_leaderboard(
             "allocation_v2": str(allocation_comparison_path),
             "allocation_optimizer": str(optimizer_results_path),
             "meta_auxiliary": str(auxiliary_metrics_path),
+            "canonical_continuous_equity_replay": str(
+                output_dir / "canonical_continuous_equity_replay.json"
+            ),
+            "profit_concentration_audit": str(
+                output_dir / "profit_concentration_audit.json"
+            ),
         },
         "optimizer_status": {
             "sampler_requested": optimizer.get("sampler_requested"),
@@ -236,6 +255,13 @@ def _trading_row(
             classification.get("expected_calibration_error")
         ),
         "classification_metrics_role": "diagnostics_only",
+        "diagnostic_period_grid_return": _number(metrics.get("total_return")),
+        "canonical_continuous_return": None,
+        "canonical_tradable_total_return": None,
+        "paper_tradable_equity_return": None,
+        "anomaly_adjusted_return": None,
+        "profit_concentration_ratio": None,
+        "turnover_after_hysteresis": None,
         "detail": detail or {},
         **RESEARCH_METADATA,
     }
@@ -266,9 +292,106 @@ def _classification_diagnostics(
     ]
 
 
+def _canonical_only_rows(
+    canonical: dict[str, Any],
+    existing_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    existing_names = {row.get("entity_name") for row in existing_rows}
+    rows = []
+    for name, candidate in canonical.get("candidates", {}).items():
+        if name in existing_names:
+            continue
+        diagnostic = candidate.get("diagnostic_period_grid", {})
+        canonical_metrics = candidate.get("canonical_continuous_equity", {})
+        total_return = _number(diagnostic.get("total_return"))
+        if total_return is None:
+            total_return = _number(canonical_metrics.get("total_return"))
+        if total_return is None:
+            continue
+        rows.append(_trading_row(
+            entity_name=str(name),
+            entity_type="canonical_replay",
+            source="canonical_continuous_equity_replay",
+            metrics={
+                "total_return": total_return,
+                "max_drawdown": canonical_metrics.get("max_drawdown"),
+                "sharpe": canonical_metrics.get("sharpe"),
+                "sortino": canonical_metrics.get("sortino"),
+                "calmar": canonical_metrics.get("calmar"),
+                "turnover": canonical_metrics.get("turnover"),
+                "estimated_transaction_costs": canonical_metrics.get(
+                    "estimated_transaction_costs"
+                ),
+            },
+            classification={},
+            selection_role="canonical_non_overlapping_replay",
+        ))
+    return rows
+
+
+def _augment_with_canonical_metrics(
+    rows: list[dict[str, Any]],
+    canonical: dict[str, Any],
+    concentration: dict[str, Any],
+) -> None:
+    canonical_by_name = canonical.get("candidates", {})
+    concentration_by_name = concentration.get("candidates", {})
+    for row in rows:
+        name = str(row.get("entity_name"))
+        candidate = canonical_by_name.get(name)
+        if not isinstance(candidate, dict):
+            continue
+        diagnostic = candidate.get("diagnostic_period_grid", {})
+        canonical_metrics = candidate.get("canonical_continuous_equity", {})
+        row["diagnostic_period_grid_return"] = _number(
+            diagnostic.get("total_return")
+        )
+        row["canonical_continuous_return"] = _number(
+            canonical_metrics.get("total_return")
+        )
+        row["canonical_tradable_total_return"] = _number(
+            canonical_metrics.get("canonical_tradable_total_return")
+        )
+        row["max_drawdown"] = _drawdown_magnitude(
+            canonical_metrics.get("max_drawdown")
+        )
+        row["sharpe"] = _number(canonical_metrics.get("sharpe"))
+        row["sortino"] = _number(canonical_metrics.get("sortino"))
+        row["calmar"] = _number(canonical_metrics.get("calmar"))
+        row["turnover"] = _number(canonical_metrics.get("turnover"))
+        row["estimated_transaction_costs"] = _number(
+            canonical_metrics.get("estimated_transaction_costs")
+        )
+        concentration_candidate = concentration_by_name.get(name, {})
+        row["profit_concentration_ratio"] = _number(
+            concentration_candidate.get("profit_concentration", {}).get(
+                "top_5_date_positive_return_share"
+            )
+        )
+        row["anomaly_adjusted_return"] = _scenario_return(
+            concentration_candidate,
+            "remove_anomaly_dates",
+        )
+
+
+def _scenario_return(candidate: dict[str, Any], scenario_name: str) -> float | None:
+    for scenario in candidate.get("scenarios", []) or []:
+        if scenario.get("scenario_name") == scenario_name:
+            return _number(scenario.get("summary", {}).get("total_return"))
+    return None
+
+
 def _ranking_key(row: dict[str, Any]) -> tuple[float, ...]:
+    canonical_return = _number(row.get("canonical_continuous_return"))
+    canonical_required = bool(row.get("canonical_ranking_available"))
+    ranking_return = (
+        canonical_return
+        if canonical_return is not None
+        else _number(row.get("total_return"))
+    )
     return (
-        _descending(row.get("total_return")),
+        1.0 if canonical_required and canonical_return is None else 0.0,
+        _descending(ranking_return),
         _ascending(row.get("max_drawdown")),
         _descending(row.get("sharpe")),
         _descending(row.get("sortino")),
@@ -326,6 +449,13 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "source",
         "selection_role",
         "total_return",
+        "diagnostic_period_grid_return",
+        "canonical_continuous_return",
+        "canonical_tradable_total_return",
+        "paper_tradable_equity_return",
+        "anomaly_adjusted_return",
+        "profit_concentration_ratio",
+        "turnover_after_hysteresis",
         "max_drawdown",
         "sharpe",
         "sortino",
@@ -353,23 +483,23 @@ def _markdown(payload: dict[str, Any]) -> str:
     lines = [
         "# Trading Research Leaderboard",
         "",
-        "Trading outcomes determine rank. Classification metrics are diagnostics only.",
+        "Canonical continuous returns determine rank when available. Old period-grid returns are diagnostic only. Classification metrics are diagnostics only.",
         "",
-        "|rank|candidate|type|total return|max drawdown|Sharpe|Sortino|Calmar|turnover|costs|",
+        "|rank|candidate|type|canonical return|diagnostic period-grid return|anomaly-adjusted return|max drawdown|Sharpe|turnover|costs|",
         "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in payload["leaderboard"]:
         lines.append(
-            "|{rank}|{entity_name}|{entity_type}|{total_return}|{max_drawdown}|"
-            "{sharpe}|{sortino}|{calmar}|{turnover}|{costs}|".format(
+            "|{rank}|{entity_name}|{entity_type}|{canonical}|{diagnostic}|"
+            "{anomaly}|{max_drawdown}|{sharpe}|{turnover}|{costs}|".format(
                 rank=row["rank"],
                 entity_name=row["entity_name"],
                 entity_type=row["entity_type"],
-                total_return=_format(row.get("total_return")),
+                canonical=_format(row.get("canonical_continuous_return")),
+                diagnostic=_format(row.get("diagnostic_period_grid_return")),
+                anomaly=_format(row.get("anomaly_adjusted_return")),
                 max_drawdown=_format(row.get("max_drawdown")),
                 sharpe=_format(row.get("sharpe")),
-                sortino=_format(row.get("sortino")),
-                calmar=_format(row.get("calmar")),
                 turnover=_format(row.get("turnover")),
                 costs=_format(row.get("estimated_transaction_costs")),
             )

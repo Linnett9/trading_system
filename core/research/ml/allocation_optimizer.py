@@ -46,6 +46,8 @@ class OptimizerPaths:
     candidates_csv: Path
     results_json: Path
     report_markdown: Path
+    selected_exposure_path_csv: Path
+    selected_exposure_path_json: Path
 
 
 @dataclass
@@ -364,6 +366,8 @@ def write_optimizer_reports(
         candidates_csv=output_dir / "allocation_optimizer_candidates.csv",
         results_json=output_dir / "allocation_optimizer_results.json",
         report_markdown=output_dir / "allocation_optimizer_report.md",
+        selected_exposure_path_csv=output_dir / "selected_optimizer_exposure_path.csv",
+        selected_exposure_path_json=output_dir / "selected_optimizer_exposure_path.json",
     )
     payload = {
         "mode": "allocation_optimizer_research_only",
@@ -389,8 +393,66 @@ def write_optimizer_reports(
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+    _write_selected_exposure_path(paths, payload)
     _write_markdown(paths.report_markdown, payload)
     return paths
+
+
+def _write_selected_exposure_path(
+    paths: OptimizerPaths,
+    payload: dict[str, Any],
+) -> None:
+    rows = list(payload.get("selected_optimizer_exposure_path", []))
+    path_payload = {
+        "mode": "selected_optimizer_exposure_path_research_only",
+        "sampler_requested": payload.get("sampler_requested"),
+        "sampler_used": payload.get("sampler_used"),
+        "selected_policy": payload.get("selected_policy", {}),
+        "row_count": len(rows),
+        "rows": rows,
+        "research_only": True,
+        "trading_impact": "none",
+        "production_validated": False,
+    }
+    paths.selected_exposure_path_json.write_text(
+        json.dumps(path_payload, indent=2),
+        encoding="utf-8",
+    )
+    fieldnames = [
+        "rebalance_date",
+        "source_row_count",
+        "period_return",
+        "exposure",
+        "score",
+        "predicted_forward_return",
+        "predicted_future_drawdown",
+        "predicted_future_volatility",
+        "turnover",
+        "transaction_cost_bps",
+        "cost",
+        "net_return",
+        "equity",
+        "drawdown",
+        "research_only",
+        "trading_impact",
+        "production_validated",
+    ]
+    with paths.selected_exposure_path_csv.open(
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(
+            {
+                **{name: row.get(name) for name in fieldnames},
+                "research_only": True,
+                "trading_impact": "none",
+                "production_validated": False,
+            }
+            for row in rows
+        )
 
 
 def _write_markdown(path: Path, payload: dict[str, Any]) -> None:

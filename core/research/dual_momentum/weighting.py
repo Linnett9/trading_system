@@ -248,7 +248,7 @@ class DualMomentumWeightingMixin:
 
             capped_this_round = False
 
-            for symbol in list(remaining_symbols):
+            for symbol in sorted(remaining_symbols):
                 proposed_weight = (
                     remaining_weight
                     * weights[symbol]
@@ -262,7 +262,7 @@ class DualMomentumWeightingMixin:
                     capped_this_round = True
 
             if not capped_this_round:
-                for symbol in remaining_symbols:
+                for symbol in sorted(remaining_symbols):
                     capped[symbol] = (
                         remaining_weight
                         * weights[symbol]

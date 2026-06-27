@@ -15,7 +15,18 @@ from core.research.ml.meta_ensemble import run_meta_ensemble
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
 from core.research.ml.leaderboard import write_source_leaderboard
 from core.research.ml.model_contract_audit import write_model_contract_audit
+from core.research.ml.canonical_continuous_equity_replay import (
+    write_canonical_continuous_equity_replay,
+)
+from core.research.ml.champion_baseline_audit import write_champion_baseline_audit
+from core.research.ml.data_anomaly_quarantine import write_data_anomaly_quarantine
+from core.research.ml.profit_concentration_audit import (
+    write_profit_concentration_audit,
+)
 from core.research.ml.return_mechanics_audit import write_return_mechanics_audit
+from core.research.ml.trading_research_leaderboard import (
+    write_trading_research_leaderboard,
+)
 from core.research.ml.runtime_parallelism import (
     apply_runtime_parallelism,
     apply_worker_thread_environment,
@@ -383,6 +394,10 @@ def run_ml_meta_ensemble(config):
     print(f"Meta auxiliary metrics: {result.meta_auxiliary_metrics_json_path}")
     print(f"Allocation optimizer: {result.allocation_optimizer_results_path}")
     print(
+        "Selected optimizer exposure path: "
+        f"{result.selected_optimizer_exposure_path_json}"
+    )
+    print(
         "Trading research leaderboard: "
         f"{result.trading_research_leaderboard_json_path}"
     )
@@ -390,11 +405,40 @@ def run_ml_meta_ensemble(config):
 
 def run_ml_return_mechanics_audit(config):
     result = write_return_mechanics_audit(config)
+    champion_result = write_champion_baseline_audit(config)
+    canonical_result = write_canonical_continuous_equity_replay(config)
+    anomaly_result = write_data_anomaly_quarantine(config)
+    concentration_result = write_profit_concentration_audit(config)
+    leaderboard_result = _refresh_trading_research_leaderboard(config)
     print("\nML RETURN MECHANICS AUDIT")
     print("mode=research | trading_impact=none")
     print(f"CSV: {result.csv_path}")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
+    print(f"Champion baseline CSV: {champion_result.csv_path}")
+    print(f"Champion baseline JSON: {champion_result.json_path}")
+    print(f"Champion baseline Markdown: {champion_result.markdown_path}")
+    print(f"Canonical replay JSON: {canonical_result.json_path}")
+    print(f"Anomaly quarantine JSON: {anomaly_result.json_path}")
+    print(f"Profit concentration JSON: {concentration_result.json_path}")
+    print(f"Trading research leaderboard JSON: {leaderboard_result.json_path}")
+
+
+def _refresh_trading_research_leaderboard(config):
+    output_dir = Path(
+        config.get("ml", {}).get(
+            "output_dir",
+            Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
+            / "regime_transformer_meta_ensemble_v1",
+        )
+    )
+    return write_trading_research_leaderboard(
+        output_dir=output_dir,
+        classification_leaderboard_path=output_dir / "leaderboard.json",
+        allocation_comparison_path=output_dir / "allocation_policy_comparison.json",
+        optimizer_results_path=output_dir / "allocation_optimizer_results.json",
+        auxiliary_metrics_path=output_dir / "meta_auxiliary_metrics.json",
+    )
 
 
 def run_ml_validate_artifacts(config):

@@ -63,6 +63,8 @@ class MetaEnsembleResult:
     allocation_optimizer_candidates_path: Path
     allocation_optimizer_results_path: Path
     allocation_optimizer_report_path: Path
+    selected_optimizer_exposure_path_csv: Path
+    selected_optimizer_exposure_path_json: Path
     trading_research_leaderboard_csv_path: Path
     trading_research_leaderboard_json_path: Path
     trading_research_leaderboard_markdown_path: Path
@@ -360,6 +362,12 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         allocation_optimizer_candidates_path=allocation_paths.optimizer_candidates_csv,
         allocation_optimizer_results_path=allocation_paths.optimizer_results_json,
         allocation_optimizer_report_path=allocation_paths.optimizer_report_markdown,
+        selected_optimizer_exposure_path_csv=(
+            allocation_paths.selected_optimizer_exposure_path_csv
+        ),
+        selected_optimizer_exposure_path_json=(
+            allocation_paths.selected_optimizer_exposure_path_json
+        ),
         trading_research_leaderboard_csv_path=(
             trading_leaderboard_paths.csv_path
         ),

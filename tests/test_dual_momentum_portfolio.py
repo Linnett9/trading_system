@@ -136,6 +136,27 @@ def test_dual_momentum_inverse_volatility_weights_lower_volatility_more():
     assert weights["LOW"] <= 0.60
 
 
+def test_dual_momentum_weight_cap_order_is_deterministic():
+    tester = DualMomentumPortfolioBacktester(max_position_weight=0.28)
+
+    weights = tester._cap_weights({
+        "CIEN": 0.36,
+        "LUMN": 0.31,
+        "KSS": 0.23,
+        "AXTI": 0.10,
+    })
+    reversed_weights = tester._cap_weights({
+        "AXTI": 0.10,
+        "KSS": 0.23,
+        "LUMN": 0.31,
+        "CIEN": 0.36,
+    })
+
+    assert list(weights) == list(reversed_weights)
+    assert abs(sum(weights.values()) - 1.0) < 1e-12
+    assert max(weights.values()) <= 0.28
+
+
 def test_dual_momentum_moves_to_cash_when_spy_below_sma():
     tester = DualMomentumPortfolioBacktester(
         starting_equity=500,

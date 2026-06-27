@@ -4,7 +4,13 @@ import json
 import math
 from pathlib import Path
 
+from core.research.ml.champion_baseline_audit import (
+    exact_champion_replay_from_equity,
+    write_champion_baseline_audit,
+)
 from core.research.ml.return_mechanics_audit import write_return_mechanics_audit
+from core.research.dual_momentum.models import DualMomentumSelection
+from core.services.portfolio_engine import EquityPoint
 
 
 def test_return_mechanics_audit_writes_outputs_without_modifying_sources(tmp_path):
@@ -93,6 +99,91 @@ def test_return_mechanics_audit_flags_champion_as_full_exposure_diagnostic(tmp_p
     assert audit["intended_by_current_allocation_code"] is True
     assert audit["represents_full_frozen_champion_yaml_replay"] is False
     assert audit["champion_config_id"] == "ranked_top5_monthly_exposure90_v1"
+
+
+def test_champion_audit_does_not_label_full_exposure_diagnostic_as_exact(tmp_path):
+    config, _ = _write_audit_fixture(tmp_path)
+    config["ml"]["stooq_parquet_dir"] = str(tmp_path / "missing_parquet")
+    write_return_mechanics_audit(config)
+
+    paths = write_champion_baseline_audit(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    rows = {row["baseline_name"]: row for row in payload["baseline_rows"]}
+
+    assert rows["champion_full_exposure_diagnostic"][
+        "is_exact_champion_replay"
+    ] is False
+    assert rows["exact_champion_replay"]["semantic_type"] == "exact_champion_replay"
+    assert payload["baseline_semantics"][
+        "current_champion_baseline_is_exact_champion_replay"
+    ] is False
+
+
+def test_exact_champion_replay_uses_target_exposure_when_available():
+    periods = [
+        {"rebalance_date": "2024-01-01", "outcome_end_date": "2024-01-08"},
+        {"rebalance_date": "2024-01-08", "outcome_end_date": "2024-01-15"},
+    ]
+    equity_curve = [
+        EquityPoint(datetime_from("2024-01-01"), 100.0),
+        EquityPoint(datetime_from("2024-01-08"), 109.0),
+        EquityPoint(datetime_from("2024-01-15"), 119.9),
+    ]
+    selections = [
+        DualMomentumSelection(
+            timestamp=datetime_from("2024-01-01"),
+            symbols=["AAA", "BBB"],
+            scores={"AAA": 1.0, "BBB": 0.9},
+            risk_on=True,
+            exposure_target=0.9,
+            target_weights={"AAA": 0.5, "BBB": 0.5},
+        )
+    ]
+
+    replay = exact_champion_replay_from_equity(
+        periods=periods,
+        equity_curve=equity_curve,
+        selections=selections,
+        champion_config={"overrides": {"target_exposure": 0.9}},
+    )
+
+    assert replay["available"] is True
+    assert replay["summary"]["target_exposure"] == 0.9
+    assert replay["period_rows"][0]["exposure_target"] == 0.9
+
+
+def test_exact_champion_replay_marks_cost_turnover_attribution_status():
+    replay = exact_champion_replay_from_equity(
+        periods=[{"rebalance_date": "2024-01-01", "outcome_end_date": "2024-01-08"}],
+        equity_curve=[
+            EquityPoint(datetime_from("2024-01-01"), 100.0),
+            EquityPoint(datetime_from("2024-01-08"), 101.0),
+        ],
+        selections=[],
+        champion_config={"overrides": {"target_exposure": 0.9}},
+    )
+
+    assert replay["summary"]["costs"] is None
+    assert "handled_inside_dual_momentum_backtester" in replay["summary"][
+        "cost_turnover_status"
+    ]
+
+
+def test_champion_audit_does_not_import_live_or_broker_code_paths():
+    import inspect
+    import core.research.ml.champion_baseline_audit as audit
+
+    source = inspect.getsource(audit)
+
+    assert "paper_trading" not in source
+    assert "live_trading" not in source
+    assert "broker" not in source
+
+
+def datetime_from(value: str):
+    from datetime import datetime
+
+    return datetime.fromisoformat(value)
 
 
 def _candidate(payload: dict, name: str) -> dict:

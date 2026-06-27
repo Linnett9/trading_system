@@ -121,6 +121,8 @@ class AllocationV2Paths:
     optimizer_candidates_csv: Path
     optimizer_results_json: Path
     optimizer_report_markdown: Path
+    selected_optimizer_exposure_path_csv: Path
+    selected_optimizer_exposure_path_json: Path
 
 
 def write_allocation_v2_reports(
@@ -314,6 +316,12 @@ def write_allocation_v2_reports(
         optimizer_candidates_csv=output_dir / "allocation_optimizer_candidates.csv",
         optimizer_results_json=output_dir / "allocation_optimizer_results.json",
         optimizer_report_markdown=output_dir / "allocation_optimizer_report.md",
+        selected_optimizer_exposure_path_csv=(
+            output_dir / "selected_optimizer_exposure_path.csv"
+        ),
+        selected_optimizer_exposure_path_json=(
+            output_dir / "selected_optimizer_exposure_path.json"
+        ),
     )
     paths.comparison_json.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
     _write_comparison_csv(paths.comparison_csv, comparison_rows)
@@ -922,6 +930,12 @@ def _evaluate_allocation_optimizer(
             "holdout_metrics": _result_payload(holdout_result),
             "frozen_holdout_metrics": _result_payload(holdout_result),
         },
+        "selected_optimizer_exposure_path": _selected_optimizer_exposure_path(
+            rows,
+            holdout_exposures,
+            selected_variant.transaction_cost_bps,
+            selected_variant,
+        ),
         "paired_comparison_vs_binary_overlay": bootstrap,
         "skip_reason": None,
     }
@@ -1379,6 +1393,85 @@ def _aggregate_periods(
         (date, mean(value[0] for value in values), mean(value[1] for value in values))
         for date, values in sorted(by_date.items())
     ]
+
+
+def _selected_optimizer_exposure_path(
+    rows: list[dict[str, str]],
+    exposures: list[float],
+    transaction_cost_bps: float,
+    variant: AllocationVariant,
+) -> list[dict[str, Any]]:
+    if len(rows) != len(exposures):
+        raise ValueError("Optimizer exposure path rows and exposures must align")
+    scores = _variant_scores(rows, variant)
+    grouped: dict[str, list[dict[str, float]]] = {}
+    for row, exposure, score in zip(rows, exposures, scores):
+        date = str(row.get("rebalance_date") or row.get("date") or "")
+        if not date:
+            raise ValueError("Optimizer exposure path row is missing rebalance_date")
+        grouped.setdefault(date, []).append({
+            "period_return": _finite_float(
+                row.get("champion_return_next_period", 0.0) or 0.0
+            ),
+            "exposure": _finite_float(exposure),
+            "score": _finite_float(score),
+            "predicted_forward_return": _return_forecast(row),
+            "predicted_future_drawdown": _mean_or_none(
+                _forecast_values(row, "predicted_future_drawdown")
+                or _forecast_values(row, "predicted_max_adverse_excursion")
+            ),
+            "predicted_future_volatility": _mean_or_none(
+                _forecast_values(row, "predicted_future_volatility")
+            ),
+        })
+
+    equity = 1.0
+    peak = 1.0
+    previous_exposure = 1.0
+    path_rows = []
+    for date, values in sorted(grouped.items()):
+        period_return = mean(value["period_return"] for value in values)
+        exposure = mean(value["exposure"] for value in values)
+        turnover = abs(exposure - previous_exposure)
+        cost = turnover * transaction_cost_bps / 10_000.0
+        net_return = (period_return * exposure) - cost
+        equity *= 1.0 + net_return
+        peak = max(peak, equity)
+        drawdown = (peak - equity) / peak if peak else 0.0
+        path_rows.append({
+            "rebalance_date": date,
+            "source_row_count": len(values),
+            "period_return": period_return,
+            "exposure": exposure,
+            "score": mean(value["score"] for value in values),
+            "predicted_forward_return": mean(
+                value["predicted_forward_return"] for value in values
+            ),
+            "predicted_future_drawdown": _mean_or_none([
+                value["predicted_future_drawdown"]
+                for value in values
+                if value["predicted_future_drawdown"] is not None
+            ]),
+            "predicted_future_volatility": _mean_or_none([
+                value["predicted_future_volatility"]
+                for value in values
+                if value["predicted_future_volatility"] is not None
+            ]),
+            "turnover": turnover,
+            "transaction_cost_bps": transaction_cost_bps,
+            "cost": cost,
+            "net_return": net_return,
+            "equity": equity,
+            "drawdown": drawdown,
+            **RESEARCH_METADATA,
+        })
+        previous_exposure = exposure
+    return path_rows
+
+
+def _mean_or_none(values: list[float | None]) -> float | None:
+    finite = [float(value) for value in values if value is not None]
+    return mean(finite) if finite else None
 
 
 def _performance_summary(
@@ -1876,8 +1969,17 @@ def _validate_output_consistency(paths: AllocationV2Paths) -> None:
     diagnostics = json.loads(paths.diagnostics_json.read_text(encoding="utf-8"))
     grid_search = json.loads(paths.grid_search_json.read_text(encoding="utf-8"))
     optimizer = json.loads(paths.optimizer_results_json.read_text(encoding="utf-8"))
+    selected_optimizer_path = json.loads(
+        paths.selected_optimizer_exposure_path_json.read_text(encoding="utf-8")
+    )
     with paths.comparison_csv.open("r", encoding="utf-8", newline="") as handle:
         csv_rows = list(csv.DictReader(handle))
+    with paths.selected_optimizer_exposure_path_csv.open(
+        "r",
+        encoding="utf-8",
+        newline="",
+    ) as handle:
+        selected_path_csv_rows = list(csv.DictReader(handle))
     markdown = paths.leaderboard_markdown.read_text(encoding="utf-8")
     diagnostics_markdown = paths.diagnostics_markdown.read_text(encoding="utf-8")
     grid_markdown = paths.grid_search_markdown.read_text(encoding="utf-8")
@@ -1909,7 +2011,14 @@ def _validate_output_consistency(paths: AllocationV2Paths) -> None:
         and csv_names == expected_policy_names | expected_baseline_names
     ):
         raise RuntimeError("Allocation v2 outputs contain inconsistent policy sets")
-    for payload in (comparison, shadow, diagnostics, grid_search, optimizer):
+    for payload in (
+        comparison,
+        shadow,
+        diagnostics,
+        grid_search,
+        optimizer,
+        selected_optimizer_path,
+    ):
         if any(payload.get(name) != value for name, value in RESEARCH_METADATA.items()):
             raise RuntimeError("Allocation v2 JSON output has invalid research metadata")
     required_notice = (
@@ -1932,6 +2041,15 @@ def _validate_output_consistency(paths: AllocationV2Paths) -> None:
         for row in csv_rows
     ):
         raise RuntimeError("Allocation v2 CSV output has invalid research metadata")
+    if any(
+        row.get("research_only") != "True"
+        or row.get("trading_impact") != "none"
+        or row.get("production_validated") != "False"
+        for row in selected_path_csv_rows
+    ):
+        raise RuntimeError(
+            "Selected optimizer exposure CSV output has invalid research metadata"
+        )
 
 
 def _trading_rank_key(result: AllocationPolicyResult) -> tuple[float, ...]:
