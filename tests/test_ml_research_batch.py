@@ -13,6 +13,7 @@ from application.services.ml_commands import (
     _artifact_source_dirs,
     incomplete_ml_run_dirs,
     _update_source_leaderboard,
+    run_ml_validate_artifacts,
     run_ml_research,
     run_ml_research_batch,
     validate_ml_research_batch_config,
@@ -183,6 +184,37 @@ def test_artifact_source_dirs_discovers_report_child_run_dirs(tmp_path):
     )
 
     assert source_dirs == [first, second]
+
+
+def test_artifact_source_dirs_skips_meta_ensemble_output(tmp_path):
+    report_dir = tmp_path / "reports" / "ml"
+    source = report_dir / "dlinear"
+    meta_output = report_dir / "regime_transformer_meta_ensemble_v1"
+    source.mkdir(parents=True)
+    meta_output.mkdir(parents=True)
+
+    source_dirs = _artifact_source_dirs(
+        {"reports": {"ml_dir": str(report_dir)}},
+        require_exists=False,
+    )
+
+    assert source_dirs == [source]
+
+
+def test_validate_artifacts_reports_meta_ensemble_not_run_yet(tmp_path, capsys):
+    report_dir = tmp_path / "reports" / "ml"
+    source_dir = report_dir / "dlinear"
+    source_dir.mkdir(parents=True)
+    _write_valid_source_artifacts(source_dir, "dlinear")
+
+    run_ml_validate_artifacts({"reports": {"ml_dir": str(report_dir)}})
+
+    output = capsys.readouterr().out
+    assert f"ok: {source_dir}" in output
+    assert (
+        f"not run yet: {report_dir / 'regime_transformer_meta_ensemble_v1'}"
+        in output
+    )
 
 
 def test_research_batch_includes_traditional_baseline_configs():

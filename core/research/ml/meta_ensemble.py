@@ -11,12 +11,18 @@ from statistics import mean
 from typing import Any
 
 from core.research.ml.artifact_validator import validate_prediction_artifacts
+from core.research.ml.allocation_v2 import write_allocation_v2_reports
 from core.research.ml.calibration import (
     build_probability_calibration,
     compare_calibration_methods,
 )
 from core.research.ml.evaluation import classification_metrics
 from core.research.ml.leaderboard import write_leaderboard
+from core.research.ml.meta_auxiliary import (
+    actual_auxiliary_values,
+    namespaced_auxiliary_features,
+    run_meta_auxiliary_ensemble,
+)
 from core.research.ml.overlay import overlay_decision_rule, should_reduce_exposure
 
 
@@ -39,6 +45,21 @@ class MetaEnsembleResult:
     overlay_model_comparison_path: Path
     leaderboard_path: Path
     leaderboard_markdown_path: Path
+    allocation_policy_comparison_json_path: Path
+    allocation_policy_comparison_csv_path: Path
+    allocation_policy_leaderboard_path: Path
+    allocation_shadow_overlay_path: Path
+    allocation_policy_diagnostics_json_path: Path
+    allocation_policy_diagnostics_markdown_path: Path
+    allocation_policy_grid_search_csv_path: Path
+    allocation_policy_grid_search_json_path: Path
+    allocation_policy_grid_search_markdown_path: Path
+    meta_auxiliary_predictions_path: Path
+    meta_auxiliary_metrics_json_path: Path
+    meta_auxiliary_metrics_markdown_path: Path
+    allocation_optimizer_candidates_path: Path
+    allocation_optimizer_results_path: Path
+    allocation_optimizer_report_path: Path
 
 
 @dataclass
@@ -107,6 +128,11 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
     )
     train_probabilities = model.predict_proba(features)
     holdout_probabilities = model.predict_proba(holdout_features)
+    auxiliary_result = run_meta_auxiliary_ensemble(
+        train_rows,
+        holdout_rows,
+        output_dir,
+    )
     threshold = float(ml_config.get("decision_threshold", 0.5))
     predictions = [int(probability >= threshold) for probability in holdout_probabilities]
     label_type = ml_config.get("label_type", "should_reduce_exposure")
@@ -272,6 +298,21 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         promotion_gates=promotion_gates,
         meta_selections=meta_model_comparison.get("selections", {}),
     )
+    allocation_paths = write_allocation_v2_reports(
+        output_dir=output_dir,
+        rows=auxiliary_result.holdout_rows,
+        meta_probabilities=holdout_probabilities,
+        diagnostics={
+            "balanced_accuracy": metrics.get("balanced_accuracy"),
+            "brier_score": leaderboard_calibration.get("brier_score"),
+            "expected_calibration_error": leaderboard_calibration.get(
+                "expected_calibration_error"
+            ),
+        },
+        config=ml_config,
+        selection_rows=auxiliary_result.train_rows,
+        selection_meta_probabilities=train_probabilities,
+    )
     return MetaEnsembleResult(
         output_dir=output_dir,
         meta_dataset_path=dataset_path,
@@ -287,6 +328,25 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         overlay_model_comparison_path=overlay_comparison_path,
         leaderboard_path=leaderboard_path,
         leaderboard_markdown_path=leaderboard_markdown_path,
+        allocation_policy_comparison_json_path=allocation_paths.comparison_json,
+        allocation_policy_comparison_csv_path=allocation_paths.comparison_csv,
+        allocation_policy_leaderboard_path=allocation_paths.leaderboard_markdown,
+        allocation_shadow_overlay_path=allocation_paths.shadow_overlay_json,
+        allocation_policy_diagnostics_json_path=allocation_paths.diagnostics_json,
+        allocation_policy_diagnostics_markdown_path=(
+            allocation_paths.diagnostics_markdown
+        ),
+        allocation_policy_grid_search_csv_path=allocation_paths.grid_search_csv,
+        allocation_policy_grid_search_json_path=allocation_paths.grid_search_json,
+        allocation_policy_grid_search_markdown_path=(
+            allocation_paths.grid_search_markdown
+        ),
+        meta_auxiliary_predictions_path=auxiliary_result.predictions_path,
+        meta_auxiliary_metrics_json_path=auxiliary_result.metrics_json_path,
+        meta_auxiliary_metrics_markdown_path=auxiliary_result.metrics_markdown_path,
+        allocation_optimizer_candidates_path=allocation_paths.optimizer_candidates_csv,
+        allocation_optimizer_results_path=allocation_paths.optimizer_results_json,
+        allocation_optimizer_report_path=allocation_paths.optimizer_report_markdown,
     )
 
 
@@ -297,6 +357,7 @@ def build_meta_dataset_rows(
     rows = []
     missing_counts = {model: 0 for model in source_predictions}
     auxiliary_prediction_columns_by_model: dict[str, list[str]] = {}
+    namespaced_auxiliary_columns_by_model: dict[str, list[str]] = {}
     ignored_leakage_columns_by_model: dict[str, list[str]] = {}
     duplicate_feature_ids = len(expanded_rows) - len({row["feature_id"] for row in expanded_rows})
     expanded_by_id = {row["feature_id"]: row for row in expanded_rows}
@@ -321,6 +382,10 @@ def build_meta_dataset_rows(
             "fold": next(iter(source_predictions.values()))[feature_id].get("fold", ""),
             "actual_label": next(iter(source_predictions.values()))[feature_id]["actual_label"],
         }
+        row.update(actual_auxiliary_values(
+            expanded,
+            [predictions[feature_id] for predictions in source_predictions.values()],
+        ))
         for model, predictions in source_predictions.items():
             prediction = predictions.get(feature_id)
             if prediction is None:
@@ -340,6 +405,12 @@ def build_meta_dataset_rows(
                 row[name] = value
                 if name not in auxiliary_prediction_columns_by_model[model]:
                     auxiliary_prediction_columns_by_model[model].append(name)
+            namespaced_features = namespaced_auxiliary_features(model, prediction)
+            namespaced_auxiliary_columns_by_model.setdefault(model, [])
+            for name, value in namespaced_features.items():
+                row[name] = value
+                if name not in namespaced_auxiliary_columns_by_model[model]:
+                    namespaced_auxiliary_columns_by_model[model].append(name)
             for name in ignored_columns:
                 if name not in ignored_leakage_columns_by_model[model]:
                     ignored_leakage_columns_by_model[model].append(name)
@@ -374,6 +445,10 @@ def build_meta_dataset_rows(
         "auxiliary_prediction_columns_by_model": {
             model: sorted(columns)
             for model, columns in auxiliary_prediction_columns_by_model.items()
+        },
+        "namespaced_auxiliary_prediction_columns_by_model": {
+            model: sorted(columns)
+            for model, columns in namespaced_auxiliary_columns_by_model.items()
         },
         "ignored_leakage_columns_by_model": {
             model: sorted(columns)
@@ -648,6 +723,8 @@ def _feature_values(row: dict[str, str]) -> dict[str, float]:
     values = {}
     for name, value in row.items():
         if name in ignored:
+            continue
+        if "__predicted_" in name or name.startswith("meta_predicted_"):
             continue
         if _is_leakage_column(name):
             continue

@@ -100,6 +100,13 @@ def validate_prediction_artifacts(
 def validate_prediction_artifact_dirs(
     source_dirs: list[Path],
 ) -> list[PredictionArtifactValidationResult]:
+    missing_dirs = [source_dir for source_dir in source_dirs if not source_dir.exists()]
+    if missing_dirs:
+        raise RuntimeError(
+            "Prediction artifact directories do not exist: "
+            + ", ".join(str(path) for path in missing_dirs)
+        )
+
     results = [
         validate_prediction_artifacts(
             source_dir / "prediction_artifacts.csv",

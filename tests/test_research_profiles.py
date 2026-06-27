@@ -186,9 +186,9 @@ def test_research_profiles_apply_ml_parallelism_values():
     benchmark = apply_research_profile(config, "benchmark")
 
     assert development["ml"]["num_workers"] == 2
-    assert development["ml"]["model_threads"] == 2
-    assert development["ml"]["torch_num_threads"] == 2
-    assert development["ml"]["sklearn_n_jobs"] == 2
+    assert development["ml"]["model_threads"] == 4
+    assert development["ml"]["torch_num_threads"] == 4
+    assert development["ml"]["sklearn_n_jobs"] == 4
     assert development["ml"]["feature_workers"] == 1
     assert benchmark["ml"]["num_workers"] == 4
     assert benchmark["ml"]["model_threads"] == 2

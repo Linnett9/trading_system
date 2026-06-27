@@ -129,6 +129,108 @@ def test_prediction_artifact_validator_rejects_mixed_hashes(tmp_path):
         validate_prediction_artifact_dirs([first, second])
 
 
+def test_prediction_artifact_validator_reports_missing_dirs_cleanly(tmp_path):
+    missing = tmp_path / "missing_model"
+
+    with pytest.raises(
+        RuntimeError,
+        match="Prediction artifact directories do not exist",
+    ):
+        validate_prediction_artifact_dirs([missing])
+
+
+def test_same_source_dataset_hash_across_different_model_inputs(tmp_path):
+    first_dataset = _dataset(12)
+    reversed_indexes = list(reversed(range(12)))
+    second_dataset = MLDataset(
+        features=[
+            {"x": float(index), "model_specific_feature": float(index * 10)}
+            for index in reversed_indexes
+        ],
+        labels=[first_dataset.labels[index] for index in reversed_indexes],
+        feature_dates=[first_dataset.feature_dates[index] for index in reversed_indexes],
+        label_start_dates=[first_dataset.label_start_dates[index] for index in reversed_indexes],
+        label_end_dates=[first_dataset.label_end_dates[index] for index in reversed_indexes],
+        feature_ids=[f"model-specific-{index}" for index in reversed_indexes],
+        metadata=[first_dataset.metadata[index] for index in reversed_indexes],
+        auxiliary_targets=[
+            {"forward_return_5d": float(index) / 100.0}
+            for index in reversed_indexes
+        ],
+    )
+    first_runner = MLExperimentRunner({
+        "ml": {
+            "model_type": "noop",
+            "label_type": "should_reduce_exposure",
+            "feature_set": "expanded_rebalance_v1",
+            "walk_forward_folds": 1,
+        }
+    })
+    second_runner = MLExperimentRunner({
+        "ml": {
+            "model_type": "logistic_regression",
+            "label_type": "should_reduce_exposure",
+            "feature_set": "model_specific_feature_set",
+            "walk_forward_folds": 1,
+        }
+    })
+
+    first_split = chronological_holdout(first_dataset, test_fraction=0.25)
+    second_split = chronological_holdout(second_dataset, test_fraction=0.25)
+    first_runner._write_prediction_artifacts(
+        tmp_path / "first" / "prediction_artifacts.csv",
+        tmp_path / "first" / "prediction_artifacts.json",
+        first_dataset,
+        first_split,
+        [0.5] * first_split.test.sample_count,
+    )
+    second_runner._write_prediction_artifacts(
+        tmp_path / "second" / "prediction_artifacts.csv",
+        tmp_path / "second" / "prediction_artifacts.json",
+        second_dataset,
+        second_split,
+        [0.5] * second_split.test.sample_count,
+    )
+
+    first_metadata = json.loads(
+        (tmp_path / "first" / "prediction_artifacts.json").read_text()
+    )
+    second_metadata = json.loads(
+        (tmp_path / "second" / "prediction_artifacts.json").read_text()
+    )
+
+    assert first_metadata["dataset_hash"] == second_metadata["dataset_hash"]
+
+
+def test_sequence_prediction_uses_train_history_for_holdout_context():
+    runner = MLExperimentRunner({
+        "ml": {
+            "model_type": "noop",
+            "label_type": "should_reduce_exposure",
+            "feature_set": "expanded_rebalance_v1",
+        }
+    })
+    dataset = MLDataset(
+        features=[{"x": float(index)} for index in range(5)],
+        labels=[0, 1, 0, 1, 0],
+        feature_dates=[f"2024-01-{index + 1:02d}" for index in range(5)],
+        label_start_dates=[f"2024-01-{index + 2:02d}" for index in range(5)],
+        label_end_dates=[f"2024-01-{index + 2:02d}" for index in range(5)],
+        feature_ids=[f"id-{index}" for index in range(5)],
+        metadata=[{"variant_id": "same_variant"} for _ in range(5)],
+    )
+    split = chronological_holdout(dataset, test_fraction=0.4)
+    model = _TwoRowContextModel()
+
+    probabilities, _ = runner._predict_research_model(
+        model,
+        split.test,
+        prediction_context=runner._prediction_context(split),
+    )
+
+    assert probabilities == [0.8, 0.8]
+
+
 def test_prediction_artifacts_overwrite_with_new_dataset_hash_when_dataset_changes(tmp_path):
     runner = MLExperimentRunner({
         "ml": {
@@ -604,6 +706,33 @@ def _dataset(sample_count: int) -> MLDataset:
             for index in range(sample_count)
         ],
     )
+
+
+class _TwoRowContextModel:
+    def __init__(self) -> None:
+        self._group_ids: list[str] = []
+
+    def set_sequence_context(
+        self,
+        metadata: list[dict[str, str]] | None = None,
+        feature_dates: list[str] | None = None,
+    ) -> None:
+        del feature_dates
+        self._group_ids = [
+            str(row.get("variant_id", "global"))
+            for row in metadata or []
+        ]
+
+    def predict_proba(self, rows: list[dict[str, float]]) -> list[float]:
+        probabilities = []
+        for index, _ in enumerate(rows):
+            has_history = (
+                index > 0
+                and index < len(self._group_ids)
+                and self._group_ids[index] == self._group_ids[index - 1]
+            )
+            probabilities.append(0.8 if has_history else 0.2)
+        return probabilities
 
 
 def _candles(symbol: str, count: int, start_price: float) -> list[Candle]:

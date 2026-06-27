@@ -24,3 +24,106 @@ ml:
   decision_threshold: 0.50
   decision_thresholds: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
   reduced_exposures: [0.70, 0.80, 0.90]
+  allocation_transaction_cost_bps: 5.0
+  allocation_severe_drawdown: -0.15
+  allocation_severe_volatility: 0.40
+  allocation_exposure_change_rate_warning: 0.80
+  allocation_mostly_extreme_percentage: 80.0
+  allocation_return_destruction_minimum: 0.02
+  allocation_too_defensive_mean_exposure: 0.25
+  allocation_turnover_per_period_warning: 0.50
+  allocation_score_thresholds:
+    strong: 0.02
+    good: 0.005
+    neutral: 0.0
+    weak: -0.02
+  allocation_policy_variants:
+    return_only_allocation:
+      conservative:
+        mapping_method: quantile
+        return_weight: 1.0
+        min_exposure: 0.0
+        max_exposure: 0.80
+        neutral_exposure: 0.35
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.20
+      balanced:
+        mapping_method: quantile
+        return_weight: 1.0
+        min_exposure: 0.10
+        max_exposure: 1.0
+        neutral_exposure: 0.55
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.30
+      aggressive:
+        mapping_method: quantile
+        return_weight: 1.0
+        min_exposure: 0.30
+        max_exposure: 1.0
+        neutral_exposure: 0.70
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.50
+    risk_adjusted_allocation:
+      conservative:
+        mapping_method: quantile
+        return_weight: 1.0
+        drawdown_weight: 0.75
+        volatility_weight: 0.40
+        min_exposure: 0.0
+        max_exposure: 0.80
+        neutral_exposure: 0.35
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.20
+      balanced:
+        mapping_method: quantile
+        return_weight: 1.0
+        drawdown_weight: 0.40
+        volatility_weight: 0.20
+        min_exposure: 0.10
+        max_exposure: 1.0
+        neutral_exposure: 0.55
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.30
+      aggressive:
+        mapping_method: quantile
+        return_weight: 1.0
+        drawdown_weight: 0.20
+        volatility_weight: 0.10
+        min_exposure: 0.30
+        max_exposure: 1.0
+        neutral_exposure: 0.70
+        transaction_cost_bps: 5.0
+        max_exposure_change: 0.50
+  allocation_policy_grid:
+    mapping_method: quantile
+    return_weights: [0.75, 1.0]
+    drawdown_weights: [0.25, 0.50]
+    volatility_weights: [0.10, 0.25]
+    min_exposures: [0.10]
+    max_exposures: [0.80, 1.0]
+    neutral_exposures: [0.50]
+    max_exposure_changes: [0.20, 0.40]
+    transaction_cost_bps: 5.0
+  allocation_grid_objective:
+    total_return_weight: 1.0
+    max_drawdown_improvement_weight: 0.50
+    sharpe_weight: 0.25
+    turnover_penalty_weight: 0.10
+    transaction_cost_penalty_weight: 1.0
+  allocation_optimizer:
+    enabled: true
+    method: random_search
+    candidate_count: 256
+    max_candidate_count: 5000
+    random_seed: 42
+    bootstrap_iterations: 1000
+    bootstrap_random_seed: 84
+    ranges:
+      return_weight: [0.50, 1.50]
+      drawdown_weight: [0.0, 1.0]
+      volatility_weight: [0.0, 0.50]
+      min_exposure: [0.0, 0.40]
+      max_exposure: [0.70, 1.0]
+      neutral_exposure: [0.30, 0.80]
+      max_exposure_change: [0.10, 1.0]
+      transaction_cost_bps: [5.0, 5.0]

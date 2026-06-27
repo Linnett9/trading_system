@@ -19,6 +19,7 @@ from core.research.ml.meta_ensemble import (
     _threshold_sweep,
     _walk_forward_meta_evaluation,
 )
+from core.research.ml.meta_auxiliary import run_meta_auxiliary_ensemble
 
 
 EXPECTED_META_SOURCE_DIRS = [
@@ -99,8 +100,14 @@ def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakag
 
     assert rows[0]["multitask_transformer_predicted_forward_return_5d"] == "0.012"
     assert rows[0]["multitask_transformer_predicted_future_volatility"] == "0.18"
+    assert rows[0][
+        "multitask_transformer__predicted_forward_return_5d"
+    ] == "0.012"
+    assert rows[0]["multitask_transformer__predicted_future_volatility"] == "0.18"
     assert "multitask_transformer_predicted_forward_return_5d" in features
     assert "multitask_transformer_predicted_future_volatility" in features
+    assert "multitask_transformer__predicted_forward_return_5d" not in features
+    assert "multitask_transformer__predicted_future_volatility" not in features
     assert all("actual_" not in name for name in features)
     assert "future_drawdown" not in features
     assert audit["auxiliary_prediction_columns_by_model"]["multitask_transformer"] == [
@@ -110,6 +117,50 @@ def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakag
     assert "actual_forward_return_5d" in audit[
         "ignored_leakage_columns_by_model"
     ]["multitask_transformer"]
+
+
+def test_meta_auxiliary_predictions_and_metrics_are_generated(tmp_path):
+    train_rows = [
+        _auxiliary_meta_row(index, "out_of_fold")
+        for index in range(8)
+    ]
+    holdout_rows = [
+        _auxiliary_meta_row(index + 8, "holdout")
+        for index in range(4)
+    ]
+
+    result = run_meta_auxiliary_ensemble(train_rows, holdout_rows, tmp_path)
+
+    assert result.predictions_path.exists()
+    assert result.metrics_json_path.exists()
+    assert result.metrics_markdown_path.exists()
+    assert result.metrics["train_prediction_method"] == (
+        "deterministic_three_fold_cross_fit"
+    )
+    for actual_name, metrics in result.metrics["targets"].items():
+        assert metrics["available"] is True
+        assert metrics["sample_count"] == 4
+        assert math.isfinite(metrics["mae"])
+        assert math.isfinite(metrics["rmse"])
+        assert math.isfinite(metrics["pearson_correlation"])
+        assert math.isfinite(metrics["spearman_correlation"])
+        if "forward_return" in actual_name:
+            assert math.isfinite(metrics["directional_accuracy"])
+    assert all(
+        "meta_predicted_forward_return_10d" in row
+        for row in result.holdout_rows
+    )
+
+
+def test_meta_auxiliary_missing_targets_do_not_break_classification_rows(tmp_path):
+    train_rows = [_meta_row("a", "2024-01-01", 0, 0.4)]
+    holdout_rows = [_meta_row("b", "2024-01-08", 1, 0.6, split="holdout")]
+    features_before = _feature_values(train_rows[0])
+
+    result = run_meta_auxiliary_ensemble(train_rows, holdout_rows, tmp_path)
+
+    assert result.metrics["available_targets"] == []
+    assert _feature_values(train_rows[0]) == features_before
 
 
 def test_meta_ensemble_refuses_mixed_prediction_artifact_dataset_hashes(tmp_path):
@@ -426,6 +477,30 @@ def _meta_row(
         "patchtst_raw_probability": str(probability),
         "patchtst_calibrated_probability": str(probability),
         "champion_return_next_period": "0.02" if label else "-0.01",
+    }
+
+
+def _auxiliary_meta_row(index: int, split: str) -> dict[str, str]:
+    value = (index - 4) / 100.0
+    return {
+        "feature_id": f"aux-{index}",
+        "rebalance_date": f"2024-{(index // 28) + 1:02d}-{(index % 28) + 1:02d}",
+        "variant_id": "variant",
+        "split": split,
+        "transformer_raw_probability": str(0.4 + (index * 0.01)),
+        "transformer_calibrated_probability": str(0.4 + (index * 0.01)),
+        "transformer__predicted_forward_return_5d": str(value * 0.8),
+        "transformer__predicted_forward_return_10d": str(value * 1.1),
+        "transformer__predicted_future_volatility": str(0.10 + abs(value)),
+        "transformer__predicted_future_drawdown": str(-abs(value) * 0.8),
+        "transformer__predicted_max_adverse_excursion": str(-abs(value)),
+        "transformer__predicted_max_favourable_excursion": str(abs(value) * 1.2),
+        "actual_forward_return_5d": str(value),
+        "actual_forward_return_10d": str(value * 1.2),
+        "actual_future_volatility": str(0.12 + abs(value)),
+        "actual_future_drawdown": str(-abs(value)),
+        "actual_max_adverse_excursion": str(-abs(value) * 1.1),
+        "actual_max_favourable_excursion": str(abs(value) * 1.3),
     }
 
 

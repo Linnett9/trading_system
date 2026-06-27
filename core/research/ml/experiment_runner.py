@@ -153,6 +153,7 @@ class MLExperimentRunner:
         probabilities, auxiliary_predictions = self._predict_research_model(
             model,
             split.test,
+            prediction_context=self._prediction_context(split),
         )
         predictions = self._predictions_from_probabilities(probabilities)
 
@@ -336,11 +337,17 @@ class MLExperimentRunner:
         self,
         model: Any,
         dataset: MLDataset,
+        *,
+        prediction_context: MLDataset | None = None,
     ) -> tuple[list[float], list[dict[str, float]]]:
-        self._set_model_sequence_context(model, dataset)
+        context = prediction_context or dataset
+        self._set_model_sequence_context(model, context)
         predict_multitask = getattr(model, "predict_multitask", None)
         if callable(predict_multitask) and self._multitask_enabled():
-            predictions = predict_multitask(dataset.features)
+            predictions = self._tail_rows(
+                predict_multitask(context.features),
+                dataset.sample_count,
+            )
             probabilities = [
                 float(row.get("probability_should_reduce_exposure", 0.5))
                 for row in predictions
@@ -354,8 +361,15 @@ class MLExperimentRunner:
                 for row in predictions
             ]
             return probabilities, auxiliary_predictions
-        component_predictions = self._model_component_predictions(model, dataset.features)
+        component_predictions = self._model_component_predictions(
+            model,
+            context.features,
+        )
         if component_predictions is not None:
+            component_predictions = self._tail_rows(
+                component_predictions,
+                dataset.sample_count,
+            )
             probabilities = [
                 self._component_probability(row)
                 for row in component_predictions
@@ -365,8 +379,39 @@ class MLExperimentRunner:
                 for row in component_predictions
             ]
             return probabilities, auxiliary_predictions
-        probabilities = model.predict_proba(dataset.features)
+        probabilities = self._tail_rows(
+            model.predict_proba(context.features),
+            dataset.sample_count,
+        )
         return probabilities, [{} for _ in probabilities]
+
+    def _prediction_context(self, split: ChronologicalSplit) -> MLDataset:
+        return self._concat_datasets(split.train, split.test)
+
+    @staticmethod
+    def _tail_rows(rows: list[Any], sample_count: int) -> list[Any]:
+        if sample_count <= 0:
+            return []
+        return list(rows[-sample_count:])
+
+    @staticmethod
+    def _concat_datasets(left: MLDataset, right: MLDataset) -> MLDataset:
+        return MLDataset(
+            features=[*left.features, *right.features],
+            labels=[*left.labels, *right.labels],
+            feature_dates=[*left.feature_dates, *right.feature_dates],
+            label_start_dates=[*left.label_start_dates, *right.label_start_dates],
+            label_end_dates=[*left.label_end_dates, *right.label_end_dates],
+            feature_ids=[*left.feature_ids, *right.feature_ids]
+            if left.feature_ids or right.feature_ids
+            else [],
+            metadata=[*left.metadata, *right.metadata]
+            if left.metadata or right.metadata
+            else [],
+            auxiliary_targets=[*left.auxiliary_targets, *right.auxiliary_targets]
+            if left.auxiliary_targets or right.auxiliary_targets
+            else [],
+        )
 
     def _model_component_predictions(
         self,
@@ -1153,10 +1198,13 @@ class MLExperimentRunner:
                 class_weight=self._class_weight(),
                 model_config=self.config.get("ml", {}),
             )
-            model.fit(fold.split.train.features, fold.split.train.labels)
-            predictions = self._predictions_from_probabilities(
-                model.predict_proba(fold.split.test.features)
+            self._fit_research_model(model, fold.split.train)
+            probabilities, _ = self._predict_research_model(
+                model,
+                fold.split.test,
+                prediction_context=self._prediction_context(fold.split),
             )
+            predictions = self._predictions_from_probabilities(probabilities)
             payload_folds.append({
                 "fold": fold.fold_number,
                 "train_sample_count": fold.split.train.sample_count,
@@ -1203,8 +1251,8 @@ class MLExperimentRunner:
             class_weight=self._class_weight(),
             model_config=self.config.get("ml", {}),
         )
-        train_model.fit(split.train.features, split.train.labels)
-        train_probabilities = train_model.predict_proba(split.train.features)
+        self._fit_research_model(train_model, split.train)
+        train_probabilities, _ = self._predict_research_model(train_model, split.train)
         comparison = compare_calibration_methods(
             split.train.labels,
             train_probabilities,
@@ -1305,8 +1353,12 @@ class MLExperimentRunner:
                 class_weight=self._class_weight(),
                 model_config=self.config.get("ml", {}),
             )
-            model.fit(fold.split.train.features, fold.split.train.labels)
-            probabilities = model.predict_proba(fold.split.test.features)
+            self._fit_research_model(model, fold.split.train)
+            probabilities, _ = self._predict_research_model(
+                model,
+                fold.split.test,
+                prediction_context=self._prediction_context(fold.split),
+            )
             all_labels.extend(fold.split.test.labels)
             all_probabilities.extend(probabilities)
             fold_payloads.append({
@@ -1387,10 +1439,15 @@ class MLExperimentRunner:
                     class_weight=self._class_weight(),
                     model_config=self.config.get("ml", {}),
                 )
-                model.fit(fold.split.train.features, fold.split.train.labels)
+                self._fit_research_model(model, fold.split.train)
+                probabilities, _ = self._predict_research_model(
+                    model,
+                    fold.split.test,
+                    prediction_context=self._prediction_context(fold.split),
+                )
                 summary = probability_summary(
                     fold.split.test.labels,
-                    model.predict_proba(fold.split.test.features),
+                    probabilities,
                     decision_threshold=self.experiment_config.decision_threshold,
                     reference_brier_score=baseline_summaries["rolling_base_rate"][
                         "brier_score"
@@ -1445,8 +1502,12 @@ class MLExperimentRunner:
                 class_weight=self._class_weight(),
                 model_config=self.config.get("ml", {}),
             )
-            model.fit(fold.split.train.features, fold.split.train.labels)
-            probabilities = model.predict_proba(fold.split.test.features)
+            self._fit_research_model(model, fold.split.train)
+            probabilities, _ = self._predict_research_model(
+                model,
+                fold.split.test,
+                prediction_context=self._prediction_context(fold.split),
+            )
             outcomes = [
                 outcomes_by_feature_date.get(feature_date, {})
                 for feature_date in fold.split.test.feature_dates
@@ -1621,8 +1682,12 @@ class MLExperimentRunner:
                     class_weight=self._class_weight(),
                     model_config=self.config.get("ml", {}),
                 )
-                model.fit(fold.split.train.features, fold.split.train.labels)
-                probabilities = model.predict_proba(fold.split.test.features)
+                self._fit_research_model(model, fold.split.train)
+                probabilities, _ = self._predict_research_model(
+                    model,
+                    fold.split.test,
+                    prediction_context=self._prediction_context(fold.split),
+                )
                 for threshold in thresholds:
                     threshold_metrics[threshold].append(classification_metrics(
                         fold.split.test.labels,
@@ -1704,8 +1769,12 @@ class MLExperimentRunner:
                                 class_weight=self._class_weight(),
                                 model_config=self.config.get("ml", {}),
                             )
-                            model.fit(fold.split.train.features, fold.split.train.labels)
-                            probabilities = model.predict_proba(fold.split.test.features)
+                            self._fit_research_model(model, fold.split.train)
+                            probabilities, _ = self._predict_research_model(
+                                model,
+                                fold.split.test,
+                                prediction_context=self._prediction_context(fold.split),
+                            )
                             result = simulate_shadow_overlay(
                                 equity_by_date,
                                 dict(zip(fold.split.test.feature_dates, probabilities)),
@@ -1813,8 +1882,12 @@ class MLExperimentRunner:
                 random_seed=self.experiment_config.random_seed,
                 model_config=self.config.get("ml", {}),
             )
-            model.fit(fold.split.train.features, fold.split.train.labels)
-            probabilities = model.predict_proba(fold.split.test.features)
+            self._fit_research_model(model, fold.split.train)
+            probabilities, _ = self._predict_research_model(
+                model,
+                fold.split.test,
+                prediction_context=self._prediction_context(fold.split),
+            )
             probabilities_by_date = dict(
                 zip(fold.split.test.feature_dates, probabilities)
             )
@@ -1859,8 +1932,12 @@ class MLExperimentRunner:
             random_seed=self.experiment_config.random_seed,
             model_config=self.config.get("ml", {}),
         )
-        model.fit(split.train.features, split.train.labels)
-        probabilities = model.predict_proba(split.test.features)
+        self._fit_research_model(model, split.train)
+        probabilities, _ = self._predict_research_model(
+            model,
+            split.test,
+            prediction_context=self._prediction_context(split),
+        )
         equity_by_date = {
             point.timestamp.date().isoformat(): point.equity
             for point in self._champion_equity_curve
@@ -1934,7 +2011,7 @@ class MLExperimentRunner:
         predictions: list[int],
     ) -> None:
         metrics = classification_metrics(split.test.labels, predictions)
-        dataset_hash = self._dataset_hash(dataset)
+        dataset_hash = self._source_dataset_hash(dataset)
         payload = {
             "mode": "research",
             "model_type": self.experiment_config.model_type,
@@ -2053,6 +2130,7 @@ class MLExperimentRunner:
             probabilities, auxiliary_predictions = self._predict_research_model(
                 model,
                 fold.split.test,
+                prediction_context=self._prediction_context(fold.split),
             )
             rows.extend(
                 self._prediction_artifact_rows(
@@ -2325,11 +2403,12 @@ class MLExperimentRunner:
         dataset: MLDataset,
         split: ChronologicalSplit,
     ) -> None:
+        dataset_hash = self._source_dataset_hash(dataset)
         payload = {
             "timestamp": datetime.utcnow().isoformat(),
             "config_hash": self._hash_payload(self.config),
-            "data_hash": self._dataset_hash(dataset),
-            "dataset_hash": self._dataset_hash(dataset),
+            "data_hash": dataset_hash,
+            "dataset_hash": dataset_hash,
             "source_dataset_row_count": dataset.sample_count,
             "git_commit": self._git_commit(),
             "model_type": self.experiment_config.model_type,
@@ -2349,6 +2428,41 @@ class MLExperimentRunner:
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _dataset_hash(self, dataset: MLDataset) -> str:
+        return self._source_dataset_hash(dataset)
+
+    def _source_dataset_hash(self, dataset: MLDataset) -> str:
+        return self._hash_payload(self._source_dataset_identity(dataset))
+
+    def _source_dataset_identity(self, dataset: MLDataset) -> dict[str, Any]:
+        rows = []
+        for index in range(dataset.sample_count):
+            metadata = dataset.metadata[index] if index < len(dataset.metadata) else {}
+            rows.append({
+                "feature_date": dataset.feature_dates[index],
+                "label_start_date": dataset.label_start_dates[index],
+                "label_end_date": dataset.label_end_dates[index],
+                "label": dataset.labels[index],
+                "rebalance_date": metadata.get(
+                    "rebalance_date",
+                    dataset.feature_dates[index],
+                ),
+                "variant_id": metadata.get("variant_id", ""),
+                "symbol": metadata.get("symbol", ""),
+                "selected_symbols": metadata.get("selected_symbols", ""),
+                "variant_universe": metadata.get("variant_universe", ""),
+                "variant_rebalance_frequency": metadata.get(
+                    "variant_rebalance_frequency",
+                    "",
+                ),
+                "variant_weighting": metadata.get("variant_weighting", ""),
+            })
+        rows.sort(key=lambda row: tuple(str(value) for value in row.values()))
+        return {
+            "label_type": self.experiment_config.label_type,
+            "rows": rows,
+        }
+
+    def _model_input_hash(self, dataset: MLDataset) -> str:
         return self._hash_payload({
             "features": dataset.features,
             "labels": dataset.labels,

@@ -375,6 +375,12 @@ def run_ml_meta_ensemble(config):
     print(f"Meta audit: {result.audit_path}")
     print(f"Metrics: {result.metrics_path}")
     print(f"Leaderboard: {result.leaderboard_path}")
+    print(f"Allocation v2: {result.allocation_policy_comparison_json_path}")
+    print(f"Allocation v2 leaderboard: {result.allocation_policy_leaderboard_path}")
+    print(f"Allocation v2 diagnostics: {result.allocation_policy_diagnostics_json_path}")
+    print(f"Allocation v2 grid search: {result.allocation_policy_grid_search_json_path}")
+    print(f"Meta auxiliary metrics: {result.meta_auxiliary_metrics_json_path}")
+    print(f"Allocation optimizer: {result.allocation_optimizer_results_path}")
 
 
 def run_ml_validate_artifacts(config):
@@ -390,6 +396,9 @@ def run_ml_validate_artifacts(config):
         )
         for warning in result.legacy_warnings:
             print(f"  warning: {warning}")
+    meta_output_dir = _meta_ensemble_output_dir(config)
+    if not (meta_output_dir / "prediction_artifacts.json").exists():
+        print(f"not run yet: {meta_output_dir}")
 
 
 def run_ml_run_inventory(config):
@@ -540,6 +549,11 @@ def _artifact_source_dirs(
     if not source_dirs:
         report_dir = Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
         source_dirs = _artifact_child_dirs(report_dir)
+    source_dirs = [
+        path
+        for path in source_dirs
+        if path.name != "regime_transformer_meta_ensemble_v1"
+    ]
     if require_exists:
         missing = [path for path in source_dirs if not path.exists()]
         if missing:
@@ -548,6 +562,11 @@ def _artifact_source_dirs(
                 + ", ".join(str(path) for path in missing)
             )
     return source_dirs
+
+
+def _meta_ensemble_output_dir(config: dict[str, Any]) -> Path:
+    report_dir = Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
+    return report_dir / "regime_transformer_meta_ensemble_v1"
 
 
 def _artifact_child_dirs(path: Path) -> list[Path]:

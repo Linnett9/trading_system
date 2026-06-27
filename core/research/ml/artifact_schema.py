@@ -24,6 +24,8 @@ ALLOWED_OPTIONAL_PREDICTION_COLUMNS = [
     "predicted_forward_return_10d",
     "predicted_future_volatility",
     "predicted_future_drawdown",
+    "predicted_max_adverse_excursion",
+    "predicted_max_favourable_excursion",
     "predicted_trend_score",
     "predicted_regime_score",
     "predicted_size_multiplier",
