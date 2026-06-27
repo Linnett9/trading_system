@@ -27,6 +27,52 @@ class CanonicalContinuousReplayPaths:
     markdown_path: Path
 
 
+def score_candidate_exposure_path(
+    rows: list[dict[str, Any]],
+    *,
+    candidate_name: str = "optimizer_candidate",
+    excluded_dates: set[str] | None = None,
+    cost_multiplier: float = 1.0,
+) -> dict[str, Any]:
+    """Score one exposure path with canonical non-overlap mechanics, without I/O."""
+    if cost_multiplier < 0.0:
+        raise ValueError("cost_multiplier must be non-negative")
+    normalized_rows = []
+    for row in rows:
+        period_return = _number(row.get("period_return"))
+        exposure = _number(row.get("exposure"))
+        if period_return is None or exposure is None:
+            continue
+        base_cost = _number(row.get("cost")) or 0.0
+        stressed_cost = base_cost * cost_multiplier
+        normalized_rows.append({
+            **row,
+            "candidate_name": candidate_name,
+            "period_return": period_return,
+            "exposure": exposure,
+            "turnover": _number(row.get("turnover")) or 0.0,
+            "cost": stressed_cost,
+            "net_return": (period_return * exposure) - stressed_cost,
+            "selected_symbols": list(row.get("selected_symbols", []) or []),
+            "target_weights": dict(row.get("target_weights", {}) or {}),
+            "source": row.get("source", "optimizer_candidate_exposure_path"),
+        })
+    return _candidate_payload(
+        candidate_name,
+        normalized_rows,
+        excluded_dates=excluded_dates or set(),
+        excluded_symbols=set(),
+        period_return_semantics=(
+            "allocation overlay return: baseline period return * candidate exposure "
+            "minus turnover cost"
+        ),
+        period_cost_semantics=(
+            "explicit allocation turnover cost multiplied by "
+            f"{cost_multiplier:g}"
+        ),
+    )
+
+
 def write_canonical_continuous_equity_replay(
     config: dict[str, Any],
 ) -> CanonicalContinuousReplayPaths:

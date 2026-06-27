@@ -49,10 +49,18 @@ def test_trading_leaderboard_combines_reports_and_ranks_trading_outcomes(
     _write_json(optimizer_path, {
         "sampler_requested": "bayesian",
         "sampler_used": "random",
+        "objective_mode": "robustness_adjusted_canonical_score",
         "fallback_reason": "Optuna unavailable",
         "selected_policy": {
             "candidate_id": "optimizer_0042",
             "objective_value": 0.7,
+            "selected_by_robustness_objective": True,
+            "holdout_objective_metrics": {
+                "canonical_non_overlap_return": 0.17,
+                "anomaly_adjusted_canonical_return": 0.14,
+                "anomaly_dependency_ratio": 0.18,
+                "robustness_adjusted_score": 0.09,
+            },
             "frozen_holdout_metrics": _allocation_row(
                 "selected_random_optimizer_diagnostic_policy", 0.19, 0.04
             ),
@@ -97,6 +105,18 @@ def test_trading_leaderboard_combines_reports_and_ranks_trading_outcomes(
         "actual_forward_return_10d"
     ]
     assert payload["optimizer_status"]["sampler_used"] == "random"
+    optimizer_row = next(
+        row for row in payload["leaderboard"]
+        if row["entity_type"] == "allocation_optimizer"
+    )
+    assert optimizer_row["optimizer_objective_mode"] == (
+        "robustness_adjusted_canonical_score"
+    )
+    assert optimizer_row["canonical_non_overlap_return"] == 0.17
+    assert optimizer_row["anomaly_adjusted_canonical_return"] == 0.14
+    assert optimizer_row["anomaly_dependency_ratio"] == 0.18
+    assert optimizer_row["robustness_adjusted_score"] == 0.09
+    assert optimizer_row["selected_by_robustness_objective"] is True
     assert payload["research_only"] is True
     assert payload["trading_impact"] == "none"
     assert payload["production_validated"] is False
@@ -155,6 +175,47 @@ def test_trading_leaderboard_handles_reports_not_run_yet(tmp_path):
     assert payload["leaderboard"] == []
     assert payload["meta_auxiliary_forecast_metrics"] == {}
     assert paths.csv_path.read_text(encoding="utf-8").startswith("rank,")
+
+
+def test_trading_leaderboard_includes_benchmark_validation_status(tmp_path):
+    classification_path = tmp_path / "leaderboard.json"
+    allocation_path = tmp_path / "allocation.json"
+    optimizer_path = tmp_path / "optimizer.json"
+    auxiliary_path = tmp_path / "auxiliary.json"
+    _write_json(classification_path, {"leaderboard": []})
+    _write_json(allocation_path, {"policies": [], "baselines": []})
+    _write_json(optimizer_path, {})
+    _write_json(auxiliary_path, {})
+    _write_json(tmp_path / "benchmark_relative_validation.json", {
+        "candidates": [
+            {
+                "candidate_name": "spy_buy_and_hold",
+                "available": True,
+                "canonical_non_overlap_return": 0.12,
+                "max_drawdown": 0.08,
+                "sharpe": 1.0,
+                "sortino": 1.2,
+                "turnover": 1.0,
+                "benchmark_relative_pass": False,
+                "tradability_validation_pass": True,
+                "promotion_candidate_status": "blocked",
+            }
+        ]
+    })
+
+    paths = write_trading_research_leaderboard(
+        tmp_path,
+        classification_path,
+        allocation_path,
+        optimizer_path,
+        auxiliary_path,
+    )
+    row = json.loads(paths.json_path.read_text(encoding="utf-8"))["leaderboard"][0]
+
+    assert row["entity_name"] == "spy_buy_and_hold"
+    assert row["benchmark_relative_pass"] is False
+    assert row["tradability_validation_pass"] is True
+    assert row["promotion_candidate_status"] == "blocked"
 
 
 def test_trading_leaderboard_does_not_import_operational_code_paths():

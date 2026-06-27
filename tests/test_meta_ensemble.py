@@ -20,7 +20,10 @@ from core.research.ml.meta_ensemble import (
     _walk_forward_meta_evaluation,
     run_meta_ensemble,
 )
-from core.research.ml.meta_auxiliary import run_meta_auxiliary_ensemble
+from core.research.ml.meta_auxiliary import (
+    _chronological_cross_fitted_predictions,
+    run_meta_auxiliary_ensemble,
+)
 
 
 EXPECTED_META_SOURCE_DIRS = [
@@ -83,6 +86,8 @@ def test_meta_ensemble_joins_predictions_by_feature_id_and_audits_leakage():
 
 def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakage():
     expanded_rows = [_expanded("a", "2024-01-01")]
+    expanded_rows[0]["label_start_date"] = "2024-01-02"
+    expanded_rows[0]["label_end_date"] = "2024-01-31"
     prediction = _prediction("a", "2024-01-01", "holdout", 1)
     prediction.update({
         "predicted_forward_return_5d": "0.012",
@@ -111,6 +116,9 @@ def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakag
     assert "multitask_transformer__predicted_future_volatility" not in features
     assert all("actual_" not in name for name in features)
     assert "future_drawdown" not in features
+    assert rows[0]["label_end_date"] == "2024-01-31"
+    assert "label_start_date" not in features
+    assert "label_end_date" not in features
     assert audit["auxiliary_prediction_columns_by_model"]["multitask_transformer"] == [
         "multitask_transformer_predicted_forward_return_5d",
         "multitask_transformer_predicted_future_volatility",
@@ -136,8 +144,20 @@ def test_meta_auxiliary_predictions_and_metrics_are_generated(tmp_path):
     assert result.metrics_json_path.exists()
     assert result.metrics_markdown_path.exists()
     assert result.metrics["train_prediction_method"] == (
-        "deterministic_three_fold_cross_fit"
+        "purged_chronological_walk_forward"
     )
+    assert result.metrics["fold_design"] == {
+        "walk_forward_folds": 3,
+        "embargo_rebalance_dates": 1,
+        "purge_overlapping_labels": True,
+        "date_grouping": "rebalance_date",
+        "training_window": "expanding",
+        "validation_window": "contiguous_future_date_blocks",
+        "warmup_rows_are_forecasted": False,
+        "selection_train_row_count": len(result.selection_train_indexes),
+    }
+    assert result.selection_train_indexes
+    assert 0 not in result.selection_train_indexes
     for actual_name, metrics in result.metrics["targets"].items():
         assert metrics["available"] is True
         assert metrics["sample_count"] == 4
@@ -150,6 +170,67 @@ def test_meta_auxiliary_predictions_and_metrics_are_generated(tmp_path):
     assert all(
         "meta_predicted_forward_return_10d" in row
         for row in result.holdout_rows
+    )
+
+
+def test_meta_auxiliary_walk_forward_never_uses_future_targets():
+    rows = [_auxiliary_meta_row(index, "out_of_fold") for index in range(12)]
+    feature_names = ["transformer_raw_probability"]
+
+    baseline, audits = _chronological_cross_fitted_predictions(
+        rows,
+        "actual_forward_return_5d",
+        feature_names,
+        fold_count=3,
+        embargo_rebalance_dates=1,
+        purge_overlapping_labels=False,
+    )
+    changed_future = [dict(row) for row in rows]
+    for row in changed_future[6:]:
+        row["actual_forward_return_5d"] = "1000000"
+    changed, _ = _chronological_cross_fitted_predictions(
+        changed_future,
+        "actual_forward_return_5d",
+        feature_names,
+        fold_count=3,
+        embargo_rebalance_dates=1,
+        purge_overlapping_labels=False,
+    )
+
+    assert baseline[3:6] == pytest.approx(changed[3:6])
+    assert all(
+        audit["max_training_rebalance_date"] < audit["validation_start"]
+        for audit in audits
+        if audit["prediction_generated"]
+    )
+    assert all(
+        audit["embargoed_rebalance_date_count"] == 1
+        for audit in audits
+        if audit["prediction_generated"]
+    )
+
+
+def test_meta_auxiliary_walk_forward_purges_overlapping_label_windows():
+    rows = [_auxiliary_meta_row(index, "out_of_fold") for index in range(12)]
+    for index, row in enumerate(rows):
+        row["label_end_date"] = (
+            f"2024-01-{min(index + 4, 28):02d}"
+        )
+
+    _, audits = _chronological_cross_fitted_predictions(
+        rows,
+        "actual_forward_return_5d",
+        ["transformer_raw_probability"],
+        fold_count=3,
+        embargo_rebalance_dates=1,
+        purge_overlapping_labels=True,
+    )
+
+    assert any(audit["purged_label_overlap_count"] > 0 for audit in audits)
+    assert all(
+        audit["max_training_rebalance_date"] < audit["validation_start"]
+        for audit in audits
+        if audit["prediction_generated"]
     )
 
 

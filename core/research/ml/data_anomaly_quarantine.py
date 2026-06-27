@@ -27,6 +27,51 @@ class DataAnomalyQuarantinePaths:
     markdown_path: Path
 
 
+def detect_period_anomalies(
+    period_rows: list[dict[str, Any]],
+    *,
+    large_symbol_return_abs: float = 1.0,
+    large_portfolio_return_abs: float = 0.50,
+) -> list[dict[str, Any]]:
+    """Detect existing quarantine anomalies in period rows without report I/O."""
+    anomalies = []
+    for row in period_rows:
+        for anomaly in row.get("symbol_return_anomalies", []) or []:
+            symbol_return = _number(anomaly.get("return"))
+            if symbol_return is None or abs(symbol_return) <= large_symbol_return_abs:
+                continue
+            anomalies.append({
+                "anomaly_type": "large_symbol_period_return",
+                "rebalance_date": row.get("rebalance_date"),
+                "outcome_end_date": row.get("outcome_end_date"),
+                "symbol": anomaly.get("symbol"),
+                "symbol_return": symbol_return,
+                "portfolio_period_return": _number(row.get("period_return")),
+                "start_close": _number(anomaly.get("start_close")),
+                "end_close": _number(anomaly.get("end_close")),
+                "severity": _severity(symbol_return),
+                "adjusted_status": "unknown",
+                **RESEARCH_METADATA,
+            })
+        period_return = _number(row.get("period_return"))
+        if period_return is None or abs(period_return) <= large_portfolio_return_abs:
+            continue
+        anomalies.append({
+            "anomaly_type": "large_portfolio_period_return",
+            "rebalance_date": row.get("rebalance_date"),
+            "outcome_end_date": row.get("outcome_end_date"),
+            "symbol": None,
+            "symbol_return": None,
+            "portfolio_period_return": period_return,
+            "start_close": None,
+            "end_close": None,
+            "severity": _severity(period_return),
+            "adjusted_status": "unknown",
+            **RESEARCH_METADATA,
+        })
+    return anomalies
+
+
 def write_data_anomaly_quarantine(
     config: dict[str, Any],
     *,
@@ -61,9 +106,7 @@ def build_anomaly_quarantine_report(
     selected_optimizer: dict[str, Any],
     exclude_flagged: bool = False,
 ) -> dict[str, Any]:
-    anomalies = _symbol_anomalies(champion_audit) + _large_portfolio_moves(
-        champion_audit
-    )
+    anomalies = detect_period_anomalies(_champion_period_rows(champion_audit))
     flagged_dates = sorted({
         str(row["rebalance_date"])
         for row in anomalies
@@ -108,49 +151,6 @@ def build_anomaly_quarantine_report(
         "red_flags": _red_flags(anomalies, champion_audit),
         **RESEARCH_METADATA,
     }
-
-
-def _symbol_anomalies(champion_audit: dict[str, Any]) -> list[dict[str, Any]]:
-    output = []
-    for row in _champion_period_rows(champion_audit):
-        for anomaly in row.get("symbol_return_anomalies", []) or []:
-            symbol_return = _number(anomaly.get("return"))
-            output.append({
-                "anomaly_type": "large_symbol_period_return",
-                "rebalance_date": row.get("rebalance_date"),
-                "outcome_end_date": row.get("outcome_end_date"),
-                "symbol": anomaly.get("symbol"),
-                "symbol_return": symbol_return,
-                "portfolio_period_return": _number(row.get("period_return")),
-                "start_close": _number(anomaly.get("start_close")),
-                "end_close": _number(anomaly.get("end_close")),
-                "severity": _severity(symbol_return),
-                "adjusted_status": "unknown",
-                **RESEARCH_METADATA,
-            })
-    return output
-
-
-def _large_portfolio_moves(champion_audit: dict[str, Any]) -> list[dict[str, Any]]:
-    output = []
-    for row in _champion_period_rows(champion_audit):
-        period_return = _number(row.get("period_return"))
-        if period_return is None or abs(period_return) <= 0.50:
-            continue
-        output.append({
-            "anomaly_type": "large_portfolio_period_return",
-            "rebalance_date": row.get("rebalance_date"),
-            "outcome_end_date": row.get("outcome_end_date"),
-            "symbol": None,
-            "symbol_return": None,
-            "portfolio_period_return": period_return,
-            "start_close": None,
-            "end_close": None,
-            "severity": _severity(period_return),
-            "adjusted_status": "unknown",
-            **RESEARCH_METADATA,
-        })
-    return output
 
 
 def _champion_period_rows(champion_audit: dict[str, Any]) -> list[dict[str, Any]]:

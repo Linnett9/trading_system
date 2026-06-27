@@ -21,6 +21,9 @@ ml:
     - reports/ml/news_analysis_transformer_should_reduce_exposure
     - reports/ml/tft_should_reduce_exposure
   meta_model_type: logistic_regression
+  meta_auxiliary_walk_forward_folds: 3
+  meta_auxiliary_embargo_rebalance_dates: 1
+  meta_auxiliary_purge_overlapping_labels: true
   decision_threshold: 0.50
   decision_thresholds: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
   reduced_exposures: [0.70, 0.80, 0.90]
@@ -32,6 +35,17 @@ ml:
   allocation_return_destruction_minimum: 0.02
   allocation_too_defensive_mean_exposure: 0.25
   allocation_turnover_per_period_warning: 0.50
+  benchmark_relative_validation:
+    max_anomaly_dependency_ratio: 0.25
+    max_top_5_date_profit_share: 0.50
+    max_drawdown_worse_than_spy: 0.05
+    min_independent_periods: 36
+    allow_unknown_adjusted_price_status: false
+    acceptable_adjusted_price_statuses:
+      - known_adjusted
+      - appears_adjusted
+      - raw_adjusted_identical
+    clean_data_min_return: 0.0
   allocation_score_thresholds:
     strong: 0.02
     good: 0.005
@@ -113,6 +127,10 @@ ml:
   allocation_optimizer:
     enabled: true
     sampler: bayesian
+    objective_mode: robustness_adjusted_canonical_score
+    anomaly_policy: penalize
+    cost_stress_multiplier: 2.0
+    max_allowed_anomaly_dependency_ratio: 0.25
     candidate_count: 256
     max_candidate_count: 5000
     random_seed: 42

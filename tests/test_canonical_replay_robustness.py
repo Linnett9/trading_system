@@ -136,8 +136,22 @@ def test_trading_leaderboard_prefers_canonical_return_when_available(tmp_path):
     )
     optimizer_path.write_text(
         json.dumps({
+            "objective_mode": "robustness_adjusted_canonical_score",
             "selected_policy": {
                 "candidate_id": "optimizer",
+                "selected_by_robustness_objective": True,
+                "holdout_objective_metrics": {
+                    "max_allowed_anomaly_dependency_ratio": 0.25,
+                    "turnover_penalty": 0.0,
+                    "cost_stress_penalty": 0.0,
+                    "robustness_weights": {
+                        "drawdown": 0.5,
+                        "turnover": 0.25,
+                        "concentration": 0.25,
+                        "anomaly_dependency": 0.5,
+                        "cost_stress": 1.0,
+                    },
+                },
                 "frozen_holdout_metrics": {
                     "policy_name": "selected_bayesian_optimizer_diagnostic_policy",
                     "total_return": 10.0,
@@ -217,6 +231,10 @@ def test_trading_leaderboard_prefers_canonical_return_when_available(tmp_path):
     ]
     assert payload["leaderboard"][1]["diagnostic_period_grid_return"] == 10.0
     assert payload["leaderboard"][1]["canonical_continuous_return"] == 0.10
+    assert payload["leaderboard"][1]["anomaly_dependency_ratio"] == 0.5
+    assert abs(
+        payload["leaderboard"][1]["robustness_adjusted_score"] - (-0.325)
+    ) < 1e-12
 
 
 def _champion_audit_payload() -> dict:

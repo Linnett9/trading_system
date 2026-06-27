@@ -140,6 +140,15 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         train_rows,
         holdout_rows,
         output_dir,
+        walk_forward_folds=int(
+            ml_config.get("meta_auxiliary_walk_forward_folds", 3)
+        ),
+        embargo_rebalance_dates=int(
+            ml_config.get("meta_auxiliary_embargo_rebalance_dates", 1)
+        ),
+        purge_overlapping_labels=bool(
+            ml_config.get("meta_auxiliary_purge_overlapping_labels", True)
+        ),
     )
     threshold = float(ml_config.get("decision_threshold", 0.5))
     predictions = [int(probability >= threshold) for probability in holdout_probabilities]
@@ -318,8 +327,14 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
             ),
         },
         config=ml_config,
-        selection_rows=auxiliary_result.train_rows,
-        selection_meta_probabilities=train_probabilities,
+        selection_rows=[
+            auxiliary_result.train_rows[index]
+            for index in auxiliary_result.selection_train_indexes
+        ],
+        selection_meta_probabilities=[
+            train_probabilities[index]
+            for index in auxiliary_result.selection_train_indexes
+        ],
     )
     trading_leaderboard_paths = write_trading_research_leaderboard(
         output_dir=output_dir,
@@ -411,6 +426,11 @@ def build_meta_dataset_rows(
             "split": split,
             "fold": next(iter(source_predictions.values()))[feature_id].get("fold", ""),
             "actual_label": next(iter(source_predictions.values()))[feature_id]["actual_label"],
+            "label_start_date": expanded.get("label_start_date", ""),
+            "label_end_date": expanded.get(
+                "label_end_date",
+                expanded.get("outcome_end_date", ""),
+            ),
         }
         row.update(actual_auxiliary_values(
             expanded,

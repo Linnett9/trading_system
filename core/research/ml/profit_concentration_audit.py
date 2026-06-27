@@ -79,6 +79,24 @@ def build_profit_concentration_audit(
     }
 
 
+def score_candidate_concentration(
+    canonical_candidate: dict[str, Any],
+    *,
+    flagged_dates: set[str] | None = None,
+) -> dict[str, Any]:
+    """Calculate concentration and anomaly-removal scenarios without report I/O."""
+    rows = [
+        row
+        for row in canonical_candidate.get("rows", []) or []
+        if isinstance(row, dict) and not row.get("exclusion_reason")
+    ]
+    return _candidate_audit(
+        str(canonical_candidate.get("candidate_name", "optimizer_candidate")),
+        rows,
+        flagged_dates or set(),
+    )
+
+
 def _candidate_audit(
     name: str,
     rows: list[dict[str, Any]],

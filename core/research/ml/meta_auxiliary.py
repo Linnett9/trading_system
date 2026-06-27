@@ -4,6 +4,7 @@ import csv
 import json
 import math
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -28,6 +29,7 @@ AUXILIARY_PREDICTION_COLUMNS = tuple(
 class MetaAuxiliaryResult:
     train_rows: list[dict[str, str]]
     holdout_rows: list[dict[str, str]]
+    selection_train_indexes: tuple[int, ...]
     predictions_path: Path
     metrics_json_path: Path
     metrics_markdown_path: Path
@@ -53,11 +55,22 @@ def run_meta_auxiliary_ensemble(
     train_rows: list[dict[str, str]],
     holdout_rows: list[dict[str, str]],
     output_dir: Path,
+    *,
+    walk_forward_folds: int = 3,
+    embargo_rebalance_dates: int = 1,
+    purge_overlapping_labels: bool = True,
 ) -> MetaAuxiliaryResult:
+    if walk_forward_folds < 1:
+        raise ValueError("walk_forward_folds must be at least one")
+    if embargo_rebalance_dates < 0:
+        raise ValueError("embargo_rebalance_dates must be non-negative")
     augmented_train = [dict(row) for row in train_rows]
     augmented_holdout = [dict(row) for row in holdout_rows]
     feature_names = _auxiliary_feature_names(train_rows)
     target_metrics: dict[str, dict[str, Any]] = {}
+    fold_audits: dict[str, list[dict[str, Any]]] = {}
+    predicted_indexes_by_target: list[set[int]] = []
+    holdout_start = _minimum_rebalance_date(holdout_rows)
 
     for actual_name, prediction_name in AUXILIARY_TARGETS.items():
         usable_train = [row for row in train_rows if _finite_value(row.get(actual_name))]
@@ -69,22 +82,53 @@ def run_meta_auxiliary_ensemble(
                 "sample_count": 0,
             }
             continue
-        model = _fit_regressor(usable_train, actual_name, feature_names)
-        train_predictions = _cross_fitted_predictions(
+        holdout_training_rows, holdout_training_audit = _purged_training_rows(
+            usable_train,
+            validation_start=holdout_start,
+            embargo_rebalance_dates=embargo_rebalance_dates,
+            purge_overlapping_labels=purge_overlapping_labels,
+        )
+        if not holdout_training_rows:
+            target_metrics[actual_name] = {
+                "available": False,
+                "reason": "no eligible training rows before purged holdout",
+                "prediction_column": prediction_name,
+                "sample_count": 0,
+            }
+            continue
+        model = _fit_regressor(holdout_training_rows, actual_name, feature_names)
+        train_predictions, target_fold_audits = _chronological_cross_fitted_predictions(
             augmented_train,
             actual_name,
             feature_names,
+            fold_count=walk_forward_folds,
+            embargo_rebalance_dates=embargo_rebalance_dates,
+            purge_overlapping_labels=purge_overlapping_labels,
         )
         holdout_predictions = model.predict(augmented_holdout)
         for row, prediction in zip(augmented_train, train_predictions):
-            row[prediction_name] = str(prediction)
+            if prediction is not None:
+                row[prediction_name] = str(prediction)
         for row, prediction in zip(augmented_holdout, holdout_predictions):
             row[prediction_name] = str(prediction)
+        predicted_indexes_by_target.append({
+            index
+            for index, prediction in enumerate(train_predictions)
+            if prediction is not None
+        })
+        fold_audits[actual_name] = target_fold_audits
         target_metrics[actual_name] = _regression_metrics(
             augmented_holdout,
             actual_name,
             prediction_name,
         )
+        target_metrics[actual_name]["holdout_training_audit"] = holdout_training_audit
+
+    selection_train_indexes = tuple(sorted(
+        set.intersection(*predicted_indexes_by_target)
+        if predicted_indexes_by_target
+        else set()
+    ))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     predictions_path = output_dir / "meta_auxiliary_predictions.csv"
@@ -98,8 +142,21 @@ def run_meta_auxiliary_ensemble(
         "available_targets": [
             name for name, payload in target_metrics.items() if payload.get("available")
         ],
-        "train_prediction_method": "deterministic_three_fold_cross_fit",
-        "holdout_prediction_method": "refit_all_out_of_fold_rows_then_predict_holdout",
+        "train_prediction_method": "purged_chronological_walk_forward",
+        "holdout_prediction_method": (
+            "refit_purged_out_of_fold_rows_then_predict_frozen_holdout"
+        ),
+        "fold_design": {
+            "walk_forward_folds": walk_forward_folds,
+            "embargo_rebalance_dates": embargo_rebalance_dates,
+            "purge_overlapping_labels": purge_overlapping_labels,
+            "date_grouping": "rebalance_date",
+            "training_window": "expanding",
+            "validation_window": "contiguous_future_date_blocks",
+            "warmup_rows_are_forecasted": False,
+            "selection_train_row_count": len(selection_train_indexes),
+        },
+        "fold_audits": fold_audits,
         "research_only": True,
         "trading_impact": "none",
         "production_validated": False,
@@ -109,6 +166,7 @@ def run_meta_auxiliary_ensemble(
     return MetaAuxiliaryResult(
         train_rows=augmented_train,
         holdout_rows=augmented_holdout,
+        selection_train_indexes=selection_train_indexes,
         predictions_path=predictions_path,
         metrics_json_path=metrics_json_path,
         metrics_markdown_path=metrics_markdown_path,
@@ -165,35 +223,143 @@ def _fit_regressor(
     return _AuxiliaryRegressor(feature_names, estimator=estimator)
 
 
-def _cross_fitted_predictions(
+def _chronological_cross_fitted_predictions(
     rows: list[dict[str, str]],
     actual_name: str,
     feature_names: list[str],
-) -> list[float]:
+    *,
+    fold_count: int,
+    embargo_rebalance_dates: int,
+    purge_overlapping_labels: bool,
+) -> tuple[list[float | None], list[dict[str, Any]]]:
     if not rows:
-        return []
-    fold_count = min(3, len(rows))
-    predictions = [0.0] * len(rows)
-    all_usable = [row for row in rows if _finite_value(row.get(actual_name))]
-    fallback = mean(float(row[actual_name]) for row in all_usable)
-    for fold in range(fold_count):
+        return [], []
+    unique_dates = sorted({_rebalance_date(row) for row in rows})
+    if len(unique_dates) < 2:
+        return [None] * len(rows), []
+    initial_training_date_count = max(1, len(unique_dates) // (fold_count + 1))
+    validation_dates = unique_dates[initial_training_date_count:]
+    date_blocks = _contiguous_blocks(validation_dates, fold_count)
+    predictions: list[float | None] = [None] * len(rows)
+    audits: list[dict[str, Any]] = []
+    for fold_number, block in enumerate(date_blocks, start=1):
+        validation_start = block[0]
+        validation_date_set = set(block)
         validation_indexes = [
-            index for index in range(len(rows)) if index % fold_count == fold
-        ]
-        training_rows = [
-            row
+            index
             for index, row in enumerate(rows)
-            if index % fold_count != fold and _finite_value(row.get(actual_name))
+            if _rebalance_date(row) in validation_date_set
         ]
-        model = (
-            _fit_regressor(training_rows, actual_name, feature_names)
-            if training_rows
-            else _AuxiliaryRegressor(feature_names, constant=fallback)
+        candidate_training_rows = [
+            row
+            for row in rows
+            if _rebalance_date(row) < validation_start
+            and _finite_value(row.get(actual_name))
+        ]
+        training_rows, purge_audit = _purged_training_rows(
+            candidate_training_rows,
+            validation_start=validation_start,
+            embargo_rebalance_dates=embargo_rebalance_dates,
+            purge_overlapping_labels=purge_overlapping_labels,
         )
+        if not training_rows:
+            audits.append({
+                "fold": fold_number,
+                "validation_start": validation_start.isoformat(),
+                "validation_end": block[-1].isoformat(),
+                "validation_row_count": len(validation_indexes),
+                "prediction_generated": False,
+                **purge_audit,
+            })
+            continue
+        model = _fit_regressor(training_rows, actual_name, feature_names)
         fold_predictions = model.predict([rows[index] for index in validation_indexes])
         for index, prediction in zip(validation_indexes, fold_predictions):
             predictions[index] = prediction
-    return predictions
+        audits.append({
+            "fold": fold_number,
+            "validation_start": validation_start.isoformat(),
+            "validation_end": block[-1].isoformat(),
+            "validation_row_count": len(validation_indexes),
+            "prediction_generated": True,
+            **purge_audit,
+        })
+    return predictions, audits
+
+
+def _purged_training_rows(
+    rows: list[dict[str, str]],
+    *,
+    validation_start: date | None,
+    embargo_rebalance_dates: int,
+    purge_overlapping_labels: bool,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    if validation_start is None:
+        return [], {
+            "training_row_count": 0,
+            "purged_label_overlap_count": 0,
+            "embargoed_rebalance_date_count": 0,
+            "max_training_rebalance_date": None,
+        }
+    chronological = [
+        row for row in rows if _rebalance_date(row) < validation_start
+    ]
+    before_label_purge = len(chronological)
+    if purge_overlapping_labels:
+        chronological = [
+            row
+            for row in chronological
+            if _label_window_ends_before(row, validation_start)
+        ]
+    eligible_dates = sorted({_rebalance_date(row) for row in chronological})
+    embargoed_dates = set(
+        eligible_dates[-embargo_rebalance_dates:]
+        if embargo_rebalance_dates
+        else []
+    )
+    retained = [
+        row for row in chronological if _rebalance_date(row) not in embargoed_dates
+    ]
+    retained_dates = [_rebalance_date(row) for row in retained]
+    return retained, {
+        "training_row_count": len(retained),
+        "purged_label_overlap_count": before_label_purge - len(chronological),
+        "embargoed_rebalance_date_count": len(embargoed_dates),
+        "max_training_rebalance_date": (
+            max(retained_dates).isoformat() if retained_dates else None
+        ),
+    }
+
+
+def _contiguous_blocks(values: list[date], block_count: int) -> list[list[date]]:
+    resolved_count = min(max(1, block_count), len(values))
+    quotient, remainder = divmod(len(values), resolved_count)
+    blocks = []
+    start = 0
+    for index in range(resolved_count):
+        size = quotient + (1 if index < remainder else 0)
+        blocks.append(values[start:start + size])
+        start += size
+    return [block for block in blocks if block]
+
+
+def _minimum_rebalance_date(rows: list[dict[str, str]]) -> date | None:
+    dates = [_rebalance_date(row) for row in rows]
+    return min(dates) if dates else None
+
+
+def _rebalance_date(row: dict[str, str]) -> date:
+    raw_value = row.get("rebalance_date") or row.get("date")
+    if not raw_value:
+        raise ValueError("Meta auxiliary row is missing rebalance_date")
+    return date.fromisoformat(str(raw_value))
+
+
+def _label_window_ends_before(row: dict[str, str], validation_start: date) -> bool:
+    raw_value = row.get("label_end_date") or row.get("outcome_end_date")
+    if not raw_value:
+        return True
+    return date.fromisoformat(str(raw_value)) < validation_start
 
 
 def _auxiliary_feature_names(rows: list[dict[str, str]]) -> list[str]:

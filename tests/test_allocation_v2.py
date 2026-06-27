@@ -17,6 +17,7 @@ from core.research.ml import (
 from core.research.ml.allocation_optimizer import (
     build_optimizer_sampler,
     optuna_is_available,
+    score_optimizer_candidate,
 )
 from core.research.ml.allocation_v2 import (
     _forecast_values,
@@ -557,6 +558,141 @@ def test_bayesian_sampler_falls_back_when_optuna_is_unavailable(monkeypatch):
     assert len(sampler.sample(4)) == 4
 
 
+def test_optimizer_legacy_diagnostic_objective_remains_default():
+    result = score_optimizer_candidate(
+        diagnostic_objective=1.234,
+        exposure_path=[],
+        config={},
+        candidate_name="legacy",
+    )
+
+    assert result["objective_mode"] == "diagnostic_period_grid_return"
+    assert result["objective_value"] == pytest.approx(1.234)
+    assert result["canonical_non_overlap_return"] is None
+
+
+def test_canonical_objective_can_select_a_different_candidate():
+    fragile = _optimizer_path(
+        [0.50, 0.50],
+        outcome_end_dates=["2024-02-01", "2024-02-02"],
+    )
+    stable = _optimizer_path(
+        [0.40, 0.40],
+        outcome_end_dates=["2024-01-01", "2024-01-02"],
+    )
+    config = {
+        "allocation_optimizer": {
+            "objective_mode": "canonical_non_overlap_return",
+        }
+    }
+
+    fragile_score = score_optimizer_candidate(
+        diagnostic_objective=1.25,
+        exposure_path=fragile,
+        config=config,
+        candidate_name="fragile",
+    )
+    stable_score = score_optimizer_candidate(
+        diagnostic_objective=0.96,
+        exposure_path=stable,
+        config=config,
+        candidate_name="stable",
+    )
+
+    assert 1.25 > 0.96
+    assert stable_score["objective_value"] > fragile_score["objective_value"]
+
+
+def test_anomaly_sensitive_candidate_is_penalized():
+    config = {
+        "allocation_optimizer": {
+            "objective_mode": "robustness_adjusted_canonical_score",
+            "anomaly_policy": "penalize",
+            "max_allowed_anomaly_dependency_ratio": 0.25,
+        }
+    }
+
+    result = score_optimizer_candidate(
+        diagnostic_objective=0.80,
+        exposure_path=_optimizer_path([0.80, 0.05]),
+        config=config,
+        candidate_name="anomaly_sensitive",
+    )
+
+    assert result["flagged_anomaly_dates"] == ["2024-01-01"]
+    assert result["anomaly_adjusted_canonical_return"] < result[
+        "canonical_non_overlap_return"
+    ]
+    assert result["anomaly_dependency_ratio"] > 0.25
+    assert result["anomaly_dependency_penalty"] > 0.0
+
+
+def test_anomaly_adjusted_objective_uses_quarantined_return():
+    result = score_optimizer_candidate(
+        diagnostic_objective=0.80,
+        exposure_path=_optimizer_path([0.80, 0.05]),
+        config={
+            "allocation_optimizer": {
+                "objective_mode": "anomaly_adjusted_canonical_return",
+                "anomaly_policy": "penalize",
+            }
+        },
+        candidate_name="anomaly_adjusted",
+    )
+
+    assert result["objective_value"] == result[
+        "anomaly_adjusted_canonical_return"
+    ]
+    assert result["objective_value"] < result["canonical_non_overlap_return"]
+
+
+def test_robust_lower_raw_return_beats_fragile_high_return():
+    config = {
+        "allocation_optimizer": {
+            "objective_mode": "robustness_adjusted_canonical_score",
+            "anomaly_policy": "penalize",
+            "cost_stress_multiplier": 2.0,
+            "max_allowed_anomaly_dependency_ratio": 0.25,
+        }
+    }
+    fragile = score_optimizer_candidate(
+        diagnostic_objective=0.80,
+        exposure_path=_optimizer_path([0.80]),
+        config=config,
+        candidate_name="fragile",
+    )
+    robust = score_optimizer_candidate(
+        diagnostic_objective=0.60,
+        exposure_path=_optimizer_path([0.10] * 6),
+        config=config,
+        candidate_name="robust",
+    )
+
+    assert fragile["canonical_non_overlap_return"] > robust[
+        "canonical_non_overlap_return"
+    ]
+    assert robust["robustness_adjusted_score"] > fragile[
+        "robustness_adjusted_score"
+    ]
+
+
+def test_optimizer_inner_loop_scoring_writes_no_report_files(tmp_path):
+    before = set(tmp_path.iterdir())
+
+    score_optimizer_candidate(
+        diagnostic_objective=0.10,
+        exposure_path=_optimizer_path([0.05, 0.04]),
+        config={
+            "allocation_optimizer": {
+                "objective_mode": "robustness_adjusted_canonical_score",
+            }
+        },
+        candidate_name="no_io",
+    )
+
+    assert set(tmp_path.iterdir()) == before
+
+
 @pytest.mark.skipif(not optuna_is_available(), reason="Optuna is not installed")
 def test_optuna_bayesian_sampler_smoke():
     sampler = build_optimizer_sampler({
@@ -611,3 +747,25 @@ def _row(
             max(return_10d, 0.0)
         ),
     }
+
+
+def _optimizer_path(
+    returns: list[float],
+    *,
+    outcome_end_dates: list[str] | None = None,
+) -> list[dict[str, object]]:
+    dates = [f"2024-01-{index + 1:02d}" for index in range(len(returns))]
+    ends = outcome_end_dates or dates
+    return [
+        {
+            "rebalance_date": date,
+            "outcome_end_date": end,
+            "period_return": period_return,
+            "exposure": 1.0,
+            "turnover": 0.0,
+            "cost": 0.0,
+            "net_return": period_return,
+            "selected_symbols": ["SPY"],
+        }
+        for date, end, period_return in zip(dates, ends, returns)
+    ]

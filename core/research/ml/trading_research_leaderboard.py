@@ -49,6 +49,9 @@ def write_trading_research_leaderboard(
     auxiliary = _read_json(auxiliary_metrics_path)
     canonical = _read_json(output_dir / "canonical_continuous_equity_replay.json")
     concentration = _read_json(output_dir / "profit_concentration_audit.json")
+    benchmark_validation = _read_json(
+        output_dir / "benchmark_relative_validation.json"
+    )
 
     classification_rows = _classification_rows(classification)
     trading_rows = [
@@ -59,7 +62,11 @@ def write_trading_research_leaderboard(
     if optimizer_row is not None:
         trading_rows.append(optimizer_row)
     trading_rows.extend(_canonical_only_rows(canonical, trading_rows))
+    trading_rows.extend(
+        _benchmark_validation_rows(benchmark_validation, trading_rows)
+    )
     _augment_with_canonical_metrics(trading_rows, canonical, concentration)
+    _augment_with_benchmark_validation(trading_rows, benchmark_validation)
     canonical_ranking_available = any(
         _number(row.get("canonical_continuous_return")) is not None
         for row in trading_rows
@@ -95,10 +102,14 @@ def write_trading_research_leaderboard(
             "profit_concentration_audit": str(
                 output_dir / "profit_concentration_audit.json"
             ),
+            "benchmark_relative_validation": str(
+                output_dir / "benchmark_relative_validation.json"
+            ),
         },
         "optimizer_status": {
             "sampler_requested": optimizer.get("sampler_requested"),
             "sampler_used": optimizer.get("sampler_used"),
+            "objective_mode": optimizer.get("objective_mode"),
             "fallback_reason": optimizer.get("fallback_reason"),
             "skip_reason": optimizer.get("skip_reason"),
         },
@@ -196,7 +207,12 @@ def _optimizer_trading_row(payload: dict[str, Any]) -> dict[str, Any] | None:
     )
     if not isinstance(metrics, dict) or _number(metrics.get("total_return")) is None:
         return None
-    return _trading_row(
+    objective_metrics = selected.get("holdout_objective_metrics") or selected.get(
+        "objective_metrics"
+    )
+    if not isinstance(objective_metrics, dict):
+        objective_metrics = {}
+    row = _trading_row(
         entity_name=str(
             metrics.get("policy_name")
             or selected.get("candidate_id")
@@ -214,8 +230,29 @@ def _optimizer_trading_row(payload: dict[str, Any]) -> dict[str, Any] | None:
             ),
             "sampler_requested": payload.get("sampler_requested"),
             "sampler_used": payload.get("sampler_used"),
+            "optimizer_objective_mode": payload.get("objective_mode"),
+            "objective_metrics": objective_metrics,
         },
     )
+    row.update({
+        "optimizer_objective_mode": payload.get("objective_mode"),
+        "canonical_non_overlap_return": _number(
+            objective_metrics.get("canonical_non_overlap_return")
+        ),
+        "anomaly_adjusted_canonical_return": _number(
+            objective_metrics.get("anomaly_adjusted_canonical_return")
+        ),
+        "anomaly_dependency_ratio": _number(
+            objective_metrics.get("anomaly_dependency_ratio")
+        ),
+        "robustness_adjusted_score": _number(
+            objective_metrics.get("robustness_adjusted_score")
+        ),
+        "selected_by_robustness_objective": bool(
+            selected.get("selected_by_robustness_objective", False)
+        ),
+    })
+    return row
 
 
 def _trading_row(
@@ -257,9 +294,18 @@ def _trading_row(
         "classification_metrics_role": "diagnostics_only",
         "diagnostic_period_grid_return": _number(metrics.get("total_return")),
         "canonical_continuous_return": None,
+        "canonical_non_overlap_return": None,
         "canonical_tradable_total_return": None,
         "paper_tradable_equity_return": None,
         "anomaly_adjusted_return": None,
+        "anomaly_adjusted_canonical_return": None,
+        "anomaly_dependency_ratio": None,
+        "robustness_adjusted_score": None,
+        "selected_by_robustness_objective": False,
+        "optimizer_objective_mode": None,
+        "benchmark_relative_pass": None,
+        "tradability_validation_pass": None,
+        "promotion_candidate_status": None,
         "profit_concentration_ratio": None,
         "turnover_after_hysteresis": None,
         "detail": detail or {},
@@ -329,6 +375,66 @@ def _canonical_only_rows(
     return rows
 
 
+def _benchmark_validation_rows(
+    validation: dict[str, Any],
+    existing_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    existing_names = {row.get("entity_name") for row in existing_rows}
+    rows = []
+    for candidate in validation.get("candidates", []) or []:
+        name = str(candidate.get("candidate_name", ""))
+        if not name or name in existing_names or not candidate.get("available"):
+            continue
+        row = _trading_row(
+            entity_name=name,
+            entity_type="tradable_benchmark",
+            source="benchmark_relative_validation",
+            metrics={
+                "total_return": candidate.get("canonical_non_overlap_return"),
+                "max_drawdown": candidate.get("max_drawdown"),
+                "sharpe": candidate.get("sharpe"),
+                "sortino": candidate.get("sortino"),
+                "turnover": candidate.get("turnover"),
+            },
+            classification={},
+            selection_role="benchmark_relative_validation",
+        )
+        row["canonical_continuous_return"] = _number(
+            candidate.get("canonical_non_overlap_return")
+        )
+        row["canonical_non_overlap_return"] = row[
+            "canonical_continuous_return"
+        ]
+        rows.append(row)
+    return rows
+
+
+def _augment_with_benchmark_validation(
+    rows: list[dict[str, Any]],
+    validation: dict[str, Any],
+) -> None:
+    by_name = {
+        str(candidate.get("candidate_name")): candidate
+        for candidate in validation.get("candidates", []) or []
+        if isinstance(candidate, dict)
+    }
+    for row in rows:
+        candidate = by_name.get(str(row.get("entity_name")))
+        if not candidate:
+            continue
+        row.update({
+            "benchmark_relative_pass": bool(
+                candidate.get("benchmark_relative_pass", False)
+            ),
+            "tradability_validation_pass": bool(
+                candidate.get("tradability_validation_pass", False)
+            ),
+            "promotion_candidate_status": candidate.get(
+                "promotion_candidate_status"
+            ),
+        })
+
+
 def _augment_with_canonical_metrics(
     rows: list[dict[str, Any]],
     canonical: dict[str, Any],
@@ -349,6 +455,9 @@ def _augment_with_canonical_metrics(
         row["canonical_continuous_return"] = _number(
             canonical_metrics.get("total_return")
         )
+        row["canonical_non_overlap_return"] = row[
+            "canonical_continuous_return"
+        ]
         row["canonical_tradable_total_return"] = _number(
             canonical_metrics.get("canonical_tradable_total_return")
         )
@@ -372,6 +481,44 @@ def _augment_with_canonical_metrics(
             concentration_candidate,
             "remove_anomaly_dates",
         )
+        row["anomaly_adjusted_canonical_return"] = row[
+            "anomaly_adjusted_return"
+        ]
+        _refresh_robustness_metrics(row)
+
+
+def _refresh_robustness_metrics(row: dict[str, Any]) -> None:
+    if row.get("optimizer_objective_mode") != (
+        "robustness_adjusted_canonical_score"
+    ):
+        return
+    metrics = row.get("detail", {}).get("objective_metrics", {})
+    canonical_return = _number(row.get("canonical_non_overlap_return"))
+    anomaly_return = _number(row.get("anomaly_adjusted_canonical_return"))
+    if canonical_return is None or anomaly_return is None:
+        return
+    ratio = max(
+        0.0,
+        (canonical_return - anomaly_return)
+        / max(abs(canonical_return), 1e-12),
+    )
+    maximum = _number(metrics.get("max_allowed_anomaly_dependency_ratio"))
+    dependency_penalty = max(0.0, ratio - (maximum if maximum is not None else 0.25))
+    weights = metrics.get("robustness_weights", {})
+    row["anomaly_dependency_ratio"] = ratio
+    row["robustness_adjusted_score"] = (
+        anomaly_return
+        - float(weights.get("drawdown", 0.50))
+        * float(row.get("max_drawdown") or 0.0)
+        - float(weights.get("turnover", 0.25))
+        * float(metrics.get("turnover_penalty") or 0.0)
+        - float(weights.get("concentration", 0.25))
+        * float(row.get("profit_concentration_ratio") or 0.0)
+        - float(weights.get("anomaly_dependency", 0.50))
+        * dependency_penalty
+        - float(weights.get("cost_stress", 1.0))
+        * float(metrics.get("cost_stress_penalty") or 0.0)
+    )
 
 
 def _scenario_return(candidate: dict[str, Any], scenario_name: str) -> float | None:
@@ -451,9 +598,18 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "total_return",
         "diagnostic_period_grid_return",
         "canonical_continuous_return",
+        "canonical_non_overlap_return",
         "canonical_tradable_total_return",
         "paper_tradable_equity_return",
         "anomaly_adjusted_return",
+        "anomaly_adjusted_canonical_return",
+        "anomaly_dependency_ratio",
+        "robustness_adjusted_score",
+        "selected_by_robustness_objective",
+        "optimizer_objective_mode",
+        "benchmark_relative_pass",
+        "tradability_validation_pass",
+        "promotion_candidate_status",
         "profit_concentration_ratio",
         "turnover_after_hysteresis",
         "max_drawdown",
@@ -485,13 +641,13 @@ def _markdown(payload: dict[str, Any]) -> str:
         "",
         "Canonical continuous returns determine rank when available. Old period-grid returns are diagnostic only. Classification metrics are diagnostics only.",
         "",
-        "|rank|candidate|type|canonical return|diagnostic period-grid return|anomaly-adjusted return|max drawdown|Sharpe|turnover|costs|",
-        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "|rank|candidate|type|canonical return|diagnostic period-grid return|anomaly-adjusted return|max drawdown|Sharpe|turnover|costs|promotion status|",
+        "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in payload["leaderboard"]:
         lines.append(
             "|{rank}|{entity_name}|{entity_type}|{canonical}|{diagnostic}|"
-            "{anomaly}|{max_drawdown}|{sharpe}|{turnover}|{costs}|".format(
+            "{anomaly}|{max_drawdown}|{sharpe}|{turnover}|{costs}|{status}|".format(
                 rank=row["rank"],
                 entity_name=row["entity_name"],
                 entity_type=row["entity_type"],
@@ -502,6 +658,7 @@ def _markdown(payload: dict[str, Any]) -> str:
                 sharpe=_format(row.get("sharpe")),
                 turnover=_format(row.get("turnover")),
                 costs=_format(row.get("estimated_transaction_costs")),
+                status=row.get("promotion_candidate_status") or "",
             )
         )
 

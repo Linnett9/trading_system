@@ -23,7 +23,9 @@ from core.research.ml.allocation_v2_variants import (
 from core.research.ml.allocation_optimizer import (
     bootstrap_paired_comparison,
     build_optimizer_sampler,
+    optimizer_objective_mode,
     optimizer_candidate_count,
+    score_optimizer_candidate,
     write_optimizer_reports,
 )
 
@@ -713,10 +715,12 @@ def _evaluate_allocation_optimizer(
     selection_probabilities: list[float] | None,
 ) -> dict[str, Any]:
     optimizer_config = config.get("allocation_optimizer", {})
+    objective_mode = optimizer_objective_mode(config)
     requested_sampler = str(optimizer_config.get("sampler", "random"))
     if not bool(optimizer_config.get("enabled", True)):
         return {
             "method": "disabled",
+            "objective_mode": objective_mode,
             "sampler_requested": requested_sampler,
             "sampler_used": "disabled",
             "optuna_available": False,
@@ -731,6 +735,7 @@ def _evaluate_allocation_optimizer(
     if not selection_rows or not selection_probabilities:
         return {
             "method": sampler.method,
+            "objective_mode": objective_mode,
             **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
@@ -749,6 +754,7 @@ def _evaluate_allocation_optimizer(
     if missing:
         return {
             "method": sampler.method,
+            "objective_mode": objective_mode,
             **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
@@ -801,17 +807,30 @@ def _evaluate_allocation_optimizer(
         except (TypeError, ValueError):
             sampler.observe(candidate, None)
             continue
-        objective_value = _drawdown_aware_objective(
+        diagnostic_objective = _drawdown_aware_objective(
             result,
             selection_champion,
             config,
         )
+        objective_metrics = score_optimizer_candidate(
+            diagnostic_objective=diagnostic_objective,
+            exposure_path=_selected_optimizer_exposure_path(
+                selection_rows,
+                exposures,
+                variant.transaction_cost_bps,
+                variant,
+            ),
+            config=config,
+            candidate_name=str(candidate["candidate_id"]),
+        )
+        objective_value = float(objective_metrics["objective_value"])
         sampler.observe(candidate, objective_value)
         evaluations.append({
             "candidate": candidate,
             "variant": variant,
             "result": result,
             "objective": objective_value,
+            "objective_metrics": objective_metrics,
         })
     sampler_metadata = sampler.metadata()
     minimize = sampler_metadata.get("study_direction") == "minimize"
@@ -844,6 +863,7 @@ def _evaluate_allocation_optimizer(
             "objective_rank": objective_ranks[row["candidate"]["candidate_id"]],
             "outcome_rank": outcome_ranks[row["candidate"]["candidate_id"]],
             "evaluation_split": "out_of_fold_selection",
+            **row["objective_metrics"],
         }
         for row in objective_ranked
     ]
@@ -857,6 +877,7 @@ def _evaluate_allocation_optimizer(
     if not objective_ranked:
         return {
             "method": sampler.method,
+            "objective_mode": objective_mode,
             **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
@@ -895,6 +916,29 @@ def _evaluate_allocation_optimizer(
         selected_variant.transaction_cost_bps,
         diagnostics,
     )
+    selected_holdout_path = _selected_optimizer_exposure_path(
+        rows,
+        holdout_exposures,
+        selected_variant.transaction_cost_bps,
+        selected_variant,
+    )
+    holdout_champion = _simulate_policy(
+        _baseline_definitions()[0],
+        rows,
+        [1.0 for _ in rows],
+        float(config.get("allocation_transaction_cost_bps", 5.0)),
+        diagnostics,
+    )
+    holdout_objective_metrics = score_optimizer_candidate(
+        diagnostic_objective=_drawdown_aware_objective(
+            holdout_result,
+            holdout_champion,
+            config,
+        ),
+        exposure_path=selected_holdout_path,
+        config=config,
+        candidate_name=selected_definition.policy_name,
+    )
     selected_returns = _net_period_returns(
         rows,
         holdout_exposures,
@@ -913,6 +957,7 @@ def _evaluate_allocation_optimizer(
     )
     return {
         "method": sampler.method,
+        "objective_mode": objective_mode,
         **sampler_metadata,
         "candidate_count": len(candidate_rows),
         "selection_protocol": (
@@ -926,16 +971,17 @@ def _evaluate_allocation_optimizer(
             "selected_params": selected["candidate"],
             "objective": selected["objective"],
             "objective_value": selected["objective"],
+            "objective_mode": objective_mode,
+            "objective_metrics": selected["objective_metrics"],
+            "holdout_objective_metrics": holdout_objective_metrics,
+            "selected_by_robustness_objective": (
+                objective_mode == "robustness_adjusted_canonical_score"
+            ),
             "selection_metrics": _result_payload(selected["result"]),
             "holdout_metrics": _result_payload(holdout_result),
             "frozen_holdout_metrics": _result_payload(holdout_result),
         },
-        "selected_optimizer_exposure_path": _selected_optimizer_exposure_path(
-            rows,
-            holdout_exposures,
-            selected_variant.transaction_cost_bps,
-            selected_variant,
-        ),
+        "selected_optimizer_exposure_path": selected_holdout_path,
         "paired_comparison_vs_binary_overlay": bootstrap,
         "skip_reason": None,
     }
@@ -1404,7 +1450,7 @@ def _selected_optimizer_exposure_path(
     if len(rows) != len(exposures):
         raise ValueError("Optimizer exposure path rows and exposures must align")
     scores = _variant_scores(rows, variant)
-    grouped: dict[str, list[dict[str, float]]] = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for row, exposure, score in zip(rows, exposures, scores):
         date = str(row.get("rebalance_date") or row.get("date") or "")
         if not date:
@@ -1423,6 +1469,12 @@ def _selected_optimizer_exposure_path(
             "predicted_future_volatility": _mean_or_none(
                 _forecast_values(row, "predicted_future_volatility")
             ),
+            "outcome_end_date": str(
+                row.get("outcome_end_date")
+                or row.get("label_end_date")
+                or date
+            ),
+            "selected_symbols": _selected_symbols(row),
         })
 
     equity = 1.0
@@ -1440,6 +1492,9 @@ def _selected_optimizer_exposure_path(
         drawdown = (peak - equity) / peak if peak else 0.0
         path_rows.append({
             "rebalance_date": date,
+            "outcome_end_date": max(
+                str(value["outcome_end_date"]) for value in values
+            ),
             "source_row_count": len(values),
             "period_return": period_return,
             "exposure": exposure,
@@ -1463,10 +1518,26 @@ def _selected_optimizer_exposure_path(
             "net_return": net_return,
             "equity": equity,
             "drawdown": drawdown,
+            "selected_symbols": sorted({
+                symbol
+                for value in values
+                for symbol in value["selected_symbols"]
+            }),
             **RESEARCH_METADATA,
         })
         previous_exposure = exposure
     return path_rows
+
+
+def _selected_symbols(row: dict[str, Any]) -> list[str]:
+    raw_value = row.get("selected_symbols", "")
+    if isinstance(raw_value, list):
+        return [str(symbol) for symbol in raw_value if str(symbol)]
+    return [
+        symbol.strip()
+        for symbol in str(raw_value).split(",")
+        if symbol.strip()
+    ]
 
 
 def _mean_or_none(values: list[float | None]) -> float | None:

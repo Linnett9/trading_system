@@ -19,6 +19,14 @@ from core.research.ml.canonical_continuous_equity_replay import (
     write_canonical_continuous_equity_replay,
 )
 from core.research.ml.champion_baseline_audit import write_champion_baseline_audit
+from core.research.ml.benchmark_relative_validation import (
+    write_benchmark_relative_validation,
+)
+from core.research.ml.data_adjustment_validation import (
+    write_clean_data_replay,
+    write_data_adjustment_audit,
+    write_independent_period_validation,
+)
 from core.research.ml.data_anomaly_quarantine import write_data_anomaly_quarantine
 from core.research.ml.profit_concentration_audit import (
     write_profit_concentration_audit,
@@ -32,6 +40,7 @@ from core.research.ml.runtime_parallelism import (
     apply_worker_thread_environment,
     format_runtime_settings,
 )
+from infrastructure.data.stooq_parquet_data_feed import StooqParquetDataFeed
 
 
 @dataclass(frozen=True)
@@ -409,6 +418,21 @@ def run_ml_return_mechanics_audit(config):
     canonical_result = write_canonical_continuous_equity_replay(config)
     anomaly_result = write_data_anomaly_quarantine(config)
     concentration_result = write_profit_concentration_audit(config)
+    research_feed = StooqParquetDataFeed(
+        str(
+            config.get("ml", {}).get(
+                "stooq_parquet_dir",
+                "data/processed/stooq_parquet",
+            )
+        )
+    )
+    adjustment_result = write_data_adjustment_audit(config)
+    independent_result = write_independent_period_validation(config)
+    clean_replay_result = write_clean_data_replay(config, research_feed)
+    validation_result = write_benchmark_relative_validation(
+        config,
+        research_feed,
+    )
     leaderboard_result = _refresh_trading_research_leaderboard(config)
     print("\nML RETURN MECHANICS AUDIT")
     print("mode=research | trading_impact=none")
@@ -421,6 +445,11 @@ def run_ml_return_mechanics_audit(config):
     print(f"Canonical replay JSON: {canonical_result.json_path}")
     print(f"Anomaly quarantine JSON: {anomaly_result.json_path}")
     print(f"Profit concentration JSON: {concentration_result.json_path}")
+    print(f"Data adjustment audit JSON: {adjustment_result.json_path}")
+    print(f"Independent-period validation JSON: {independent_result.json_path}")
+    print(f"Clean-data replay JSON: {clean_replay_result.json_path}")
+    print(f"Benchmark-relative validation JSON: {validation_result.json_path}")
+    print(f"Promotion readiness: {validation_result.promotion_readiness_path}")
     print(f"Trading research leaderboard JSON: {leaderboard_result.json_path}")
 
 
