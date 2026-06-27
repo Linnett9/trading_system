@@ -43,6 +43,10 @@ def write_benchmark_relative_validation(
         "independent_period_validation": _read_json(
             output_dir / "independent_period_validation.json"
         ),
+        "adjusted_data_comparison": _read_json(
+            output_dir / "adjusted_data_comparison.json"
+        ),
+        "adjusted_price_replay": _read_json(output_dir / "adjusted_price_replay.json"),
     }
     closes = _load_required_closes(config, data_feed, canonical)
     payload = build_benchmark_relative_validation(
@@ -536,6 +540,49 @@ def _external_promotion_gate_context(
         context["clean_data_replay"] = {
             "clean_canonical_return": clean_row.get("clean_canonical_return"),
             "clean_data_verdict": clean_row.get("clean_data_verdict"),
+        }
+    adjusted_comparison = external_reports.get("adjusted_data_comparison") or {}
+    if adjusted_comparison:
+        source = adjusted_comparison.get("adjusted_source", {})
+        dependencies = (
+            adjusted_comparison.get("candidate_dependencies", {}).get(
+                candidate_name,
+                {},
+            )
+            if isinstance(adjusted_comparison.get("candidate_dependencies"), dict)
+            else {}
+        )
+        dependency_count = int(
+            dependencies.get("raw_adjusted_distortion_dependency_count") or 0
+        )
+        gates["adjusted_source_available"] = bool(source.get("acceptable", False))
+        gates["no_raw_adjusted_split_like_distortion"] = dependency_count == 0
+        context["adjusted_data_comparison"] = {
+            "adjusted_source_status": source.get("available_status"),
+            "raw_adjusted_distortion_dependency_count": dependency_count,
+            "distortion_rebalance_dates": dependencies.get(
+                "distortion_rebalance_dates",
+                [],
+            ),
+        }
+    adjusted_replay = external_reports.get("adjusted_price_replay") or {}
+    if adjusted_replay:
+        replay_candidates = adjusted_replay.get("candidates", {})
+        replay_row = (
+            replay_candidates.get(candidate_name, {})
+            if isinstance(replay_candidates, dict)
+            else {}
+        )
+        context["adjusted_price_replay"] = {
+            "adjusted_source_available": adjusted_replay.get(
+                "adjusted_source_available"
+            ),
+            "adjusted_canonical_return": replay_row.get(
+                "adjusted_canonical_return"
+            ),
+            "adjusted_price_replay_verdict": replay_row.get(
+                "adjusted_price_replay_verdict"
+            ),
         }
     return {"gates": gates, "context": context}
 

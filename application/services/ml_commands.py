@@ -15,6 +15,10 @@ from core.research.ml.meta_ensemble import run_meta_ensemble
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
 from core.research.ml.leaderboard import write_source_leaderboard
 from core.research.ml.model_contract_audit import write_model_contract_audit
+from core.research.ml.adjusted_data_comparison import (
+    write_adjusted_data_comparison,
+    write_adjusted_price_replay,
+)
 from core.research.ml.canonical_continuous_equity_replay import (
     write_canonical_continuous_equity_replay,
 )
@@ -429,6 +433,8 @@ def run_ml_return_mechanics_audit(config):
     adjustment_result = write_data_adjustment_audit(config)
     independent_result = write_independent_period_validation(config)
     clean_replay_result = write_clean_data_replay(config, research_feed)
+    adjusted_comparison_result = write_adjusted_data_comparison(config)
+    adjusted_replay_result = write_adjusted_price_replay(config)
     validation_result = write_benchmark_relative_validation(
         config,
         research_feed,
@@ -448,6 +454,8 @@ def run_ml_return_mechanics_audit(config):
     print(f"Data adjustment audit JSON: {adjustment_result.json_path}")
     print(f"Independent-period validation JSON: {independent_result.json_path}")
     print(f"Clean-data replay JSON: {clean_replay_result.json_path}")
+    print(f"Adjusted data comparison JSON: {adjusted_comparison_result.json_path}")
+    print(f"Adjusted price replay JSON: {adjusted_replay_result.json_path}")
     print(f"Benchmark-relative validation JSON: {validation_result.json_path}")
     print(f"Promotion readiness: {validation_result.promotion_readiness_path}")
     print(f"Trading research leaderboard JSON: {leaderboard_result.json_path}")

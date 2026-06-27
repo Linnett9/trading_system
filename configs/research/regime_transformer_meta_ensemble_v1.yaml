@@ -35,6 +35,10 @@ ml:
   allocation_return_destruction_minimum: 0.02
   allocation_too_defensive_mean_exposure: 0.25
   allocation_turnover_per_period_warning: 0.50
+  adjusted_data_source:
+    adjusted_source_name: local_adjusted_price_csv
+    adjusted_data_dir: data/reference/adjusted_prices
+    inspect_symbols: [AMSC, AXTI, LEU, LUMN, MRVL, MU]
   benchmark_relative_validation:
     max_anomaly_dependency_ratio: 0.25
     max_top_5_date_profit_share: 0.50
