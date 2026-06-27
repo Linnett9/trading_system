@@ -45,6 +45,7 @@ from application.services.ml_commands import (
     run_ml_run_inventory,
     run_ml_meta_ensemble,
     run_ml_research,
+    run_ml_return_mechanics_audit,
     run_ml_validate_artifacts,
 )
 from application.services.stooq_bulk_commands import run_stooq_bulk_import
@@ -95,6 +96,8 @@ def parse_args():
             "ml-build-universes",
             "ml-expanded-rebalance-dataset",
             "ml-meta-ensemble",
+            "ml-return-mechanics-audit",
+            "ml-benchmark-return-audit",
             "import-stooq-bulk",
             "champion-robustness",
         ],
@@ -296,6 +299,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-meta-ensemble":
         run_ml_meta_ensemble(config)
         return
+    if args.mode in {"ml-return-mechanics-audit", "ml-benchmark-return-audit"}:
+        run_ml_return_mechanics_audit(config)
+        return
     if args.mode == "champion-robustness":
         run_champion_robustness(config, feed)
         return
@@ -445,6 +451,8 @@ def run_cli():
         "ml-clean-incomplete-runs",
         "ml-validate-artifacts",
         "ml-meta-ensemble",
+        "ml-return-mechanics-audit",
+        "ml-benchmark-return-audit",
         "ml-research-batch",
     }
     feed = None if args.mode in feedless_modes else build_feed(config)

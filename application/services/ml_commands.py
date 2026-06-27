@@ -15,6 +15,7 @@ from core.research.ml.meta_ensemble import run_meta_ensemble
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
 from core.research.ml.leaderboard import write_source_leaderboard
 from core.research.ml.model_contract_audit import write_model_contract_audit
+from core.research.ml.return_mechanics_audit import write_return_mechanics_audit
 from core.research.ml.runtime_parallelism import (
     apply_runtime_parallelism,
     apply_worker_thread_environment,
@@ -385,6 +386,15 @@ def run_ml_meta_ensemble(config):
         "Trading research leaderboard: "
         f"{result.trading_research_leaderboard_json_path}"
     )
+
+
+def run_ml_return_mechanics_audit(config):
+    result = write_return_mechanics_audit(config)
+    print("\nML RETURN MECHANICS AUDIT")
+    print("mode=research | trading_impact=none")
+    print(f"CSV: {result.csv_path}")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
 
 
 def run_ml_validate_artifacts(config):
