@@ -381,6 +381,10 @@ def run_ml_meta_ensemble(config):
     print(f"Allocation v2 grid search: {result.allocation_policy_grid_search_json_path}")
     print(f"Meta auxiliary metrics: {result.meta_auxiliary_metrics_json_path}")
     print(f"Allocation optimizer: {result.allocation_optimizer_results_path}")
+    print(
+        "Trading research leaderboard: "
+        f"{result.trading_research_leaderboard_json_path}"
+    )
 
 
 def run_ml_validate_artifacts(config):

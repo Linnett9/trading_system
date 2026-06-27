@@ -24,6 +24,9 @@ from core.research.ml.meta_auxiliary import (
     run_meta_auxiliary_ensemble,
 )
 from core.research.ml.overlay import overlay_decision_rule, should_reduce_exposure
+from core.research.ml.trading_research_leaderboard import (
+    write_trading_research_leaderboard,
+)
 
 
 _MAX_ABS_PERIOD_RETURN = 5.0
@@ -60,6 +63,9 @@ class MetaEnsembleResult:
     allocation_optimizer_candidates_path: Path
     allocation_optimizer_results_path: Path
     allocation_optimizer_report_path: Path
+    trading_research_leaderboard_csv_path: Path
+    trading_research_leaderboard_json_path: Path
+    trading_research_leaderboard_markdown_path: Path
 
 
 @dataclass
@@ -313,6 +319,13 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         selection_rows=auxiliary_result.train_rows,
         selection_meta_probabilities=train_probabilities,
     )
+    trading_leaderboard_paths = write_trading_research_leaderboard(
+        output_dir=output_dir,
+        classification_leaderboard_path=leaderboard_path,
+        allocation_comparison_path=allocation_paths.comparison_json,
+        optimizer_results_path=allocation_paths.optimizer_results_json,
+        auxiliary_metrics_path=auxiliary_result.metrics_json_path,
+    )
     return MetaEnsembleResult(
         output_dir=output_dir,
         meta_dataset_path=dataset_path,
@@ -347,6 +360,15 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         allocation_optimizer_candidates_path=allocation_paths.optimizer_candidates_csv,
         allocation_optimizer_results_path=allocation_paths.optimizer_results_json,
         allocation_optimizer_report_path=allocation_paths.optimizer_report_markdown,
+        trading_research_leaderboard_csv_path=(
+            trading_leaderboard_paths.csv_path
+        ),
+        trading_research_leaderboard_json_path=(
+            trading_leaderboard_paths.json_path
+        ),
+        trading_research_leaderboard_markdown_path=(
+            trading_leaderboard_paths.markdown_path
+        ),
     )
 
 
