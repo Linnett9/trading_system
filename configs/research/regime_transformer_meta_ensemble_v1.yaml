@@ -112,12 +112,17 @@ ml:
     transaction_cost_penalty_weight: 1.0
   allocation_optimizer:
     enabled: true
-    method: random_search
+    sampler: bayesian
     candidate_count: 256
     max_candidate_count: 5000
     random_seed: 42
     bootstrap_iterations: 1000
     bootstrap_random_seed: 84
+    bayesian:
+      n_trials: 256
+      seed: 42
+      startup_trials: 32
+      direction: maximize
     ranges:
       return_weight: [0.50, 1.50]
       drawdown_weight: [0.0, 1.0]

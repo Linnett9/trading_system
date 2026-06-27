@@ -6,13 +6,18 @@ import json
 import math
 from statistics import mean
 
+import pytest
+
 from core.research.ml import (
     allocation_optimizer,
     allocation_v2,
     allocation_v2_variants,
     meta_auxiliary,
 )
-from core.research.ml.allocation_optimizer import build_optimizer_sampler
+from core.research.ml.allocation_optimizer import (
+    build_optimizer_sampler,
+    optuna_is_available,
+)
 from core.research.ml.allocation_v2 import (
     _forecast_values,
     _policy_exposures,
@@ -364,9 +369,16 @@ def test_grid_selection_is_frozen_before_holdout_evaluation(tmp_path):
 
     optimizer_config = {
         "allocation_optimizer": {
+            "sampler": "bayesian",
             "candidate_count": 8,
             "bootstrap_iterations": 50,
             "random_seed": 7,
+            "bayesian": {
+                "n_trials": 8,
+                "seed": 7,
+                "startup_trials": 2,
+                "direction": "maximize",
+            },
         }
     }
     first = write_allocation_v2_reports(
@@ -434,6 +446,25 @@ def test_grid_selection_is_frozen_before_holdout_evaluation(tmp_path):
     assert first_optimizer["research_only"] is True
     assert first_optimizer["trading_impact"] == "none"
     assert first_optimizer["production_validated"] is False
+    assert first_optimizer["sampler_requested"] == "bayesian"
+    expected_sampler = "bayesian" if optuna_is_available() else "random"
+    assert first_optimizer["sampler_used"] == expected_sampler
+    assert first_optimizer["optuna_available"] is optuna_is_available()
+    if not optuna_is_available():
+        assert "Optuna is not installed" in first_optimizer["fallback_reason"]
+    assert first_optimizer["selected_policy"]["selected_params"] == (
+        first_optimizer["selected_policy"]["parameters"]
+    )
+    assert first_optimizer["selected_policy"]["frozen_holdout_metrics"] == (
+        first_optimizer["selected_policy"]["holdout_metrics"]
+    )
+    assert all(
+        row["sampler_requested"] == "bayesian"
+        and row["sampler_used"] == expected_sampler
+        and row["trial_number"] >= 0
+        and math.isfinite(row["objective_value"])
+        for row in first_optimizer["candidates"]
+    )
 
 
 def test_random_optimizer_sampler_is_deterministic_and_bounded():
@@ -453,6 +484,10 @@ def test_random_optimizer_sampler_is_deterministic_and_bounded():
 
     assert first == second
     assert len(first) == 12
+    metadata = build_optimizer_sampler(config).metadata()
+    assert metadata["sampler_requested"] == "random"
+    assert metadata["sampler_used"] == "random"
+    assert metadata["fallback_reason"] is None
     assert all(
         0.0 <= row["min_exposure"]
         <= row["neutral_exposure"]
@@ -460,6 +495,48 @@ def test_random_optimizer_sampler_is_deterministic_and_bounded():
         <= 1.0
         for row in first
     )
+
+
+def test_bayesian_sampler_falls_back_when_optuna_is_unavailable(monkeypatch):
+    monkeypatch.setattr(allocation_optimizer, "optuna_is_available", lambda: False)
+
+    sampler = build_optimizer_sampler({
+        "allocation_optimizer": {
+            "sampler": "bayesian",
+            "bayesian": {"seed": 19, "n_trials": 4},
+        }
+    })
+    metadata = sampler.metadata()
+
+    assert metadata["sampler_requested"] == "bayesian"
+    assert metadata["sampler_used"] == "random"
+    assert metadata["optuna_available"] is False
+    assert "falling back" in metadata["fallback_reason"]
+    assert len(sampler.sample(4)) == 4
+
+
+@pytest.mark.skipif(not optuna_is_available(), reason="Optuna is not installed")
+def test_optuna_bayesian_sampler_smoke():
+    sampler = build_optimizer_sampler({
+        "allocation_optimizer": {
+            "sampler": "bayesian",
+            "bayesian": {
+                "n_trials": 4,
+                "seed": 5,
+                "startup_trials": 2,
+                "direction": "maximize",
+            },
+        }
+    })
+
+    for trial_number in range(4):
+        candidate = sampler.suggest(trial_number)
+        sampler.observe(candidate, float(candidate["return_weight"]))
+
+    metadata = sampler.metadata()
+    assert metadata["sampler_used"] == "bayesian"
+    assert metadata["best_trial_number"] is not None
+    assert metadata["n_trials"] == 4
 
 
 def test_allocation_v2_does_not_import_operational_code_paths():

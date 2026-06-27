@@ -705,17 +705,25 @@ def _evaluate_allocation_optimizer(
     selection_probabilities: list[float] | None,
 ) -> dict[str, Any]:
     optimizer_config = config.get("allocation_optimizer", {})
+    requested_sampler = str(optimizer_config.get("sampler", "random"))
     if not bool(optimizer_config.get("enabled", True)):
         return {
             "method": "disabled",
+            "sampler_requested": requested_sampler,
+            "sampler_used": "disabled",
+            "optuna_available": False,
+            "fallback_reason": None,
             "candidate_count": 0,
             "candidates": [],
             "selected_policy": None,
             "skip_reason": "allocation optimizer disabled by configuration",
         }
+    sampler = build_optimizer_sampler(config)
+    sampler_metadata = sampler.metadata()
     if not selection_rows or not selection_probabilities:
         return {
-            "method": "random_search",
+            "method": sampler.method,
+            **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
             "selected_policy": None,
@@ -732,15 +740,15 @@ def _evaluate_allocation_optimizer(
     ))
     if missing:
         return {
-            "method": "random_search",
+            "method": sampler.method,
+            **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
             "selected_policy": None,
             "skip_reason": "missing required prediction columns: " + ", ".join(missing),
         }
 
-    sampler = build_optimizer_sampler(config)
-    candidates = sampler.sample(optimizer_candidate_count(config))
+    trial_count = optimizer_candidate_count(config, sampler)
     baseline_definition = _baseline_definitions()[0]
     selection_champion = _simulate_policy(
         baseline_definition,
@@ -750,7 +758,8 @@ def _evaluate_allocation_optimizer(
         diagnostics,
     )
     evaluations = []
-    for candidate in candidates:
+    for trial_number in range(trial_count):
+        candidate = sampler.suggest(trial_number)
         variant = grid_variant(candidate)
         definition = AllocationPolicyDefinition(
             policy_name=str(candidate["candidate_id"]),
@@ -782,20 +791,29 @@ def _evaluate_allocation_optimizer(
                 diagnostics,
             )
         except (TypeError, ValueError):
+            sampler.observe(candidate, None)
             continue
+        objective_value = _drawdown_aware_objective(
+            result,
+            selection_champion,
+            config,
+        )
+        sampler.observe(candidate, objective_value)
         evaluations.append({
             "candidate": candidate,
             "variant": variant,
             "result": result,
-            "objective": _drawdown_aware_objective(
-                result,
-                selection_champion,
-                config,
-            ),
+            "objective": objective_value,
         })
+    sampler_metadata = sampler.metadata()
+    minimize = sampler_metadata.get("study_direction") == "minimize"
     objective_ranked = sorted(
         evaluations,
-        key=lambda row: (-float(row["objective"]),) + _trading_rank_key(row["result"]),
+        key=lambda row: (
+            float(row["objective"])
+            if minimize
+            else -float(row["objective"]),
+        ) + _trading_rank_key(row["result"]),
     )
     outcome_ranked = sorted(
         evaluations,
@@ -814,15 +832,24 @@ def _evaluate_allocation_optimizer(
             **row["candidate"],
             **_result_payload(row["result"]),
             "objective": row["objective"],
+            "objective_value": row["objective"],
             "objective_rank": objective_ranks[row["candidate"]["candidate_id"]],
             "outcome_rank": outcome_ranks[row["candidate"]["candidate_id"]],
             "evaluation_split": "out_of_fold_selection",
         }
         for row in objective_ranked
     ]
+    for row in candidate_rows:
+        row.update({
+            "sampler_requested": sampler_metadata.get("sampler_requested"),
+            "sampler_used": sampler_metadata.get("sampler_used"),
+            "optuna_available": sampler_metadata.get("optuna_available"),
+            "fallback_reason": sampler_metadata.get("fallback_reason"),
+        })
     if not objective_ranked:
         return {
             "method": sampler.method,
+            **sampler_metadata,
             "candidate_count": 0,
             "candidates": [],
             "selected_policy": None,
@@ -832,7 +859,7 @@ def _evaluate_allocation_optimizer(
     selected = objective_ranked[0]
     selected_variant = selected["variant"]
     selected_definition = AllocationPolicyDefinition(
-        policy_name="selected_random_optimizer_diagnostic_policy",
+        policy_name=f"selected_{sampler.sampler_used}_optimizer_diagnostic_policy",
         required_prediction_columns=requirements,
         exposure_builder=partial(_variant_exposures, variant=selected_variant),
         policy_kind="optimizer_diagnostic",
@@ -878,6 +905,7 @@ def _evaluate_allocation_optimizer(
     )
     return {
         "method": sampler.method,
+        **sampler_metadata,
         "candidate_count": len(candidate_rows),
         "selection_protocol": (
             "out_of_fold_random_search_then_frozen_holdout_evaluation"
@@ -887,9 +915,12 @@ def _evaluate_allocation_optimizer(
         "selected_policy": {
             "candidate_id": selected["candidate"]["candidate_id"],
             "parameters": selected["candidate"],
+            "selected_params": selected["candidate"],
             "objective": selected["objective"],
+            "objective_value": selected["objective"],
             "selection_metrics": _result_payload(selected["result"]),
             "holdout_metrics": _result_payload(holdout_result),
+            "frozen_holdout_metrics": _result_payload(holdout_result),
         },
         "paired_comparison_vs_binary_overlay": bootstrap,
         "skip_reason": None,
