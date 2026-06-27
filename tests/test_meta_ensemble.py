@@ -18,6 +18,7 @@ from core.research.ml.meta_ensemble import (
     _promotion_gate_report,
     _threshold_sweep,
     _walk_forward_meta_evaluation,
+    run_meta_ensemble,
 )
 from core.research.ml.meta_auxiliary import run_meta_auxiliary_ensemble
 
@@ -443,6 +444,44 @@ def test_meta_threshold_sweep_and_promotion_gates_report_sanity_fields():
     assert gates["checks"]["finite_sanity_check"]["passed"]
 
 
+def test_run_meta_ensemble_writes_trading_research_leaderboard_files(tmp_path):
+    expanded_path = tmp_path / "expanded_rebalance_dataset.csv"
+    meta_dataset_path = tmp_path / "meta_ensemble_dataset.csv"
+    output_dir = tmp_path / "meta_output"
+    dlinear_dir = tmp_path / "dlinear"
+    patchtst_dir = tmp_path / "patchtst"
+    _write_prediction_artifact_dir(dlinear_dir, "dlinear", "dataset-hash")
+    _write_prediction_artifact_dir(patchtst_dir, "patchtst", "dataset-hash")
+    _write_expanded_rows(expanded_path)
+
+    result = run_meta_ensemble({
+        "ml": {
+            "output_dir": str(output_dir),
+            "meta_dataset_path": str(meta_dataset_path),
+            "expanded_rebalance_dataset_path": str(expanded_path),
+            "source_prediction_dirs": [str(dlinear_dir), str(patchtst_dir)],
+            "meta_model_type": "logistic_regression",
+            "decision_threshold": 0.5,
+            "decision_thresholds": [0.5],
+            "reduced_exposures": [0.7],
+            "allocation_optimizer": {"enabled": False},
+        }
+    })
+
+    assert result.trading_research_leaderboard_csv_path.exists()
+    assert result.trading_research_leaderboard_json_path.exists()
+    assert result.trading_research_leaderboard_markdown_path.exists()
+    payload = json.loads(
+        result.trading_research_leaderboard_json_path.read_text(encoding="utf-8")
+    )
+    assert payload["research_only"] is True
+    assert payload["classification_metrics_role"] == "diagnostics_only"
+    assert (
+        "Research only. Trading impact: none. Production validated: false."
+        in result.trading_research_leaderboard_markdown_path.read_text(encoding="utf-8")
+    )
+
+
 def _expanded(feature_id: str, date: str) -> dict[str, str]:
     return {
         "feature_id": feature_id,
@@ -457,6 +496,36 @@ def _expanded(feature_id: str, date: str) -> dict[str, str]:
         "recent_champion_excess_return": "0.01",
         "replacements": "1",
     }
+
+
+def _write_expanded_rows(path: Path) -> None:
+    rows = [
+        {
+            **_expanded("feature-a", "2024-01-01"),
+            "champion_return_next_period": "-0.01",
+            "actual_forward_return_5d": "-0.004",
+            "actual_forward_return_10d": "-0.01",
+            "actual_future_volatility": "0.12",
+            "actual_future_drawdown": "-0.03",
+            "actual_max_adverse_excursion": "-0.04",
+            "actual_max_favourable_excursion": "0.01",
+        },
+        {
+            **_expanded("feature-b", "2024-01-08"),
+            "champion_return_next_period": "0.02",
+            "actual_forward_return_5d": "0.01",
+            "actual_forward_return_10d": "0.02",
+            "actual_future_volatility": "0.10",
+            "actual_future_drawdown": "-0.01",
+            "actual_max_adverse_excursion": "-0.02",
+            "actual_max_favourable_excursion": "0.03",
+        },
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _meta_row(
