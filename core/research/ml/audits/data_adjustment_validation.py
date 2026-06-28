@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from core.interfaces.data_feed import IDataFeed
-from core.research.ml.benchmark_relative_validation import (
+from core.research.ml.audits.benchmark_relative_validation import (
     _load_required_closes as _load_benchmark_required_closes,
 )
-from core.research.ml.benchmark_relative_validation import (
+from core.research.ml.audits.benchmark_relative_validation import (
     build_benchmark_relative_validation,
 )
 from core.research.ml.canonical_continuous_equity_replay import (

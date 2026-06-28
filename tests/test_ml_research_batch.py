@@ -18,7 +18,7 @@ from application.services.ml_commands import (
     run_ml_research_batch,
     validate_ml_research_batch_config,
 )
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 
 
 def test_ml_research_batch_config_validation(tmp_path):

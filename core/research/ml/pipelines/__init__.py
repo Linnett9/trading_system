@@ -10,6 +10,7 @@ __all__ = [
     "MLLabelPipeline",
     "MLModelPipeline",
     "MLModelPrediction",
+    "MLRebalancePipeline",
 ]
 
 
@@ -48,4 +49,8 @@ def __getattr__(name: str) -> Any:
             "MLModelPipeline": MLModelPipeline,
             "MLModelPrediction": MLModelPrediction,
         }[name]
+    if name == "MLRebalancePipeline":
+        from core.research.ml.pipelines.rebalance_pipeline import MLRebalancePipeline
+
+        return MLRebalancePipeline
     raise AttributeError(name)

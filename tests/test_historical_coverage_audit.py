@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from core.research.ml import historical_coverage_audit
-from core.research.ml.historical_coverage_audit import (
+from core.research.ml.audits import historical_coverage_audit
+from core.research.ml.audits.historical_coverage_audit import (
     build_historical_coverage_audit,
 )
 

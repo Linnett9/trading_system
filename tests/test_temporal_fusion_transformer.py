@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from core.research.ml.temporal_fusion_transformer_model import (
+from core.research.ml.models.temporal_fusion_transformer_model import (
     TemporalFusionTransformerMLModel,
 )
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.artifact_schema import (
+from core.research.ml.artifacts.artifact_schema import (
     ARTIFACT_SCHEMA_VERSION,
     REQUIRED_PREDICTION_ARTIFACT_COLUMNS,
 )

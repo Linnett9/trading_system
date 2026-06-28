@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 from core.entities.candle import Candle
-from core.research.ml.feature_cache import MLFeatureCache
+from core.research.ml.artifacts.feature_cache import MLFeatureCache
 from core.research.ml.features import MLFeatureBuildResult
 
 

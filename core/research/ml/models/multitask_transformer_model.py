@@ -10,7 +10,7 @@ from core.research.ml.sequence_dataset import (
     build_sequence_indices,
     sequence_group_ids_from_metadata,
 )
-from core.research.ml.transformer_model import _torch_dependencies
+from core.research.ml.models.transformer_model import _torch_dependencies
 
 
 DEFAULT_REGRESSION_TARGETS = [

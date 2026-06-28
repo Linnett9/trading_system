@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
-from core.research.ml.artifact_validator import (
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_validator import (
     validate_prediction_artifact_dirs,
     validate_prediction_artifacts,
 )

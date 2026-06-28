@@ -127,7 +127,7 @@ class TorchSequenceReturnRegressor:
         if config.architecture == "dlinear":
             return _DLinearRegressor(nn, config.sequence_length, feature_count)
         if config.architecture == "transformer":
-            from core.research.ml.transformer_model import (
+            from core.research.ml.models.transformer_model import (
                 _make_tiny_transformer_classifier,
             )
 
@@ -141,7 +141,7 @@ class TorchSequenceReturnRegressor:
                 dropout=config.dropout,
             )
         if config.architecture == "patchtst":
-            from core.research.ml.patchtst_model import _build_patchtst_module
+            from core.research.ml.models.patchtst_model import _build_patchtst_module
 
             return _build_patchtst_module(
                 torch,
@@ -157,7 +157,7 @@ class TorchSequenceReturnRegressor:
                 config.dropout,
             )
         if config.architecture == "itransformer":
-            from core.research.ml.itransformer_model import _build_itransformer_module
+            from core.research.ml.models.itransformer_model import _build_itransformer_module
 
             return _build_itransformer_module(
                 torch,
@@ -171,7 +171,7 @@ class TorchSequenceReturnRegressor:
                 config.dropout,
             )
         if config.architecture == "momentum_transformer":
-            from core.research.ml.momentum_transformer_model import (
+            from core.research.ml.models.momentum_transformer_model import (
                 _build_momentum_transformer_module,
             )
 
@@ -187,7 +187,7 @@ class TorchSequenceReturnRegressor:
                 config.dropout,
             )
         if config.architecture == "multitask_transformer":
-            from core.research.ml.multitask_transformer_model import (
+            from core.research.ml.models.multitask_transformer_model import (
                 _make_multitask_transformer_module,
             )
 
@@ -202,7 +202,7 @@ class TorchSequenceReturnRegressor:
                 regression_head_count=4,
             )
         if config.architecture == "market_context_encoder":
-            from core.research.ml.market_context_encoder_model import (
+            from core.research.ml.models.market_context_encoder_model import (
                 _build_market_context_module,
             )
 
@@ -214,7 +214,7 @@ class TorchSequenceReturnRegressor:
                 config.dropout,
             )
         if config.architecture == "news_analysis_transformer":
-            from core.research.ml.news_analysis_transformer_model import (
+            from core.research.ml.models.news_analysis_transformer_model import (
                 _build_news_transformer_module,
             )
 
@@ -266,7 +266,7 @@ def _TFTRegressionWrapper(
     config: SequenceRegressorConfig,
     feature_count: int,
 ) -> Any:
-    from core.research.ml.temporal_fusion_transformer_model import _build_tft_module
+    from core.research.ml.models.temporal_fusion_transformer_model import _build_tft_module
 
     backbone = _build_tft_module(
         torch,

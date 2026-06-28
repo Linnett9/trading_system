@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from core.research.ml.multitask_transformer_model import (
+from core.research.ml.models.multitask_transformer_model import (
     MultiTaskTransformerSequenceMLModel,
     _make_multitask_transformer_module,
 )

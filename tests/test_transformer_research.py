@@ -5,16 +5,16 @@ from pathlib import Path
 import pytest
 
 from core.research.ml.datasets import MLDataset
-from core.research.ml.itransformer_model import (
+from core.research.ml.models.itransformer_model import (
     ITransformerSequenceMLModel,
     _build_itransformer_module,
 )
-from core.research.ml.momentum_transformer_model import (
+from core.research.ml.models.momentum_transformer_model import (
     MomentumTransformerSequenceMLModel,
     _build_momentum_transformer_module,
 )
 from core.research.ml.sequence_dataset import build_sequence_dataset
-from core.research.ml.transformer_model import TransformerSequenceMLModel
+from core.research.ml.models.transformer_model import TransformerSequenceMLModel
 from core.research.ml.models import build_ml_model
 
 

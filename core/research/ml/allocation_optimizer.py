@@ -14,7 +14,7 @@ from core.research.ml.canonical_continuous_equity_replay import (
     score_candidate_exposure_path,
 )
 from core.research.ml.data_anomaly_quarantine import detect_period_anomalies
-from core.research.ml.profit_concentration_audit import (
+from core.research.ml.audits.profit_concentration_audit import (
     score_candidate_concentration,
 )
 

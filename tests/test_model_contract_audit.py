@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
-from core.research.ml.model_contract_audit import (
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.audits.model_contract_audit import (
     COMPLETE_V1,
     MODEL_CONTRACT_SPECS,
     build_model_contract_audit,

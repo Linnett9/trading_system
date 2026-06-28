@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
-from core.research.ml.artifact_writers import MLCoreArtifactWriter
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.datasets import MLDataset
 from core.research.ml.features import MLFeatureBuildResult

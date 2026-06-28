@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from core.research.ml.market_context_encoder_model import MarketContextEncoderMLModel
+from core.research.ml.models.market_context_encoder_model import MarketContextEncoderMLModel
 
 
 def _rows(count: int = 32) -> list[dict[str, float]]:

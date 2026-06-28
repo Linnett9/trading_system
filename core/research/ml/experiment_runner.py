@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
-import json
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +10,8 @@ from core.research.ml.artifacts import (
     MLExperimentPaths,
     MLFeatureCache,
 )
+from core.research.ml.artifacts.report_annotation import annotate_report_artifacts
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.diagnostics import (
-    build_ranking_diagnostics,
-    probability_summary,
-    rolling_base_rate_probabilities,
-)
 from core.research.ml.datasets import MLDataset, write_dataset
 from core.research.ml.drawdown_review import write_drawdown_event_review
 from core.research.ml.pipelines import (
@@ -26,10 +20,19 @@ from core.research.ml.pipelines import (
     MLFeaturePipelineResult,
     MLLabelPipeline,
     MLModelPipeline,
+    MLRebalancePipeline,
 )
-from core.research.ml.reports import MLCalibrationReportWriter
+from core.research.ml.reports import (
+    MLCalibrationReportWriter,
+    MLDiagnosticReportWriter,
+    MLOverlayReportWriter,
+)
+from core.research.ml.reports.ranking_outcomes import (
+    future_drawdown_event,
+    outcomes_by_feature_date,
+    period_return,
+)
 from core.research.ml.html_report import write_research_html_report
-from core.research.ml.evaluation import classification_metrics
 from core.research.ml.features import (
     MLFeatureBuildResult,
     write_feature_rows,
@@ -38,24 +41,7 @@ from core.research.ml.labels import (
     MLLabelBuildResult,
     write_label_rows,
 )
-from core.research.ml.models import build_ml_model
-from core.research.ml.overlay import overlay_decision_rule, simulate_shadow_overlay
-from core.research.ml.rebalance_dataset import (
-    build_expanded_rebalance_rows,
-    build_champion_rebalance_rows,
-    write_expanded_rebalance_audit,
-    write_rebalance_dataset,
-)
-from core.research.ml.rule_overlay import (
-    run_drawdown_risk_diagnostics,
-    run_rule_exposure_study,
-    run_volatility_managed_walk_forward,
-)
-from core.research.ml.sector_reference import load_sector_by_symbol
-from core.research.ml.validation import (
-    ChronologicalSplit,
-    rolling_walk_forward,
-)
+from core.research.ml.validation import ChronologicalSplit
 
 
 @dataclass(frozen=True)
@@ -271,6 +257,15 @@ class MLExperimentRunner:
     def _model_pipeline(self) -> MLModelPipeline:
         return MLModelPipeline(self.config, self.experiment_config)
 
+    def _rebalance_pipeline(self) -> MLRebalancePipeline:
+        return MLRebalancePipeline(
+            self.config,
+            self.experiment_config,
+            champion_equity_curve=self._champion_equity_curve,
+            champion_selections=self._champion_selections,
+            feature_cache=self._feature_cache(),
+        )
+
     def _artifact_writer(self) -> MLCoreArtifactWriter:
         return MLCoreArtifactWriter(
             self.config,
@@ -283,6 +278,22 @@ class MLExperimentRunner:
         return MLCalibrationReportWriter(
             self.config,
             self.experiment_config,
+            model_pipeline=self._model_pipeline(),
+        )
+
+    def _diagnostic_report_writer(self) -> MLDiagnosticReportWriter:
+        return MLDiagnosticReportWriter(
+            self.config,
+            self.experiment_config,
+            model_pipeline=self._model_pipeline(),
+        )
+
+    def _overlay_report_writer(self) -> MLOverlayReportWriter:
+        return MLOverlayReportWriter(
+            self.config,
+            self.experiment_config,
+            self._champion_equity_curve,
+            self._champion_rebalance_dates,
             model_pipeline=self._model_pipeline(),
         )
 
@@ -387,32 +398,7 @@ class MLExperimentRunner:
         )
 
     def _annotate_report_artifacts(self, output_dir: Path) -> None:
-        warning = (
-            "Short-history ML smoke test only. Not valid for production conclusions."
-            if self.research_label == "SMOKE_TEST_NOT_PRODUCTION_VALIDATED"
-            else None
-        )
-        for path in output_dir.glob("*.json"):
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                payload["research_label"] = self.research_label
-                payload["production_validated"] = False
-                if warning:
-                    payload["warning"] = warning
-                path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        for path in output_dir.glob("*.csv"):
-            with path.open("r", encoding="utf-8", newline="") as handle:
-                reader = csv.DictReader(handle)
-                rows = list(reader)
-                fieldnames = list(reader.fieldnames or [])
-            if "research_label" not in fieldnames:
-                fieldnames.append("research_label")
-            with path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                writer.writeheader()
-                for row in rows:
-                    row["research_label"] = self.research_label
-                    writer.writerow(row)
+        annotate_report_artifacts(output_dir, self.research_label)
 
     def _build_labels(
         self,
@@ -450,88 +436,9 @@ class MLExperimentRunner:
         feature_result: MLFeatureBuildResult,
         candles_by_symbol: dict[str, list[Any]],
     ) -> MLFeatureBuildResult:
-        ml_config = self.config.get("ml", {})
-        cache_path = Path(
-            ml_config.get(
-                "expanded_rebalance_dataset_path",
-                Path(self.config.get("cache", {}).get("ml_dir", "cache/ml"))
-                / "expanded_rebalance_dataset.csv",
-            )
-        )
-        if bool(ml_config.get("read_existing_expanded_rebalance_dataset", False)):
-            if not cache_path.exists():
-                raise RuntimeError(
-                    "ML research batch requires existing expanded rebalance dataset: "
-                    f"{cache_path}"
-                )
-            with cache_path.open("r", encoding="utf-8", newline="") as handle:
-                rows = list(csv.DictReader(handle))
-            date_range = None
-            if rows:
-                date_range = (
-                    str(rows[0].get("feature_date", "")),
-                    str(rows[-1].get("feature_date", "")),
-                )
-            return MLFeatureBuildResult(
-                rows=rows,
-                dropped_rows=feature_result.dropped_rows,
-                date_range=date_range,
-            )
-
-        expanded_cache_key = self._expanded_rebalance_cache_key(
+        return self._rebalance_pipeline().build_expanded_rebalance_features(
             feature_result,
             candles_by_symbol,
-        )
-        if bool(ml_config.get("cache_expanded_rebalance_dataset", False)):
-            cached = self._load_cached_expanded_rebalance_rows(
-                cache_path,
-                expanded_cache_key,
-                feature_result.dropped_rows,
-            )
-            if cached is not None:
-                return cached
-
-        benchmark = str(self.config.get("ml", {}).get("benchmark_symbols", ["SPY"])[0])
-        rows, audit = build_expanded_rebalance_rows(
-            self.config,
-            feature_result.rows,
-            candles_by_symbol,
-            benchmark,
-            self.experiment_config.label_horizon_days,
-            sector_by_symbol=self._sector_by_symbol(),
-        )
-        audit_path = Path(
-            self.config.get("ml", {}).get(
-                "expanded_rebalance_audit_path",
-                "reports/ml/expanded_rebalance_dataset_audit.json",
-            )
-        )
-        write_rebalance_dataset(cache_path, rows)
-        write_expanded_rebalance_audit(audit_path, audit)
-        if bool(ml_config.get("cache_expanded_rebalance_dataset", False)):
-            self._write_cache_metadata(
-                cache_path,
-                expanded_cache_key,
-                {
-                    "cache_type": "expanded_rebalance_dataset",
-                    "row_count": len(rows),
-                    "date_range": (
-                        [str(rows[0]["feature_date"]), str(rows[-1]["feature_date"])]
-                        if rows
-                        else None
-                    ),
-                    "audit_path": str(audit_path),
-                    "research_only": True,
-                    "trading_impact": "none",
-                },
-            )
-        date_range = None
-        if rows:
-            date_range = (str(rows[0]["feature_date"]), str(rows[-1]["feature_date"]))
-        return MLFeatureBuildResult(
-            rows=rows,
-            dropped_rows=feature_result.dropped_rows,
-            date_range=date_range,
         )
 
     def _load_cached_feature_rows(
@@ -580,23 +487,10 @@ class MLExperimentRunner:
         feature_result: MLFeatureBuildResult,
         candles_by_symbol: dict[str, list[Any]],
     ) -> str:
-        ml_config = self.config.get("ml", {})
-        return self._hash_payload({
-            "cache_version": 1,
-            "cache_type": "expanded_rebalance_dataset",
-            "label_type": self.experiment_config.label_type,
-            "label_horizon_days": self.experiment_config.label_horizon_days,
-            "expanded_rebalance_dataset": ml_config.get(
-                "expanded_rebalance_dataset", {}
-            ),
-            "benchmark_symbols": ml_config.get("benchmark_symbols", ["SPY", "QQQ"]),
-            "sector_reference_path": ml_config.get("sector_reference_path"),
-            "sector_by_symbol": ml_config.get("sector_by_symbol", {}),
-            "feature_rows_hash": self._rows_hash(feature_result.rows),
-            "feature_row_count": len(feature_result.rows),
-            "feature_date_range": feature_result.date_range,
-            "history": self._candles_cache_summary(candles_by_symbol),
-        })
+        return self._rebalance_pipeline().expanded_rebalance_cache_key(
+            feature_result,
+            candles_by_symbol,
+        )
 
     def _candles_cache_summary(
         self,
@@ -634,85 +528,19 @@ class MLExperimentRunner:
         candles_by_symbol: dict[str, list[Any]],
         rule_study_path: Path,
     ) -> list[dict[str, float | str]]:
-        if self.experiment_config.label_type == "should_reduce_exposure":
-            write_rebalance_dataset(path, feature_rows)
-            audit_path.write_text(json.dumps({
-                "row_count": len(feature_rows),
-                "should_reduce_exposure_rate": self._row_rate(
-                    feature_rows,
-                    "should_reduce_exposure",
-                ),
-                "drawdown_event_rate": self._row_rate(feature_rows, "drawdown_event"),
-                "underperforms_spy_rate": self._row_rate(
-                    feature_rows,
-                    "underperforms_spy",
-                ),
-                "source": "expanded_rebalance_dataset",
-                "research_only": True,
-                "trading_impact": "none",
-            }, indent=2), encoding="utf-8")
-            rule_study_path.write_text(json.dumps({
-                "mode": "expanded_rebalance_rule_based_research_only",
-                "rules": run_rule_exposure_study(feature_rows, transaction_cost_bps=5.0),
-                "volatility_managed_walk_forward": run_volatility_managed_walk_forward(
-                    feature_rows,
-                    transaction_cost_bps=5.0,
-                ),
-                "drawdown_risk_diagnostics": run_drawdown_risk_diagnostics(feature_rows),
-                "trading_impact": "none",
-            }, indent=2), encoding="utf-8")
-            return feature_rows
-
-        benchmark = str(self.config.get("ml", {}).get("benchmark_symbols", ["SPY"])[0])
-        rows = build_champion_rebalance_rows(
+        return self._rebalance_pipeline().write_rebalance_dataset(
+            path,
+            audit_path,
             feature_rows,
-            self._champion_selections,
-            self._champion_equity_curve,
-            candles_by_symbol.get(benchmark, []),
-            self.experiment_config.label_horizon_days,
-            candles_by_symbol=candles_by_symbol,
-            sector_by_symbol=self._sector_by_symbol(),
+            candles_by_symbol,
+            rule_study_path,
         )
-        write_rebalance_dataset(path, rows)
-        audit_path.write_text(json.dumps({
-            "row_count": len(rows),
-            "good_period_rate": self._row_rate(rows, "good_period"),
-            "bad_period_rate": self._row_rate(rows, "bad_period"),
-            "underperforms_spy_rate": self._row_rate(rows, "underperforms_spy"),
-            "drawdown_event_rate": self._row_rate(rows, "drawdown_event"),
-            "history_years": self.config.get("backtest", {}).get("years"),
-            "recommended_generalization_years": self.config.get("ml", {}).get(
-                "research_years", 10,
-            ),
-            "minimum_history_years": self.config.get("ml", {}).get(
-                "minimum_history_years",
-            ),
-            "sector_reference_path": self.config.get("ml", {}).get(
-                "sector_reference_path",
-            ),
-            "research_only": True,
-        }, indent=2), encoding="utf-8")
-        rule_study_path.write_text(json.dumps({
-            "mode": "rule_based_research_only",
-            "rules": run_rule_exposure_study(rows, transaction_cost_bps=5.0),
-            "volatility_managed_walk_forward": run_volatility_managed_walk_forward(
-                rows,
-                transaction_cost_bps=5.0,
-            ),
-            "drawdown_risk_diagnostics": run_drawdown_risk_diagnostics(rows),
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
-        return rows
 
     def _sector_by_symbol(self) -> dict[str, str]:
-        ml_config = self.config.get("ml", {})
-        return load_sector_by_symbol(
-            ml_config.get("sector_reference_path"),
-            inline_mapping=dict(ml_config.get("sector_by_symbol", {})),
-        )
+        return self._rebalance_pipeline().sector_by_symbol()
 
     def _row_rate(self, rows: list[dict[str, float | str]], key: str) -> float | None:
-        return sum(int(row[key]) for row in rows) / len(rows) if rows else None
+        return MLRebalancePipeline.row_rate(rows, key)
 
     def _write_feature_summary(
         self,
@@ -730,40 +558,7 @@ class MLExperimentRunner:
         self._artifact_writer().write_dataset_audit(path, dataset, label_result)
 
     def _write_walk_forward_metrics(self, path: Path, dataset: MLDataset) -> None:
-        folds = rolling_walk_forward(
-            dataset,
-            fold_count=self.experiment_config.walk_forward_folds,
-        )
-        payload_folds = []
-        for fold in folds:
-            model = build_ml_model(
-                self.experiment_config.model_type,
-                random_seed=self.experiment_config.random_seed,
-                class_weight=self._class_weight(),
-                model_config=self.config.get("ml", {}),
-            )
-            self._fit_research_model(model, fold.split.train)
-            probabilities, _ = self._predict_research_model(
-                model,
-                fold.split.test,
-                prediction_context=self._prediction_context(fold.split),
-            )
-            predictions = self._predictions_from_probabilities(probabilities)
-            payload_folds.append({
-                "fold": fold.fold_number,
-                "train_sample_count": fold.split.train.sample_count,
-                "test_sample_count": fold.split.test.sample_count,
-                "test_start_date": fold.split.test_start_date,
-                "purged_train_samples": fold.split.purged_train_samples,
-                "metrics": classification_metrics(fold.split.test.labels, predictions),
-                "baselines": self._baseline_metrics(fold.split),
-            })
-        path.write_text(json.dumps({
-            "model_type": self.experiment_config.model_type,
-            "fold_count": len(payload_folds),
-            "folds": payload_folds,
-            "research_only": True,
-        }, indent=2), encoding="utf-8")
+        self._diagnostic_report_writer().write_walk_forward_metrics(path, dataset)
 
     def _write_probability_calibration(
         self,
@@ -847,98 +642,10 @@ class MLExperimentRunner:
         path: Path,
         dataset: MLDataset,
     ) -> None:
-        model_types = list(self.config.get("ml", {}).get(
-            "comparison_models",
-            ["logistic_regression", "random_forest", "gradient_boosting"],
-        ))
-        fold_payloads = []
-        summaries_by_name: dict[str, list[dict]] = {}
-        for fold in rolling_walk_forward(
+        self._diagnostic_report_writer().write_baseline_model_comparison(
+            path,
             dataset,
-            fold_count=self.experiment_config.walk_forward_folds,
-        ):
-            static_probability = (
-                sum(fold.split.train.labels) / fold.split.train.sample_count
-            )
-            static_probabilities = [static_probability] * fold.split.test.sample_count
-            static_summary = probability_summary(
-                fold.split.test.labels,
-                static_probabilities,
-                decision_threshold=self.experiment_config.decision_threshold,
-            )
-            rolling_probabilities = rolling_base_rate_probabilities(
-                fold.split.train.labels,
-                fold.split.train.label_end_dates,
-                fold.split.test.feature_dates,
-                fold.split.test.labels,
-                fold.split.test.label_end_dates,
-                lookback_samples=self._rolling_base_rate_lookback_samples(),
-            )
-            baseline_summaries = {
-                "static_base_rate": static_summary,
-                "rolling_base_rate": probability_summary(
-                    fold.split.test.labels,
-                    rolling_probabilities,
-                    decision_threshold=self.experiment_config.decision_threshold,
-                    reference_brier_score=static_summary["brier_score"],
-                ),
-                "always_positive": probability_summary(
-                    fold.split.test.labels,
-                    [1.0] * fold.split.test.sample_count,
-                    decision_threshold=self.experiment_config.decision_threshold,
-                    reference_brier_score=static_summary["brier_score"],
-                ),
-            }
-            model_summaries = []
-            for model_type in model_types:
-                model = build_ml_model(
-                    model_type,
-                    random_seed=self.experiment_config.random_seed,
-                    class_weight=self._class_weight(),
-                    model_config=self.config.get("ml", {}),
-                )
-                self._fit_research_model(model, fold.split.train)
-                probabilities, _ = self._predict_research_model(
-                    model,
-                    fold.split.test,
-                    prediction_context=self._prediction_context(fold.split),
-                )
-                summary = probability_summary(
-                    fold.split.test.labels,
-                    probabilities,
-                    decision_threshold=self.experiment_config.decision_threshold,
-                    reference_brier_score=baseline_summaries["rolling_base_rate"][
-                        "brier_score"
-                    ],
-                )
-                summary["brier_skill_vs_static_base_rate"] = (
-                    1 - summary["brier_score"] / static_summary["brier_score"]
-                    if static_summary["brier_score"] else None
-                )
-                summaries_by_name.setdefault(model_type, []).append(summary)
-                model_summaries.append({"model_type": model_type, **summary})
-            for name, summary in baseline_summaries.items():
-                summaries_by_name.setdefault(name, []).append(summary)
-            fold_payloads.append({
-                "fold": fold.fold_number,
-                "test_start_date": fold.split.test_start_date,
-                "baselines": baseline_summaries,
-                "models": model_summaries,
-            })
-        path.write_text(json.dumps({
-            "evaluation": "purged_walk_forward",
-            "rolling_base_rate_lookback_samples": (
-                self._rolling_base_rate_lookback_samples()
-            ),
-            "fold_count": len(fold_payloads),
-            "folds": fold_payloads,
-            "mean_metrics_by_predictor": {
-                name: self._mean_probability_summary(summaries)
-                for name, summaries in summaries_by_name.items()
-            },
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
+        )
 
     def _write_ranking_diagnostics(
         self,
@@ -946,105 +653,23 @@ class MLExperimentRunner:
         dataset: MLDataset,
         outcomes_by_feature_date: dict[str, dict[str, float | None]],
     ) -> None:
-        folds = []
-        all_labels: list[int] = []
-        all_probabilities: list[float] = []
-        all_outcomes: list[dict[str, float | None]] = []
-        for fold in rolling_walk_forward(
+        self._diagnostic_report_writer().write_ranking_diagnostics(
+            path,
             dataset,
-            fold_count=self.experiment_config.walk_forward_folds,
-        ):
-            model = build_ml_model(
-                self.experiment_config.model_type,
-                random_seed=self.experiment_config.random_seed,
-                class_weight=self._class_weight(),
-                model_config=self.config.get("ml", {}),
-            )
-            self._fit_research_model(model, fold.split.train)
-            probabilities, _ = self._predict_research_model(
-                model,
-                fold.split.test,
-                prediction_context=self._prediction_context(fold.split),
-            )
-            outcomes = [
-                outcomes_by_feature_date.get(feature_date, {})
-                for feature_date in fold.split.test.feature_dates
-            ]
-            all_labels.extend(fold.split.test.labels)
-            all_probabilities.extend(probabilities)
-            all_outcomes.extend(outcomes)
-            folds.append({
-                "fold": fold.fold_number,
-                "test_start_date": fold.split.test_start_date,
-                "diagnostics": build_ranking_diagnostics(
-                    fold.split.test.labels,
-                    probabilities,
-                    outcomes,
-                    quantile_count=self._ranking_quantile_count(),
-                ),
-            })
-        path.write_text(json.dumps({
-            "evaluation": "purged_walk_forward",
-            "model_type": self.experiment_config.model_type,
-            "quantile_count": self._ranking_quantile_count(),
-            "fold_count": len(folds),
-            "folds": folds,
-            "pooled_out_of_sample_diagnostics": build_ranking_diagnostics(
-                all_labels,
-                all_probabilities,
-                all_outcomes,
-                quantile_count=self._ranking_quantile_count(),
-            ),
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
+            outcomes_by_feature_date,
+        )
 
     def _outcomes_by_feature_date(
         self,
         label_result: MLLabelBuildResult,
         candles_by_symbol: dict[str, list[Any]],
     ) -> dict[str, dict[str, float | None]]:
-        benchmark_symbol = str(
-            self.config.get("ml", {}).get("benchmark_symbols", ["SPY"])[0]
+        return outcomes_by_feature_date(
+            self.config,
+            label_result,
+            candles_by_symbol,
+            self._champion_equity_curve,
         )
-        benchmark_closes = {
-            candle.timestamp.date().isoformat(): candle.close
-            for candle in candles_by_symbol.get(benchmark_symbol, [])
-            if candle.close > 0
-        }
-        equity_by_date = {
-            point.timestamp.date().isoformat(): point.equity
-            for point in self._champion_equity_curve
-            if point.equity > 0
-        }
-        equity_dates = sorted(equity_by_date)
-        index_by_date = {value: index for index, value in enumerate(equity_dates)}
-        outcomes = {}
-        for row in label_result.rows:
-            feature_date = str(row["feature_date"])
-            label_end_date = str(row["label_end_date"])
-            strategy_return = self._period_return(
-                equity_by_date, feature_date, label_end_date
-            )
-            benchmark_return = self._period_return(
-                benchmark_closes, feature_date, label_end_date
-            )
-            outcomes[feature_date] = {
-                "strategy_return": strategy_return,
-                "excess_spy_return": (
-                    strategy_return - benchmark_return
-                    if strategy_return is not None and benchmark_return is not None
-                    else None
-                ),
-                "drawdown_event": self._future_drawdown_event(
-                    equity_dates,
-                    equity_by_date,
-                    index_by_date,
-                    feature_date,
-                    label_end_date,
-                ),
-            }
-        return outcomes
 
     def _period_return(
         self,
@@ -1052,9 +677,7 @@ class MLExperimentRunner:
         start_date: str,
         end_date: str,
     ) -> float | None:
-        start = values_by_date.get(start_date)
-        end = values_by_date.get(end_date)
-        return (end / start) - 1.0 if start and end else None
+        return period_return(values_by_date, start_date, end_date)
 
     def _future_drawdown_event(
         self,
@@ -1064,40 +687,22 @@ class MLExperimentRunner:
         start_date: str,
         end_date: str,
     ) -> float | None:
-        start_index = index_by_date.get(start_date)
-        end_index = index_by_date.get(end_date)
-        if start_index is None or end_index is None:
-            return None
-        peak = values_by_date[dates[start_index]]
-        maximum_drawdown = 0.0
-        for date in dates[start_index:end_index + 1]:
-            value = values_by_date[date]
-            peak = max(peak, value)
-            maximum_drawdown = min(maximum_drawdown, (value / peak) - 1.0)
-        return float(maximum_drawdown <= -0.10)
+        return future_drawdown_event(
+            dates,
+            values_by_date,
+            index_by_date,
+            start_date,
+            end_date,
+        )
 
     def _mean_probability_summary(self, summaries: list[dict]) -> dict[str, float | None]:
-        keys = (
-            "brier_score",
-            "brier_skill_vs_reference",
-            "brier_skill_vs_static_base_rate",
-            "roc_auc",
-            "positive_prediction_rate",
-        )
-        return {
-            key: self._mean_metric(summaries, key)
-            for key in keys
-        }
+        return self._diagnostic_report_writer().mean_probability_summary(summaries)
 
     def _rolling_base_rate_lookback_samples(self) -> int:
-        return int(
-            self.config.get("ml", {}).get(
-                "rolling_base_rate_lookback_samples", 252
-            )
-        )
+        return self._diagnostic_report_writer().rolling_base_rate_lookback_samples()
 
     def _ranking_quantile_count(self) -> int:
-        return int(self.config.get("ml", {}).get("ranking_quantile_count", 5))
+        return self._diagnostic_report_writer().ranking_quantile_count()
 
     def _calibration_bin_count(self) -> int:
         return self._calibration_report_writer().calibration_bin_count()
@@ -1108,321 +713,42 @@ class MLExperimentRunner:
         dataset: MLDataset,
         probabilities: list[float],
     ) -> None:
-        thresholds = [round(value / 100, 2) for value in range(20, 85, 5)]
-        path.write_text(json.dumps({
-            "evaluation": "holdout_only",
-            "thresholds": [
-                {
-                    "threshold": threshold,
-                    "metrics": classification_metrics(
-                        dataset.labels,
-                        [int(value >= threshold) for value in probabilities],
-                    ),
-                }
-                for threshold in thresholds
-            ],
-        }, indent=2), encoding="utf-8")
+        self._diagnostic_report_writer().write_threshold_sweep(
+            path,
+            dataset,
+            probabilities,
+        )
 
     def _write_model_comparison(self, path: Path, dataset: MLDataset) -> None:
-        folds = rolling_walk_forward(dataset, self.experiment_config.walk_forward_folds)
-        thresholds = [round(value / 100, 2) for value in range(20, 85, 5)]
-        model_types = self.config.get("ml", {}).get(
-            "comparison_models",
-            ["logistic_regression", "random_forest", "gradient_boosting"],
-        )
-        models = []
-        for model_type in model_types:
-            threshold_metrics = {threshold: [] for threshold in thresholds}
-            for fold in folds:
-                model = build_ml_model(
-                    model_type,
-                    random_seed=self.experiment_config.random_seed,
-                    class_weight=self._class_weight(),
-                    model_config=self.config.get("ml", {}),
-                )
-                self._fit_research_model(model, fold.split.train)
-                probabilities, _ = self._predict_research_model(
-                    model,
-                    fold.split.test,
-                    prediction_context=self._prediction_context(fold.split),
-                )
-                for threshold in thresholds:
-                    threshold_metrics[threshold].append(classification_metrics(
-                        fold.split.test.labels,
-                        [int(value >= threshold) for value in probabilities],
-                    ))
-            models.append({
-                "model_type": model_type,
-                "thresholds": [
-                    {
-                        "threshold": threshold,
-                        "mean_balanced_accuracy": self._mean_metric(
-                            threshold_metrics[threshold], "balanced_accuracy"
-                        ),
-                        "mean_precision": self._mean_metric(
-                            threshold_metrics[threshold], "precision"
-                        ),
-                        "mean_recall": self._mean_metric(
-                            threshold_metrics[threshold], "recall"
-                        ),
-                    }
-                    for threshold in thresholds
-                ],
-            })
-        path.write_text(json.dumps({
-            "evaluation": "purged_walk_forward",
-            "fold_count": len(folds),
-            "models": models,
-            "research_only": True,
-        }, indent=2), encoding="utf-8")
+        self._diagnostic_report_writer().write_model_comparison(path, dataset)
 
     def _write_overlay_model_comparison(self, path: Path, dataset: MLDataset) -> None:
-        config = self.config.get("ml", {})
-        reduce_when, decision_rule = overlay_decision_rule(self.experiment_config.label_type)
-        model_types = self._unique_strings(
-            config.get(
-                "overlay_comparison_models",
-                [
-                    self.experiment_config.model_type,
-                    "logistic_regression",
-                    "random_forest",
-                    "gradient_boosting",
-                ],
-            )
-        )
-        thresholds = [
-            float(value)
-            for value in config.get(
-                "overlay_comparison_thresholds",
-                config.get("shadow_thresholds", [0.10, 0.15, 0.20, 0.25]),
-            )
-        ]
-        reduced_exposures = [
-            float(value)
-            for value in config.get(
-                "overlay_comparison_reduced_exposures",
-                config.get("shadow_reduced_exposures", [0.70, 0.80, 0.90]),
-            )
-        ]
-        transaction_cost_bps = float(config.get("shadow_transaction_cost_bps", 5.0))
-        equity_by_date = {
-            point.timestamp.date().isoformat(): point.equity
-            for point in self._champion_equity_curve
-        }
-        folds = rolling_walk_forward(
+        self._overlay_report_writer().write_overlay_model_comparison(
+            path,
             dataset,
-            self.experiment_config.walk_forward_folds,
         )
-        model_payloads = []
-        for model_type in model_types:
-            scenarios = []
-            for threshold in thresholds:
-                for reduced_exposure in reduced_exposures:
-                    fold_payloads = []
-                    for fold in folds:
-                        try:
-                            model = build_ml_model(
-                                model_type,
-                                random_seed=self.experiment_config.random_seed,
-                                class_weight=self._class_weight(),
-                                model_config=self.config.get("ml", {}),
-                            )
-                            self._fit_research_model(model, fold.split.train)
-                            probabilities, _ = self._predict_research_model(
-                                model,
-                                fold.split.test,
-                                prediction_context=self._prediction_context(fold.split),
-                            )
-                            result = simulate_shadow_overlay(
-                                equity_by_date,
-                                dict(zip(fold.split.test.feature_dates, probabilities)),
-                                threshold,
-                                reduced_exposure,
-                                rebalance_dates=self._champion_rebalance_dates,
-                                transaction_cost_bps=transaction_cost_bps,
-                                reduce_when=reduce_when,
-                            )
-                        except Exception as exc:  # research report should record, not crash comparison
-                            fold_payloads.append({
-                                "fold": fold.fold_number,
-                                "skipped": True,
-                                "reason": str(exc),
-                            })
-                            continue
-                        if result is None:
-                            fold_payloads.append({
-                                "fold": fold.fold_number,
-                                "skipped": True,
-                                "reason": "overlay_result_unavailable",
-                            })
-                            continue
-                        payload = {
-                            "fold": fold.fold_number,
-                            **result.__dict__,
-                        }
-                        payload["return_delta"] = (
-                            payload["overlay_total_return"] - payload["base_total_return"]
-                        )
-                        payload["max_drawdown_delta"] = (
-                            payload["overlay_max_drawdown"] - payload["base_max_drawdown"]
-                        )
-                        fold_payloads.append(payload)
-                    scenarios.append({
-                        "decision_threshold": threshold,
-                        "reduced_exposure": reduced_exposure,
-                        "folds": fold_payloads,
-                        "summary": self._overlay_fold_summary(fold_payloads),
-                    })
-            model_payloads.append({"model_type": model_type, "scenarios": scenarios})
-        path.write_text(json.dumps({
-            "mode": "overlay_model_comparison_research_only",
-            "label_type": self.experiment_config.label_type,
-            "overlay_probability": self._overlay_probability_label(),
-            "overlay_decision_rule": decision_rule,
-            "fold_count": len(folds),
-            "rebalance_only": True,
-            "transaction_cost_bps": transaction_cost_bps,
-            "models": model_payloads,
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
 
     def _overlay_probabilities(self, probabilities: list[float]) -> list[float]:
         return [float(probability) for probability in probabilities]
 
     def _overlay_probability_label(self) -> str:
-        return f"{self.experiment_config.label_type}_probability"
+        return self._overlay_report_writer().overlay_probability_label()
 
     def _overlay_fold_summary(self, folds: list[dict]) -> dict[str, float | int | None]:
-        valid_folds = [fold for fold in folds if not fold.get("skipped")]
-        return {
-            "valid_fold_count": len(valid_folds),
-            "skipped_fold_count": len(folds) - len(valid_folds),
-            "mean_base_total_return": self._mean_metric(valid_folds, "base_total_return"),
-            "mean_overlay_total_return": self._mean_metric(valid_folds, "overlay_total_return"),
-            "mean_return_delta": self._mean_metric(valid_folds, "return_delta"),
-            "mean_base_max_drawdown": self._mean_metric(valid_folds, "base_max_drawdown"),
-            "mean_overlay_max_drawdown": self._mean_metric(valid_folds, "overlay_max_drawdown"),
-            "mean_max_drawdown_delta": self._mean_metric(valid_folds, "max_drawdown_delta"),
-            "mean_reduced_exposure_days": self._mean_metric(valid_folds, "reduced_exposure_days"),
-            "mean_overlay_turnover": self._mean_metric(valid_folds, "overlay_turnover"),
-        }
+        return self._overlay_report_writer().overlay_fold_summary(folds)
 
     def _unique_strings(self, values: list[Any]) -> list[str]:
-        seen = set()
-        output = []
-        for value in values:
-            text = str(value)
-            if text not in seen:
-                seen.add(text)
-                output.append(text)
-        return output
+        return MLOverlayReportWriter.unique_strings(values)
 
     def _write_shadow_overlay(self, path: Path, dataset: MLDataset) -> None:
-        config = self.config.get("ml", {})
-        reduce_when, decision_rule = overlay_decision_rule(self.experiment_config.label_type)
-        model_type = str(config.get("shadow_model_type", "gradient_boosting"))
-        thresholds = config.get("shadow_thresholds", [0.10, 0.15, 0.20, 0.25])
-        reduced_exposures = config.get("shadow_reduced_exposures", [0.70, 0.80, 0.90])
-        transaction_cost_bps = float(config.get("shadow_transaction_cost_bps", 5.0))
-        equity_by_date = {
-            point.timestamp.date().isoformat(): point.equity
-            for point in self._champion_equity_curve
-        }
-        scenarios = [
-            {"decision_threshold": float(threshold), "reduced_exposure": float(exposure), "folds": []}
-            for threshold in thresholds
-            for exposure in reduced_exposures
-        ]
-        for fold in rolling_walk_forward(dataset, self.experiment_config.walk_forward_folds):
-            model = build_ml_model(
-                model_type,
-                random_seed=self.experiment_config.random_seed,
-                model_config=self.config.get("ml", {}),
-            )
-            self._fit_research_model(model, fold.split.train)
-            probabilities, _ = self._predict_research_model(
-                model,
-                fold.split.test,
-                prediction_context=self._prediction_context(fold.split),
-            )
-            probabilities_by_date = dict(
-                zip(fold.split.test.feature_dates, probabilities)
-            )
-            for scenario in scenarios:
-                result = simulate_shadow_overlay(
-                    equity_by_date,
-                    probabilities_by_date,
-                    scenario["decision_threshold"],
-                    scenario["reduced_exposure"],
-                    rebalance_dates=self._champion_rebalance_dates,
-                    transaction_cost_bps=transaction_cost_bps,
-                    reduce_when=reduce_when,
-                )
-                if result is not None:
-                    scenario["folds"].append({"fold": fold.fold_number, **result.__dict__})
-        path.write_text(json.dumps({
-            "mode": "shadow_research_only",
-            "model_type": model_type,
-            "rebalance_only": True,
-            "overlay_probability": self._overlay_probability_label(),
-            "overlay_decision_rule": decision_rule,
-            "transaction_cost_bps": transaction_cost_bps,
-            "scenarios": scenarios,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
+        self._overlay_report_writer().write_shadow_overlay(path, dataset)
 
     def _write_holdout_shadow_overlay(
         self,
         path: Path,
         split: ChronologicalSplit,
     ) -> None:
-        config = self.config.get("ml", {})
-        reduce_when, decision_rule = overlay_decision_rule(self.experiment_config.label_type)
-        model_type = str(config.get("shadow_model_type", "gradient_boosting"))
-        threshold = float(config.get("shadow_holdout_threshold", 0.20))
-        reduced_exposure = float(
-            config.get("shadow_holdout_reduced_exposure", 0.70)
-        )
-        transaction_cost_bps = float(config.get("shadow_transaction_cost_bps", 5.0))
-        model = build_ml_model(
-            model_type,
-            random_seed=self.experiment_config.random_seed,
-            model_config=self.config.get("ml", {}),
-        )
-        self._fit_research_model(model, split.train)
-        probabilities, _ = self._predict_research_model(
-            model,
-            split.test,
-            prediction_context=self._prediction_context(split),
-        )
-        equity_by_date = {
-            point.timestamp.date().isoformat(): point.equity
-            for point in self._champion_equity_curve
-        }
-        result = simulate_shadow_overlay(
-            equity_by_date,
-            dict(zip(split.test.feature_dates, probabilities)),
-            threshold,
-            reduced_exposure,
-            rebalance_dates=self._champion_rebalance_dates,
-            transaction_cost_bps=transaction_cost_bps,
-            reduce_when=reduce_when,
-        )
-        path.write_text(json.dumps({
-            "mode": "final_holdout_shadow_research_only",
-            "model_type": model_type,
-            "decision_threshold": threshold,
-            "reduced_exposure": reduced_exposure,
-            "rebalance_only": True,
-            "overlay_probability": self._overlay_probability_label(),
-            "overlay_decision_rule": decision_rule,
-            "transaction_cost_bps": transaction_cost_bps,
-            "test_start_date": split.test_start_date,
-            "result": result.__dict__ if result is not None else None,
-            "trading_impact": "none",
-            "candidate_frozen_before_holdout": True,
-        }, indent=2), encoding="utf-8")
+        self._overlay_report_writer().write_holdout_shadow_overlay(path, split)
 
     def _mean_metric(self, metrics: list[dict], key: str) -> float | None:
         values = [item[key] for item in metrics if item.get(key) is not None]

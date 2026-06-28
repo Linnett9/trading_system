@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.market_context_encoder_model import _torch_dependencies
+from core.research.ml.models.market_context_encoder_model import _torch_dependencies
 from core.research.ml.sequence_dataset import (
     build_sequence_indices,
     sequence_group_ids_from_metadata,

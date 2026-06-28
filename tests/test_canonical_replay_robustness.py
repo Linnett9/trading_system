@@ -8,7 +8,7 @@ from core.research.ml.canonical_continuous_equity_replay import (
 from core.research.ml.data_anomaly_quarantine import (
     build_anomaly_quarantine_report,
 )
-from core.research.ml.profit_concentration_audit import (
+from core.research.ml.audits.profit_concentration_audit import (
     build_profit_concentration_audit,
 )
 from core.research.ml.trading_research_leaderboard import (

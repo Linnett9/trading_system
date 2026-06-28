@@ -10,7 +10,7 @@ from core.entities.candle import Candle
 from core.research.portfolio_utils import rebalance_key
 from core.research.ml.drawdown_review import build_drawdown_event_review
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.experiment_paths import MLExperimentPathBuilder
+from core.research.ml.artifacts.experiment_paths import MLExperimentPathBuilder
 from core.research.ml.experiment_runner import MLExperimentResult, MLExperimentRunner
 from core.research.ml.features import HistoricalFeatureBuilder, add_champion_state_features
 from core.research.ml.labels import (

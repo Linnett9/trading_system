@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from core.research.ml import adjusted_replay_alignment_audit
-from core.research.ml.adjusted_replay_alignment_audit import (
+from core.research.ml.audits import adjusted_replay_alignment_audit
+from core.research.ml.audits.adjusted_replay_alignment_audit import (
     build_adjusted_replay_alignment_audit,
 )
 from core.research.ml.canonical_continuous_equity_replay import (

@@ -10,7 +10,7 @@ import platform
 from statistics import mean
 from typing import Any
 
-from core.research.ml.artifact_validator import validate_prediction_artifacts
+from core.research.ml.artifacts.artifact_validator import validate_prediction_artifacts
 from core.research.ml.allocation_v2 import write_allocation_v2_reports
 from core.research.ml.calibration import (
     build_probability_calibration,

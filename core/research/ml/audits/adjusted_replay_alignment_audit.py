@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.adjusted_data_comparison import (
+from core.research.ml.audits.adjusted_data_comparison import (
     NOTICE,
     RESEARCH_METADATA,
     _adjusted_close_by_date,

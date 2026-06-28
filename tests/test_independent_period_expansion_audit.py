@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from core.research.ml import independent_period_expansion_audit
-from core.research.ml.independent_period_expansion_audit import (
+from core.research.ml.audits import independent_period_expansion_audit
+from core.research.ml.audits.independent_period_expansion_audit import (
     build_independent_period_expansion_audit,
 )
 

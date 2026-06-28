@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.dataset_pipeline import MLDatasetPipeline
+from core.research.ml.pipelines.dataset_pipeline import MLDatasetPipeline
 from core.research.ml.features import MLFeatureBuildResult
 from core.research.ml.labels import MLLabelBuildResult
 

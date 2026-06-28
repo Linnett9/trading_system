@@ -4,11 +4,11 @@ import json
 import math
 from pathlib import Path
 
-from core.research.ml.champion_baseline_audit import (
+from core.research.ml.audits.champion_baseline_audit import (
     exact_champion_replay_from_equity,
     write_champion_baseline_audit,
 )
-from core.research.ml.return_mechanics_audit import write_return_mechanics_audit
+from core.research.ml.audits.return_mechanics_audit import write_return_mechanics_audit
 from core.research.dual_momentum.models import DualMomentumSelection
 from core.services.portfolio_engine import EquityPoint
 
@@ -171,7 +171,7 @@ def test_exact_champion_replay_marks_cost_turnover_attribution_status():
 
 def test_champion_audit_does_not_import_live_or_broker_code_paths():
     import inspect
-    import core.research.ml.champion_baseline_audit as audit
+    import core.research.ml.audits.champion_baseline_audit as audit
 
     source = inspect.getsource(audit)
 

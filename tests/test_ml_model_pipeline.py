@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.datasets import MLDataset
-from core.research.ml.model_pipeline import MLModelPipeline
+from core.research.ml.pipelines.model_pipeline import MLModelPipeline
 from core.research.ml.validation import ChronologicalSplit
 
 

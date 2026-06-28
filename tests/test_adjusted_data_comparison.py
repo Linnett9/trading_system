@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import inspect
 
-from core.research.ml import adjusted_data_comparison
-from core.research.ml.adjusted_data_comparison import (
+from core.research.ml.audits import adjusted_data_comparison
+from core.research.ml.audits.adjusted_data_comparison import (
     build_adjusted_data_comparison,
     build_adjusted_price_replay,
     detect_split_like_adjustment_ratio,
 )
-from core.research.ml.benchmark_relative_validation import (
+from core.research.ml.audits.benchmark_relative_validation import (
     build_benchmark_relative_validation,
 )
 from core.research.ml.canonical_continuous_equity_replay import (

@@ -262,7 +262,7 @@ def build_ml_model(
         )
 
     if model_type == "transformer":
-        from core.research.ml.transformer_model import TransformerSequenceMLModel
+        from core.research.ml.models.transformer_model import TransformerSequenceMLModel
 
         config = model_config or {}
         return TransformerSequenceMLModel(
@@ -281,7 +281,7 @@ def build_ml_model(
         )
 
     if model_type == "patchtst":
-        from core.research.ml.patchtst_model import PatchTSTSequenceMLModel
+        from core.research.ml.models.patchtst_model import PatchTSTSequenceMLModel
 
         config = model_config or {}
         return PatchTSTSequenceMLModel(
@@ -307,7 +307,7 @@ def build_ml_model(
         )
 
     if model_type == "dlinear":
-        from core.research.ml.dlinear_model import DLinearSequenceMLModel
+        from core.research.ml.models.dlinear_model import DLinearSequenceMLModel
 
         config = model_config or {}
         return DLinearSequenceMLModel(
@@ -326,7 +326,7 @@ def build_ml_model(
         )
 
     if model_type == "itransformer":
-        from core.research.ml.itransformer_model import ITransformerSequenceMLModel
+        from core.research.ml.models.itransformer_model import ITransformerSequenceMLModel
 
         config = model_config or {}
         return ITransformerSequenceMLModel(
@@ -350,7 +350,7 @@ def build_ml_model(
         )
 
     if model_type == "momentum_transformer":
-        from core.research.ml.momentum_transformer_model import (
+        from core.research.ml.models.momentum_transformer_model import (
             MomentumTransformerSequenceMLModel,
         )
 
@@ -388,7 +388,7 @@ def build_ml_model(
         )
 
     if model_type == "multitask_transformer":
-        from core.research.ml.multitask_transformer_model import (
+        from core.research.ml.models.multitask_transformer_model import (
             DEFAULT_REGRESSION_TARGETS,
             MultiTaskTransformerSequenceMLModel,
         )
@@ -460,7 +460,7 @@ def build_ml_model(
         )
 
     if model_type == "market_context_encoder":
-        from core.research.ml.market_context_encoder_model import (
+        from core.research.ml.models.market_context_encoder_model import (
             MarketContextEncoderMLModel,
         )
 
@@ -491,7 +491,7 @@ def build_ml_model(
         )
 
     if model_type == "news_analysis_transformer":
-        from core.research.ml.news_analysis_transformer_model import (
+        from core.research.ml.models.news_analysis_transformer_model import (
             NewsAnalysisTransformerMLModel,
         )
 
@@ -519,7 +519,7 @@ def build_ml_model(
         )
 
     if model_type == "temporal_fusion_transformer":
-        from core.research.ml.temporal_fusion_transformer_model import (
+        from core.research.ml.models.temporal_fusion_transformer_model import (
             DEFAULT_KNOWN_FUTURE_FEATURES,
             TemporalFusionTransformerMLModel,
         )

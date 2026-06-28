@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.meta_ensemble import (
     build_meta_dataset_rows,
     _compare_meta_learners,

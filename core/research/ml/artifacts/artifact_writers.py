@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Mapping
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.datasets import MLDataset
 from core.research.ml.evaluation import classification_metrics

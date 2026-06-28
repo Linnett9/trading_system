@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from core.research.ml import benchmark_relative_validation
-from core.research.ml.benchmark_relative_validation import (
+from core.research.ml.audits import benchmark_relative_validation
+from core.research.ml.audits.benchmark_relative_validation import (
     build_benchmark_relative_validation,
 )
 

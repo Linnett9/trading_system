@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["MLCalibrationReportWriter"]
+__all__ = [
+    "MLCalibrationReportWriter",
+    "MLDiagnosticReportWriter",
+    "MLOverlayReportWriter",
+]
 
 
 def __getattr__(name: str) -> Any:
@@ -12,4 +16,14 @@ def __getattr__(name: str) -> Any:
         )
 
         return MLCalibrationReportWriter
+    if name == "MLDiagnosticReportWriter":
+        from core.research.ml.reports.diagnostic_reports import (
+            MLDiagnosticReportWriter,
+        )
+
+        return MLDiagnosticReportWriter
+    if name == "MLOverlayReportWriter":
+        from core.research.ml.reports.overlay_reports import MLOverlayReportWriter
+
+        return MLOverlayReportWriter
     raise AttributeError(name)

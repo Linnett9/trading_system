@@ -8,7 +8,7 @@ import pytest
 from core.entities.candle import Candle
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.label_pipeline import MLLabelPipeline
+from core.research.ml.pipelines.label_pipeline import MLLabelPipeline
 
 
 def test_label_pipeline_preserves_empty_dataset_result():

@@ -9,7 +9,7 @@ import pytest
 
 from core.entities.candle import Candle
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.feature_pipeline import MLFeaturePipeline
+from core.research.ml.pipelines.feature_pipeline import MLFeaturePipeline
 
 
 def test_feature_pipeline_returns_empty_result_without_feed(tmp_path):

@@ -47,25 +47,25 @@ MODEL_CONTRACT_SPECS = (
         "dlinear",
         "DLinear",
         "DLinearSequenceMLModel",
-        "core/research/ml/dlinear_model.py",
+        "core/research/ml/models/dlinear_model.py",
     ),
     ModelContractSpec(
         "patchtst",
         "PatchTST",
         "PatchTSTSequenceMLModel",
-        "core/research/ml/patchtst_model.py",
+        "core/research/ml/models/patchtst_model.py",
     ),
     ModelContractSpec(
         "transformer",
         "Transformer",
         "TransformerSequenceMLModel",
-        "core/research/ml/transformer_model.py",
+        "core/research/ml/models/transformer_model.py",
     ),
     ModelContractSpec(
         "itransformer",
         "ITransformer",
         "ITransformerSequenceMLModel",
-        "core/research/ml/itransformer_model.py",
+        "core/research/ml/models/itransformer_model.py",
         partial_todos=(
             "Full cross-asset rank-score design is not implemented; do not emit "
             "predicted_rank_score until supported by model internals.",
@@ -75,7 +75,7 @@ MODEL_CONTRACT_SPECS = (
         "momentum_transformer",
         "Momentum Transformer",
         "MomentumTransformerSequenceMLModel",
-        "core/research/ml/momentum_transformer_model.py",
+        "core/research/ml/models/momentum_transformer_model.py",
         expected_predicted_outputs=(
             "predicted_trend_score",
             "predicted_regime_score",
@@ -86,7 +86,7 @@ MODEL_CONTRACT_SPECS = (
         "multitask_transformer",
         "Multi-task Transformer",
         "MultiTaskTransformerSequenceMLModel",
-        "core/research/ml/multitask_transformer_model.py",
+        "core/research/ml/models/multitask_transformer_model.py",
         expected_predicted_outputs=(
             "predicted_forward_return_5d",
             "predicted_forward_return_10d",
@@ -98,7 +98,7 @@ MODEL_CONTRACT_SPECS = (
         "market_context_encoder",
         "Market Context Encoder",
         "MarketContextEncoderMLModel",
-        "core/research/ml/market_context_encoder_model.py",
+        "core/research/ml/models/market_context_encoder_model.py",
         expected_predicted_outputs=("predicted_context_risk_multiplier",),
         partial_todos=(
             "Context embeddings and detailed regime diagnostics are intentionally "
@@ -109,7 +109,7 @@ MODEL_CONTRACT_SPECS = (
         "news_analysis_transformer",
         "News Analysis Transformer",
         "NewsAnalysisTransformerMLModel",
-        "core/research/ml/news_analysis_transformer_model.py",
+        "core/research/ml/models/news_analysis_transformer_model.py",
         partial_todos=(
             "Full timestamped news ingestion and FinBERT-style sentiment pipeline "
             "remain out of scope for v1.",
@@ -119,7 +119,7 @@ MODEL_CONTRACT_SPECS = (
         "temporal_fusion_transformer",
         "Temporal Fusion Transformer",
         "TemporalFusionTransformerMLModel",
-        "core/research/ml/temporal_fusion_transformer_model.py",
+        "core/research/ml/models/temporal_fusion_transformer_model.py",
         expected_predicted_outputs=(
             "predicted_forward_return_5d",
             "predicted_forward_return_10d",
@@ -135,19 +135,19 @@ MODEL_CONTRACT_SPECS = (
         "logistic_regression",
         "Logistic Regression",
         "LogisticRegressionMLModel",
-        "core/research/ml/models.py",
+        "core/research/ml/models/registry.py",
     ),
     ModelContractSpec(
         "random_forest",
         "Random Forest",
         "TreeClassifierMLModel",
-        "core/research/ml/models.py",
+        "core/research/ml/models/registry.py",
     ),
     ModelContractSpec(
         "gradient_boosting",
         "Gradient Boosting",
         "TreeClassifierMLModel",
-        "core/research/ml/models.py",
+        "core/research/ml/models/registry.py",
     ),
     ModelContractSpec(
         "meta_ensemble",
