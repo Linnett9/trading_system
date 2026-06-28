@@ -41,13 +41,10 @@ from core.research.ml.features import (
     write_feature_rows,
 )
 from core.research.ml.labels import (
-    ChampionSuccessLabelBuilder,
-    DrawdownRiskLabelBuilder,
     MLLabelBuildResult,
-    RiskRegimeLabelBuilder,
-    ShouldReduceExposureLabelBuilder,
     write_label_rows,
 )
+from core.research.ml.label_pipeline import MLLabelPipeline
 from core.research.ml.models import build_ml_model
 from core.research.ml.overlay import overlay_decision_rule, simulate_shadow_overlay
 from core.research.ml.rebalance_dataset import (
@@ -607,41 +604,11 @@ class MLExperimentRunner:
         feature_result: MLFeatureBuildResult,
         candles_by_symbol: dict[str, list[Any]],
     ) -> MLLabelBuildResult:
-        if not candles_by_symbol:
-            return MLLabelBuildResult(
-                rows=[],
-                dropped_rows_insufficient_horizon=0,
-                label_name=self.experiment_config.label_type,
-            )
-
-        benchmark_symbol = str(
-            self.config.get("ml", {}).get("benchmark_symbols", ["SPY", "QQQ"])[0]
-        )
-        if self.experiment_config.label_type == "risk_regime":
-            builder = RiskRegimeLabelBuilder(
-                horizon_days=self.experiment_config.label_horizon_days,
-            )
-        elif self.experiment_config.label_type == "drawdown_risk":
-            builder = DrawdownRiskLabelBuilder(
-                horizon_days=self.experiment_config.label_horizon_days,
-                threshold=self.experiment_config.drawdown_risk_threshold,
-            )
-        elif self.experiment_config.label_type == "champion_success":
-            builder = ChampionSuccessLabelBuilder(
-                horizon_days=self.experiment_config.label_horizon_days,
-            )
-            return builder.build(
-                feature_result.rows,
-                candles_by_symbol[benchmark_symbol],
-                self._champion_equity_curve,
-            )
-        elif self.experiment_config.label_type == "should_reduce_exposure":
-            return ShouldReduceExposureLabelBuilder().build(feature_result.rows)
-        else:
-            raise ValueError(
-                f"Unsupported ML label type: {self.experiment_config.label_type}"
-            )
-        return builder.build(feature_result.rows, candles_by_symbol[benchmark_symbol])
+        return MLLabelPipeline(
+            self.config,
+            self.experiment_config,
+            self._champion_equity_curve,
+        ).build(feature_result, candles_by_symbol)
 
     def _feature_symbols(self) -> list[str]:
         dual_momentum = self.config.get("research", {}).get("dual_momentum", {})
