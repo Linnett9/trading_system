@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
 from bisect import bisect_left
 from dataclasses import dataclass
@@ -12,6 +10,8 @@ from typing import Any
 import yaml
 
 from core.research.ml.sector_reference import load_sector_by_symbol
+from core.research.framework.data import CsvRowRepository
+from core.research.framework.reporting import ResearchArtifactWriter
 
 
 RESEARCH_METADATA = {
@@ -91,8 +91,9 @@ def write_stock_level_prediction_artifacts(
         markdown_path=output_dir / "stock_level_prediction_artifacts.md",
     )
     _write_csv(paths.csv_path, rows)
-    paths.json_path.write_text(json.dumps(audit, indent=2), encoding="utf-8")
-    paths.markdown_path.write_text(_markdown(audit), encoding="utf-8")
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.json_path, audit)
+    writer.write_markdown(paths.markdown_path, _markdown(audit))
     return paths
 
 
@@ -524,10 +525,7 @@ def _expanded_dataset_path(config: dict[str, Any]) -> Path:
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return CsvRowRepository().read(path)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -547,12 +545,11 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "source_dataset_hash",
         "true_stock_level_row",
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: row.get(name, "") for name in fieldnames})
+    normalized = [
+        {name: row.get(name, "") for name in fieldnames}
+        for row in rows
+    ]
+    ResearchArtifactWriter().write_csv(path, normalized, fieldnames=fieldnames)
 
 
 def _markdown(audit: dict[str, Any]) -> str:

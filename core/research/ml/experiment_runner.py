@@ -22,6 +22,11 @@ from core.research.ml.diagnostics import (
 )
 from core.research.ml.datasets import MLDataset, build_dataset, write_dataset
 from core.research.ml.drawdown_review import write_drawdown_event_review
+from core.research.ml.experiment_paths import (
+    MLExperimentPathBuilder,
+    MLExperimentPaths,
+)
+from core.research.ml.feature_cache import MLFeatureCache
 from core.research.ml.history_coverage import (
     assess_history_coverage,
     write_history_coverage_report,
@@ -157,101 +162,88 @@ class MLExperimentRunner:
         )
         predictions = self._predictions_from_probabilities(probabilities)
 
-        output_dir = Path(self.experiment_config.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        metrics_path = output_dir / "metrics.json"
-        predictions_path = output_dir / "predictions.csv"
-        feature_importance_path = output_dir / "feature_importance.csv"
-        confusion_matrix_path = output_dir / "confusion_matrix.csv"
-        metadata_path = output_dir / "metadata.json"
-        model_path = output_dir / self._model_filename()
-        features_path = self._features_path()
-        feature_summary_path = output_dir / "feature_summary.json"
-        labels_path = self._labels_path()
-        dataset_path = self._dataset_path()
-        dataset_audit_path = output_dir / "dataset_audit.json"
-        walk_forward_metrics_path = output_dir / "walk_forward_metrics.json"
-        threshold_sweep_path = output_dir / "threshold_sweep.json"
-        model_comparison_path = output_dir / "model_comparison.json"
-        shadow_overlay_path = output_dir / "shadow_overlay.json"
-        holdout_shadow_overlay_path = output_dir / "holdout_shadow_overlay.json"
-        rebalance_dataset_path = self._rebalance_dataset_path()
-        rebalance_dataset_audit_path = output_dir / "rebalance_dataset_audit.json"
-        history_coverage_path = output_dir / "history_coverage.json"
-        drawdown_event_review_path = output_dir / "drawdown_event_review.json"
-        rule_exposure_study_path = output_dir / "rule_exposure_study.json"
-        probability_calibration_path = output_dir / "probability_calibration.json"
-        walk_forward_probability_calibration_path = (
-            output_dir / "walk_forward_probability_calibration.json"
-        )
-        baseline_model_comparison_path = output_dir / "baseline_model_comparison.json"
-        ranking_diagnostics_path = output_dir / "ranking_diagnostics.json"
-        calibrated_probability_calibration_path = (
-            output_dir / "calibrated_probability_calibration.json"
-        )
-        overlay_model_comparison_path = output_dir / "overlay_model_comparison.json"
-        prediction_artifacts_path = output_dir / "prediction_artifacts.csv"
-        prediction_artifacts_metadata_path = output_dir / "prediction_artifacts.json"
-        html_report_path = output_dir / "research_report.html"
+        paths = self._experiment_paths()
 
-        write_feature_rows(features_path, feature_result.rows)
-        write_label_rows(labels_path, label_result.rows, label_result.label_name)
-        write_dataset(dataset_path, dataset, label_name=label_result.label_name)
-        self._write_feature_summary(feature_summary_path, feature_result)
-        self._write_dataset_audit(dataset_audit_path, dataset, label_result)
-        self._write_walk_forward_metrics(walk_forward_metrics_path, dataset)
+        write_feature_rows(paths.features_path, feature_result.rows)
+        write_label_rows(paths.labels_path, label_result.rows, label_result.label_name)
+        write_dataset(paths.dataset_path, dataset, label_name=label_result.label_name)
+        self._write_feature_summary(paths.feature_summary_path, feature_result)
+        self._write_dataset_audit(paths.dataset_audit_path, dataset, label_result)
+        self._write_walk_forward_metrics(paths.walk_forward_metrics_path, dataset)
         self._write_probability_calibration(
-            probability_calibration_path,
+            paths.probability_calibration_path,
             split.test.labels,
             probabilities,
         )
         self._write_calibrated_probability_calibration(
-            calibrated_probability_calibration_path,
+            paths.calibrated_probability_calibration_path,
             split,
             probabilities,
         )
         self._write_walk_forward_probability_calibration(
-            walk_forward_probability_calibration_path,
+            paths.walk_forward_probability_calibration_path,
             dataset,
         )
         self._write_baseline_model_comparison(
-            baseline_model_comparison_path,
+            paths.baseline_model_comparison_path,
             dataset,
         )
         self._write_ranking_diagnostics(
-            ranking_diagnostics_path,
+            paths.ranking_diagnostics_path,
             dataset,
             self._outcomes_by_feature_date(label_result, candles_by_symbol),
         )
-        self._write_threshold_sweep(threshold_sweep_path, split.test, probabilities)
-        self._write_model_comparison(model_comparison_path, dataset)
-        self._write_shadow_overlay(shadow_overlay_path, dataset)
-        self._write_overlay_model_comparison(overlay_model_comparison_path, dataset)
+        self._write_threshold_sweep(
+            paths.threshold_sweep_path,
+            split.test,
+            probabilities,
+        )
+        self._write_model_comparison(paths.model_comparison_path, dataset)
+        self._write_shadow_overlay(paths.shadow_overlay_path, dataset)
+        self._write_overlay_model_comparison(
+            paths.overlay_model_comparison_path,
+            dataset,
+        )
         self._write_holdout_shadow_overlay(
-            holdout_shadow_overlay_path,
+            paths.holdout_shadow_overlay_path,
             split,
         )
         rebalance_rows = self._write_rebalance_dataset(
-            rebalance_dataset_path,
-            rebalance_dataset_audit_path,
+            paths.rebalance_dataset_path,
+            paths.rebalance_dataset_audit_path,
             feature_result.rows,
             candles_by_symbol,
-            rule_exposure_study_path,
+            paths.rule_exposure_study_path,
         )
-        write_drawdown_event_review(drawdown_event_review_path, rebalance_rows)
+        write_drawdown_event_review(
+            paths.drawdown_event_review_path,
+            rebalance_rows,
+        )
 
         prediction_artifact_provenance = self._prediction_artifact_provenance(
             dataset,
             split,
         )
-        self._write_metrics(metrics_path, dataset, split, predictions)
-        self._write_predictions(predictions_path, split.test, predictions, probabilities)
-        self._write_feature_importance(feature_importance_path, model.feature_importances())
-        self._write_confusion_matrix(confusion_matrix_path, split.test, predictions)
-        self._write_metadata(metadata_path, dataset, split)
+        self._write_metrics(paths.metrics_path, dataset, split, predictions)
+        self._write_predictions(
+            paths.predictions_path,
+            split.test,
+            predictions,
+            probabilities,
+        )
+        self._write_feature_importance(
+            paths.feature_importance_path,
+            model.feature_importances(),
+        )
+        self._write_confusion_matrix(
+            paths.confusion_matrix_path,
+            split.test,
+            predictions,
+        )
+        self._write_metadata(paths.metadata_path, dataset, split)
         self._write_prediction_artifacts(
-            prediction_artifacts_path,
-            prediction_artifacts_metadata_path,
+            paths.prediction_artifacts_path,
+            paths.prediction_artifacts_metadata_path,
             dataset,
             split,
             probabilities,
@@ -264,47 +256,20 @@ class MLExperimentRunner:
             test_sample_count=int(prediction_artifact_provenance["test_sample_count"]),
             generated_at=str(prediction_artifact_provenance["generated_at"]),
         )
-        model.save(model_path)
-        self._annotate_report_artifacts(output_dir)
-        write_research_html_report(html_report_path, output_dir)
+        model.save(paths.model_path)
+        self._annotate_report_artifacts(paths.output_dir)
+        write_research_html_report(paths.html_report_path, paths.output_dir)
 
-        return MLExperimentResult(
-            output_dir=output_dir,
-            metrics_path=metrics_path,
-            predictions_path=predictions_path,
-            feature_importance_path=feature_importance_path,
-            confusion_matrix_path=confusion_matrix_path,
-            metadata_path=metadata_path,
-            model_path=model_path,
-            features_path=features_path,
-            feature_summary_path=feature_summary_path,
-            labels_path=labels_path,
-            dataset_path=dataset_path,
-            dataset_audit_path=dataset_audit_path,
-            walk_forward_metrics_path=walk_forward_metrics_path,
-            threshold_sweep_path=threshold_sweep_path,
-            model_comparison_path=model_comparison_path,
-            shadow_overlay_path=shadow_overlay_path,
-            holdout_shadow_overlay_path=holdout_shadow_overlay_path,
-            rebalance_dataset_path=rebalance_dataset_path,
-            rebalance_dataset_audit_path=rebalance_dataset_audit_path,
-            history_coverage_path=history_coverage_path,
-            drawdown_event_review_path=drawdown_event_review_path,
-            rule_exposure_study_path=rule_exposure_study_path,
-            probability_calibration_path=probability_calibration_path,
-            walk_forward_probability_calibration_path=(
-                walk_forward_probability_calibration_path
-            ),
-            baseline_model_comparison_path=baseline_model_comparison_path,
-            ranking_diagnostics_path=ranking_diagnostics_path,
-            calibrated_probability_calibration_path=(
-                calibrated_probability_calibration_path
-            ),
-            overlay_model_comparison_path=overlay_model_comparison_path,
-            prediction_artifacts_path=prediction_artifacts_path,
-            prediction_artifacts_metadata_path=prediction_artifacts_metadata_path,
-            html_report_path=html_report_path,
-        )
+        return MLExperimentResult(**paths.result_kwargs())
+
+    def _experiment_path_builder(self) -> MLExperimentPathBuilder:
+        return MLExperimentPathBuilder(self.config, self.experiment_config)
+
+    def _experiment_paths(self) -> MLExperimentPaths:
+        return self._experiment_path_builder().build()
+
+    def _feature_cache(self) -> MLFeatureCache:
+        return MLFeatureCache(self.config)
 
     def _split_dataset(self, dataset: MLDataset) -> ChronologicalSplit:
         return chronological_holdout(
@@ -491,21 +456,7 @@ class MLExperimentRunner:
         }
 
     def _model_filename(self) -> str:
-        if self.experiment_config.model_type == "noop":
-            return "model.json"
-        if self.experiment_config.model_type in {
-            "transformer",
-            "patchtst",
-            "dlinear",
-            "itransformer",
-            "market_context_encoder",
-            "momentum_transformer",
-            "multitask_transformer",
-            "news_analysis_transformer",
-            "temporal_fusion_transformer",
-        }:
-            return "model.pt"
-        return "model.joblib"
+        return self._experiment_path_builder().model_filename()
 
     def _class_weight(self) -> str | None:
         return "balanced" if self.experiment_config.class_weight_balanced else None
@@ -747,24 +698,16 @@ class MLExperimentRunner:
         return output
 
     def _features_path(self) -> Path:
-        cache_config = self.config.get("cache", {})
-        return Path(cache_config.get("ml_dir", "cache/ml")) / "features.csv"
+        return self._experiment_path_builder().features_path()
 
     def _labels_path(self) -> Path:
-        cache_config = self.config.get("cache", {})
-        filename = f"labels_{self.experiment_config.label_type}.csv"
-        return Path(cache_config.get("ml_dir", "cache/ml")) / filename
+        return self._experiment_path_builder().labels_path()
 
     def _dataset_path(self) -> Path:
-        cache_config = self.config.get("cache", {})
-        filename = f"dataset_{self.experiment_config.label_type}.csv"
-        return Path(cache_config.get("ml_dir", "cache/ml")) / filename
+        return self._experiment_path_builder().dataset_path()
 
     def _rebalance_dataset_path(self) -> Path:
-        cache_config = self.config.get("cache", {})
-        if self.experiment_config.label_type == "should_reduce_exposure":
-            return Path(cache_config.get("ml_dir", "cache/ml")) / "expanded_rebalance_dataset.csv"
-        return Path(cache_config.get("ml_dir", "cache/ml")) / "champion_rebalance_dataset.csv"
+        return self._experiment_path_builder().rebalance_dataset_path()
 
     def _build_expanded_rebalance_features(
         self,
@@ -860,23 +803,7 @@ class MLExperimentRunner:
         path: Path,
         cache_key: str,
     ) -> MLFeatureBuildResult | None:
-        if not bool(self.config.get("ml", {}).get("cache_feature_rows", False)):
-            return None
-        metadata = self._read_cache_metadata(path)
-        if metadata.get("cache_key") != cache_key or not path.exists():
-            return None
-        rows = self._read_csv_rows(path)
-        date_range = None
-        if rows:
-            date_range = (
-                str(rows[0].get("feature_date", "")),
-                str(rows[-1].get("feature_date", "")),
-            )
-        return MLFeatureBuildResult(
-            rows=rows,
-            dropped_rows=int(metadata.get("dropped_rows_insufficient_lookback", 0)),
-            date_range=date_range,
-        )
+        return self._feature_cache().load_feature_rows(path, cache_key)
 
     def _write_cached_feature_rows(
         self,
@@ -884,21 +811,7 @@ class MLExperimentRunner:
         feature_result: MLFeatureBuildResult,
         cache_key: str,
     ) -> None:
-        if not bool(self.config.get("ml", {}).get("cache_feature_rows", False)):
-            return
-        write_feature_rows(path, feature_result.rows)
-        self._write_cache_metadata(
-            path,
-            cache_key,
-            {
-                "cache_type": "historical_feature_rows",
-                "row_count": len(feature_result.rows),
-                "date_range": feature_result.date_range,
-                "dropped_rows_insufficient_lookback": feature_result.dropped_rows,
-                "research_only": True,
-                "trading_impact": "none",
-            },
-        )
+        self._feature_cache().write_feature_rows(path, feature_result, cache_key)
 
     def _load_cached_expanded_rebalance_rows(
         self,
@@ -906,20 +819,10 @@ class MLExperimentRunner:
         cache_key: str,
         dropped_rows: int,
     ) -> MLFeatureBuildResult | None:
-        metadata = self._read_cache_metadata(path)
-        if metadata.get("cache_key") != cache_key or not path.exists():
-            return None
-        rows = self._read_csv_rows(path)
-        date_range = None
-        if rows:
-            date_range = (
-                str(rows[0].get("feature_date", "")),
-                str(rows[-1].get("feature_date", "")),
-            )
-        return MLFeatureBuildResult(
-            rows=rows,
-            dropped_rows=dropped_rows,
-            date_range=date_range,
+        return self._feature_cache().load_expanded_rebalance_rows(
+            path,
+            cache_key,
+            dropped_rows,
         )
 
     def _feature_cache_key(
@@ -929,15 +832,12 @@ class MLExperimentRunner:
         lookback_days: int,
         candles_by_symbol: dict[str, list[Any]],
     ) -> str:
-        return self._hash_payload({
-            "cache_version": 1,
-            "cache_type": "historical_feature_rows",
-            "symbols": sorted(str(symbol).upper() for symbol in symbols),
-            "benchmark_symbols": [str(symbol).upper() for symbol in benchmark_symbols],
-            "lookback_days": int(lookback_days),
-            "history": self._candles_cache_summary(candles_by_symbol),
-            "feature_builder": "HistoricalFeatureBuilder",
-        })
+        return self._feature_cache().feature_cache_key(
+            symbols,
+            benchmark_symbols,
+            lookback_days,
+            candles_by_symbol,
+        )
 
     def _expanded_rebalance_cache_key(
         self,
@@ -966,34 +866,10 @@ class MLExperimentRunner:
         self,
         candles_by_symbol: dict[str, list[Any]],
     ) -> dict[str, dict[str, Any]]:
-        summary: dict[str, dict[str, Any]] = {}
-        for symbol, candles in sorted(candles_by_symbol.items()):
-            ordered = sorted(candles, key=lambda item: item.timestamp)
-            summary[symbol] = {
-                "count": len(ordered),
-                "start": (
-                    ordered[0].timestamp.date().isoformat()
-                    if ordered
-                    else None
-                ),
-                "end": (
-                    ordered[-1].timestamp.date().isoformat()
-                    if ordered
-                    else None
-                ),
-                "first_close": float(ordered[0].close) if ordered else None,
-                "last_close": float(ordered[-1].close) if ordered else None,
-            }
-        return summary
+        return MLFeatureCache.candles_cache_summary(candles_by_symbol)
 
     def _read_cache_metadata(self, path: Path) -> dict[str, Any]:
-        metadata_path = self._cache_metadata_path(path)
-        if not metadata_path.exists():
-            return {}
-        try:
-            return json.loads(metadata_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return {}
+        return self._feature_cache().read_metadata(path)
 
     def _write_cache_metadata(
         self,
@@ -1001,27 +877,18 @@ class MLExperimentRunner:
         cache_key: str,
         metadata: dict[str, Any],
     ) -> None:
-        metadata_path = self._cache_metadata_path(path)
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            **metadata,
-            "cache_key": cache_key,
-            "config_hash": self._hash_payload(self.config),
-            "generated_at": datetime.utcnow().isoformat() + "Z",
-        }
-        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._feature_cache().write_metadata(path, cache_key, metadata)
 
     @staticmethod
     def _cache_metadata_path(path: Path) -> Path:
-        return path.with_suffix(path.suffix + ".metadata.json")
+        return MLFeatureCache.metadata_path(path)
 
     @staticmethod
     def _read_csv_rows(path: Path) -> list[dict[str, str]]:
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            return list(csv.DictReader(handle))
+        return MLFeatureCache.read_csv_rows(path)
 
     def _rows_hash(self, rows: list[dict[str, Any]]) -> str:
-        return self._hash_payload(rows)
+        return MLFeatureCache.rows_hash(rows)
 
     def _write_rebalance_dataset(
         self,

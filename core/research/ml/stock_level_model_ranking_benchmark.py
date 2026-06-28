@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +9,17 @@ from statistics import mean
 from typing import Any, Callable
 
 from core.research.ml.stock_level_alpha_features import ENGINEERED_FEATURE_COLUMNS
+from core.research.framework.config import StockLevelResearchConfig
+from core.research.framework.data import CsvRowRepository
+from core.research.framework.logging import ResearchStageLogger
+from core.research.framework.parallel import ParallelTaskExecutor
+from core.research.framework.ranking import CrossSectionalRankingEvaluator
+from core.research.framework.registry import ModelRegistry
+from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.framework.walk_forward import (
+    ExpandingWindowSpec,
+    ExpandingWindowSplitter,
+)
 
 
 RESEARCH_METADATA = {
@@ -132,44 +141,36 @@ def write_stock_level_model_ranking_benchmark(
     config: dict[str, Any],
 ) -> StockLevelModelRankingBenchmarkPaths:
     """Train the isolated stock-level benchmark and write research artifacts."""
-    ml_config = config.get("ml", {})
-    output_dir = _output_dir(config)
-    source_path = Path(
-        ml_config.get(
-            "stock_level_prediction_artifacts_path",
-            output_dir / "stock_level_prediction_artifacts.csv",
-        )
-    )
+    settings = StockLevelResearchConfig.from_mapping(config)
+    output_dir = settings.output_dir
+    source_path = settings.artifact_path
     if not source_path.exists():
         raise FileNotFoundError(f"Stock-level prediction artifact not found: {source_path}")
 
-    rows = _read_csv(source_path)
+    logger = ResearchStageLogger("stock_level_alpha_benchmark")
+    with logger.stage("loading"):
+        rows = CsvRowRepository().read(source_path)
     feature_columns = _available_feature_columns(
         rows,
-        include_engineered=bool(
-            ml_config.get("stock_ranker_include_engineered_features", False)
-        ),
+        include_engineered=settings.include_engineered_features,
     )
-    predictions, payload = build_stock_level_model_ranking_benchmark(
-        rows,
-        feature_columns=feature_columns,
-        source_path=str(source_path),
-        min_train_dates=int(ml_config.get("stock_ranker_min_train_dates", 52)),
-        test_window_dates=int(ml_config.get("stock_ranker_test_window_dates", 13)),
-        embargo_dates=int(ml_config.get("stock_ranker_embargo_dates", 2)),
-        random_seed=int(ml_config.get("random_seed", 42)),
-        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
-        model_n_jobs=int(ml_config.get("stock_ranker_model_n_jobs", 1)),
-        include_sequence_models=bool(
-            ml_config.get("stock_ranker_include_sequence_models", True)
-        ),
-        sequence_length=int(ml_config.get("stock_ranker_sequence_length", 13)),
-        sequence_epochs=int(ml_config.get("stock_ranker_sequence_epochs", 5)),
-        sequence_batch_size=int(
-            ml_config.get("stock_ranker_sequence_batch_size", 256)
-        ),
-        sequence_device=str(ml_config.get("stock_ranker_sequence_device", "cpu")),
-    )
+    with logger.stage("training_and_evaluation"):
+        predictions, payload = build_stock_level_model_ranking_benchmark(
+            rows,
+            feature_columns=feature_columns,
+            source_path=str(source_path),
+            min_train_dates=settings.min_train_dates,
+            test_window_dates=settings.test_window_dates,
+            embargo_dates=settings.embargo_dates,
+            random_seed=settings.random_seed,
+            sklearn_n_jobs=settings.sklearn_n_jobs,
+            model_n_jobs=settings.model_n_jobs,
+            include_sequence_models=settings.include_sequence_models,
+            sequence_length=settings.sequence_length,
+            sequence_epochs=settings.sequence_epochs,
+            sequence_batch_size=settings.sequence_batch_size,
+            sequence_device=settings.sequence_device,
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = StockLevelModelRankingBenchmarkPaths(
@@ -178,14 +179,20 @@ def write_stock_level_model_ranking_benchmark(
         markdown_path=output_dir / "stock_level_model_ranking_benchmark.md",
         predictions_path=output_dir / "stock_level_model_oos_predictions.csv",
     )
-    _write_csv(paths.csv_path, payload["leaderboard"], _leaderboard_columns())
-    _write_csv(
-        paths.predictions_path,
-        predictions,
-        _prediction_columns(payload["completed_models"]),
-    )
-    paths.json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    paths.markdown_path.write_text(_markdown(payload), encoding="utf-8")
+    with logger.stage("report_generation"):
+        writer = ResearchArtifactWriter()
+        writer.write_csv(
+            paths.csv_path,
+            payload["leaderboard"],
+            fieldnames=_leaderboard_columns(),
+        )
+        writer.write_csv(
+            paths.predictions_path,
+            predictions,
+            fieldnames=_prediction_columns(payload["completed_models"]),
+        )
+        writer.write_json(paths.json_path, payload)
+        writer.write_markdown(paths.markdown_path, _markdown(payload))
     return paths
 
 
@@ -412,32 +419,25 @@ def _execute_model_runs(
         sequence_length,
         1 if model_n_jobs > 1 else None,
     )
-    results: dict[str, dict[tuple[str, str], float]] = {}
-    errors: dict[str, str] = {}
     if model_n_jobs == 1:
-        for spec in specs:
-            try:
-                results[spec.name] = _run_model_walk_forward(spec, *arguments)
-            except Exception as exc:  # isolated research model boundary
-                errors[spec.name] = f"{type(exc).__name__}: {exc}"
-        return results, errors
-
-    with executor_cls(
-        max_workers=min(model_n_jobs, len(specs)),
-        initializer=_initialize_model_worker,
-        initargs=(arguments,),
-    ) as executor:
-        futures = {
-            executor.submit(_run_initialized_model, spec): spec
-            for spec in specs
-        }
-        for future in as_completed(futures):
-            spec = futures[future]
-            try:
-                results[spec.name] = future.result()
-            except Exception as exc:  # isolated process boundary
-                errors[spec.name] = f"{type(exc).__name__}: {exc}"
-    return results, errors
+        worker = lambda spec: _run_model_walk_forward(spec, *arguments)
+        initializer = None
+        initargs = ()
+    else:
+        worker = _run_initialized_model
+        initializer = _initialize_model_worker
+        initargs = (arguments,)
+    execution = ParallelTaskExecutor[ModelRunSpec, dict[tuple[str, str], float]]()
+    result = execution.execute(
+        specs,
+        worker,
+        key=lambda spec: spec.name,
+        max_workers=model_n_jobs,
+        executor_cls=executor_cls,
+        initializer=initializer,
+        initargs=initargs,
+    )
+    return result.results, result.errors
 
 
 def _initialize_model_worker(arguments: tuple[Any, ...]) -> None:
@@ -606,28 +606,21 @@ def _walk_forward_partitions(
     test_window_dates: int,
     embargo_dates: int,
 ):
-    for fold_id, test_start in enumerate(
-        range(first_test_index, len(dates), test_window_dates),
-        start=1,
-    ):
-        test_dates = dates[test_start : test_start + test_window_dates]
-        train_dates = dates[: test_start - embargo_dates]
-        embargoed_dates = dates[test_start - embargo_dates : test_start]
-        train_date_set = set(train_dates)
-        test_date_set = set(test_dates)
-        train_rows = [
-            row for row in prepared_rows if row["rebalance_date"] in train_date_set
-        ]
-        test_rows = [
-            row for row in prepared_rows if row["rebalance_date"] in test_date_set
-        ]
+    splitter = ExpandingWindowSplitter(
+        ExpandingWindowSpec(
+            min_train_dates=first_test_index - embargo_dates,
+            test_window_dates=test_window_dates,
+            embargo_dates=embargo_dates,
+        )
+    )
+    for fold in splitter.split(prepared_rows, dates=dates):
         yield (
-            fold_id,
-            train_rows,
-            test_rows,
-            train_dates,
-            test_dates,
-            embargoed_dates,
+            fold.fold_id,
+            list(fold.train_rows),
+            list(fold.test_rows),
+            list(fold.train_dates),
+            list(fold.test_dates),
+            list(fold.embargoed_dates),
         )
 
 
@@ -706,10 +699,27 @@ def _model_factories(
     random_seed: int,
     sklearn_n_jobs: int,
 ) -> dict[str, Callable[[], Any]]:
-    return {
-        name: TabularModelFactory(name, random_seed, sklearn_n_jobs)
-        for name in TABULAR_MODEL_NAMES
-    }
+    return dict(
+        stock_ranker_model_registry(
+            random_seed=random_seed,
+            sklearn_n_jobs=sklearn_n_jobs,
+        ).items()
+    )
+
+
+def stock_ranker_model_registry(
+    *,
+    random_seed: int,
+    sklearn_n_jobs: int,
+) -> ModelRegistry[Callable[[], Any]]:
+    registry: ModelRegistry[Callable[[], Any]] = ModelRegistry()
+    for name in TABULAR_MODEL_NAMES:
+        registry.register(
+            name,
+            TabularModelFactory(name, random_seed, sklearn_n_jobs),
+            metadata={"family": "tabular_regressor"},
+        )
+    return registry
 
 
 def _build_tabular_model(
@@ -893,79 +903,12 @@ def _evaluate_signal(
     *,
     kind: str,
 ) -> dict[str, Any]:
-    by_date: dict[str, list[dict[str, float]]] = {}
-    for row in rows:
-        signal = _number(row.get(signal_column))
-        target = _number(row.get(TARGET_COLUMN))
-        if signal is None or target is None:
-            continue
-        risk = max(
-            abs(_number(row.get("actual_future_drawdown")) or 0.0),
-            abs(_number(row.get("actual_future_volatility")) or 0.0),
-            1e-6,
-        )
-        by_date.setdefault(str(row["rebalance_date"]), []).append(
-            {"score": signal, "target": target, "risk_target": target / risk}
-        )
-    date_metrics = [
-        _date_metrics(group) for _, group in sorted(by_date.items()) if len(group) >= 2
-    ]
-    return {
-        "rank": None,
-        "name": name,
-        "kind": kind,
-        "signal_column": signal_column,
-        "mean_pearson_ic": _average([row["pearson"] for row in date_metrics]),
-        "mean_spearman_ic": _average([row["spearman"] for row in date_metrics]),
-        "top_decile_return": _average([row["top_decile_return"] for row in date_metrics]),
-        "bottom_decile_return": _average(
-            [row["bottom_decile_return"] for row in date_metrics]
-        ),
-        "top_minus_bottom_spread": _average(
-            [row["top_minus_bottom_spread"] for row in date_metrics]
-        ),
-        "top_decile_hit_rate": _average(
-            [row["top_decile_hit_rate"] for row in date_metrics]
-        ),
-        "risk_adjusted_spread": _average(
-            [row["risk_adjusted_spread"] for row in date_metrics]
-        ),
-        "spread_sharpe": _annualized_sharpe(
-            [row["top_minus_bottom_spread"] for row in date_metrics]
-        ),
-        "date_count": len(date_metrics),
-        "row_count": sum(row["row_count"] for row in date_metrics),
-    }
-
-
-def _date_metrics(rows: list[dict[str, float]]) -> dict[str, Any]:
-    ordered = sorted(rows, key=lambda row: row["score"], reverse=True)
-    bucket_size = max(1, math.ceil(len(ordered) * 0.10))
-    top = ordered[:bucket_size]
-    bottom = ordered[-bucket_size:]
-    top_return = mean(row["target"] for row in top)
-    bottom_return = mean(row["target"] for row in bottom)
-    return {
-        "row_count": len(ordered),
-        "pearson": _pearson(
-            [row["score"] for row in ordered],
-            [row["target"] for row in ordered],
-        ),
-        "spearman": _spearman(
-            [row["score"] for row in ordered],
-            [row["target"] for row in ordered],
-        ),
-        "top_decile_return": top_return,
-        "bottom_decile_return": bottom_return,
-        "top_minus_bottom_spread": top_return - bottom_return,
-        "top_decile_hit_rate": mean(
-            1.0 if row["target"] > 0.0 else 0.0 for row in top
-        ),
-        "risk_adjusted_spread": (
-            mean(row["risk_target"] for row in top)
-            - mean(row["risk_target"] for row in bottom)
-        ),
-    }
+    return CrossSectionalRankingEvaluator(target_column=TARGET_COLUMN).evaluate(
+        rows,
+        name=name,
+        signal_column=signal_column,
+        kind=kind,
+    )
 
 
 def _compare_to_momentum(
@@ -1026,49 +969,9 @@ def _validate_unique_keys(rows: list[dict[str, Any]]) -> None:
         raise ValueError("Stock-level rows must be unique by rebalance_date and symbol")
 
 
-def _spearman(left: list[float], right: list[float]) -> float | None:
-    if len(left) != len(right) or len(left) < 2:
-        return None
-    return _pearson(_ranks(left), _ranks(right))
-
-
-def _ranks(values: list[float]) -> list[float]:
-    indexed = sorted(enumerate(values), key=lambda item: item[1])
-    ranks = [0.0] * len(values)
-    index = 0
-    while index < len(indexed):
-        end = index + 1
-        while end < len(indexed) and indexed[end][1] == indexed[index][1]:
-            end += 1
-        rank = (index + 1 + end) / 2.0
-        for original_index, _ in indexed[index:end]:
-            ranks[original_index] = rank
-        index = end
-    return ranks
-
-
-def _pearson(left: list[float], right: list[float]) -> float | None:
-    left_mean = mean(left)
-    right_mean = mean(right)
-    numerator = sum((x - left_mean) * (y - right_mean) for x, y in zip(left, right))
-    left_variance = sum((x - left_mean) ** 2 for x in left)
-    right_variance = sum((y - right_mean) ** 2 for y in right)
-    denominator = math.sqrt(left_variance * right_variance)
-    return numerator / denominator if denominator > 0.0 else None
-
-
 def _average(values: list[float | None]) -> float | None:
     finite = [float(value) for value in values if value is not None and math.isfinite(value)]
     return mean(finite) if finite else None
-
-
-def _annualized_sharpe(values: list[float | None]) -> float | None:
-    finite = [float(value) for value in values if value is not None and math.isfinite(value)]
-    if len(finite) < 2:
-        return None
-    average = mean(finite)
-    variance = sum((value - average) ** 2 for value in finite) / (len(finite) - 1)
-    return average / math.sqrt(variance) * math.sqrt(52.0) if variance > 0.0 else None
 
 
 def _number(value: Any) -> float | None:
@@ -1096,8 +999,7 @@ def _output_dir(config: dict[str, Any]) -> Path:
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return CsvRowRepository().read(path)
 
 
 def _leaderboard_columns() -> list[str]:
@@ -1138,11 +1040,7 @@ def _write_csv(
     rows: list[dict[str, Any]],
     fieldnames: list[str],
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
 
 
 def _markdown(payload: dict[str, Any]) -> str:

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable
+
+from core.research.framework.config import StockLevelResearchConfig
+from core.research.framework.data import CsvRowRepository, JsonRepository
+from core.research.framework.logging import ResearchStageLogger
+from core.research.framework.ranking import CrossSectionalRankingEvaluator
+from core.research.framework.reporting import ResearchArtifactWriter
 
 from core.research.ml.stock_level_model_ranking_benchmark import (
     FEATURE_COLUMNS,
@@ -17,7 +21,6 @@ from core.research.ml.stock_level_model_ranking_benchmark import (
     TARGET_COLUMN,
     _base_prediction_row,
     _build_tabular_model,
-    _evaluate_signal,
     _prepare_rows,
     _walk_forward_partitions,
 )
@@ -45,46 +48,32 @@ class StockLevelFeatureAttributionPaths:
 def write_stock_level_feature_attribution(
     config: dict[str, Any],
 ) -> StockLevelFeatureAttributionPaths:
-    ml_config = config.get("ml", {})
-    output_dir = _output_dir(config)
-    source_path = Path(
-        ml_config.get(
-            "stock_level_prediction_artifacts_path",
-            output_dir / "stock_level_prediction_artifacts.csv",
-        )
-    )
-    benchmark_path = Path(
-        ml_config.get(
-            "stock_level_model_ranking_benchmark_path",
-            output_dir / "stock_level_model_ranking_benchmark.json",
-        )
-    )
-    predictions_path = Path(
-        ml_config.get(
-            "stock_level_model_oos_predictions_path",
-            output_dir / "stock_level_model_oos_predictions.csv",
-        )
-    )
+    settings = StockLevelResearchConfig.from_mapping(config)
+    output_dir = settings.output_dir
+    source_path = settings.artifact_path
+    benchmark_path = settings.benchmark_path
+    predictions_path = settings.oos_predictions_path
     for path in (source_path, benchmark_path, predictions_path):
         if not path.exists():
             raise FileNotFoundError(f"Required stock-level research artifact not found: {path}")
 
-    rows = _read_csv(source_path)
-    benchmark = json.loads(benchmark_path.read_text(encoding="utf-8"))
-    existing_predictions = _read_csv(predictions_path)
-    payload = build_stock_level_feature_attribution(
-        rows,
-        benchmark,
-        existing_prediction_rows=existing_predictions,
-        source_path=str(source_path),
-        benchmark_path=str(benchmark_path),
-        predictions_path=str(predictions_path),
-        random_seed=int(ml_config.get("random_seed", 42)),
-        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
-        permutation_repeats=int(
-            ml_config.get("stock_ranker_permutation_importance_repeats", 3)
-        ),
-    )
+    logger = ResearchStageLogger("stock_level_feature_attribution")
+    with logger.stage("loading"):
+        rows = CsvRowRepository().read(source_path)
+        benchmark = JsonRepository().read(benchmark_path)
+        existing_predictions = CsvRowRepository().read(predictions_path)
+    with logger.stage("evaluation"):
+        payload = build_stock_level_feature_attribution(
+            rows,
+            benchmark,
+            existing_prediction_rows=existing_predictions,
+            source_path=str(source_path),
+            benchmark_path=str(benchmark_path),
+            predictions_path=str(predictions_path),
+            random_seed=settings.random_seed,
+            sklearn_n_jobs=settings.sklearn_n_jobs,
+            permutation_repeats=settings.permutation_repeats,
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = StockLevelFeatureAttributionPaths(
@@ -92,9 +81,11 @@ def write_stock_level_feature_attribution(
         json_path=output_dir / "stock_level_feature_attribution.json",
         markdown_path=output_dir / "stock_level_feature_attribution.md",
     )
-    _write_csv(paths.csv_path, payload["feature_rows"])
-    paths.json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    paths.markdown_path.write_text(_markdown(payload), encoding="utf-8")
+    with logger.stage("report_generation"):
+        _write_csv(paths.csv_path, payload["feature_rows"])
+        writer = ResearchArtifactWriter()
+        writer.write_json(paths.json_path, payload)
+        writer.write_markdown(paths.markdown_path, _markdown(payload))
     return paths
 
 
@@ -509,6 +500,21 @@ def _metrics(summary: dict[str, Any]) -> dict[str, Any]:
     return {name: summary.get(name) for name in METRIC_NAMES}
 
 
+def _evaluate_signal(
+    rows: list[dict[str, Any]],
+    name: str,
+    signal_column: str,
+    *,
+    kind: str,
+) -> dict[str, Any]:
+    return CrossSectionalRankingEvaluator(target_column=TARGET_COLUMN).evaluate(
+        rows,
+        name=name,
+        signal_column=signal_column,
+        kind=kind,
+    )
+
+
 def _reference_metrics(reference: dict[str, Any] | None) -> dict[str, Any]:
     if reference is None:
         return {name: None for name in METRIC_NAMES}
@@ -543,18 +549,11 @@ def _difference(left: Any, right: Any) -> float | None:
 
 
 def _output_dir(config: dict[str, Any]) -> Path:
-    return Path(
-        config.get("ml", {}).get(
-            "output_dir",
-            Path(config.get("reports", {}).get("ml_dir", "reports/ml"))
-            / "regime_transformer_meta_ensemble_v1",
-        )
-    )
+    return StockLevelResearchConfig.from_mapping(config).output_dir
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return CsvRowRepository().read(path)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -573,11 +572,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         *(f"ablated_{metric}" for metric in METRIC_NAMES),
         *(f"ablation_delta_{metric}" for metric in METRIC_NAMES),
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
 
 
 def _markdown(payload: dict[str, Any]) -> str:

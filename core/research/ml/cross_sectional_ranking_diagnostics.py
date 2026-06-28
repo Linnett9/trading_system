@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any
+
+from core.research.framework.data import CsvRowRepository
+from core.research.framework.reporting import ResearchArtifactWriter
 
 
 RESEARCH_METADATA = {
@@ -52,8 +53,9 @@ def write_cross_sectional_ranking_diagnostics(
         markdown_path=output_dir / "cross_sectional_ranking_diagnostics.md",
     )
     _write_csv(paths.csv_path, payload["signals"])
-    paths.json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    paths.markdown_path.write_text(_markdown(payload), encoding="utf-8")
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.json_path, payload)
+    writer.write_markdown(paths.markdown_path, _markdown(payload))
     return paths
 
 
@@ -393,10 +395,7 @@ def _output_dir(config: dict[str, Any]) -> Path:
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return CsvRowRepository().read(path)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -414,12 +413,8 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "missing_signal_rows",
         "missing_target_rows",
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({name: row.get(name) for name in fieldnames})
+    normalized = [{name: row.get(name) for name in fieldnames} for row in rows]
+    ResearchArtifactWriter().write_csv(path, normalized, fieldnames=fieldnames)
 
 
 def _markdown(payload: dict[str, Any]) -> str:

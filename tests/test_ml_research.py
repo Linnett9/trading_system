@@ -1,5 +1,6 @@
 import csv
 import json
+from dataclasses import fields
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -9,7 +10,8 @@ from core.entities.candle import Candle
 from core.research.portfolio_utils import rebalance_key
 from core.research.ml.drawdown_review import build_drawdown_event_review
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.experiment_runner import MLExperimentRunner
+from core.research.ml.experiment_paths import MLExperimentPathBuilder
+from core.research.ml.experiment_runner import MLExperimentResult, MLExperimentRunner
 from core.research.ml.features import HistoricalFeatureBuilder, add_champion_state_features
 from core.research.ml.labels import (
     DrawdownRiskLabelBuilder,
@@ -54,6 +56,53 @@ def test_ml_experiment_config_uses_defaults(tmp_path):
     assert experiment_config.label_horizon_days == 42
     assert experiment_config.random_seed == 42
     assert experiment_config.output_dir == str(tmp_path)
+
+
+def test_ml_experiment_path_builder_preserves_runner_paths(tmp_path):
+    report_dir = tmp_path / "reports"
+    cache_dir = tmp_path / "cache"
+    config = {
+        "reports": {"ml_dir": str(report_dir)},
+        "cache": {"ml_dir": str(cache_dir)},
+        "ml": {
+            "model_type": "dlinear",
+            "label_type": "should_reduce_exposure",
+        },
+    }
+    paths = MLExperimentPathBuilder(
+        config,
+        MLExperimentConfig.from_config(config),
+    ).build()
+
+    assert list(paths.result_kwargs()) == [
+        field.name for field in fields(MLExperimentResult)
+    ]
+    assert paths.output_dir == report_dir
+    assert report_dir.exists()
+    assert paths.metrics_path == report_dir / "metrics.json"
+    assert paths.model_path == report_dir / "model.pt"
+    assert paths.features_path == cache_dir / "features.csv"
+    assert paths.labels_path == cache_dir / "labels_should_reduce_exposure.csv"
+    assert paths.dataset_path == cache_dir / "dataset_should_reduce_exposure.csv"
+    assert paths.rebalance_dataset_path == (
+        cache_dir / "expanded_rebalance_dataset.csv"
+    )
+    assert paths.prediction_artifacts_path == report_dir / "prediction_artifacts.csv"
+    assert paths.prediction_artifacts_metadata_path == (
+        report_dir / "prediction_artifacts.json"
+    )
+    assert paths.html_report_path == report_dir / "research_report.html"
+
+    noop_config = {
+        "reports": {"ml_dir": str(report_dir / "noop")},
+        "ml": {"model_type": "noop"},
+    }
+    noop_paths = MLExperimentPathBuilder(
+        noop_config,
+        MLExperimentConfig.from_config(noop_config),
+    ).build()
+
+    assert noop_paths.model_path.name == "model.json"
 
 
 def test_noop_ml_model_returns_neutral_probabilities():

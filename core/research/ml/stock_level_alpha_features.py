@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import csv
-import json
 import math
 from bisect import bisect_left
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, pstdev
 from typing import Any
+
+from core.research.framework.config import StockLevelResearchConfig
+from core.research.framework.data import CsvRowRepository
+from core.research.framework.logging import ResearchStageLogger
+from core.research.framework.registry import FeatureRegistry
+from core.research.framework.reporting import ResearchArtifactWriter
 
 
 RESEARCH_METADATA = {
@@ -70,29 +74,28 @@ class StockLevelAlphaFeaturePaths:
 def write_stock_level_alpha_features(
     config: dict[str, Any],
 ) -> StockLevelAlphaFeaturePaths:
-    ml_config = config.get("ml", {})
-    output_dir = _output_dir(config)
-    source_path = Path(
-        ml_config.get(
-            "stock_level_base_prediction_artifacts_path",
-            output_dir / "stock_level_prediction_artifacts.csv",
-        )
-    )
+    settings = StockLevelResearchConfig.from_mapping(config)
+    output_dir = settings.output_dir
+    source_path = settings.base_artifact_path
     if not source_path.exists():
         raise FileNotFoundError(f"Base stock-level artifact not found: {source_path}")
-    rows = _read_csv(source_path)
+    logger = ResearchStageLogger("stock_level_alpha_features")
+    repository = CsvRowRepository()
+    with logger.stage("loading"):
+        rows = repository.read(source_path)
     symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
-    spy_symbol = str(ml_config.get("stock_ranker_spy_symbol", "SPY")).upper()
-    price_histories = _load_price_histories(
-        Path(ml_config.get("stooq_parquet_dir", "data/processed/stooq_parquet")),
-        sorted({*symbols, spy_symbol}),
-    )
-    enriched_rows, audit = build_stock_level_alpha_features(
-        rows,
-        price_histories,
-        spy_symbol=spy_symbol,
-        source_path=str(source_path),
-    )
+    spy_symbol = settings.spy_symbol
+    with logger.stage("feature_generation"):
+        price_histories = _load_price_histories(
+            settings.parquet_dir,
+            sorted({*symbols, spy_symbol}),
+        )
+        enriched_rows, audit = build_stock_level_alpha_features(
+            rows,
+            price_histories,
+            spy_symbol=spy_symbol,
+            source_path=str(source_path),
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = StockLevelAlphaFeaturePaths(
@@ -101,10 +104,12 @@ def write_stock_level_alpha_features(
         audit_json_path=output_dir / "stock_level_alpha_feature_audit.json",
         audit_markdown_path=output_dir / "stock_level_alpha_feature_audit.md",
     )
-    _write_enriched_csv(paths.enriched_csv_path, rows, enriched_rows)
-    _write_audit_csv(paths.audit_csv_path, audit["features"])
-    paths.audit_json_path.write_text(json.dumps(audit, indent=2), encoding="utf-8")
-    paths.audit_markdown_path.write_text(_markdown(audit), encoding="utf-8")
+    with logger.stage("report_generation"):
+        _write_enriched_csv(paths.enriched_csv_path, rows, enriched_rows)
+        _write_audit_csv(paths.audit_csv_path, audit["features"])
+        writer = ResearchArtifactWriter()
+        writer.write_json(paths.audit_json_path, audit)
+        writer.write_markdown(paths.audit_markdown_path, _markdown(audit))
     return paths
 
 
@@ -465,6 +470,17 @@ def _audit(
     }
 
 
+def alpha_feature_registry() -> FeatureRegistry[str]:
+    registry: FeatureRegistry[str] = FeatureRegistry()
+    for name in ENGINEERED_FEATURE_COLUMNS:
+        registry.register(
+            name,
+            name,
+            metadata={"definition": FEATURE_DEFINITIONS[name]},
+        )
+    return registry
+
+
 def _load_price_histories(
     parquet_dir: Path,
     symbols: list[str],
@@ -499,12 +515,11 @@ def _load_price_histories(
 
 
 def _output_dir(config: dict[str, Any]) -> Path:
-    return Path(config.get("ml", {}).get("output_dir", "reports/ml"))
+    return StockLevelResearchConfig.from_mapping(config).output_dir
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return CsvRowRepository().read(path)
 
 
 def _write_enriched_csv(
@@ -514,11 +529,7 @@ def _write_enriched_csv(
 ) -> None:
     source_columns = list(source_rows[0]) if source_rows else []
     fieldnames = [*source_columns, *ENGINEERED_FEATURE_COLUMNS]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
 
 
 def _write_audit_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -529,11 +540,7 @@ def _write_audit_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "missing_count",
         "availability_rate",
     ]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
 
 
 def _markdown(audit: dict[str, Any]) -> str:
