@@ -6,29 +6,28 @@ import json
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.artifact_writers import MLCoreArtifactWriter
-from core.research.ml.config import MLExperimentConfig
-from core.research.ml.calibration import (
-    build_probability_calibration,
-    compare_calibration_methods,
+from core.research.ml.artifacts import (
+    MLCoreArtifactWriter,
+    MLExperimentPathBuilder,
+    MLExperimentPaths,
+    MLFeatureCache,
 )
+from core.research.ml.config import MLExperimentConfig
 from core.research.ml.diagnostics import (
     build_ranking_diagnostics,
     probability_summary,
     rolling_base_rate_probabilities,
 )
-from core.research.ml.dataset_pipeline import MLDatasetPipeline
 from core.research.ml.datasets import MLDataset, write_dataset
 from core.research.ml.drawdown_review import write_drawdown_event_review
-from core.research.ml.experiment_paths import (
-    MLExperimentPathBuilder,
-    MLExperimentPaths,
-)
-from core.research.ml.feature_cache import MLFeatureCache
-from core.research.ml.feature_pipeline import (
+from core.research.ml.pipelines import (
+    MLDatasetPipeline,
     MLFeaturePipeline,
     MLFeaturePipelineResult,
+    MLLabelPipeline,
+    MLModelPipeline,
 )
+from core.research.ml.reports import MLCalibrationReportWriter
 from core.research.ml.html_report import write_research_html_report
 from core.research.ml.evaluation import classification_metrics
 from core.research.ml.features import (
@@ -39,8 +38,6 @@ from core.research.ml.labels import (
     MLLabelBuildResult,
     write_label_rows,
 )
-from core.research.ml.label_pipeline import MLLabelPipeline
-from core.research.ml.model_pipeline import MLModelPipeline
 from core.research.ml.models import build_ml_model
 from core.research.ml.overlay import overlay_decision_rule, simulate_shadow_overlay
 from core.research.ml.rebalance_dataset import (
@@ -279,6 +276,13 @@ class MLExperimentRunner:
             self.config,
             self.experiment_config,
             research_label=self.research_label,
+            model_pipeline=self._model_pipeline(),
+        )
+
+    def _calibration_report_writer(self) -> MLCalibrationReportWriter:
+        return MLCalibrationReportWriter(
+            self.config,
+            self.experiment_config,
             model_pipeline=self._model_pipeline(),
         )
 
@@ -767,17 +771,11 @@ class MLExperimentRunner:
         labels: list[int],
         probabilities: list[float],
     ) -> None:
-        path.write_text(json.dumps({
-            "evaluation": "chronological_holdout",
-            "model_type": self.experiment_config.model_type,
-            "calibration": build_probability_calibration(
-                labels,
-                probabilities,
-                bin_count=self._calibration_bin_count(),
-            ),
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
+        self._calibration_report_writer().write_probability_calibration(
+            path,
+            labels,
+            probabilities,
+        )
 
     def _write_calibrated_probability_calibration(
         self,
@@ -785,52 +783,11 @@ class MLExperimentRunner:
         split: ChronologicalSplit,
         raw_probabilities: list[float],
     ) -> None:
-        train_model = build_ml_model(
-            self.experiment_config.model_type,
-            random_seed=self.experiment_config.random_seed,
-            class_weight=self._class_weight(),
-            model_config=self.config.get("ml", {}),
-        )
-        self._fit_research_model(train_model, split.train)
-        train_probabilities, _ = self._predict_research_model(train_model, split.train)
-        comparison = compare_calibration_methods(
-            split.train.labels,
-            train_probabilities,
-            split.test.labels,
+        self._calibration_report_writer().write_calibrated_probability_calibration(
+            path,
+            split,
             raw_probabilities,
-            bin_count=self._calibration_bin_count(),
         )
-        raw_calibration = build_probability_calibration(
-            split.test.labels,
-            raw_probabilities,
-            bin_count=self._calibration_bin_count(),
-        )
-        best_method = comparison.get("best_method_by_brier")
-        best_calibration = (
-            comparison.get("methods", {})
-            .get(str(best_method), {})
-            .get("calibration", {})
-        )
-        path.write_text(json.dumps({
-            "evaluation": "chronological_holdout_calibration_method_comparison",
-            "model_type": self.experiment_config.model_type,
-            "label_type": self.experiment_config.label_type,
-            "calibration_methods": ["raw", "platt", "isotonic", "temperature_scaling"],
-            "best_method_by_brier": best_method,
-            "raw_calibration": raw_calibration,
-            "best_calibration": best_calibration,
-            "method_comparison": comparison,
-            "raw_brier_score": raw_calibration.get("brier_score"),
-            "best_brier_score": best_calibration.get("brier_score"),
-            "brier_delta_best_minus_raw": (
-                best_calibration.get("brier_score") - raw_calibration.get("brier_score")
-                if raw_calibration.get("brier_score") is not None
-                and best_calibration.get("brier_score") is not None
-                else None
-            ),
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
 
     def _quantile_calibrated_probabilities(
         self,
@@ -880,49 +837,10 @@ class MLExperimentRunner:
         path: Path,
         dataset: MLDataset,
     ) -> None:
-        fold_payloads = []
-        all_labels: list[int] = []
-        all_probabilities: list[float] = []
-        for fold in rolling_walk_forward(
+        self._calibration_report_writer().write_walk_forward_probability_calibration(
+            path,
             dataset,
-            fold_count=self.experiment_config.walk_forward_folds,
-        ):
-            model = build_ml_model(
-                self.experiment_config.model_type,
-                random_seed=self.experiment_config.random_seed,
-                class_weight=self._class_weight(),
-                model_config=self.config.get("ml", {}),
-            )
-            self._fit_research_model(model, fold.split.train)
-            probabilities, _ = self._predict_research_model(
-                model,
-                fold.split.test,
-                prediction_context=self._prediction_context(fold.split),
-            )
-            all_labels.extend(fold.split.test.labels)
-            all_probabilities.extend(probabilities)
-            fold_payloads.append({
-                "fold": fold.fold_number,
-                "test_start_date": fold.split.test_start_date,
-                "calibration": build_probability_calibration(
-                    fold.split.test.labels,
-                    probabilities,
-                    bin_count=self._calibration_bin_count(),
-                ),
-            })
-        path.write_text(json.dumps({
-            "evaluation": "purged_walk_forward",
-            "model_type": self.experiment_config.model_type,
-            "fold_count": len(fold_payloads),
-            "folds": fold_payloads,
-            "pooled_out_of_sample_calibration": build_probability_calibration(
-                all_labels,
-                all_probabilities,
-                bin_count=self._calibration_bin_count(),
-            ),
-            "research_only": True,
-            "trading_impact": "none",
-        }, indent=2), encoding="utf-8")
+        )
 
     def _write_baseline_model_comparison(
         self,
@@ -1182,7 +1100,7 @@ class MLExperimentRunner:
         return int(self.config.get("ml", {}).get("ranking_quantile_count", 5))
 
     def _calibration_bin_count(self) -> int:
-        return int(self.config.get("ml", {}).get("calibration_bin_count", 10))
+        return self._calibration_report_writer().calibration_bin_count()
 
     def _write_threshold_sweep(
         self,
