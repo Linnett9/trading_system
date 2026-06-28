@@ -1,0 +1,1511 @@
+from __future__ import annotations
+
+import ctypes.util
+import json
+import math
+from pathlib import Path
+import platform
+from statistics import mean
+from typing import Any
+
+from core.research.ml.allocation.allocation_v2 import write_allocation_v2_reports
+from core.research.ml.metrics.calibration import (
+    build_probability_calibration,
+    compare_calibration_methods,
+)
+from core.research.ml.metrics.evaluation import classification_metrics
+from core.research.ml.metrics.leaderboard import write_leaderboard
+from core.research.ml.meta.meta_auxiliary import (
+    actual_auxiliary_values,
+    namespaced_auxiliary_features,
+    run_meta_auxiliary_ensemble,
+)
+from core.research.ml.overlays.overlay import overlay_decision_rule, should_reduce_exposure
+from core.research.ml.stock_level.trading_research_leaderboard import (
+    write_trading_research_leaderboard,
+)
+from core.research.ml.meta.meta_dataset import (
+    _feature_values,
+    _load_source_predictions,
+    build_meta_dataset_rows,
+)
+from core.research.ml.meta.meta_io import _read_csv, _write_csv
+from core.research.ml.meta.meta_types import MetaEnsembleResult, MetaLearnerModel
+
+
+_MAX_ABS_PERIOD_RETURN = 5.0
+
+
+def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
+    ml_config = config.get("ml", {})
+    output_dir = Path(ml_config.get("output_dir", "reports/ml/regime_transformer_meta_ensemble_v1"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dataset_path = Path(ml_config.get("meta_dataset_path", "cache/ml/meta_ensemble_dataset.csv"))
+    expanded_dataset_path = Path(
+        ml_config.get("expanded_rebalance_dataset_path", "cache/ml/expanded_rebalance_dataset.csv")
+    )
+    source_dirs = [Path(path) for path in ml_config.get("source_prediction_dirs", [])]
+    source_predictions, warnings = _load_source_predictions(source_dirs)
+    source_models = sorted(source_predictions)
+    if len(source_models) < 2:
+        raise RuntimeError(
+            "Meta ensemble requires at least two available source prediction artifacts"
+        )
+
+    expanded_rows = _read_csv(expanded_dataset_path)
+    meta_rows, audit = build_meta_dataset_rows(expanded_rows, source_predictions)
+    audit.update({
+        "warnings": warnings,
+        "source_prediction_dirs": [str(path) for path in source_dirs],
+        "research_only": True,
+        "trading_impact": "none",
+    })
+    _write_csv(dataset_path, meta_rows)
+    audit_path = output_dir / "meta_dataset_audit.json"
+    audit_path.write_text(json.dumps(audit, indent=2), encoding="utf-8")
+
+    train_rows = [row for row in meta_rows if row["split"] == "out_of_fold"]
+    holdout_rows = [row for row in meta_rows if row["split"] == "holdout"]
+    if not train_rows or not holdout_rows:
+        raise RuntimeError("Meta ensemble requires out-of-fold and holdout rows")
+
+    features = [_feature_values(row) for row in train_rows]
+    labels = [int(row["actual_label"]) for row in train_rows]
+    holdout_features = [_feature_values(row) for row in holdout_rows]
+    holdout_labels = [int(row["actual_label"]) for row in holdout_rows]
+
+    random_seed = int(ml_config.get("random_seed", 42))
+    selected_meta_model_type = str(
+        ml_config.get("meta_model_type", "logistic_regression")
+    )
+    model = _fit_meta_model(
+        selected_meta_model_type,
+        features,
+        labels,
+        random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
+    )
+    train_probabilities = model.predict_proba(features)
+    holdout_probabilities = model.predict_proba(holdout_features)
+    auxiliary_result = run_meta_auxiliary_ensemble(
+        train_rows,
+        holdout_rows,
+        output_dir,
+        walk_forward_folds=int(
+            ml_config.get("meta_auxiliary_walk_forward_folds", 3)
+        ),
+        embargo_rebalance_dates=int(
+            ml_config.get("meta_auxiliary_embargo_rebalance_dates", 1)
+        ),
+        purge_overlapping_labels=bool(
+            ml_config.get("meta_auxiliary_purge_overlapping_labels", True)
+        ),
+    )
+    horizon = _extended_horizon_rows(
+        train_rows=auxiliary_result.train_rows,
+        holdout_rows=auxiliary_result.holdout_rows,
+        holdout_probabilities=holdout_probabilities,
+        model_type=selected_meta_model_type,
+        config=ml_config,
+        random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
+    )
+    if horizon["enabled"] and horizon["available"]:
+        allocation_rows = horizon["evaluation_rows"]
+        allocation_probabilities = horizon["evaluation_probabilities"]
+        allocation_selection_rows = horizon["selection_rows"]
+        allocation_selection_probabilities = horizon["selection_probabilities"]
+        _write_csv(auxiliary_result.predictions_path, allocation_rows)
+        auxiliary_result.metrics["extended_meta_canonical_horizon"] = (
+            horizon["audit"]
+        )
+        auxiliary_result.metrics_json_path.write_text(
+            json.dumps(auxiliary_result.metrics, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        allocation_rows = auxiliary_result.holdout_rows
+        allocation_probabilities = holdout_probabilities
+        allocation_selection_rows = [
+            auxiliary_result.train_rows[index]
+            for index in auxiliary_result.selection_train_indexes
+        ]
+        allocation_selection_probabilities = [
+            train_probabilities[index]
+            for index in auxiliary_result.selection_train_indexes
+        ]
+    threshold = float(ml_config.get("decision_threshold", 0.5))
+    predictions = [int(probability >= threshold) for probability in holdout_probabilities]
+    label_type = ml_config.get("label_type", "should_reduce_exposure")
+    reduce_when, decision_rule = overlay_decision_rule(str(label_type))
+    reduced_exposure = float(ml_config.get("promotion_reduced_exposure", 0.7))
+    metrics_path = output_dir / "metrics.json"
+    metrics = classification_metrics(holdout_labels, predictions)
+    metrics_path.write_text(json.dumps({
+        "mode": "research",
+        "ensemble_name": ml_config.get("ensemble_name", "regime_transformer_meta_ensemble_v1"),
+        "model_type": _meta_ensemble_name(selected_meta_model_type),
+        "meta_model_type": selected_meta_model_type,
+        "label_type": label_type,
+        "feature_set": ml_config.get("feature_set", "expanded_rebalance_v1"),
+        "train_sample_count": len(train_rows),
+        "test_sample_count": len(holdout_rows),
+        "metrics": metrics,
+        "research_only": True,
+        "trading_impact": "none",
+        "production_validated": False,
+    }, indent=2), encoding="utf-8")
+
+    calibration_path = output_dir / "probability_calibration.json"
+    calibration = build_probability_calibration(holdout_labels, holdout_probabilities)
+    calibration_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
+
+    calibrated_probability_calibration_path = (
+        output_dir / "calibrated_probability_calibration.json"
+    )
+    calibration_comparison = compare_calibration_methods(
+        labels,
+        train_probabilities,
+        holdout_labels,
+        holdout_probabilities,
+        bin_count=int(ml_config.get("calibration_bin_count", 10)),
+    )
+    calibrated_probability_calibration_path.write_text(
+        json.dumps(calibration_comparison, indent=2),
+        encoding="utf-8",
+    )
+    leaderboard_calibration = _best_calibration_summary(calibration_comparison)
+
+    walk_forward_path = output_dir / "walk_forward_metrics.json"
+    walk_forward = _walk_forward_meta_evaluation(
+        meta_rows,
+        model_type=selected_meta_model_type,
+        fold_count=int(ml_config.get("walk_forward_folds", 3)),
+        threshold=threshold,
+        reduced_exposure=reduced_exposure,
+        reduce_when=reduce_when,
+        random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
+        calibration_bin_count=int(ml_config.get("calibration_bin_count", 10)),
+    )
+    walk_forward_path.write_text(
+        json.dumps(walk_forward, indent=2),
+        encoding="utf-8",
+    )
+
+    holdout_overlay_path = output_dir / "holdout_shadow_overlay.json"
+    overlay = _overlay_summary(
+        holdout_rows,
+        holdout_probabilities,
+        threshold,
+        reduced_exposure,
+        reduce_when=reduce_when,
+    )
+    holdout_overlay_path.write_text(json.dumps({
+        "mode": "meta_ensemble_holdout_shadow_research_only",
+        "decision_threshold": threshold,
+        "reduced_exposure": reduced_exposure,
+        "overlay_decision_rule": decision_rule,
+        "result": overlay,
+        "research_only": True,
+        "trading_impact": "none",
+    }, indent=2), encoding="utf-8")
+
+    threshold_sweep_path = output_dir / "threshold_sweep.json"
+    threshold_sweep = _threshold_sweep(
+        holdout_rows,
+        holdout_labels,
+        holdout_probabilities,
+        thresholds=ml_config.get("decision_thresholds", [0.5, 0.6, 0.7]),
+        reduced_exposures=ml_config.get("reduced_exposures", [0.7, 0.8, 0.9]),
+        reduce_when=reduce_when,
+    )
+    threshold_sweep_path.write_text(
+        json.dumps(threshold_sweep, indent=2),
+        encoding="utf-8",
+    )
+
+    meta_model_comparison_path = output_dir / "meta_model_comparison.json"
+    meta_model_comparison = _compare_meta_learners(
+        train_rows,
+        holdout_rows,
+        model_types=_meta_model_types(ml_config, selected_meta_model_type),
+        threshold=threshold,
+        reduced_exposure=reduced_exposure,
+        reduce_when=reduce_when,
+        random_seed=random_seed,
+        calibration_bin_count=int(ml_config.get("calibration_bin_count", 10)),
+        all_rows=meta_rows,
+        walk_forward_folds=int(ml_config.get("walk_forward_folds", 3)),
+        promotion_config=ml_config,
+    )
+    meta_model_comparison_path.write_text(
+        json.dumps(meta_model_comparison, indent=2),
+        encoding="utf-8",
+    )
+
+    promotion_gates_path = output_dir / "promotion_gates.json"
+    promotion_gates = _promotion_gate_report(
+        metrics=metrics,
+        calibration=leaderboard_calibration,
+        overlay=overlay,
+        walk_forward=walk_forward,
+        config=ml_config,
+    )
+    promotion_gates_path.write_text(
+        json.dumps(promotion_gates, indent=2),
+        encoding="utf-8",
+    )
+
+    overlay_comparison_path = output_dir / "overlay_model_comparison.json"
+    scenarios = []
+    for decision_threshold in ml_config.get("decision_thresholds", [0.5, 0.6, 0.7]):
+        for scenario_reduced_exposure in ml_config.get("reduced_exposures", [0.7, 0.8, 0.9]):
+            scenarios.append({
+                "decision_threshold": float(decision_threshold),
+                "reduced_exposure": float(scenario_reduced_exposure),
+                "summary": _overlay_summary(
+                    holdout_rows,
+                    holdout_probabilities,
+                    float(decision_threshold),
+                    float(scenario_reduced_exposure),
+                    reduce_when=reduce_when,
+                ),
+            })
+    overlay_comparison_path.write_text(json.dumps({
+        "mode": "meta_ensemble_overlay_model_comparison_research_only",
+        "overlay_decision_rule": decision_rule,
+        "models": [
+            {
+                "model_type": _meta_ensemble_name(selected_meta_model_type),
+                "scenarios": scenarios,
+            }
+        ],
+        "research_only": True,
+        "trading_impact": "none",
+    }, indent=2), encoding="utf-8")
+
+    leaderboard_path = output_dir / "leaderboard.json"
+    leaderboard_markdown_path = output_dir / "leaderboard.md"
+    write_leaderboard(
+        leaderboard_path,
+        leaderboard_markdown_path,
+        source_dirs,
+        metrics,
+        leaderboard_calibration,
+        overlay,
+        meta_model_name=_meta_ensemble_name(selected_meta_model_type),
+        meta_walk_forward=walk_forward.get("summary", {}),
+        promotion_gates=promotion_gates,
+        meta_selections=meta_model_comparison.get("selections", {}),
+    )
+    allocation_paths = write_allocation_v2_reports(
+        output_dir=output_dir,
+        rows=allocation_rows,
+        meta_probabilities=allocation_probabilities,
+        diagnostics={
+            "balanced_accuracy": metrics.get("balanced_accuracy"),
+            "brier_score": leaderboard_calibration.get("brier_score"),
+            "expected_calibration_error": leaderboard_calibration.get(
+                "expected_calibration_error"
+            ),
+        },
+        config=ml_config,
+        selection_rows=allocation_selection_rows,
+        selection_meta_probabilities=allocation_selection_probabilities,
+    )
+    trading_leaderboard_paths = write_trading_research_leaderboard(
+        output_dir=output_dir,
+        classification_leaderboard_path=leaderboard_path,
+        allocation_comparison_path=allocation_paths.comparison_json,
+        optimizer_results_path=allocation_paths.optimizer_results_json,
+        auxiliary_metrics_path=auxiliary_result.metrics_json_path,
+    )
+    return MetaEnsembleResult(
+        output_dir=output_dir,
+        meta_dataset_path=dataset_path,
+        audit_path=audit_path,
+        metrics_path=metrics_path,
+        walk_forward_metrics_path=walk_forward_path,
+        probability_calibration_path=calibration_path,
+        calibrated_probability_calibration_path=calibrated_probability_calibration_path,
+        holdout_shadow_overlay_path=holdout_overlay_path,
+        threshold_sweep_path=threshold_sweep_path,
+        meta_model_comparison_path=meta_model_comparison_path,
+        promotion_gates_path=promotion_gates_path,
+        overlay_model_comparison_path=overlay_comparison_path,
+        leaderboard_path=leaderboard_path,
+        leaderboard_markdown_path=leaderboard_markdown_path,
+        allocation_policy_comparison_json_path=allocation_paths.comparison_json,
+        allocation_policy_comparison_csv_path=allocation_paths.comparison_csv,
+        allocation_policy_leaderboard_path=allocation_paths.leaderboard_markdown,
+        allocation_shadow_overlay_path=allocation_paths.shadow_overlay_json,
+        allocation_policy_diagnostics_json_path=allocation_paths.diagnostics_json,
+        allocation_policy_diagnostics_markdown_path=(
+            allocation_paths.diagnostics_markdown
+        ),
+        allocation_policy_grid_search_csv_path=allocation_paths.grid_search_csv,
+        allocation_policy_grid_search_json_path=allocation_paths.grid_search_json,
+        allocation_policy_grid_search_markdown_path=(
+            allocation_paths.grid_search_markdown
+        ),
+        meta_auxiliary_predictions_path=auxiliary_result.predictions_path,
+        meta_auxiliary_metrics_json_path=auxiliary_result.metrics_json_path,
+        meta_auxiliary_metrics_markdown_path=auxiliary_result.metrics_markdown_path,
+        allocation_optimizer_candidates_path=allocation_paths.optimizer_candidates_csv,
+        allocation_optimizer_results_path=allocation_paths.optimizer_results_json,
+        allocation_optimizer_report_path=allocation_paths.optimizer_report_markdown,
+        selected_optimizer_exposure_path_csv=(
+            allocation_paths.selected_optimizer_exposure_path_csv
+        ),
+        selected_optimizer_exposure_path_json=(
+            allocation_paths.selected_optimizer_exposure_path_json
+        ),
+        trading_research_leaderboard_csv_path=(
+            trading_leaderboard_paths.csv_path
+        ),
+        trading_research_leaderboard_json_path=(
+            trading_leaderboard_paths.json_path
+        ),
+        trading_research_leaderboard_markdown_path=(
+            trading_leaderboard_paths.markdown_path
+        ),
+    )
+
+
+def _fit_meta_model(
+    model_type: str,
+    features: list[dict[str, float]],
+    labels: list[int],
+    random_seed: int,
+    sklearn_n_jobs: int = 1,
+) -> MetaLearnerModel:
+    normalized = _normalize_meta_model_type(model_type)
+    feature_names = sorted(features[0]) if features else []
+    if not features:
+        return MetaLearnerModel(normalized, feature_names, constant_probability=0.5)
+    if len(set(labels)) < 2:
+        probability = sum(labels) / len(labels) if labels else 0.5
+        return MetaLearnerModel(
+            normalized,
+            feature_names,
+            constant_probability=float(probability),
+        )
+
+    matrix = _feature_matrix(features, feature_names)
+    if normalized in {"logistic_regression", "ridge_logistic"}:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        estimator = make_pipeline(
+            StandardScaler(),
+            LogisticRegression(
+                C=100.0 if normalized == "logistic_regression" else 1.0,
+                max_iter=5_000,
+                solver="lbfgs",
+                class_weight="balanced",
+                random_state=random_seed,
+            ),
+        )
+    elif normalized == "random_forest":
+        from sklearn.ensemble import RandomForestClassifier
+
+        estimator = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=4,
+            min_samples_leaf=12,
+            class_weight="balanced",
+            random_state=random_seed,
+            n_jobs=sklearn_n_jobs,
+        )
+    elif normalized == "gradient_boosting":
+        from sklearn.ensemble import GradientBoostingClassifier
+
+        estimator = GradientBoostingClassifier(
+            n_estimators=100,
+            learning_rate=0.05,
+            max_depth=2,
+            min_samples_leaf=12,
+            random_state=random_seed,
+        )
+    elif normalized == "lightgbm":
+        _ensure_lightgbm_runtime_available()
+        try:
+            from lightgbm import LGBMClassifier
+        except ImportError as exc:
+            raise RuntimeError("LightGBM meta learner requested but lightgbm is not installed") from exc
+        estimator = LGBMClassifier(
+            n_estimators=200,
+            learning_rate=0.03,
+            max_depth=3,
+            min_child_samples=12,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=random_seed,
+            verbose=-1,
+            n_jobs=sklearn_n_jobs,
+        )
+    else:
+        raise RuntimeError(f"Unsupported ml.meta_model_type '{model_type}'")
+
+    estimator.fit(matrix, labels)
+    return MetaLearnerModel(normalized, feature_names, estimator=estimator)
+
+
+def _ensure_lightgbm_runtime_available() -> None:
+    if platform.system() != "Darwin":
+        return
+    if ctypes.util.find_library("omp") or ctypes.util.find_library("libomp"):
+        return
+    raise RuntimeError(
+        "LightGBM meta learner requested but macOS libomp is not available. "
+        "Install it with 'brew install libomp' or remove lightgbm from "
+        "ml.meta_model_types."
+    )
+
+
+def _feature_matrix(
+    features: list[dict[str, float]],
+    feature_names: list[str],
+) -> list[list[float]]:
+    return [[float(row.get(name, 0.0)) for name in feature_names] for row in features]
+
+
+def _normalize_meta_model_type(model_type: str) -> str:
+    normalized = str(model_type).strip().lower()
+    aliases = {
+        "logistic": "logistic_regression",
+        "meta_ensemble_logistic": "logistic_regression",
+        "ridge": "ridge_logistic",
+        "gbm": "gradient_boosting",
+        "light_gradient_boosting": "lightgbm",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _meta_ensemble_name(model_type: str) -> str:
+    normalized = _normalize_meta_model_type(model_type)
+    if normalized == "logistic_regression":
+        return "meta_ensemble_logistic"
+    return f"meta_ensemble_{normalized}"
+
+
+def _meta_model_types(
+    ml_config: dict[str, Any],
+    selected_meta_model_type: str,
+) -> list[str]:
+    configured = ml_config.get(
+        "meta_model_types",
+        [
+            "logistic_regression",
+            "ridge_logistic",
+            "random_forest",
+            "gradient_boosting",
+            "lightgbm",
+        ],
+    )
+    model_types = [_normalize_meta_model_type(value) for value in configured]
+    selected = _normalize_meta_model_type(selected_meta_model_type)
+    if selected not in model_types:
+        model_types.insert(0, selected)
+    return list(dict.fromkeys(model_types))
+
+
+def _compare_meta_learners(
+    train_rows: list[dict[str, str]],
+    holdout_rows: list[dict[str, str]],
+    model_types: list[str],
+    threshold: float,
+    reduced_exposure: float,
+    reduce_when: str,
+    random_seed: int,
+    calibration_bin_count: int,
+    sklearn_n_jobs: int = 1,
+    all_rows: list[dict[str, str]] | None = None,
+    walk_forward_folds: int = 3,
+    promotion_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    train_features = [_feature_values(row) for row in train_rows]
+    train_labels = [int(row["actual_label"]) for row in train_rows]
+    holdout_features = [_feature_values(row) for row in holdout_rows]
+    holdout_labels = [int(row["actual_label"]) for row in holdout_rows]
+    models = []
+    for model_type in model_types:
+        normalized = _normalize_meta_model_type(model_type)
+        try:
+            model = _fit_meta_model(
+                normalized,
+                train_features,
+                train_labels,
+                random_seed=random_seed,
+                sklearn_n_jobs=sklearn_n_jobs,
+            )
+            train_probabilities = model.predict_proba(train_features)
+            probabilities = model.predict_proba(holdout_features)
+            predictions = [int(value >= threshold) for value in probabilities]
+            calibration_comparison = compare_calibration_methods(
+                train_labels,
+                train_probabilities,
+                holdout_labels,
+                probabilities,
+                bin_count=calibration_bin_count,
+            )
+            calibration = _best_calibration_summary(calibration_comparison)
+            overlay = _overlay_summary(
+                holdout_rows,
+                probabilities,
+                threshold,
+                reduced_exposure,
+                reduce_when=reduce_when,
+            )
+            walk_forward = _walk_forward_meta_evaluation(
+                all_rows or train_rows + holdout_rows,
+                model_type=normalized,
+                fold_count=walk_forward_folds,
+                threshold=threshold,
+                reduced_exposure=reduced_exposure,
+                reduce_when=reduce_when,
+                random_seed=random_seed,
+                calibration_bin_count=calibration_bin_count,
+                sklearn_n_jobs=sklearn_n_jobs,
+            )
+            promotion_gates = _promotion_gate_report(
+                metrics=classification_metrics(holdout_labels, predictions),
+                calibration=calibration,
+                overlay=overlay,
+                walk_forward=walk_forward,
+                config=promotion_config or {},
+            )
+            models.append({
+                "model_type": normalized,
+                "leaderboard_model": _meta_ensemble_name(normalized),
+                "available": True,
+                "metrics": classification_metrics(holdout_labels, predictions),
+                "calibration": calibration,
+                "best_calibration_method": calibration.get("method"),
+                "overlay": overlay,
+                "walk_forward_summary": walk_forward.get("summary", {}),
+                "promotion_gates": promotion_gates,
+                "promotion_gate_score": _promotion_gate_score(
+                    metrics=classification_metrics(holdout_labels, predictions),
+                    calibration=calibration,
+                    overlay=overlay,
+                    walk_forward=walk_forward.get("summary", {}),
+                    promotion_gates=promotion_gates,
+                ),
+            })
+        except Exception as exc:
+            if normalized == "lightgbm":
+                models.append({
+                    "model_type": normalized,
+                    "leaderboard_model": _meta_ensemble_name(normalized),
+                    "available": False,
+                    "reason": str(exc),
+                })
+                continue
+            raise
+    available_models = [row for row in models if row.get("available")]
+    classifier_ranking = sorted(
+        available_models,
+        key=lambda row: _classifier_rank_key(row),
+    )
+    calibration_ranking = sorted(
+        available_models,
+        key=lambda row: _calibration_rank_key(row),
+    )
+    overlay_ranking = sorted(
+        available_models,
+        key=lambda row: _overlay_rank_key(row),
+    )
+    selections = _meta_selection_summary(
+        classifier_ranking,
+        calibration_ranking,
+        overlay_ranking,
+    )
+    return {
+        "mode": "meta_learner_comparison_research_only",
+        "models": models,
+        "ranked_model_types": [row["model_type"] for row in classifier_ranking],
+        "classifier_ranking": _selection_ranking_rows(classifier_ranking),
+        "calibration_ranking": _selection_ranking_rows(calibration_ranking),
+        "promotion_gate_ranking": _selection_ranking_rows(overlay_ranking),
+        "selections": selections,
+        "research_only": True,
+        "trading_impact": "none",
+    }
+
+
+def _classifier_rank_key(row: dict[str, Any]) -> tuple[float, float, float]:
+    return (
+        -float(row.get("metrics", {}).get("balanced_accuracy") or 0.0),
+        float(row.get("calibration", {}).get("brier_score") or float("inf")),
+        -float(row.get("overlay", {}).get("return_delta") or 0.0),
+    )
+
+
+def _calibration_rank_key(row: dict[str, Any]) -> tuple[float, float, float]:
+    return (
+        float(row.get("calibration", {}).get("brier_score") or float("inf")),
+        float(row.get("calibration", {}).get("expected_calibration_error") or float("inf")),
+        -float(row.get("metrics", {}).get("balanced_accuracy") or 0.0),
+    )
+
+
+def _overlay_rank_key(row: dict[str, Any]) -> tuple[float, float, float]:
+    return (
+        -float(row.get("promotion_gate_score") or 0.0),
+        -float(row.get("walk_forward_summary", {}).get("balanced_accuracy") or 0.0),
+        float(row.get("calibration", {}).get("brier_score") or float("inf")),
+    )
+
+
+def _meta_selection_summary(
+    classifier_ranking: list[dict[str, Any]],
+    calibration_ranking: list[dict[str, Any]],
+    overlay_ranking: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selections = {}
+    if classifier_ranking:
+        selections["selected_classifier"] = _selection_payload(
+            classifier_ranking[0],
+            role="selected_classifier",
+            reason=(
+                "highest holdout balanced accuracy; not automatically selected "
+                "as trading overlay"
+            ),
+        )
+    if calibration_ranking:
+        selections["selected_calibrated"] = _selection_payload(
+            calibration_ranking[0],
+            role="selected_calibrated",
+            reason="lowest Brier score with ECE as tie-breaker",
+        )
+    if overlay_ranking:
+        selections["selected_overlay"] = _selection_payload(
+            overlay_ranking[0],
+            role="selected_overlay",
+            reason=(
+                "highest promotion-gate utility balancing walk-forward accuracy, "
+                "Brier/ECE, overlay return delta, drawdown impact, turnover, "
+                "and reduced-exposure days"
+            ),
+        )
+    return selections
+
+
+def _selection_payload(
+    row: dict[str, Any],
+    role: str,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "selection_role": role,
+        "selected_model": row.get("leaderboard_model"),
+        "model_type": row.get("model_type"),
+        "selection_reason": reason,
+        "metrics": row.get("metrics", {}),
+        "calibration": row.get("calibration", {}),
+        "overlay": row.get("overlay", {}),
+        "walk_forward_summary": row.get("walk_forward_summary", {}),
+        "promotion_gates": row.get("promotion_gates", {}),
+        "promotion_gate_score": row.get("promotion_gate_score"),
+    }
+
+
+def _selection_ranking_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank": index + 1,
+            "model_type": row.get("model_type"),
+            "leaderboard_model": row.get("leaderboard_model"),
+            "holdout_balanced_accuracy": row.get("metrics", {}).get(
+                "balanced_accuracy"
+            ),
+            "walk_forward_balanced_accuracy": row.get(
+                "walk_forward_summary", {}
+            ).get("balanced_accuracy"),
+            "brier_score": row.get("calibration", {}).get("brier_score"),
+            "expected_calibration_error": row.get("calibration", {}).get(
+                "expected_calibration_error"
+            ),
+            "overlay_return_delta": row.get("overlay", {}).get("return_delta"),
+            "max_drawdown_delta": row.get("overlay", {}).get("max_drawdown_delta"),
+            "turnover": row.get("overlay", {}).get("overlay_turnover"),
+            "reduced_exposure_days": row.get("overlay", {}).get(
+                "reduced_exposure_days"
+            ),
+            "promotion_gate_score": row.get("promotion_gate_score"),
+            "promotion_candidate": row.get("promotion_gates", {}).get(
+                "promotion_candidate"
+            ),
+        }
+        for index, row in enumerate(rows)
+    ]
+
+
+def _extended_horizon_rows(
+    *,
+    train_rows: list[dict[str, str]],
+    holdout_rows: list[dict[str, str]],
+    holdout_probabilities: list[float],
+    model_type: str,
+    config: dict[str, Any],
+    random_seed: int,
+    sklearn_n_jobs: int,
+) -> dict[str, Any]:
+    horizon_config = config.get("meta_canonical_horizon", {}) or {}
+    enabled = bool(horizon_config.get("expand_from_source_predictions", False))
+    if not enabled:
+        return {"enabled": False, "available": False}
+    min_selection_dates = int(
+        horizon_config.get("minimum_selection_rebalance_dates", 26)
+    )
+    fold_count = int(
+        horizon_config.get(
+            "walk_forward_folds",
+            config.get("meta_auxiliary_walk_forward_folds", 3),
+        )
+    )
+    embargo = int(
+        horizon_config.get(
+            "embargo_rebalance_dates",
+            config.get("meta_auxiliary_embargo_rebalance_dates", 1),
+        )
+    )
+    purge_overlaps = bool(
+        horizon_config.get(
+            "purge_overlapping_labels",
+            config.get("meta_auxiliary_purge_overlapping_labels", True),
+        )
+    )
+    train_probabilities, audits = _chronological_meta_probabilities(
+        train_rows,
+        model_type=model_type,
+        fold_count=fold_count,
+        embargo_rebalance_dates=embargo,
+        purge_overlapping_labels=purge_overlaps,
+        random_seed=random_seed,
+        sklearn_n_jobs=sklearn_n_jobs,
+    )
+    eligible_indexes = [
+        index
+        for index, probability in enumerate(train_probabilities)
+        if probability is not None and _has_allocation_forecasts(train_rows[index])
+    ]
+    eligible_dates = sorted(
+        {
+            train_rows[index].get("rebalance_date", "")
+            for index in eligible_indexes
+            if train_rows[index].get("rebalance_date")
+        }
+    )
+    if len(eligible_dates) <= min_selection_dates:
+        return {
+            "enabled": True,
+            "available": False,
+            "audit": {
+                "available": False,
+                "reason": "insufficient_cross_fitted_source_prediction_dates",
+                "eligible_rebalance_date_count": len(eligible_dates),
+                "minimum_selection_rebalance_dates": min_selection_dates,
+                "source": "existing_prediction_artifacts_only",
+            },
+        }
+    evaluation_start = eligible_dates[min_selection_dates]
+    selection_rows = [
+        train_rows[index]
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") < evaluation_start
+    ]
+    selection_probabilities = [
+        float(train_probabilities[index])
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") < evaluation_start
+    ]
+    out_of_fold_evaluation_rows = [
+        {
+            **train_rows[index],
+            "split": "extended_out_of_fold_evaluation",
+            "meta_prediction_source": "chronological_cross_fitted_meta_model",
+        }
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") >= evaluation_start
+    ]
+    out_of_fold_evaluation_probabilities = [
+        float(train_probabilities[index])
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") >= evaluation_start
+    ]
+    frozen_holdout_rows = [
+        {
+            **row,
+            "split": "holdout",
+            "meta_prediction_source": "frozen_meta_model_holdout",
+        }
+        for row in holdout_rows
+    ]
+    evaluation_rows = out_of_fold_evaluation_rows + frozen_holdout_rows
+    evaluation_probabilities = (
+        out_of_fold_evaluation_probabilities + list(holdout_probabilities)
+    )
+    return {
+        "enabled": True,
+        "available": bool(evaluation_rows and selection_rows),
+        "selection_rows": selection_rows,
+        "selection_probabilities": selection_probabilities,
+        "evaluation_rows": evaluation_rows,
+        "evaluation_probabilities": evaluation_probabilities,
+        "audit": {
+            "available": bool(evaluation_rows and selection_rows),
+            "source": "existing_prediction_artifacts_only",
+            "mode": "chronological_cross_fitted_out_of_fold_plus_frozen_holdout",
+            "old_holdout_start_date": _minimum_row_date(holdout_rows),
+            "old_holdout_end_date": _maximum_row_date(holdout_rows),
+            "new_evaluation_start_date": _minimum_row_date(evaluation_rows),
+            "new_evaluation_end_date": _maximum_row_date(evaluation_rows),
+            "selection_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in selection_rows
+                if row.get("rebalance_date")
+            }),
+            "extended_out_of_fold_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in out_of_fold_evaluation_rows
+                if row.get("rebalance_date")
+            }),
+            "holdout_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in holdout_rows
+                if row.get("rebalance_date")
+            }),
+            "evaluation_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in evaluation_rows
+                if row.get("rebalance_date")
+            }),
+            "minimum_selection_rebalance_dates": min_selection_dates,
+            "embargo_rebalance_dates": embargo,
+            "purge_overlapping_labels": purge_overlaps,
+            "walk_forward_folds": fold_count,
+            "fold_audits": audits,
+            "in_sample_meta_predictions": False,
+            "base_models_rerun": False,
+        },
+    }
+
+
+def _chronological_meta_probabilities(
+    rows: list[dict[str, str]],
+    *,
+    model_type: str,
+    fold_count: int,
+    embargo_rebalance_dates: int,
+    purge_overlapping_labels: bool,
+    random_seed: int,
+    sklearn_n_jobs: int,
+) -> tuple[list[float | None], list[dict[str, Any]]]:
+    probabilities: list[float | None] = [None] * len(rows)
+    unique_dates = sorted({
+        row.get("rebalance_date", "")
+        for row in rows
+        if row.get("rebalance_date")
+    })
+    if len(unique_dates) < 2:
+        return probabilities, []
+    date_positions = {date: index for index, date in enumerate(unique_dates)}
+    effective_fold_count = min(max(1, int(fold_count)), len(unique_dates) - 1)
+    candidate_test_dates = unique_dates[1:]
+    chunk_size = max(1, math.ceil(len(candidate_test_dates) / effective_fold_count))
+    audits: list[dict[str, Any]] = []
+    for fold_index in range(effective_fold_count):
+        test_dates = candidate_test_dates[
+            fold_index * chunk_size : (fold_index + 1) * chunk_size
+        ]
+        if not test_dates:
+            continue
+        first_test_date = test_dates[0]
+        first_position = date_positions[first_test_date]
+        embargo_start = max(0, first_position - embargo_rebalance_dates)
+        embargoed_dates = set(unique_dates[embargo_start:first_position])
+        train_dates = [
+            date
+            for date in unique_dates
+            if date < first_test_date and date not in embargoed_dates
+        ]
+        train_fold_rows = [
+            row
+            for row in rows
+            if row.get("rebalance_date") in train_dates
+            and (
+                not purge_overlapping_labels
+                or not _label_overlaps_validation(row, first_test_date)
+            )
+        ]
+        test_indexes = [
+            index
+            for index, row in enumerate(rows)
+            if row.get("rebalance_date") in set(test_dates)
+        ]
+        test_rows = [rows[index] for index in test_indexes]
+        audit = {
+            "fold": fold_index + 1,
+            "validation_start": first_test_date,
+            "validation_end": test_dates[-1],
+            "train_sample_count": len(train_fold_rows),
+            "test_sample_count": len(test_rows),
+            "embargoed_rebalance_date_count": len(embargoed_dates),
+            "purged_label_overlap_count": len([
+                row
+                for row in rows
+                if row.get("rebalance_date") in train_dates
+                and _label_overlaps_validation(row, first_test_date)
+            ])
+            if purge_overlapping_labels
+            else 0,
+            "prediction_generated": False,
+        }
+        if not train_fold_rows or not test_rows:
+            audits.append(audit)
+            continue
+        model = _fit_meta_model(
+            model_type,
+            [_feature_values(row) for row in train_fold_rows],
+            [int(row["actual_label"]) for row in train_fold_rows],
+            random_seed=random_seed + fold_index,
+            sklearn_n_jobs=sklearn_n_jobs,
+        )
+        predicted = model.predict_proba([_feature_values(row) for row in test_rows])
+        for index, probability in zip(test_indexes, predicted):
+            probabilities[index] = float(probability)
+        audit["prediction_generated"] = True
+        audit["max_training_rebalance_date"] = max(
+            row.get("rebalance_date", "") for row in train_fold_rows
+        )
+        audits.append(audit)
+    return probabilities, audits
+
+
+def _label_overlaps_validation(row: dict[str, str], validation_start: str) -> bool:
+    label_end = row.get("label_end_date") or row.get("outcome_end_date") or ""
+    return bool(label_end and label_end >= validation_start)
+
+
+def _has_allocation_forecasts(row: dict[str, str]) -> bool:
+    return all(
+        _row_has_forecast(row, requirement)
+        for requirement in (
+            "predicted_forward_return_10d",
+            "predicted_future_drawdown",
+            "predicted_future_volatility",
+        )
+    )
+
+
+def _row_has_forecast(row: dict[str, str], suffix: str) -> bool:
+    meta_name = f"meta_{suffix}"
+    if row.get(meta_name) not in (None, ""):
+        return True
+    return any(
+        value not in (None, "")
+        and (name == suffix or name.endswith(f"_{suffix}"))
+        for name, value in row.items()
+    )
+
+
+def _minimum_row_date(rows: list[dict[str, str]]) -> str | None:
+    dates = sorted(row.get("rebalance_date", "") for row in rows if row.get("rebalance_date"))
+    return dates[0] if dates else None
+
+
+def _maximum_row_date(rows: list[dict[str, str]]) -> str | None:
+    dates = sorted(row.get("rebalance_date", "") for row in rows if row.get("rebalance_date"))
+    return dates[-1] if dates else None
+
+
+def _promotion_gate_score(
+    metrics: dict[str, Any],
+    calibration: dict[str, Any],
+    overlay: dict[str, Any],
+    walk_forward: dict[str, Any],
+    promotion_gates: dict[str, Any],
+) -> float:
+    gate_checks = promotion_gates.get("checks", {})
+    passed_gate_count = sum(
+        1 for check in gate_checks.values()
+        if isinstance(check, dict) and check.get("passed")
+    )
+    finite_bonus = 0.25 if gate_checks.get("finite_sanity_check", {}).get("passed") else -1.0
+    return (
+        2.0 * float(walk_forward.get("balanced_accuracy") or 0.0)
+        + 0.5 * float(metrics.get("balanced_accuracy") or 0.0)
+        - 1.5 * float(calibration.get("brier_score") or 1.0)
+        - 1.0 * float(calibration.get("expected_calibration_error") or 1.0)
+        + 2.0 * float(overlay.get("return_delta") or 0.0)
+        + 1.0 * float(overlay.get("max_drawdown_delta") or 0.0)
+        - 0.01 * float(overlay.get("overlay_turnover") or 0.0)
+        - 0.001 * float(overlay.get("reduced_exposure_days") or 0.0)
+        + 0.05 * passed_gate_count
+        + finite_bonus
+    )
+
+
+def _walk_forward_meta_evaluation(
+    rows: list[dict[str, str]],
+    model_type: str,
+    fold_count: int,
+    threshold: float,
+    reduced_exposure: float,
+    reduce_when: str,
+    random_seed: int,
+    calibration_bin_count: int,
+    sklearn_n_jobs: int = 1,
+) -> dict[str, Any]:
+    unique_dates = sorted({row["rebalance_date"] for row in rows if row.get("rebalance_date")})
+    if len(unique_dates) < 2:
+        return {
+            "validation": "chronological_meta_walk_forward_grouped_by_rebalance_date",
+            "fold_count": 0,
+            "folds": [],
+            "summary": {},
+            "research_only": True,
+            "trading_impact": "none",
+        }
+    effective_fold_count = min(max(1, int(fold_count)), len(unique_dates) - 1)
+    candidate_test_dates = unique_dates[1:]
+    chunk_size = max(1, math.ceil(len(candidate_test_dates) / effective_fold_count))
+    folds = []
+    for fold_index in range(effective_fold_count):
+        test_dates = candidate_test_dates[
+            fold_index * chunk_size : (fold_index + 1) * chunk_size
+        ]
+        if not test_dates:
+            continue
+        first_test_date = test_dates[0]
+        train_dates = [date for date in unique_dates if date < first_test_date]
+        train_rows = [row for row in rows if row.get("rebalance_date") in train_dates]
+        test_rows = [row for row in rows if row.get("rebalance_date") in set(test_dates)]
+        if not train_rows or not test_rows:
+            continue
+        train_features = [_feature_values(row) for row in train_rows]
+        train_labels = [int(row["actual_label"]) for row in train_rows]
+        test_features = [_feature_values(row) for row in test_rows]
+        test_labels = [int(row["actual_label"]) for row in test_rows]
+        model = _fit_meta_model(
+            model_type,
+            train_features,
+            train_labels,
+            random_seed=random_seed + fold_index,
+            sklearn_n_jobs=sklearn_n_jobs,
+        )
+        probabilities = model.predict_proba(test_features)
+        predictions = [int(value >= threshold) for value in probabilities]
+        calibration = build_probability_calibration(
+            test_labels,
+            probabilities,
+            bin_count=calibration_bin_count,
+        )
+        overlay = _overlay_summary(
+            _with_split(test_rows, "test"),
+            probabilities,
+            threshold,
+            reduced_exposure,
+            reduce_when=reduce_when,
+        )
+        folds.append({
+            "fold": fold_index + 1,
+            "train_start_date": min(train_dates),
+            "train_end_date": max(train_dates),
+            "test_start_date": min(test_dates),
+            "test_end_date": max(test_dates),
+            "train_sample_count": len(train_rows),
+            "test_sample_count": len(test_rows),
+            "metrics": classification_metrics(test_labels, predictions),
+            "calibration": calibration,
+            "overlay": overlay,
+        })
+    summary = _walk_forward_summary(folds)
+    return {
+        "validation": "chronological_meta_walk_forward_grouped_by_rebalance_date",
+        "model_type": _normalize_meta_model_type(model_type),
+        "fold_count": len(folds),
+        "folds": folds,
+        "summary": summary,
+        "research_only": True,
+        "trading_impact": "none",
+    }
+
+
+def _walk_forward_summary(folds: list[dict[str, Any]]) -> dict[str, Any]:
+    def average(path: tuple[str, ...]) -> float | None:
+        values = []
+        for fold in folds:
+            value: Any = fold
+            for key in path:
+                value = value.get(key, {}) if isinstance(value, dict) else None
+            if value is not None:
+                values.append(float(value))
+        return sum(values) / len(values) if values else None
+
+    return {
+        "fold_count": len(folds),
+        "balanced_accuracy": average(("metrics", "balanced_accuracy")),
+        "accuracy": average(("metrics", "accuracy")),
+        "brier_score": average(("calibration", "brier_score")),
+        "expected_calibration_error": average(
+            ("calibration", "expected_calibration_error")
+        ),
+        "overlay_return_delta": average(("overlay", "return_delta")),
+        "overlay_max_drawdown_improvement": average(("overlay", "max_drawdown_delta")),
+        "overlay_turnover": average(("overlay", "overlay_turnover")),
+        "reduced_exposure_days": average(("overlay", "reduced_exposure_days")),
+    }
+
+
+def _threshold_sweep(
+    rows: list[dict[str, str]],
+    labels: list[int],
+    probabilities: list[float],
+    thresholds: list[float],
+    reduced_exposures: list[float],
+    reduce_when: str,
+) -> dict[str, Any]:
+    scenarios = []
+    for threshold in thresholds:
+        for reduced_exposure in reduced_exposures:
+            threshold_value = float(threshold)
+            predictions = [int(value >= threshold_value) for value in probabilities]
+            overlay = _overlay_summary(
+                rows,
+                probabilities,
+                threshold_value,
+                float(reduced_exposure),
+                reduce_when=reduce_when,
+            )
+            scenarios.append({
+                "decision_threshold": threshold_value,
+                "reduced_exposure": float(reduced_exposure),
+                "metrics": classification_metrics(labels, predictions),
+                "overlay": overlay,
+                "finite_sanity_check": _finite_sanity_check(overlay),
+            })
+    ranked = sorted(
+        scenarios,
+        key=lambda row: (
+            -float(row["metrics"].get("balanced_accuracy") or 0.0),
+            -float(row["overlay"].get("return_delta") or 0.0),
+        ),
+    )
+    return {
+        "mode": "meta_ensemble_threshold_sweep_research_only",
+        "scenarios": scenarios,
+        "best": ranked[0] if ranked else None,
+        "research_only": True,
+        "trading_impact": "none",
+    }
+
+
+def _promotion_gate_report(
+    metrics: dict[str, Any],
+    calibration: dict[str, Any],
+    overlay: dict[str, Any],
+    walk_forward: dict[str, Any],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    summary = walk_forward.get("summary", {})
+    thresholds = {
+        "min_walk_forward_balanced_accuracy": float(
+            config.get("promotion_min_walk_forward_balanced_accuracy", 0.50)
+        ),
+        "max_brier_score": float(config.get("promotion_max_brier_score", 0.25)),
+        "max_expected_calibration_error": float(
+            config.get("promotion_max_expected_calibration_error", 0.10)
+        ),
+        "min_overlay_return_delta": float(
+            config.get("promotion_min_overlay_return_delta", 0.0)
+        ),
+        "min_overlay_sample_count": int(
+            config.get("promotion_min_overlay_sample_count", 50)
+        ),
+        "min_max_drawdown_delta": float(
+            config.get("promotion_min_max_drawdown_delta", 0.0)
+        ),
+    }
+    checks = {
+        "finite_sanity_check": _finite_sanity_check(overlay),
+        "walk_forward_balanced_accuracy": _passes_minimum(
+            summary.get("balanced_accuracy"),
+            thresholds["min_walk_forward_balanced_accuracy"],
+        ),
+        "brier_score": _passes_maximum(
+            calibration.get("brier_score"),
+            thresholds["max_brier_score"],
+        ),
+        "expected_calibration_error": _passes_maximum(
+            calibration.get("expected_calibration_error"),
+            thresholds["max_expected_calibration_error"],
+        ),
+        "overlay_return_delta": _passes_minimum(
+            overlay.get("return_delta"),
+            thresholds["min_overlay_return_delta"],
+        ),
+        "overlay_sample_count": _passes_minimum(
+            overlay.get("overlay_sample_count"),
+            thresholds["min_overlay_sample_count"],
+        ),
+        "max_drawdown_delta": _passes_minimum(
+            overlay.get("max_drawdown_delta"),
+            thresholds["min_max_drawdown_delta"],
+        ),
+    }
+    passed = all(item.get("passed") for item in checks.values())
+    return {
+        "promotion_candidate": passed,
+        "checks": checks,
+        "thresholds": thresholds,
+        "observed": {
+            "holdout_balanced_accuracy": metrics.get("balanced_accuracy"),
+            "walk_forward_balanced_accuracy": summary.get("balanced_accuracy"),
+            "brier_score": calibration.get("brier_score"),
+            "expected_calibration_error": calibration.get(
+                "expected_calibration_error"
+            ),
+            "overlay_return_delta": overlay.get("return_delta"),
+            "overlay_max_drawdown_improvement": overlay.get("max_drawdown_delta"),
+            "turnover": overlay.get("overlay_turnover"),
+            "reduced_exposure_days": overlay.get("reduced_exposure_days"),
+        },
+        "research_only": True,
+        "trading_impact": "none",
+        "production_validated": False,
+    }
+
+
+def _passes_minimum(value: Any, minimum: float) -> dict[str, Any]:
+    numeric = _finite_or_none(value)
+    return {
+        "value": numeric,
+        "minimum": minimum,
+        "passed": numeric is not None and numeric >= minimum,
+    }
+
+
+def _passes_maximum(value: Any, maximum: float) -> dict[str, Any]:
+    numeric = _finite_or_none(value)
+    return {
+        "value": numeric,
+        "maximum": maximum,
+        "passed": numeric is not None and numeric <= maximum,
+    }
+
+
+def _finite_sanity_check(payload: dict[str, Any]) -> dict[str, Any]:
+    checked_fields = [
+        "overlay_baseline_return",
+        "overlay_adjusted_return",
+        "return_delta",
+        "base_max_drawdown",
+        "overlay_max_drawdown",
+        "max_drawdown_delta",
+        "overlay_turnover",
+    ]
+    invalid = [
+        name for name in checked_fields
+        if payload.get(name) is not None and _finite_or_none(payload.get(name)) is None
+    ]
+    return {"passed": not invalid, "invalid_fields": invalid}
+
+
+def _finite_or_none(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _with_split(rows: list[dict[str, str]], split: str) -> list[dict[str, str]]:
+    return [{**row, "split": split} for row in rows]
+
+
+def _best_calibration_summary(calibration_comparison: dict[str, Any]) -> dict[str, Any]:
+    method = calibration_comparison.get("best_method_by_brier", "raw")
+    payload = calibration_comparison.get("methods", {}).get(method, {})
+    calibration = dict(payload.get("calibration", {}))
+    calibration["method"] = method
+    return calibration
+
+
+def _overlay_summary(
+    rows: list[dict[str, str]],
+    probabilities: list[float],
+    threshold: float,
+    reduced_exposure: float,
+    reduce_when: str = "above_or_equal_threshold",
+) -> dict[str, float | int]:
+    if len(rows) != len(probabilities):
+        raise ValueError("Overlay rows and probabilities must have the same length")
+    if not math.isfinite(float(threshold)):
+        raise ValueError("Overlay threshold must be finite")
+    if not math.isfinite(float(reduced_exposure)) or not 0 <= reduced_exposure <= 1:
+        raise ValueError("Reduced exposure must be a finite decimal between 0 and 1")
+
+    pairs = _holdout_overlay_pairs(rows, probabilities)
+    if not pairs:
+        return {
+            "overlay_start_date": None,
+            "overlay_end_date": None,
+            "overlay_sample_count": 0,
+            "overlay_evaluated_dates": 0,
+            "base_total_return": 0.0,
+            "overlay_total_return": 0.0,
+            "overlay_baseline_return": 0.0,
+            "overlay_adjusted_return": 0.0,
+            "return_delta": 0.0,
+            "base_compounded_return": 0.0,
+            "overlay_compounded_return": 0.0,
+            "base_max_drawdown": 0.0,
+            "overlay_max_drawdown": 0.0,
+            "max_drawdown_delta": 0.0,
+            "reduced_exposure_days": 0,
+            "overlay_turnover": 0.0,
+            "aggregation": "mean_by_rebalance_date_not_compounded",
+        }
+
+    by_date: dict[str, list[tuple[dict[str, str], float]]] = {}
+    for row, probability in pairs:
+        date = str(row.get("rebalance_date") or row.get("date") or "")
+        if not date:
+            raise ValueError("Overlay rows must include rebalance_date or date")
+        by_date.setdefault(date, []).append((row, probability))
+
+    date_baseline_returns = []
+    date_adjusted_returns = []
+    reduced_days = 0
+    overlay_turnover = 0.0
+    active_reduced = False
+    for date in sorted(by_date):
+        base_returns = []
+        adjusted_returns = []
+        date_reduced = False
+        for row, probability in by_date[date]:
+            _validate_probability(probability)
+            base_return = _period_return(row)
+            multiplier = (
+                reduced_exposure
+                if should_reduce_exposure(probability, threshold, reduce_when)
+                else 1.0
+            )
+            date_reduced = date_reduced or multiplier < 1.0
+            base_returns.append(base_return)
+            adjusted_returns.append(base_return * multiplier)
+        date_baseline_returns.append(mean(base_returns))
+        date_adjusted_returns.append(mean(adjusted_returns))
+        reduced_days += int(date_reduced)
+        if date_reduced != active_reduced:
+            overlay_turnover += abs((reduced_exposure if date_reduced else 1.0) - (reduced_exposure if active_reduced else 1.0))
+            active_reduced = date_reduced
+
+    baseline_return = mean(date_baseline_returns)
+    adjusted_return = mean(date_adjusted_returns)
+    _validate_finite("overlay_baseline_return", baseline_return)
+    _validate_finite("overlay_adjusted_return", adjusted_return)
+    return_delta = adjusted_return - baseline_return
+    _validate_finite("overlay_return_delta", return_delta)
+    base_curve = _equity_curve(date_baseline_returns)
+    overlay_curve = _equity_curve(date_adjusted_returns)
+    base_max_drawdown = _max_drawdown(base_curve)
+    overlay_max_drawdown = _max_drawdown(overlay_curve)
+    max_drawdown_delta = overlay_max_drawdown - base_max_drawdown
+    for name, value in (
+        ("base_compounded_return", base_curve[-1] - 1.0),
+        ("overlay_compounded_return", overlay_curve[-1] - 1.0),
+        ("base_max_drawdown", base_max_drawdown),
+        ("overlay_max_drawdown", overlay_max_drawdown),
+        ("max_drawdown_delta", max_drawdown_delta),
+    ):
+        _validate_finite(name, value)
+
+    return {
+        "overlay_start_date": min(by_date),
+        "overlay_end_date": max(by_date),
+        "overlay_sample_count": len(pairs),
+        "overlay_evaluated_dates": len(by_date),
+        "base_total_return": baseline_return,
+        "overlay_total_return": adjusted_return,
+        "overlay_baseline_return": baseline_return,
+        "overlay_adjusted_return": adjusted_return,
+        "return_delta": return_delta,
+        "base_compounded_return": base_curve[-1] - 1.0,
+        "overlay_compounded_return": overlay_curve[-1] - 1.0,
+        "base_max_drawdown": base_max_drawdown,
+        "overlay_max_drawdown": overlay_max_drawdown,
+        "max_drawdown_delta": max_drawdown_delta,
+        "reduced_exposure_days": reduced_days,
+        "overlay_turnover": float(overlay_turnover),
+        "aggregation": "mean_by_rebalance_date_not_compounded",
+    }
+
+
+def _equity_curve(returns: list[float]) -> list[float]:
+    equity = 1.0
+    values = [equity]
+    for value in returns:
+        _validate_finite("period return", value)
+        if value <= -1.0:
+            raise ValueError("period return would zero or invert equity")
+        equity *= 1.0 + value
+        _validate_finite("overlay equity", equity)
+        values.append(equity)
+    return values
+
+
+def _max_drawdown(values: list[float]) -> float:
+    peak = values[0] if values else 1.0
+    drawdown = 0.0
+    for value in values:
+        peak = max(peak, value)
+        if peak <= 0:
+            raise ValueError("baseline equity denominator must be positive")
+        drawdown = min(drawdown, (value / peak) - 1.0)
+    return drawdown
+
+
+def _holdout_overlay_pairs(
+    rows: list[dict[str, str]],
+    probabilities: list[float],
+) -> list[tuple[dict[str, str], float]]:
+    pairs = list(zip(rows, probabilities))
+    has_split = any(row.get("split") for row, _ in pairs)
+    if not has_split:
+        return pairs
+    return [
+        (row, probability)
+        for row, probability in pairs
+        if row.get("split") in {"holdout", "test"}
+    ]
+
+
+def _period_return(row: dict[str, str]) -> float:
+    value = float(row.get("champion_return_next_period", 0.0) or 0.0)
+    _validate_finite("champion_return_next_period", value)
+    if abs(value) > _MAX_ABS_PERIOD_RETURN:
+        raise ValueError(
+            "champion_return_next_period must be a decimal return, not a percent"
+        )
+    if value <= -1.0:
+        raise ValueError("champion_return_next_period would zero or invert equity")
+    return value
+
+
+def _validate_probability(probability: float) -> None:
+    value = float(probability)
+    _validate_finite("overlay probability", value)
+    if value < 0 or value > 1:
+        raise ValueError("Overlay probabilities must be between 0 and 1")
+
+
+def _validate_finite(name: str, value: float) -> None:
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{name} must be finite")
+

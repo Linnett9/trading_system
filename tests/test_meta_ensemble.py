@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
-from core.research.ml.meta_ensemble import (
+from core.research.ml.meta.meta_ensemble import (
     build_meta_dataset_rows,
     _compare_meta_learners,
     _chronological_meta_probabilities,
@@ -22,7 +22,7 @@ from core.research.ml.meta_ensemble import (
     _walk_forward_meta_evaluation,
     run_meta_ensemble,
 )
-from core.research.ml.meta_auxiliary import (
+from core.research.ml.meta.meta_auxiliary import (
     _chronological_cross_fitted_predictions,
     run_meta_auxiliary_ensemble,
 )
@@ -316,7 +316,7 @@ def test_extended_meta_probabilities_preserve_chronological_leakage_safety():
 
 
 def test_extended_meta_horizon_has_no_operational_imports():
-    source = Path("core/research/ml/meta_ensemble.py").read_text(encoding="utf-8")
+    source = Path("core/research/ml/meta/meta_ensemble.py").read_text(encoding="utf-8")
     assert "infrastructure.broker" not in source
     assert "paper_trading" not in source
     assert "paper_commands" not in source
