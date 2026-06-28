@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Callable
 
-from core.research.ml.stock_level_alpha_features import ENGINEERED_FEATURE_COLUMNS
+from core.research.ml.stock_level.stock_level_alpha_features import ENGINEERED_FEATURE_COLUMNS
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.logging import ResearchStageLogger
@@ -119,7 +119,7 @@ class SequenceModelFactory:
     torch_num_threads: int | None
 
     def __call__(self) -> Any:
-        from core.research.ml.stock_level_sequence_regressors import (
+        from core.research.ml.stock_level.stock_level_sequence_regressors import (
             SequenceRegressorConfig,
             TorchSequenceReturnRegressor,
         )

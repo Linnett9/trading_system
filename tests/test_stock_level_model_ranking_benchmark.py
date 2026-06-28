@@ -3,9 +3,9 @@ from __future__ import annotations
 import inspect
 from concurrent.futures import ThreadPoolExecutor
 
-from core.research.ml import stock_level_model_ranking_benchmark
-from core.research.ml import stock_level_sequence_regressors
-from core.research.ml.stock_level_model_ranking_benchmark import (
+from core.research.ml.stock_level import stock_level_model_ranking_benchmark
+from core.research.ml.stock_level import stock_level_sequence_regressors
+from core.research.ml.stock_level.stock_level_model_ranking_benchmark import (
     MODEL_NAMES,
     PREDICTION_PREFIX,
     SEQUENCE_MODEL_NAMES,

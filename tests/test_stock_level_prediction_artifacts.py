@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from core.research.ml import stock_level_prediction_artifacts
-from core.research.ml.stock_level_prediction_artifacts import (
+from core.research.ml.stock_level import stock_level_prediction_artifacts
+from core.research.ml.stock_level.stock_level_prediction_artifacts import (
     build_stock_level_prediction_artifacts,
     write_stock_level_prediction_artifacts,
 )

@@ -13,7 +13,7 @@ from core.research.framework.logging import ResearchStageLogger
 from core.research.framework.ranking import CrossSectionalRankingEvaluator
 from core.research.framework.reporting import ResearchArtifactWriter
 
-from core.research.ml.stock_level_model_ranking_benchmark import (
+from core.research.ml.stock_level.stock_level_model_ranking_benchmark import (
     FEATURE_COLUMNS,
     PREDICTION_PREFIX,
     RESEARCH_METADATA,

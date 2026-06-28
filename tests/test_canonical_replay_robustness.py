@@ -11,7 +11,7 @@ from core.research.ml.data_anomaly_quarantine import (
 from core.research.ml.audits.profit_concentration_audit import (
     build_profit_concentration_audit,
 )
-from core.research.ml.trading_research_leaderboard import (
+from core.research.ml.stock_level.trading_research_leaderboard import (
     write_trading_research_leaderboard,
 )
 

@@ -4,8 +4,8 @@ import csv
 import inspect
 import json
 
-from core.research.ml import trading_research_leaderboard
-from core.research.ml.trading_research_leaderboard import (
+from core.research.ml.stock_level import trading_research_leaderboard
+from core.research.ml.stock_level.trading_research_leaderboard import (
     write_trading_research_leaderboard,
 )
 

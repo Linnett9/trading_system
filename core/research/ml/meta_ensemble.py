@@ -24,7 +24,7 @@ from core.research.ml.meta_auxiliary import (
     run_meta_auxiliary_ensemble,
 )
 from core.research.ml.overlay import overlay_decision_rule, should_reduce_exposure
-from core.research.ml.trading_research_leaderboard import (
+from core.research.ml.stock_level.trading_research_leaderboard import (
     write_trading_research_leaderboard,
 )
 

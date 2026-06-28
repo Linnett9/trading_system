@@ -6,8 +6,8 @@ from datetime import date, timedelta
 
 import pytest
 
-from core.research.ml import stock_level_alpha_features
-from core.research.ml.stock_level_alpha_features import (
+from core.research.ml.stock_level import stock_level_alpha_features
+from core.research.ml.stock_level.stock_level_alpha_features import (
     ENGINEERED_FEATURE_COLUMNS,
     build_stock_level_alpha_features,
 )
