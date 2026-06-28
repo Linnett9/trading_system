@@ -1,0 +1,7 @@
+
+ML EXPANDED REBALANCE DATASET
+mode=research | trading_impact=none
+Runtime: num_workers=4 | model_threads=2 | torch_num_threads=2 | sklearn_n_jobs=2 | feature_workers=1
+Rows: 4782
+Dataset: cache/ml/benchmark/expanded_rebalance_dataset.csv
+Audit: reports/ml/benchmark/expanded_rebalance_dataset_audit.json

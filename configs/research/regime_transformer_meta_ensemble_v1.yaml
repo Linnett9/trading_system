@@ -24,6 +24,12 @@ ml:
   meta_auxiliary_walk_forward_folds: 3
   meta_auxiliary_embargo_rebalance_dates: 1
   meta_auxiliary_purge_overlapping_labels: true
+  meta_canonical_horizon:
+    expand_from_source_predictions: true
+    minimum_selection_rebalance_dates: 26
+    walk_forward_folds: 3
+    embargo_rebalance_dates: 1
+    purge_overlapping_labels: true
   decision_threshold: 0.50
   decision_thresholds: [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80]
   reduced_exposures: [0.70, 0.80, 0.90]

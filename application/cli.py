@@ -46,9 +46,13 @@ from application.services.ml_commands import (
     run_ml_meta_ensemble,
     run_ml_research,
     run_ml_return_mechanics_audit,
+    run_ml_stock_level_alpha_benchmark,
+    run_ml_stock_level_feature_attribution,
+    run_ml_stock_level_alpha_features,
     run_ml_validate_artifacts,
 )
 from application.services.stooq_bulk_commands import run_stooq_bulk_import
+from application.services.adjusted_price_commands import run_refresh_adjusted_prices
 from application.services.champion_robustness_commands import run_champion_robustness
 from config.config_loader import load_config
 
@@ -98,6 +102,10 @@ def parse_args():
             "ml-meta-ensemble",
             "ml-return-mechanics-audit",
             "ml-benchmark-return-audit",
+            "ml-refresh-adjusted-prices",
+            "ml-stock-level-alpha-benchmark",
+            "ml-stock-level-feature-attribution",
+            "ml-stock-level-alpha-features",
             "import-stooq-bulk",
             "champion-robustness",
         ],
@@ -123,6 +131,11 @@ def parse_args():
         "--symbols",
         nargs="+",
         help="Override backtest symbols for this run.",
+    )
+    parser.add_argument(
+        "--auto-discover-replay-symbols",
+        action="store_true",
+        help="For adjusted price refresh, include symbols used by replay artifacts.",
     )
     parser.add_argument(
         "--top",
@@ -278,6 +291,13 @@ def dispatch(args, config, feed):
             exclude_warrants_units_rights=args.exclude_warrants_units_rights,
         )
         return
+    if args.mode == "ml-refresh-adjusted-prices":
+        run_refresh_adjusted_prices(
+            config,
+            symbols=args.symbols,
+            auto_discover_replay_symbols=args.auto_discover_replay_symbols,
+        )
+        return
     if args.mode == "ml-data-inventory":
         run_ml_data_inventory(config)
         return
@@ -301,6 +321,15 @@ def dispatch(args, config, feed):
         return
     if args.mode in {"ml-return-mechanics-audit", "ml-benchmark-return-audit"}:
         run_ml_return_mechanics_audit(config)
+        return
+    if args.mode == "ml-stock-level-alpha-benchmark":
+        run_ml_stock_level_alpha_benchmark(config)
+        return
+    if args.mode == "ml-stock-level-feature-attribution":
+        run_ml_stock_level_feature_attribution(config)
+        return
+    if args.mode == "ml-stock-level-alpha-features":
+        run_ml_stock_level_alpha_features(config)
         return
     if args.mode == "champion-robustness":
         run_champion_robustness(config, feed)
@@ -453,7 +482,11 @@ def run_cli():
         "ml-meta-ensemble",
         "ml-return-mechanics-audit",
         "ml-benchmark-return-audit",
+        "ml-refresh-adjusted-prices",
         "ml-research-batch",
+        "ml-stock-level-alpha-benchmark",
+        "ml-stock-level-feature-attribution",
+        "ml-stock-level-alpha-features",
     }
     feed = None if args.mode in feedless_modes else build_feed(config)
 

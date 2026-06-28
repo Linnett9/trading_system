@@ -150,6 +150,39 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
             ml_config.get("meta_auxiliary_purge_overlapping_labels", True)
         ),
     )
+    horizon = _extended_horizon_rows(
+        train_rows=auxiliary_result.train_rows,
+        holdout_rows=auxiliary_result.holdout_rows,
+        holdout_probabilities=holdout_probabilities,
+        model_type=selected_meta_model_type,
+        config=ml_config,
+        random_seed=random_seed,
+        sklearn_n_jobs=int(ml_config.get("sklearn_n_jobs", 1)),
+    )
+    if horizon["enabled"] and horizon["available"]:
+        allocation_rows = horizon["evaluation_rows"]
+        allocation_probabilities = horizon["evaluation_probabilities"]
+        allocation_selection_rows = horizon["selection_rows"]
+        allocation_selection_probabilities = horizon["selection_probabilities"]
+        _write_csv(auxiliary_result.predictions_path, allocation_rows)
+        auxiliary_result.metrics["extended_meta_canonical_horizon"] = (
+            horizon["audit"]
+        )
+        auxiliary_result.metrics_json_path.write_text(
+            json.dumps(auxiliary_result.metrics, indent=2),
+            encoding="utf-8",
+        )
+    else:
+        allocation_rows = auxiliary_result.holdout_rows
+        allocation_probabilities = holdout_probabilities
+        allocation_selection_rows = [
+            auxiliary_result.train_rows[index]
+            for index in auxiliary_result.selection_train_indexes
+        ]
+        allocation_selection_probabilities = [
+            train_probabilities[index]
+            for index in auxiliary_result.selection_train_indexes
+        ]
     threshold = float(ml_config.get("decision_threshold", 0.5))
     predictions = [int(probability >= threshold) for probability in holdout_probabilities]
     label_type = ml_config.get("label_type", "should_reduce_exposure")
@@ -317,8 +350,8 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
     )
     allocation_paths = write_allocation_v2_reports(
         output_dir=output_dir,
-        rows=auxiliary_result.holdout_rows,
-        meta_probabilities=holdout_probabilities,
+        rows=allocation_rows,
+        meta_probabilities=allocation_probabilities,
         diagnostics={
             "balanced_accuracy": metrics.get("balanced_accuracy"),
             "brier_score": leaderboard_calibration.get("brier_score"),
@@ -327,14 +360,8 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
             ),
         },
         config=ml_config,
-        selection_rows=[
-            auxiliary_result.train_rows[index]
-            for index in auxiliary_result.selection_train_indexes
-        ],
-        selection_meta_probabilities=[
-            train_probabilities[index]
-            for index in auxiliary_result.selection_train_indexes
-        ],
+        selection_rows=allocation_selection_rows,
+        selection_meta_probabilities=allocation_selection_probabilities,
     )
     trading_leaderboard_paths = write_trading_research_leaderboard(
         output_dir=output_dir,
@@ -1060,6 +1087,285 @@ def _selection_ranking_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for index, row in enumerate(rows)
     ]
+
+
+def _extended_horizon_rows(
+    *,
+    train_rows: list[dict[str, str]],
+    holdout_rows: list[dict[str, str]],
+    holdout_probabilities: list[float],
+    model_type: str,
+    config: dict[str, Any],
+    random_seed: int,
+    sklearn_n_jobs: int,
+) -> dict[str, Any]:
+    horizon_config = config.get("meta_canonical_horizon", {}) or {}
+    enabled = bool(horizon_config.get("expand_from_source_predictions", False))
+    if not enabled:
+        return {"enabled": False, "available": False}
+    min_selection_dates = int(
+        horizon_config.get("minimum_selection_rebalance_dates", 26)
+    )
+    fold_count = int(
+        horizon_config.get(
+            "walk_forward_folds",
+            config.get("meta_auxiliary_walk_forward_folds", 3),
+        )
+    )
+    embargo = int(
+        horizon_config.get(
+            "embargo_rebalance_dates",
+            config.get("meta_auxiliary_embargo_rebalance_dates", 1),
+        )
+    )
+    purge_overlaps = bool(
+        horizon_config.get(
+            "purge_overlapping_labels",
+            config.get("meta_auxiliary_purge_overlapping_labels", True),
+        )
+    )
+    train_probabilities, audits = _chronological_meta_probabilities(
+        train_rows,
+        model_type=model_type,
+        fold_count=fold_count,
+        embargo_rebalance_dates=embargo,
+        purge_overlapping_labels=purge_overlaps,
+        random_seed=random_seed,
+        sklearn_n_jobs=sklearn_n_jobs,
+    )
+    eligible_indexes = [
+        index
+        for index, probability in enumerate(train_probabilities)
+        if probability is not None and _has_allocation_forecasts(train_rows[index])
+    ]
+    eligible_dates = sorted(
+        {
+            train_rows[index].get("rebalance_date", "")
+            for index in eligible_indexes
+            if train_rows[index].get("rebalance_date")
+        }
+    )
+    if len(eligible_dates) <= min_selection_dates:
+        return {
+            "enabled": True,
+            "available": False,
+            "audit": {
+                "available": False,
+                "reason": "insufficient_cross_fitted_source_prediction_dates",
+                "eligible_rebalance_date_count": len(eligible_dates),
+                "minimum_selection_rebalance_dates": min_selection_dates,
+                "source": "existing_prediction_artifacts_only",
+            },
+        }
+    evaluation_start = eligible_dates[min_selection_dates]
+    selection_rows = [
+        train_rows[index]
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") < evaluation_start
+    ]
+    selection_probabilities = [
+        float(train_probabilities[index])
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") < evaluation_start
+    ]
+    out_of_fold_evaluation_rows = [
+        {
+            **train_rows[index],
+            "split": "extended_out_of_fold_evaluation",
+            "meta_prediction_source": "chronological_cross_fitted_meta_model",
+        }
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") >= evaluation_start
+    ]
+    out_of_fold_evaluation_probabilities = [
+        float(train_probabilities[index])
+        for index in eligible_indexes
+        if train_rows[index].get("rebalance_date", "") >= evaluation_start
+    ]
+    frozen_holdout_rows = [
+        {
+            **row,
+            "split": "holdout",
+            "meta_prediction_source": "frozen_meta_model_holdout",
+        }
+        for row in holdout_rows
+    ]
+    evaluation_rows = out_of_fold_evaluation_rows + frozen_holdout_rows
+    evaluation_probabilities = (
+        out_of_fold_evaluation_probabilities + list(holdout_probabilities)
+    )
+    return {
+        "enabled": True,
+        "available": bool(evaluation_rows and selection_rows),
+        "selection_rows": selection_rows,
+        "selection_probabilities": selection_probabilities,
+        "evaluation_rows": evaluation_rows,
+        "evaluation_probabilities": evaluation_probabilities,
+        "audit": {
+            "available": bool(evaluation_rows and selection_rows),
+            "source": "existing_prediction_artifacts_only",
+            "mode": "chronological_cross_fitted_out_of_fold_plus_frozen_holdout",
+            "old_holdout_start_date": _minimum_row_date(holdout_rows),
+            "old_holdout_end_date": _maximum_row_date(holdout_rows),
+            "new_evaluation_start_date": _minimum_row_date(evaluation_rows),
+            "new_evaluation_end_date": _maximum_row_date(evaluation_rows),
+            "selection_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in selection_rows
+                if row.get("rebalance_date")
+            }),
+            "extended_out_of_fold_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in out_of_fold_evaluation_rows
+                if row.get("rebalance_date")
+            }),
+            "holdout_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in holdout_rows
+                if row.get("rebalance_date")
+            }),
+            "evaluation_rebalance_date_count": len({
+                row.get("rebalance_date")
+                for row in evaluation_rows
+                if row.get("rebalance_date")
+            }),
+            "minimum_selection_rebalance_dates": min_selection_dates,
+            "embargo_rebalance_dates": embargo,
+            "purge_overlapping_labels": purge_overlaps,
+            "walk_forward_folds": fold_count,
+            "fold_audits": audits,
+            "in_sample_meta_predictions": False,
+            "base_models_rerun": False,
+        },
+    }
+
+
+def _chronological_meta_probabilities(
+    rows: list[dict[str, str]],
+    *,
+    model_type: str,
+    fold_count: int,
+    embargo_rebalance_dates: int,
+    purge_overlapping_labels: bool,
+    random_seed: int,
+    sklearn_n_jobs: int,
+) -> tuple[list[float | None], list[dict[str, Any]]]:
+    probabilities: list[float | None] = [None] * len(rows)
+    unique_dates = sorted({
+        row.get("rebalance_date", "")
+        for row in rows
+        if row.get("rebalance_date")
+    })
+    if len(unique_dates) < 2:
+        return probabilities, []
+    date_positions = {date: index for index, date in enumerate(unique_dates)}
+    effective_fold_count = min(max(1, int(fold_count)), len(unique_dates) - 1)
+    candidate_test_dates = unique_dates[1:]
+    chunk_size = max(1, math.ceil(len(candidate_test_dates) / effective_fold_count))
+    audits: list[dict[str, Any]] = []
+    for fold_index in range(effective_fold_count):
+        test_dates = candidate_test_dates[
+            fold_index * chunk_size : (fold_index + 1) * chunk_size
+        ]
+        if not test_dates:
+            continue
+        first_test_date = test_dates[0]
+        first_position = date_positions[first_test_date]
+        embargo_start = max(0, first_position - embargo_rebalance_dates)
+        embargoed_dates = set(unique_dates[embargo_start:first_position])
+        train_dates = [
+            date
+            for date in unique_dates
+            if date < first_test_date and date not in embargoed_dates
+        ]
+        train_fold_rows = [
+            row
+            for row in rows
+            if row.get("rebalance_date") in train_dates
+            and (
+                not purge_overlapping_labels
+                or not _label_overlaps_validation(row, first_test_date)
+            )
+        ]
+        test_indexes = [
+            index
+            for index, row in enumerate(rows)
+            if row.get("rebalance_date") in set(test_dates)
+        ]
+        test_rows = [rows[index] for index in test_indexes]
+        audit = {
+            "fold": fold_index + 1,
+            "validation_start": first_test_date,
+            "validation_end": test_dates[-1],
+            "train_sample_count": len(train_fold_rows),
+            "test_sample_count": len(test_rows),
+            "embargoed_rebalance_date_count": len(embargoed_dates),
+            "purged_label_overlap_count": len([
+                row
+                for row in rows
+                if row.get("rebalance_date") in train_dates
+                and _label_overlaps_validation(row, first_test_date)
+            ])
+            if purge_overlapping_labels
+            else 0,
+            "prediction_generated": False,
+        }
+        if not train_fold_rows or not test_rows:
+            audits.append(audit)
+            continue
+        model = _fit_meta_model(
+            model_type,
+            [_feature_values(row) for row in train_fold_rows],
+            [int(row["actual_label"]) for row in train_fold_rows],
+            random_seed=random_seed + fold_index,
+            sklearn_n_jobs=sklearn_n_jobs,
+        )
+        predicted = model.predict_proba([_feature_values(row) for row in test_rows])
+        for index, probability in zip(test_indexes, predicted):
+            probabilities[index] = float(probability)
+        audit["prediction_generated"] = True
+        audit["max_training_rebalance_date"] = max(
+            row.get("rebalance_date", "") for row in train_fold_rows
+        )
+        audits.append(audit)
+    return probabilities, audits
+
+
+def _label_overlaps_validation(row: dict[str, str], validation_start: str) -> bool:
+    label_end = row.get("label_end_date") or row.get("outcome_end_date") or ""
+    return bool(label_end and label_end >= validation_start)
+
+
+def _has_allocation_forecasts(row: dict[str, str]) -> bool:
+    return all(
+        _row_has_forecast(row, requirement)
+        for requirement in (
+            "predicted_forward_return_10d",
+            "predicted_future_drawdown",
+            "predicted_future_volatility",
+        )
+    )
+
+
+def _row_has_forecast(row: dict[str, str], suffix: str) -> bool:
+    meta_name = f"meta_{suffix}"
+    if row.get(meta_name) not in (None, ""):
+        return True
+    return any(
+        value not in (None, "")
+        and (name == suffix or name.endswith(f"_{suffix}"))
+        for name, value in row.items()
+    )
+
+
+def _minimum_row_date(rows: list[dict[str, str]]) -> str | None:
+    dates = sorted(row.get("rebalance_date", "") for row in rows if row.get("rebalance_date"))
+    return dates[0] if dates else None
+
+
+def _maximum_row_date(rows: list[dict[str, str]]) -> str | None:
+    dates = sorted(row.get("rebalance_date", "") for row in rows if row.get("rebalance_date"))
+    return dates[-1] if dates else None
 
 
 def _promotion_gate_score(

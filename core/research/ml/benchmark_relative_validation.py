@@ -47,6 +47,9 @@ def write_benchmark_relative_validation(
             output_dir / "adjusted_data_comparison.json"
         ),
         "adjusted_price_replay": _read_json(output_dir / "adjusted_price_replay.json"),
+        "adjusted_replay_alignment_audit": _read_json(
+            output_dir / "adjusted_replay_alignment_audit.json"
+        ),
     }
     closes = _load_required_closes(config, data_feed, canonical)
     payload = build_benchmark_relative_validation(
@@ -582,6 +585,34 @@ def _external_promotion_gate_context(
             ),
             "adjusted_price_replay_verdict": replay_row.get(
                 "adjusted_price_replay_verdict"
+            ),
+            "adjusted_coverage_ratio": replay_row.get("adjusted_coverage_ratio"),
+            "missing_adjusted_symbols": replay_row.get("missing_adjusted_symbols"),
+            "invalid_adjusted_period_count": replay_row.get(
+                "invalid_adjusted_period_count"
+            ),
+            "fail_closed_reason": replay_row.get("fail_closed_reason"),
+        }
+        gates["adjusted_replay_full_symbol_coverage"] = bool(
+            replay_row.get("adjusted_full_symbol_coverage", True)
+        )
+        gates["minimum_adjusted_independent_periods"] = bool(
+            replay_row.get("minimum_adjusted_independent_periods_pass", True)
+        )
+    alignment_audit = external_reports.get("adjusted_replay_alignment_audit") or {}
+    if alignment_audit:
+        alignment = alignment_audit.get("alignment", {})
+        gates["adjusted_replay_alignment"] = bool(
+            alignment.get("aligned_correctly", False)
+        )
+        context["adjusted_replay_alignment_audit"] = {
+            "aligned_correctly": alignment.get("aligned_correctly"),
+            "explanation_verdict": alignment.get("explanation_verdict"),
+            "missing_adjusted_price_row_count": alignment.get(
+                "missing_adjusted_price_row_count"
+            ),
+            "invalid_adjusted_period_count": alignment.get(
+                "invalid_adjusted_period_count"
             ),
         }
     return {"gates": gates, "context": context}

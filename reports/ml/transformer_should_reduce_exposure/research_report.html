@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ML Research Report</title>
+<style>
+body{font-family:Arial,sans-serif;margin:32px;color:#1f2933}
+section{margin:0 0 28px}
+table{border-collapse:collapse;width:100%;max-width:980px}
+th,td{border:1px solid #d9e2ec;padding:7px 9px;text-align:left}
+th{background:#f0f4f8}
+code{background:#f0f4f8;padding:2px 4px}
+</style>
+</head>
+<body>
+<h1>ML Research Report</h1>
+<p>Research only. Trading impact: none. Production validated: false.</p>
+<section><h2>Model Performance</h2><table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody><tr><td>mode</td><td>research</td></tr><tr><td>model_type</td><td>transformer</td></tr><tr><td>feature_set</td><td>expanded_rebalance_v1</td></tr><tr><td>label_type</td><td>should_reduce_exposure</td></tr><tr><td>decision_threshold</td><td>0.500000</td></tr><tr><td>class_weight</td><td>balanced</td></tr><tr><td>train_sample_count</td><td>7440</td></tr><tr><td>test_sample_count</td><td>1932</td></tr><tr><td>feature_count</td><td>31</td></tr><tr><td>test_start_date</td><td>2024-07-15</td></tr><tr><td>purged_train_samples</td><td>180</td></tr><tr><td>baselines</td><td>{&quot;noop&quot;: {&quot;accuracy&quot;: 0.16925465838509315, &quot;precision&quot;: null, &quot;recall&quot;: 0.0, &quot;f1&quot;: null, &quot;balanced_accuracy&quot;: 0.5, &quot;samples&quot;: 1932}, &quot;majority_class&quot;: {&quot;predicted_class&quot;: 1, &quot;metrics&quot;: {&quot;accuracy&quot;: 0.8307453416149069, &quot;precision&quot;: 0.8307453416149069, &quot;recall&quot;: 1.0, &quot;f1&quot;: 0.90754877014419, &quot;balanced_accuracy&quot;: 0.5, &quot;samples&quot;: 1932}}}</td></tr><tr><td>note</td><td>Research-only out-of-sample evaluation; ML does not affect trading decisions.</td></tr><tr><td>research_label</td><td>EXPANDED_REBALANCE_CURRENT_32_RESEARCH_ONLY</td></tr><tr><td>production_validated</td><td>False</td></tr><tr><td>accuracy</td><td>0.729814</td></tr><tr><td>precision</td><td>0.942041</td></tr><tr><td>recall</td><td>0.719003</td></tr><tr><td>f1</td><td>0.815548</td></tr><tr><td>balanced_accuracy</td><td>0.750939</td></tr><tr><td>samples</td><td>1932</td></tr></tbody></table></section>
+<section><h2>Calibration</h2><table><thead><tr><th>method</th><th>brier_score</th><th>expected_calibration_error</th></tr></thead><tbody><tr><td>raw</td><td>0.227390</td><td>0.222602</td></tr><tr><td>platt</td><td>0.202633</td><td>0.195737</td></tr><tr><td>isotonic</td><td>0.202812</td><td>0.187339</td></tr><tr><td>temperature_scaling</td><td>0.227390</td><td>0.222602</td></tr></tbody></table></section>
+<section><h2>Confusion Matrix</h2><table><thead><tr><th>bucket</th><th>count</th><th>research_label</th></tr></thead><tbody><tr><td>true_positive</td><td>1154</td><td>EXPANDED_REBALANCE_CURRENT_32_RESEARCH_ONLY</td></tr><tr><td>true_negative</td><td>256</td><td>EXPANDED_REBALANCE_CURRENT_32_RESEARCH_ONLY</td></tr><tr><td>false_positive</td><td>71</td><td>EXPANDED_REBALANCE_CURRENT_32_RESEARCH_ONLY</td></tr><tr><td>false_negative</td><td>451</td><td>EXPANDED_REBALANCE_CURRENT_32_RESEARCH_ONLY</td></tr></tbody></table></section>
+<section><h2>Shadow Overlay</h2><table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody><tr><td>base_total_return</td><td>1.349324</td></tr><tr><td>overlay_total_return</td><td>1.344507</td></tr><tr><td>base_max_drawdown</td><td>-0.301904</td></tr><tr><td>overlay_max_drawdown</td><td>-0.241842</td></tr><tr><td>reduced_exposure_days</td><td>49</td></tr><tr><td>evaluated_days</td><td>103</td></tr><tr><td>overlay_turnover</td><td>3.000000</td></tr><tr><td>estimated_cost</td><td>0.001500</td></tr></tbody></table></section>
+<section><h2>Walk-Forward Results</h2><table><thead><tr><th>fold</th><th>test_start_date</th><th>test_sample_count</th><th>accuracy</th><th>balanced_accuracy</th></tr></thead><tbody><tr><td>1</td><td>2021-01-04</td><td>1944</td><td>0.764403</td><td>0.703674</td></tr><tr><td>2</td><td>2022-10-10</td><td>1920</td><td>0.773958</td><td>0.758705</td></tr><tr><td>3</td><td>2024-07-15</td><td>1932</td><td>0.729814</td><td>0.750939</td></tr></tbody></table></section>
+</body>
+</html>

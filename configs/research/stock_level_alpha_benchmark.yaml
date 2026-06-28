@@ -1,0 +1,17 @@
+ml:
+  output_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1
+  stock_level_base_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_level_prediction_artifacts.csv
+  stock_level_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_level_prediction_artifacts_enriched.csv
+  stock_ranker_min_train_dates: 52
+  stock_ranker_test_window_dates: 26
+  stock_ranker_embargo_dates: 2
+  stock_ranker_include_sequence_models: false
+  stock_ranker_include_engineered_features: true
+  stock_ranker_model_n_jobs: 4
+  stock_ranker_permutation_importance_repeats: 3
+  stock_ranker_sequence_length: 13
+  stock_ranker_sequence_epochs: 3
+  stock_ranker_sequence_batch_size: 256
+  stock_ranker_sequence_device: cpu
+  sklearn_n_jobs: 2
+  random_seed: 42

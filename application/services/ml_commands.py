@@ -37,6 +37,24 @@ from core.research.ml.data_adjustment_validation import (
 from core.research.ml.independent_period_expansion_audit import (
     write_independent_period_expansion_audit,
 )
+from core.research.ml.historical_coverage_audit import (
+    write_historical_coverage_audit,
+)
+from core.research.ml.cross_sectional_ranking_diagnostics import (
+    write_cross_sectional_ranking_diagnostics,
+)
+from core.research.ml.stock_level_prediction_artifacts import (
+    write_stock_level_prediction_artifacts,
+)
+from core.research.ml.stock_level_model_ranking_benchmark import (
+    write_stock_level_model_ranking_benchmark,
+)
+from core.research.ml.stock_level_feature_attribution import (
+    write_stock_level_feature_attribution,
+)
+from core.research.ml.stock_level_alpha_features import (
+    write_stock_level_alpha_features,
+)
 from core.research.ml.data_anomaly_quarantine import write_data_anomaly_quarantine
 from core.research.ml.profit_concentration_audit import (
     write_profit_concentration_audit,
@@ -443,6 +461,9 @@ def run_ml_return_mechanics_audit(config):
     adjusted_replay_result = write_adjusted_price_replay(config)
     adjusted_alignment_result = write_adjusted_replay_alignment_audit(config)
     expansion_result = write_independent_period_expansion_audit(config)
+    historical_coverage_result = write_historical_coverage_audit(config)
+    stock_artifact_result = write_stock_level_prediction_artifacts(config)
+    ranking_result = write_cross_sectional_ranking_diagnostics(config)
     validation_result = write_benchmark_relative_validation(
         config,
         research_feed,
@@ -466,9 +487,41 @@ def run_ml_return_mechanics_audit(config):
     print(f"Adjusted price replay JSON: {adjusted_replay_result.json_path}")
     print(f"Adjusted replay alignment JSON: {adjusted_alignment_result.json_path}")
     print(f"Independent period expansion JSON: {expansion_result.json_path}")
+    print(f"Historical coverage audit JSON: {historical_coverage_result.json_path}")
+    print(f"Stock-level prediction artifacts JSON: {stock_artifact_result.json_path}")
+    print(f"Cross-sectional ranking diagnostics JSON: {ranking_result.json_path}")
     print(f"Benchmark-relative validation JSON: {validation_result.json_path}")
     print(f"Promotion readiness: {validation_result.promotion_readiness_path}")
     print(f"Trading research leaderboard JSON: {leaderboard_result.json_path}")
+
+
+def run_ml_stock_level_alpha_benchmark(config):
+    result = write_stock_level_model_ranking_benchmark(config)
+    print("\nSTOCK-LEVEL ALPHA BENCHMARK SUITE")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Leaderboard CSV: {result.csv_path}")
+    print(f"Leaderboard JSON: {result.json_path}")
+    print(f"Leaderboard Markdown: {result.markdown_path}")
+    print(f"OOS predictions: {result.predictions_path}")
+
+
+def run_ml_stock_level_feature_attribution(config):
+    result = write_stock_level_feature_attribution(config)
+    print("\nSTOCK-LEVEL FEATURE ATTRIBUTION")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"CSV: {result.csv_path}")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+
+def run_ml_stock_level_alpha_features(config):
+    result = write_stock_level_alpha_features(config)
+    print("\nSTOCK-LEVEL ALPHA FEATURES")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Enriched artifact: {result.enriched_csv_path}")
+    print(f"Audit CSV: {result.audit_csv_path}")
+    print(f"Audit JSON: {result.audit_json_path}")
+    print(f"Audit Markdown: {result.audit_markdown_path}")
 
 
 def _refresh_trading_research_leaderboard(config):

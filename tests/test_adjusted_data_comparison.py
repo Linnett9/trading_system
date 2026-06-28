@@ -156,6 +156,7 @@ def test_adjusted_price_replay_uses_adjusted_closes_when_available():
         validation_config={
             "max_top_5_date_profit_share": 1.0,
             "max_drawdown_worse_than_spy": 1.0,
+            "min_independent_periods": 1,
         },
     )
 
@@ -163,6 +164,220 @@ def test_adjusted_price_replay_uses_adjusted_closes_when_available():
 
     assert replay["adjusted_source_available"] is True
     assert round(exact["adjusted_canonical_return"], 6) == 0.05
+
+
+def test_missing_adjusted_symbol_blocks_adjusted_period_fail_closed():
+    champion = _champion_payload([0.25])
+    selected = _selected_optimizer_payload([0.25])
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+
+    replay = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={
+            "AAA": {"2024-01-01": 100.0, "2024-01-02": 200.0},
+        },
+        validation_config={"min_independent_periods": 1},
+    )
+    exact = replay["candidates"]["exact_champion_replay"]
+
+    assert exact["adjusted_canonical_return"] is None
+    assert exact["adjusted_price_replay_verdict"] == "blocked"
+    assert exact["adjusted_full_symbol_coverage"] is False
+    assert exact["invalid_adjusted_period_count"] == 1
+    assert exact["valid_adjusted_period_count"] == 0
+    assert exact["missing_adjusted_symbols"] == ["BBB"]
+    assert exact["fail_closed_reason"] == "missing_adjusted_prices_for_selected_symbols"
+
+
+def test_missing_adjusted_symbol_does_not_increase_return_by_dropping_loser():
+    champion = _champion_payload([-0.25])
+    selected = _selected_optimizer_payload([-0.25])
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+
+    replay = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={
+            "AAA": {"2024-01-01": 100.0, "2024-01-02": 200.0},
+        },
+        validation_config={"min_independent_periods": 1},
+    )
+    exact = replay["candidates"]["exact_champion_replay"]
+
+    assert exact["coverage_valid_adjusted_canonical_return"] is None
+    assert exact["adjusted_canonical_return"] is None
+    assert replay["adjusted_canonical_replay"]["candidates"][
+        "exact_champion_replay"
+    ]["canonical_continuous_equity"]["row_count"] == 0
+
+
+def test_optimizer_positive_exposure_empty_selection_fails_closed():
+    selected = {
+        "rows": [
+            {
+                "rebalance_date": "2024-01-01",
+                "period_return": 0.25,
+                "exposure": 0.75,
+                "turnover": 0.0,
+                "cost": 0.0,
+                "net_return": 0.1875,
+            }
+        ]
+    }
+    champion = {
+        "exact_champion_replay": {
+            "period_rows": [
+                {
+                    "rebalance_date": "2024-01-01",
+                    "outcome_end_date": "2024-01-02",
+                    "period_return": 0.0,
+                    "exposure_target": 0.0,
+                    "selected_symbols": [],
+                    "target_weights": {},
+                    "symbol_return_anomalies": [],
+                }
+            ]
+        }
+    }
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+
+    replay = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={},
+        validation_config={"min_independent_periods": 1},
+    )
+    optimizer = replay["candidates"][
+        "selected_bayesian_optimizer_diagnostic_policy"
+    ]
+
+    assert optimizer["adjusted_canonical_return"] is None
+    assert optimizer["coverage_valid_adjusted_canonical_return"] is None
+    assert optimizer["empty_selection_with_positive_exposure_count"] == 1
+    assert optimizer["affected_dates"] == ["2024-01-01"]
+    assert optimizer["empty_selection_resolution"] == "invalidated"
+    assert optimizer["fail_closed_reason"] == "empty_selection_with_positive_exposure"
+    assert "empty_selection_with_positive_exposure" in optimizer["failed_gates"]
+    assert replay["adjusted_canonical_replay"]["candidates"][
+        "selected_bayesian_optimizer_diagnostic_policy"
+    ]["canonical_continuous_equity"]["row_count"] == 0
+
+
+def test_full_adjusted_coverage_preserves_selected_symbol_composition():
+    champion = _champion_payload([0.10])
+    selected = _selected_optimizer_payload([0.10])
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+
+    replay = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={
+            "AAA": {"2024-01-01": 100.0, "2024-01-02": 120.0},
+            "BBB": {"2024-01-01": 100.0, "2024-01-02": 80.0},
+            "SPY": {"2024-01-01": 100.0, "2024-01-02": 101.0},
+            "QQQ": {"2024-01-01": 100.0, "2024-01-02": 101.0},
+        },
+        validation_config={"min_independent_periods": 1},
+    )
+    exact = replay["candidates"]["exact_champion_replay"]
+    adjusted_row = replay["adjusted_canonical_replay"]["candidates"][
+        "exact_champion_replay"
+    ]["rows"][0]
+
+    assert exact["adjusted_full_symbol_coverage"] is True
+    assert exact["adjusted_coverage_ratio"] == 1.0
+    assert adjusted_row["selected_symbols"] == ["AAA", "BBB"]
+    assert round(adjusted_row["period_return"], 12) == 0.0
+    assert round(exact["coverage_valid_adjusted_canonical_return"], 12) == 0.0
+
+
+def test_adjusted_replay_raw_fallback_is_off_by_default():
+    replay = build_adjusted_price_replay(
+        canonical_replay={},
+        champion_audit={},
+        selected_optimizer={},
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={},
+        validation_config={},
+    )
+
+    assert replay["coverage_rules"]["allow_raw_fallback"] is False
+    assert replay["coverage_rules"]["missing_symbol_policy"] == "fail_closed"
+    assert replay["coverage_rules"]["require_full_adjusted_coverage"] is True
+
+
+def test_fallback_raw_only_works_when_explicitly_enabled():
+    champion = _champion_payload([0.25])
+    selected = _selected_optimizer_payload([0.25])
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+
+    blocked = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={
+            "AAA": {"2024-01-01": 100.0, "2024-01-02": 200.0},
+        },
+        raw_closes_by_symbol={
+            "BBB": {"2024-01-01": 100.0, "2024-01-02": 50.0},
+        },
+        validation_config={"min_independent_periods": 1},
+    )
+    fallback = build_adjusted_price_replay(
+        canonical_replay=canonical,
+        champion_audit=champion,
+        selected_optimizer=selected,
+        adjusted_comparison=_available_adjusted_comparison(),
+        adjusted_closes_by_symbol={
+            "AAA": {"2024-01-01": 100.0, "2024-01-02": 200.0},
+        },
+        raw_closes_by_symbol={
+            "BBB": {"2024-01-01": 100.0, "2024-01-02": 50.0},
+        },
+        validation_config={
+            "min_independent_periods": 1,
+            "adjusted_replay": {"missing_symbol_policy": "fallback_raw"},
+        },
+    )
+
+    blocked_exact = blocked["candidates"]["exact_champion_replay"]
+    fallback_exact = fallback["candidates"]["exact_champion_replay"]
+    adjusted_row = fallback["adjusted_canonical_replay"]["candidates"][
+        "exact_champion_replay"
+    ]["rows"][0]
+
+    assert blocked_exact["adjusted_canonical_return"] is None
+    assert fallback["coverage_rules"]["missing_symbol_policy"] == "fallback_raw"
+    assert fallback_exact["coverage_valid_adjusted_canonical_return"] == 0.25
+    assert fallback_exact["adjusted_canonical_return"] == 0.25
+    assert fallback_exact["adjusted_full_symbol_coverage"] is False
+    assert fallback_exact["raw_fallback_symbols"] == ["BBB"]
+    assert adjusted_row["selected_symbols"] == ["AAA", "BBB"]
 
 
 def test_missing_adjusted_data_blocks_promotion():
@@ -265,3 +480,13 @@ def _candidate(payload: dict, name: str) -> dict:
         row for row in payload["candidates"]
         if row["candidate_name"] == name
     )
+
+
+def _available_adjusted_comparison() -> dict:
+    return {
+        "adjusted_source": {
+            "available_status": "available",
+            "acceptable": True,
+        },
+        "candidate_dependencies": {},
+    }

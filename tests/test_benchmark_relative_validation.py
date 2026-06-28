@@ -119,6 +119,35 @@ def test_existing_canonical_concentration_audit_is_reused():
     assert exact["top_1_symbol_profit_share"] == 0.60
 
 
+def test_false_adjusted_alignment_audit_blocks_promotion():
+    canonical, closes = _fixtures()
+
+    payload = build_benchmark_relative_validation(
+        canonical_replay=canonical,
+        anomaly_report={"flagged_rebalance_dates": []},
+        closes_by_symbol=closes,
+        validation_config={
+            "max_top_5_date_profit_share": 1.0,
+            "max_drawdown_worse_than_spy": 1.0,
+        },
+        external_reports={
+            "adjusted_replay_alignment_audit": {
+                "alignment": {
+                    "aligned_correctly": False,
+                    "explanation_verdict": "not_aligned_missing_adjusted_prices",
+                    "missing_adjusted_price_row_count": 2,
+                    "invalid_adjusted_period_count": 1,
+                }
+            }
+        },
+    )
+    exact = _candidate(payload, "exact_champion_replay")
+
+    assert exact["gates"]["adjusted_replay_alignment"] is False
+    assert "adjusted_replay_alignment" in exact["failed_gates"]
+    assert exact["promotion_candidate_status"] == "blocked"
+
+
 def test_benchmark_validation_has_no_operational_imports_or_references():
     source = inspect.getsource(benchmark_relative_validation)
 

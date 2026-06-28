@@ -163,7 +163,10 @@ def _no_selected_symbol_rows(
             .get("periods", [])
             or []
         ):
-            if period.get("fail_closed_reason") != "no_selected_symbols":
+            if period.get("fail_closed_reason") not in {
+                "no_selected_symbols",
+                "empty_selection_with_positive_exposure",
+            }:
                 continue
             date = str(period.get("rebalance_date"))
             raw = raw_by_date.get(date, {})
@@ -174,9 +177,12 @@ def _no_selected_symbol_rows(
                 and (exposure is None or abs(exposure) <= 1e-12)
             )
             positive_exposure_without_symbols = (
-                len(selected_symbols) == 0
-                and exposure is not None
-                and exposure > 1e-12
+                bool(period.get("empty_selection_with_positive_exposure"))
+                or (
+                    len(selected_symbols) == 0
+                    and exposure is not None
+                    and exposure > 1e-12
+                )
             )
             output.append({
                 "candidate": candidate_name,
@@ -252,6 +258,14 @@ def _setting_metrics(
         "adjusted_coverage_ratio": coverage.get("adjusted_coverage_ratio"),
         "valid_adjusted_period_count": coverage.get("valid_adjusted_period_count"),
         "invalid_adjusted_period_count": coverage.get("invalid_adjusted_period_count"),
+        "empty_selection_with_positive_exposure_count": coverage.get(
+            "empty_selection_with_positive_exposure_count",
+            0,
+        ),
+        "empty_selection_resolution": coverage.get(
+            "empty_selection_resolution",
+            "unchanged",
+        ),
         "canonical_return": total_return,
         "anomaly_adjusted_return": anomaly_adjusted_return,
         "max_drawdown": drawdown,

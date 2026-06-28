@@ -50,6 +50,43 @@ def test_selected_optimizer_diagnostic_period_grid_matches_saved_path():
     assert abs(reported - replayed) < 1e-12
 
 
+def test_optimizer_positive_exposure_empty_selection_is_invalidated():
+    selected = {"rows": [_selected_row("2024-03-03", 0.20, 0.75)]}
+    champion = {
+        "exact_champion_replay": {
+            "period_rows": [
+                {
+                    "rebalance_date": "2024-03-03",
+                    "outcome_end_date": "2024-04-01",
+                    "period_return": 0.0,
+                    "exposure_target": 0.0,
+                    "selected_symbols": [],
+                    "target_weights": {},
+                    "symbol_return_anomalies": [],
+                }
+            ]
+        }
+    }
+
+    canonical = build_canonical_replay(
+        selected_optimizer=selected,
+        champion_audit=champion,
+    )
+    candidate = canonical["candidates"][
+        "selected_bayesian_optimizer_diagnostic_policy"
+    ]
+    row = candidate["rows"][0]
+
+    assert row["replay_valid"] is False
+    assert row["replay_invalid_reason"] == "empty_selection_with_positive_exposure"
+    assert row["included_in_canonical"] is False
+    assert row["exclusion_reason"] == "empty_selection_with_positive_exposure"
+    assert row["net_return"] == 0.0
+    assert candidate["canonical_continuous_equity"]["row_count"] == 0
+    assert candidate["empty_selection_with_positive_exposure_count"] == 1
+    assert candidate["empty_selection_resolution"] == "invalidated"
+
+
 def test_anomaly_exclusion_changes_results_deterministically():
     champion = _champion_audit_payload()
     selected = _selected_optimizer_payload()

@@ -12,6 +12,8 @@ from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.meta_ensemble import (
     build_meta_dataset_rows,
     _compare_meta_learners,
+    _chronological_meta_probabilities,
+    _extended_horizon_rows,
     _feature_values,
     _load_source_predictions,
     _overlay_summary,
@@ -243,6 +245,84 @@ def test_meta_auxiliary_missing_targets_do_not_break_classification_rows(tmp_pat
 
     assert result.metrics["available_targets"] == []
     assert _feature_values(train_rows[0]) == features_before
+
+
+def test_extended_meta_canonical_horizon_uses_existing_source_predictions_only(tmp_path):
+    train_rows = [_auxiliary_meta_row(index, "out_of_fold") for index in range(12)]
+    holdout_rows = [
+        _auxiliary_meta_row(index + 12, "holdout")
+        for index in range(2)
+    ]
+    auxiliary = run_meta_auxiliary_ensemble(
+        train_rows,
+        holdout_rows,
+        tmp_path,
+        walk_forward_folds=3,
+    )
+
+    horizon = _extended_horizon_rows(
+        train_rows=auxiliary.train_rows,
+        holdout_rows=auxiliary.holdout_rows,
+        holdout_probabilities=[0.4, 0.6],
+        model_type="logistic_regression",
+        config={
+            "meta_canonical_horizon": {
+                "expand_from_source_predictions": True,
+                "minimum_selection_rebalance_dates": 2,
+                "walk_forward_folds": 3,
+                "embargo_rebalance_dates": 1,
+                "purge_overlapping_labels": True,
+            }
+        },
+        random_seed=42,
+        sklearn_n_jobs=1,
+    )
+
+    assert horizon["available"] is True
+    assert horizon["audit"]["source"] == "existing_prediction_artifacts_only"
+    assert horizon["audit"]["base_models_rerun"] is False
+    assert horizon["audit"]["in_sample_meta_predictions"] is False
+    assert min(row["rebalance_date"] for row in horizon["evaluation_rows"]) < (
+        min(row["rebalance_date"] for row in holdout_rows)
+    )
+    assert len(horizon["evaluation_rows"]) == len(horizon["evaluation_probabilities"])
+    assert len(horizon["selection_rows"]) == len(horizon["selection_probabilities"])
+
+
+def test_extended_meta_probabilities_preserve_chronological_leakage_safety():
+    rows = [_auxiliary_meta_row(index, "out_of_fold") for index in range(15)]
+
+    probabilities, audits = _chronological_meta_probabilities(
+        rows,
+        model_type="logistic_regression",
+        fold_count=3,
+        embargo_rebalance_dates=1,
+        purge_overlapping_labels=True,
+        random_seed=42,
+        sklearn_n_jobs=1,
+    )
+
+    assert any(value is not None for value in probabilities)
+    assert all(
+        audit["max_training_rebalance_date"] < audit["validation_start"]
+        for audit in audits
+        if audit["prediction_generated"]
+    )
+    assert all(
+        audit["embargoed_rebalance_date_count"] == 1
+        for audit in audits
+        if audit["prediction_generated"]
+    )
+
+
+def test_extended_meta_horizon_has_no_operational_imports():
+    source = Path("core/research/ml/meta_ensemble.py").read_text(encoding="utf-8")
+    assert "infrastructure.broker" not in source
+    assert "paper_trading" not in source
+    assert "paper_commands" not in source
+    assert "live_trading" not in source
+    assert "core.entities.order" not in source
+    assert "order_execution" not in source
 
 
 def test_meta_ensemble_refuses_mixed_prediction_artifact_dataset_hashes(tmp_path):
@@ -637,6 +717,7 @@ def _auxiliary_meta_row(index: int, split: str) -> dict[str, str]:
         "rebalance_date": f"2024-{(index // 28) + 1:02d}-{(index % 28) + 1:02d}",
         "variant_id": "variant",
         "split": split,
+        "actual_label": str(int(value < 0.0)),
         "transformer_raw_probability": str(0.4 + (index * 0.01)),
         "transformer_calibrated_probability": str(0.4 + (index * 0.01)),
         "transformer__predicted_forward_return_5d": str(value * 0.8),

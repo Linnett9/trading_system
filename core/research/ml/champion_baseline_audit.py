@@ -37,7 +37,7 @@ def write_champion_baseline_audit(config: dict[str, Any]) -> ChampionBaselineAud
     expanded_rows = _read_csv(_expanded_dataset_path(config))
     meta_rows = _read_csv(_meta_dataset_path(config))
     return_audit = _read_json(output_dir / "benchmark_return_audit.json")
-    periods = _evaluation_periods(meta_rows, expanded_rows)
+    periods = _evaluation_periods(config, meta_rows, expanded_rows)
     diagnostic_rows = _diagnostic_baseline_rows(return_audit)
     exact_replay = _try_exact_champion_replay(config, periods)
     top_date_report = _top_date_report(
@@ -320,14 +320,11 @@ def _required_replay_symbols(dual_config: dict[str, Any]) -> list[str]:
 
 
 def _evaluation_periods(
+    config: dict[str, Any],
     meta_rows: list[dict[str, str]],
     expanded_rows: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    holdout_dates = {
-        row.get("rebalance_date")
-        for row in meta_rows
-        if row.get("split") == "holdout" and row.get("rebalance_date")
-    }
+    holdout_dates = _configured_evaluation_dates(config, meta_rows)
     end_by_date = {}
     for row in expanded_rows:
         date = row.get("rebalance_date")
@@ -337,6 +334,29 @@ def _evaluation_periods(
         {"rebalance_date": date, "outcome_end_date": end_by_date[date]}
         for date in sorted(end_by_date)
     ]
+
+
+def _configured_evaluation_dates(
+    config: dict[str, Any],
+    meta_rows: list[dict[str, str]],
+) -> set[str]:
+    horizon_config = (
+        config.get("ml", {}).get("meta_canonical_horizon", {}) or {}
+    )
+    if bool(horizon_config.get("expand_from_source_predictions", False)):
+        predictions_path = _meta_output_dir(config) / "meta_auxiliary_predictions.csv"
+        prediction_dates = {
+            row.get("rebalance_date")
+            for row in _read_csv(predictions_path)
+            if row.get("rebalance_date")
+        }
+        if prediction_dates:
+            return prediction_dates
+    return {
+        row.get("rebalance_date")
+        for row in meta_rows
+        if row.get("split") == "holdout" and row.get("rebalance_date")
+    }
 
 
 def _diagnostic_baseline_rows(return_audit: dict[str, Any]) -> list[dict[str, Any]]:

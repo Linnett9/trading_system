@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ML Research Report</title>
+<style>
+body{font-family:Arial,sans-serif;margin:32px;color:#1f2933}
+section{margin:0 0 28px}
+table{border-collapse:collapse;width:100%;max-width:980px}
+th,td{border:1px solid #d9e2ec;padding:7px 9px;text-align:left}
+th{background:#f0f4f8}
+code{background:#f0f4f8;padding:2px 4px}
+</style>
+</head>
+<body>
+<h1>ML Research Report</h1>
+<p>Research only. Trading impact: none. Production validated: false.</p>
+<section><h2>Model Performance</h2><table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody><tr><td>mode</td><td>research</td></tr><tr><td>model_type</td><td>gradient_boosting</td></tr><tr><td>feature_set</td><td>expanded_rebalance_v1</td></tr><tr><td>label_type</td><td>should_reduce_exposure</td></tr><tr><td>decision_threshold</td><td>0.500000</td></tr><tr><td>class_weight</td><td>balanced</td></tr><tr><td>train_sample_count</td><td>3726</td></tr><tr><td>test_sample_count</td><td>966</td></tr><tr><td>source_dataset_row_count</td><td>4782</td></tr><tr><td>dataset_hash</td><td>e1c8ed6bc88cce9d714a738144968908659e04fa8f24dcb19deb16e5e2dedabc</td></tr><tr><td>feature_count</td><td>31</td></tr><tr><td>test_start_date</td><td>2024-07-15</td></tr><tr><td>purged_train_samples</td><td>90</td></tr><tr><td>baselines</td><td>{&quot;noop&quot;: {&quot;accuracy&quot;: 0.06521739130434782, &quot;precision&quot;: null, &quot;recall&quot;: 0.0, &quot;f1&quot;: null, &quot;balanced_accuracy&quot;: 0.5, &quot;samples&quot;: 966}, &quot;majority_class&quot;: {&quot;predicted_class&quot;: 1, &quot;metrics&quot;: {&quot;accuracy&quot;: 0.9347826086956522, &quot;precision&quot;: 0.9347826086956522, &quot;recall&quot;: 1.0, &quot;f1&quot;: 0.9662921348314606, &quot;balanced_accuracy&quot;: 0.5, &quot;samples&quot;: 966}}}</td></tr><tr><td>note</td><td>Research-only out-of-sample evaluation; ML does not affect trading decisions.</td></tr><tr><td>research_label</td><td>GRADIENT_BOOSTING_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY</td></tr><tr><td>production_validated</td><td>False</td></tr><tr><td>accuracy</td><td>0.917184</td></tr><tr><td>precision</td><td>0.983549</td></tr><tr><td>recall</td><td>0.926910</td></tr><tr><td>f1</td><td>0.954390</td></tr><tr><td>balanced_accuracy</td><td>0.852344</td></tr><tr><td>samples</td><td>966</td></tr></tbody></table></section>
+<section><h2>Calibration</h2><table><thead><tr><th>method</th><th>brier_score</th><th>expected_calibration_error</th></tr></thead><tbody><tr><td>raw</td><td>0.067677</td><td>0.128343</td></tr><tr><td>isotonic</td><td>0.062098</td><td>0.088937</td></tr><tr><td>platt</td><td>0.062946</td><td>0.086979</td></tr><tr><td>temperature_scaling</td><td>0.064470</td><td>0.102394</td></tr></tbody></table></section>
+<section><h2>Confusion Matrix</h2><table><thead><tr><th>bucket</th><th>count</th><th>research_label</th></tr></thead><tbody><tr><td>true_positive</td><td>837</td><td>GRADIENT_BOOSTING_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY</td></tr><tr><td>true_negative</td><td>49</td><td>GRADIENT_BOOSTING_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY</td></tr><tr><td>false_positive</td><td>14</td><td>GRADIENT_BOOSTING_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY</td></tr><tr><td>false_negative</td><td>66</td><td>GRADIENT_BOOSTING_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY</td></tr></tbody></table></section>
+<section><h2>Shadow Overlay</h2><table><thead><tr><th>metric</th><th>value</th></tr></thead><tbody><tr><td>base_total_return</td><td>0.964084</td></tr><tr><td>overlay_total_return</td><td>0.604925</td></tr><tr><td>base_max_drawdown</td><td>-0.233409</td></tr><tr><td>overlay_max_drawdown</td><td>-0.166181</td></tr><tr><td>reduced_exposure_days</td><td>95</td></tr><tr><td>evaluated_days</td><td>103</td></tr><tr><td>overlay_turnover</td><td>0.900000</td></tr><tr><td>estimated_cost</td><td>0.000450</td></tr></tbody></table></section>
+<section><h2>Walk-Forward Results</h2><table><thead><tr><th>fold</th><th>test_start_date</th><th>test_sample_count</th><th>accuracy</th><th>balanced_accuracy</th></tr></thead><tbody><tr><td>1</td><td>2021-01-04</td><td>972</td><td>0.905350</td><td>0.885819</td></tr><tr><td>2</td><td>2022-10-10</td><td>966</td><td>0.803313</td><td>0.778653</td></tr><tr><td>3</td><td>2024-07-15</td><td>966</td><td>0.917184</td><td>0.852344</td></tr></tbody></table></section>
+</body>
+</html>

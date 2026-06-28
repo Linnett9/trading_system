@@ -1,0 +1,295 @@
+{
+  "source": "yahoo_finance_chart_adjusted_close",
+  "output_dir": "data/reference/adjusted_prices",
+  "download_date": "2026-06-27",
+  "requested_symbols": [
+    "AEO",
+    "ALK",
+    "AMD",
+    "AMSC",
+    "ANF",
+    "AU",
+    "AXON",
+    "AXTI",
+    "AZN",
+    "BB",
+    "BFH",
+    "CAR",
+    "CCL",
+    "CDE",
+    "CIEN",
+    "JBL",
+    "KSS",
+    "LEU",
+    "LUMN",
+    "MRVL",
+    "MU",
+    "NEM",
+    "NVDA",
+    "QQQ",
+    "SPY",
+    "TER",
+    "THC",
+    "VIAV"
+  ],
+  "requested_symbol_count": 28,
+  "imported_symbol_count": 28,
+  "failed_symbol_count": 0,
+  "symbols": [
+    {
+      "symbol": "AEO",
+      "output_path": "data/reference/adjusted_prices/AEO.csv",
+      "row_count": 8103,
+      "first_date": "1994-04-14",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "ALK",
+      "output_path": "data/reference/adjusted_prices/ALK.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AMD",
+      "output_path": "data/reference/adjusted_prices/AMD.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AMSC",
+      "output_path": "data/reference/adjusted_prices/AMSC.csv",
+      "row_count": 8694,
+      "first_date": "1991-12-12",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "ANF",
+      "output_path": "data/reference/adjusted_prices/ANF.csv",
+      "row_count": 7483,
+      "first_date": "1996-09-26",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AU",
+      "output_path": "data/reference/adjusted_prices/AU.csv",
+      "row_count": 7015,
+      "first_date": "1998-08-05",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AXON",
+      "output_path": "data/reference/adjusted_prices/AXON.csv",
+      "row_count": 6291,
+      "first_date": "2001-06-19",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AXTI",
+      "output_path": "data/reference/adjusted_prices/AXTI.csv",
+      "row_count": 7067,
+      "first_date": "1998-05-21",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "AZN",
+      "output_path": "data/reference/adjusted_prices/AZN.csv",
+      "row_count": 8337,
+      "first_date": "1993-05-12",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "BB",
+      "output_path": "data/reference/adjusted_prices/BB.csv",
+      "row_count": 6889,
+      "first_date": "1999-02-04",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "BFH",
+      "output_path": "data/reference/adjusted_prices/BFH.csv",
+      "row_count": 6293,
+      "first_date": "2001-06-15",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "CAR",
+      "output_path": "data/reference/adjusted_prices/CAR.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "CCL",
+      "output_path": "data/reference/adjusted_prices/CCL.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "CDE",
+      "output_path": "data/reference/adjusted_prices/CDE.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "CIEN",
+      "output_path": "data/reference/adjusted_prices/CIEN.csv",
+      "row_count": 7390,
+      "first_date": "1997-02-07",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "JBL",
+      "output_path": "data/reference/adjusted_prices/JBL.csv",
+      "row_count": 8344,
+      "first_date": "1993-05-03",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "KSS",
+      "output_path": "data/reference/adjusted_prices/KSS.csv",
+      "row_count": 8585,
+      "first_date": "1992-05-19",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "LEU",
+      "output_path": "data/reference/adjusted_prices/LEU.csv",
+      "row_count": 7024,
+      "first_date": "1998-07-23",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "LUMN",
+      "output_path": "data/reference/adjusted_prices/LUMN.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "MRVL",
+      "output_path": "data/reference/adjusted_prices/MRVL.csv",
+      "row_count": 6534,
+      "first_date": "2000-06-30",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "MU",
+      "output_path": "data/reference/adjusted_prices/MU.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "NEM",
+      "output_path": "data/reference/adjusted_prices/NEM.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "NVDA",
+      "output_path": "data/reference/adjusted_prices/NVDA.csv",
+      "row_count": 6898,
+      "first_date": "1999-01-22",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "QQQ",
+      "output_path": "data/reference/adjusted_prices/QQQ.csv",
+      "row_count": 6866,
+      "first_date": "1999-03-10",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "SPY",
+      "output_path": "data/reference/adjusted_prices/SPY.csv",
+      "row_count": 8408,
+      "first_date": "1993-01-29",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "TER",
+      "output_path": "data/reference/adjusted_prices/TER.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "THC",
+      "output_path": "data/reference/adjusted_prices/THC.csv",
+      "row_count": 9187,
+      "first_date": "1990-01-02",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    },
+    {
+      "symbol": "VIAV",
+      "output_path": "data/reference/adjusted_prices/VIAV.csv",
+      "row_count": 8205,
+      "first_date": "1993-11-17",
+      "last_date": "2026-06-25",
+      "source": "yahoo_finance_chart_adjusted_close",
+      "adjusted_ohlc": true
+    }
+  ],
+  "failed_symbols": [],
+  "research_only": true,
+  "trading_impact": "none"
+}
