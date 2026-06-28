@@ -19,6 +19,9 @@ from core.research.ml.adjusted_data_comparison import (
     write_adjusted_data_comparison,
     write_adjusted_price_replay,
 )
+from core.research.ml.adjusted_replay_alignment_audit import (
+    write_adjusted_replay_alignment_audit,
+)
 from core.research.ml.canonical_continuous_equity_replay import (
     write_canonical_continuous_equity_replay,
 )
@@ -30,6 +33,9 @@ from core.research.ml.data_adjustment_validation import (
     write_clean_data_replay,
     write_data_adjustment_audit,
     write_independent_period_validation,
+)
+from core.research.ml.independent_period_expansion_audit import (
+    write_independent_period_expansion_audit,
 )
 from core.research.ml.data_anomaly_quarantine import write_data_anomaly_quarantine
 from core.research.ml.profit_concentration_audit import (
@@ -435,6 +441,8 @@ def run_ml_return_mechanics_audit(config):
     clean_replay_result = write_clean_data_replay(config, research_feed)
     adjusted_comparison_result = write_adjusted_data_comparison(config)
     adjusted_replay_result = write_adjusted_price_replay(config)
+    adjusted_alignment_result = write_adjusted_replay_alignment_audit(config)
+    expansion_result = write_independent_period_expansion_audit(config)
     validation_result = write_benchmark_relative_validation(
         config,
         research_feed,
@@ -456,6 +464,8 @@ def run_ml_return_mechanics_audit(config):
     print(f"Clean-data replay JSON: {clean_replay_result.json_path}")
     print(f"Adjusted data comparison JSON: {adjusted_comparison_result.json_path}")
     print(f"Adjusted price replay JSON: {adjusted_replay_result.json_path}")
+    print(f"Adjusted replay alignment JSON: {adjusted_alignment_result.json_path}")
+    print(f"Independent period expansion JSON: {expansion_result.json_path}")
     print(f"Benchmark-relative validation JSON: {validation_result.json_path}")
     print(f"Promotion readiness: {validation_result.promotion_readiness_path}")
     print(f"Trading research leaderboard JSON: {leaderboard_result.json_path}")

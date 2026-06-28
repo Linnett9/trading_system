@@ -39,6 +39,34 @@ ml:
     adjusted_source_name: local_adjusted_price_csv
     adjusted_data_dir: data/reference/adjusted_prices
     inspect_symbols: [AMSC, AXTI, LEU, LUMN, MRVL, MU]
+    symbols: [AMSC, AXTI, LEU, LUMN, MRVL, MU, SPY, QQQ]
+    source: yahoo_finance_chart_adjusted_close
+    start_date: "1990-01-01"
+    auto_discover_replay_symbols: true
+  adjusted_replay:
+    missing_symbol_policy: fail_closed
+  independent_period_expansion:
+    settings:
+      - name: current_strict_non_overlap
+        description: Current adjusted canonical non-overlap selection.
+        spacing: strict_non_overlap
+        minimum_gap_days: 0
+        enforce_non_overlap: true
+      - name: monthly_leakage_safe
+        description: First valid adjusted period each month, filtered for label-window non-overlap.
+        spacing: monthly
+        minimum_gap_days: 0
+        enforce_non_overlap: true
+      - name: quarterly_leakage_safe
+        description: First valid adjusted period each quarter, filtered for label-window non-overlap.
+        spacing: quarterly
+        minimum_gap_days: 0
+        enforce_non_overlap: true
+      - name: all_valid_min_gap_0
+        description: All valid adjusted periods filtered for label-window non-overlap.
+        spacing: all_valid_min_gap
+        minimum_gap_days: 0
+        enforce_non_overlap: true
   benchmark_relative_validation:
     max_anomaly_dependency_ratio: 0.25
     max_top_5_date_profit_share: 0.50
