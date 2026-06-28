@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import datetime
-import hashlib
 import json
 from pathlib import Path
-import subprocess
 from typing import Any
 
-from core.research.ml.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.calibration import (
     build_probability_calibration,
@@ -20,24 +17,22 @@ from core.research.ml.diagnostics import (
     probability_summary,
     rolling_base_rate_probabilities,
 )
-from core.research.ml.datasets import MLDataset, build_dataset, write_dataset
+from core.research.ml.dataset_pipeline import MLDatasetPipeline
+from core.research.ml.datasets import MLDataset, write_dataset
 from core.research.ml.drawdown_review import write_drawdown_event_review
 from core.research.ml.experiment_paths import (
     MLExperimentPathBuilder,
     MLExperimentPaths,
 )
 from core.research.ml.feature_cache import MLFeatureCache
-from core.research.ml.history_coverage import (
-    assess_history_coverage,
-    write_history_coverage_report,
+from core.research.ml.feature_pipeline import (
+    MLFeaturePipeline,
+    MLFeaturePipelineResult,
 )
 from core.research.ml.html_report import write_research_html_report
 from core.research.ml.evaluation import classification_metrics
-from application.services.market_data_loader import load_candles_with_metadata
 from core.research.ml.features import (
-    HistoricalFeatureBuilder,
     MLFeatureBuildResult,
-    add_champion_state_features,
     write_feature_rows,
 )
 from core.research.ml.labels import (
@@ -45,6 +40,7 @@ from core.research.ml.labels import (
     write_label_rows,
 )
 from core.research.ml.label_pipeline import MLLabelPipeline
+from core.research.ml.model_pipeline import MLModelPipeline
 from core.research.ml.models import build_ml_model
 from core.research.ml.overlay import overlay_decision_rule, simulate_shadow_overlay
 from core.research.ml.rebalance_dataset import (
@@ -61,7 +57,6 @@ from core.research.ml.rule_overlay import (
 from core.research.ml.sector_reference import load_sector_by_symbol
 from core.research.ml.validation import (
     ChronologicalSplit,
-    chronological_holdout,
     rolling_walk_forward,
 )
 
@@ -139,18 +134,13 @@ class MLExperimentRunner:
                 candles_by_symbol,
             )
         label_result = self._build_labels(feature_result, candles_by_symbol)
-        dataset = build_dataset(
-            feature_result.rows,
-            label_result.rows,
-            label_name=label_result.label_name,
+        prepared_dataset = self._dataset_pipeline().prepare(
+            feature_result,
+            label_result,
         )
-        split = self._split_dataset(dataset)
-        model = build_ml_model(
-            self.experiment_config.model_type,
-            random_seed=self.experiment_config.random_seed,
-            class_weight=self._class_weight(),
-            model_config=self.config.get("ml", {}),
-        )
+        dataset = prepared_dataset.dataset
+        split = prepared_dataset.split
+        model = self._model_pipeline().build_model()
         self._fit_research_model(model, split.train)
         probabilities, auxiliary_predictions = self._predict_research_model(
             model,
@@ -268,32 +258,38 @@ class MLExperimentRunner:
     def _feature_cache(self) -> MLFeatureCache:
         return MLFeatureCache(self.config)
 
-    def _split_dataset(self, dataset: MLDataset) -> ChronologicalSplit:
-        return chronological_holdout(
-            dataset,
-            test_fraction=self.experiment_config.test_fraction,
-            train_start=self.experiment_config.train_start,
-            train_end=self.experiment_config.train_end,
-            test_start=self.experiment_config.test_start,
-            test_end=self.experiment_config.test_end,
+    def _feature_pipeline(self) -> MLFeaturePipeline:
+        return MLFeaturePipeline(
+            self.config,
+            self.experiment_config,
+            feed=self.feed,
+            research_label=self.research_label,
+            feature_cache=self._feature_cache(),
+            path_builder=self._experiment_path_builder(),
         )
 
+    def _dataset_pipeline(self) -> MLDatasetPipeline:
+        return MLDatasetPipeline(self.experiment_config)
+
+    def _model_pipeline(self) -> MLModelPipeline:
+        return MLModelPipeline(self.config, self.experiment_config)
+
+    def _artifact_writer(self) -> MLCoreArtifactWriter:
+        return MLCoreArtifactWriter(
+            self.config,
+            self.experiment_config,
+            research_label=self.research_label,
+            model_pipeline=self._model_pipeline(),
+        )
+
+    def _split_dataset(self, dataset: MLDataset) -> ChronologicalSplit:
+        return self._dataset_pipeline().split(dataset)
+
     def _set_model_sequence_context(self, model: Any, dataset: MLDataset) -> None:
-        setter = getattr(model, "set_sequence_context", None)
-        if callable(setter):
-            setter(metadata=dataset.metadata, feature_dates=dataset.feature_dates)
+        self._model_pipeline().set_sequence_context(model, dataset)
 
     def _fit_research_model(self, model: Any, dataset: MLDataset) -> None:
-        self._set_model_sequence_context(model, dataset)
-        fit_multitask = getattr(model, "fit_multitask", None)
-        if callable(fit_multitask) and self._multitask_enabled():
-            fit_multitask(
-                dataset.features,
-                dataset.labels,
-                self._auxiliary_targets_for_dataset(dataset),
-            )
-            return
-        model.fit(dataset.features, dataset.labels)
+        self._model_pipeline().fit(model, dataset)
 
     def _predict_research_model(
         self,
@@ -302,274 +298,89 @@ class MLExperimentRunner:
         *,
         prediction_context: MLDataset | None = None,
     ) -> tuple[list[float], list[dict[str, float]]]:
-        context = prediction_context or dataset
-        self._set_model_sequence_context(model, context)
-        predict_multitask = getattr(model, "predict_multitask", None)
-        if callable(predict_multitask) and self._multitask_enabled():
-            predictions = self._tail_rows(
-                predict_multitask(context.features),
-                dataset.sample_count,
-            )
-            probabilities = [
-                float(row.get("probability_should_reduce_exposure", 0.5))
-                for row in predictions
-            ]
-            auxiliary_predictions = [
-                {
-                    key: float(value)
-                    for key, value in row.items()
-                    if key.startswith("predicted_")
-                }
-                for row in predictions
-            ]
-            return probabilities, auxiliary_predictions
-        component_predictions = self._model_component_predictions(
+        prediction = self._model_pipeline().predict(
             model,
-            context.features,
+            dataset,
+            prediction_context=prediction_context,
         )
-        if component_predictions is not None:
-            component_predictions = self._tail_rows(
-                component_predictions,
-                dataset.sample_count,
-            )
-            probabilities = [
-                self._component_probability(row)
-                for row in component_predictions
-            ]
-            auxiliary_predictions = [
-                self._safe_component_auxiliary_predictions(row)
-                for row in component_predictions
-            ]
-            return probabilities, auxiliary_predictions
-        probabilities = self._tail_rows(
-            model.predict_proba(context.features),
-            dataset.sample_count,
-        )
-        return probabilities, [{} for _ in probabilities]
+        return prediction.probabilities, prediction.auxiliary_predictions
 
     def _prediction_context(self, split: ChronologicalSplit) -> MLDataset:
-        return self._concat_datasets(split.train, split.test)
+        return self._model_pipeline().prediction_context(split)
 
     @staticmethod
     def _tail_rows(rows: list[Any], sample_count: int) -> list[Any]:
-        if sample_count <= 0:
-            return []
-        return list(rows[-sample_count:])
+        return MLModelPipeline.tail_rows(rows, sample_count)
 
     @staticmethod
     def _concat_datasets(left: MLDataset, right: MLDataset) -> MLDataset:
-        return MLDataset(
-            features=[*left.features, *right.features],
-            labels=[*left.labels, *right.labels],
-            feature_dates=[*left.feature_dates, *right.feature_dates],
-            label_start_dates=[*left.label_start_dates, *right.label_start_dates],
-            label_end_dates=[*left.label_end_dates, *right.label_end_dates],
-            feature_ids=[*left.feature_ids, *right.feature_ids]
-            if left.feature_ids or right.feature_ids
-            else [],
-            metadata=[*left.metadata, *right.metadata]
-            if left.metadata or right.metadata
-            else [],
-            auxiliary_targets=[*left.auxiliary_targets, *right.auxiliary_targets]
-            if left.auxiliary_targets or right.auxiliary_targets
-            else [],
-        )
+        return MLModelPipeline.concat_datasets(left, right)
 
     def _model_component_predictions(
         self,
         model: Any,
         features: list[dict[str, float]],
     ) -> list[dict[str, float]] | None:
-        for method_name in (
-            "predict_components",
-            "predict_context",
-            "predict_tft_outputs",
-            "predict_news_components",
-        ):
-            method = getattr(model, method_name, None)
-            if callable(method):
-                return method(features)
-        return None
+        return MLModelPipeline.model_component_predictions(model, features)
 
     def _component_probability(self, row: dict[str, float]) -> float:
-        for name in (
-            "probability_should_reduce_exposure",
-            "market_regime_probability_risk_off",
-            "news_probability_should_reduce_exposure",
-        ):
-            if name in row:
-                return float(row[name])
-        return 0.5
+        return MLModelPipeline.component_probability(row)
 
     def _safe_component_auxiliary_predictions(
         self,
         row: dict[str, float],
     ) -> dict[str, float]:
-        values: dict[str, float] = {}
-        direct_mappings = {
-            "trend_score": "predicted_trend_score",
-            "regime_score": "predicted_regime_score",
-            "size_multiplier": "predicted_size_multiplier",
-            "rank_score": "predicted_rank_score",
-            "risk_multiplier": "predicted_context_risk_multiplier",
-        }
-        for key, value in row.items():
-            if key.startswith("predicted_"):
-                values[key] = float(value)
-            elif key in direct_mappings:
-                values[direct_mappings[key]] = float(value)
-        return values
+        return MLModelPipeline.safe_component_auxiliary_predictions(row)
 
     def _multitask_enabled(self) -> bool:
-        ml_config = self.config.get("ml", {})
-        return bool(
-            ml_config.get("multitask_enabled", False)
-            or self.experiment_config.model_type == "multitask_transformer"
-        )
+        return self._model_pipeline().multitask_enabled()
 
     def _multitask_regression_targets(self) -> list[str]:
-        configured = self.config.get("ml", {}).get("multitask_regression_targets", [])
-        return [str(value) for value in configured]
+        return self._model_pipeline().multitask_regression_targets()
 
     def _auxiliary_targets_for_dataset(
         self,
         dataset: MLDataset,
     ) -> dict[str, list[float | None]]:
-        targets = self._multitask_regression_targets()
-        if not targets:
-            return {}
-        return {
-            target: [
-                (
-                    dataset.auxiliary_targets[index].get(target)
-                    if dataset.auxiliary_targets
-                    and index < len(dataset.auxiliary_targets)
-                    and dataset.auxiliary_targets[index]
-                    else None
-                )
-                for index in range(dataset.sample_count)
-            ]
-            for target in targets
-        }
+        return self._model_pipeline().auxiliary_targets_for_dataset(dataset)
 
     def _model_filename(self) -> str:
         return self._experiment_path_builder().model_filename()
 
     def _class_weight(self) -> str | None:
-        return "balanced" if self.experiment_config.class_weight_balanced else None
+        return self._model_pipeline().class_weight()
 
     def _predictions_from_probabilities(self, probabilities: list[float]) -> list[int]:
-        return [
-            int(probability >= self.experiment_config.decision_threshold)
-            for probability in probabilities
-        ]
+        return self._model_pipeline().predictions_from_probabilities(probabilities)
 
     def _build_features(
         self,
     ) -> tuple[MLFeatureBuildResult, dict[str, list[Any]]]:
-        if self.feed is None:
-            return MLFeatureBuildResult(rows=[], dropped_rows=0, date_range=None), {}
+        result = self._feature_pipeline().build()
+        self._apply_feature_pipeline_result(result)
+        return result.feature_result, result.candles_by_symbol
 
-        symbols = self._feature_symbols()
-        loaded_candles = {
-            symbol: load_candles_with_metadata(symbol, self.config, self.feed)
-            for symbol in symbols
-        }
-        candles_by_symbol = {
-            symbol: result.candles for symbol, result in loaded_candles.items()
-        }
-        self._history_data_metadata = {
-            symbol: result.metadata for symbol, result in loaded_candles.items()
-        }
-        ml_config = self.config.get("ml", {})
-        self._validate_history_coverage(candles_by_symbol, ml_config)
-        benchmark_symbols = tuple(ml_config.get("benchmark_symbols", ["SPY", "QQQ"]))
-        if len(benchmark_symbols) < 2:
-            raise ValueError("ml.benchmark_symbols must contain at least SPY and QQQ")
-
-        builder = HistoricalFeatureBuilder(
-            benchmark_symbols=tuple(str(symbol) for symbol in benchmark_symbols),
-            lookback_days=int(ml_config.get("feature_lookback_days", 252)),
-        )
-        feature_cache_path = self._features_path()
-        feature_cache_key = self._feature_cache_key(
-            symbols,
-            benchmark_symbols,
-            builder.lookback_days,
-            candles_by_symbol,
-        )
-        cached_feature_result = self._load_cached_feature_rows(
-            feature_cache_path,
-            feature_cache_key,
-        )
-        if cached_feature_result is not None:
-            feature_result = cached_feature_result
-        else:
-            feature_result = builder.build(candles_by_symbol)
-            self._write_cached_feature_rows(
-                feature_cache_path,
-                feature_result,
-                feature_cache_key,
-            )
-        if (
-            ml_config.get("include_champion_state_features", True)
-            and self.config.get("research", {}).get("dual_momentum")
-        ):
-            from application.services.dual_momentum_config import (
-                active_dual_momentum_config,
-            )
-            from core.research.dual_momentum_factory import build_dual_momentum_tester
-
-            champion_config = active_dual_momentum_config(self.config)
-            champion_result = build_dual_momentum_tester(
-                self.config,
-                champion_config,
-            ).run(candles_by_symbol)
-            self._champion_equity_curve = champion_result.result.equity_curve
-            self._champion_selections = champion_result.selections
-            self._champion_rebalance_dates = {
-                selection.timestamp.date().isoformat()
-                for selection in champion_result.selections
-            }
-            feature_result = MLFeatureBuildResult(
-                rows=add_champion_state_features(
-                    feature_result.rows,
-                    champion_result.selections,
-                ),
-                dropped_rows=feature_result.dropped_rows,
-                date_range=feature_result.date_range,
-            )
-        return feature_result, candles_by_symbol
+    def _apply_feature_pipeline_result(
+        self,
+        result: MLFeaturePipelineResult,
+    ) -> None:
+        if result.champion_state_updated:
+            self._champion_equity_curve = result.champion_equity_curve
+            self._champion_selections = result.champion_selections
+            self._champion_rebalance_dates = result.champion_rebalance_dates
+        if result.history_data_metadata_updated:
+            self._history_data_metadata = result.history_data_metadata
 
     def _validate_history_coverage(
         self,
         candles_by_symbol: dict[str, list[Any]],
         ml_config: dict[str, Any],
     ) -> None:
-        required_years = ml_config.get("minimum_history_years")
-        if required_years is None:
-            return
-        report = assess_history_coverage(
+        self._feature_pipeline().validate_history_coverage(
             candles_by_symbol,
-            required_years=int(required_years),
-            tolerance_days=int(ml_config.get("history_coverage_tolerance_days", 10)),
-            source_metadata=self._history_data_metadata,
+            ml_config,
+            self._history_data_metadata,
         )
-        output_dir = Path(self.experiment_config.output_dir)
-        report_path = output_dir / "history_coverage.json"
-        allow_short_history = bool(
-            ml_config.get("allow_short_history_for_smoke_test", False)
-        )
-        report["research_label"] = self.research_label
-        report["short_history_allowed_for_smoke_test"] = allow_short_history
-        write_history_coverage_report(report_path, report)
-        if not report["coverage_sufficient"] and not allow_short_history:
-            raise RuntimeError(
-                "ML research stopped: historical coverage is insufficient. "
-                f"Required {report['required_years']} years, but the common range is "
-                f"{report['common_start_date']} to {report['common_end_date']}. "
-                f"See {report_path}."
-            )
 
     def _annotate_report_artifacts(self, output_dir: Path) -> None:
         warning = (
@@ -611,58 +422,12 @@ class MLExperimentRunner:
         ).build(feature_result, candles_by_symbol)
 
     def _feature_symbols(self) -> list[str]:
-        dual_momentum = self.config.get("research", {}).get("dual_momentum", {})
-        symbols = dual_momentum.get(
-            "symbols",
-            self.config.get("backtest", {}).get("symbols", []),
-        )
-        universe_path = dual_momentum.get("universe_path")
-        if universe_path:
-            try:
-                import yaml
-
-                payload = yaml.safe_load(Path(str(universe_path)).read_text(
-                    encoding="utf-8"
-                )) or {}
-                symbols = payload.get("symbols", symbols)
-            except FileNotFoundError:
-                symbols = []
-        if self.experiment_config.label_type == "should_reduce_exposure":
-            symbols = [
-                *symbols,
-                *self._expanded_rebalance_universe_symbols(dual_momentum),
-            ]
-        benchmarks = self.config.get("ml", {}).get("benchmark_symbols", ["SPY", "QQQ"])
-        return list(dict.fromkeys([*symbols, *benchmarks]))
+        return self._feature_pipeline().feature_symbols()
 
     def _expanded_rebalance_universe_symbols(self, dual_momentum: dict) -> list[str]:
-        ml_config = self.config.get("ml", {})
-        expanded_config = ml_config.get("expanded_rebalance_dataset", {})
-        universe_paths = expanded_config.get(
-            "universe_paths",
-            [
-                "data/reference/universes/current_32.yaml",
-                "data/reference/universes/us_liquid_100.yaml",
-            ],
+        return self._feature_pipeline().expanded_rebalance_universe_symbols(
+            dual_momentum,
         )
-        output = []
-        for universe_path in universe_paths:
-            path = Path(str(universe_path))
-            if not path.exists():
-                continue
-            try:
-                import yaml
-
-                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except FileNotFoundError:
-                continue
-            output.extend(str(symbol).upper() for symbol in payload.get("symbols", []))
-        if not output:
-            output = [str(symbol).upper() for symbol in dual_momentum.get("symbols", [])]
-        max_symbols = expanded_config.get("max_symbols")
-        if max_symbols:
-            return output[: int(max_symbols)]
-        return output
 
     def _features_path(self) -> Path:
         return self._experiment_path_builder().features_path()
@@ -950,39 +715,7 @@ class MLExperimentRunner:
         path: Path,
         feature_result: MLFeatureBuildResult,
     ) -> None:
-        rows = feature_result.rows
-        numeric_columns = [
-            name for name in (rows[0] if rows else {})
-            if name != "feature_date" and self._is_numeric_column(rows, name)
-        ]
-        summary = {
-            "row_count": len(rows),
-            "dropped_rows_insufficient_lookback": feature_result.dropped_rows,
-            "date_range": feature_result.date_range,
-            "missing_values": {
-                name: sum(row.get(name) is None for row in rows)
-                for name in numeric_columns
-            },
-            "means": {
-                name: sum(float(row[name]) for row in rows) / len(rows)
-                for name in numeric_columns
-            } if rows else {},
-            "standard_deviations": {
-                name: self._standard_deviation([float(row[name]) for row in rows])
-                for name in numeric_columns
-            } if rows else {},
-            "correlation_matrix": {
-                left: {
-                    right: self._correlation(
-                        [float(row[left]) for row in rows],
-                        [float(row[right]) for row in rows],
-                    )
-                    for right in numeric_columns
-                }
-                for left in numeric_columns
-            } if rows else {},
-        }
-        path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        self._artifact_writer().write_feature_summary(path, feature_result)
 
     def _write_dataset_audit(
         self,
@@ -990,34 +723,7 @@ class MLExperimentRunner:
         dataset: MLDataset,
         label_result: MLLabelBuildResult,
     ) -> None:
-        positive_labels = sum(dataset.labels)
-        sample_count = dataset.sample_count
-        payload = {
-            "sample_count": sample_count,
-            "feature_count": dataset.feature_count,
-            "date_coverage": (
-                [dataset.feature_dates[0], dataset.feature_dates[-1]]
-                if dataset.feature_dates
-                else None
-            ),
-            "class_balance": {
-                "positive": positive_labels,
-                "negative": sample_count - positive_labels,
-                "positive_rate": positive_labels / sample_count if sample_count else None,
-            },
-            "dropped_rows_insufficient_label_horizon": (
-                label_result.dropped_rows_insufficient_horizon
-            ),
-            "leakage_check_passed": all(
-                feature_date < label_start <= label_end
-                for feature_date, label_start, label_end in zip(
-                    dataset.feature_dates,
-                    dataset.label_start_dates,
-                    dataset.label_end_dates,
-                )
-            ),
-        }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._artifact_writer().write_dataset_audit(path, dataset, label_result)
 
     def _write_walk_forward_metrics(self, path: Path, dataset: MLDataset) -> None:
         folds = rolling_walk_forward(
@@ -1805,37 +1511,17 @@ class MLExperimentRunner:
         return sum(values) / len(values) if values else None
 
     def _standard_deviation(self, values: list[float]) -> float:
-        if len(values) < 2:
-            return 0.0
-        average = sum(values) / len(values)
-        return (sum((value - average) ** 2 for value in values) / len(values)) ** 0.5
+        return MLCoreArtifactWriter.standard_deviation(values)
 
     def _correlation(self, left: list[float], right: list[float]) -> float:
-        if len(left) < 2 or len(left) != len(right):
-            return 0.0
-        left_average = sum(left) / len(left)
-        right_average = sum(right) / len(right)
-        numerator = sum(
-            (left_value - left_average) * (right_value - right_average)
-            for left_value, right_value in zip(left, right)
-        )
-        left_scale = sum((value - left_average) ** 2 for value in left) ** 0.5
-        right_scale = sum((value - right_average) ** 2 for value in right) ** 0.5
-        if left_scale == 0 or right_scale == 0:
-            return 0.0
-        return numerator / (left_scale * right_scale)
+        return MLCoreArtifactWriter.correlation(left, right)
 
     def _is_numeric_column(
         self,
         rows: list[dict[str, float | str]],
         name: str,
     ) -> bool:
-        for row in rows:
-            try:
-                float(row[name])
-            except (KeyError, TypeError, ValueError):
-                return False
-        return True
+        return MLCoreArtifactWriter.is_numeric_column(rows, name)
 
     def _write_metrics(
         self,
@@ -1844,47 +1530,10 @@ class MLExperimentRunner:
         split: ChronologicalSplit,
         predictions: list[int],
     ) -> None:
-        metrics = classification_metrics(split.test.labels, predictions)
-        dataset_hash = self._source_dataset_hash(dataset)
-        payload = {
-            "mode": "research",
-            "model_type": self.experiment_config.model_type,
-            "feature_set": self.experiment_config.feature_set,
-            "label_type": self.experiment_config.label_type,
-            "decision_threshold": self.experiment_config.decision_threshold,
-            "class_weight": self._class_weight(),
-            "train_sample_count": split.train.sample_count,
-            "test_sample_count": split.test.sample_count,
-            "source_dataset_row_count": dataset.sample_count,
-            "dataset_hash": dataset_hash,
-            "feature_count": split.train.feature_count,
-            "test_start_date": split.test_start_date,
-            "purged_train_samples": split.purged_train_samples,
-            "metrics": metrics,
-            "baselines": self._baseline_metrics(split),
-            "note": (
-                "Research-only out-of-sample evaluation; ML does not affect "
-                "trading decisions."
-            ),
-        }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._artifact_writer().write_metrics(path, dataset, split, predictions)
 
     def _baseline_metrics(self, split: ChronologicalSplit) -> dict[str, dict]:
-        no_op_predictions = [0] * split.test.sample_count
-        majority_class = int(
-            sum(split.train.labels) >= (split.train.sample_count / 2)
-        ) if split.train.sample_count else 0
-        majority_predictions = [majority_class] * split.test.sample_count
-        return {
-            "noop": classification_metrics(split.test.labels, no_op_predictions),
-            "majority_class": {
-                "predicted_class": majority_class,
-                "metrics": classification_metrics(
-                    split.test.labels,
-                    majority_predictions,
-                ),
-            },
-        }
+        return self._artifact_writer().baseline_metrics(split)
 
     def _write_predictions(
         self,
@@ -1893,30 +1542,12 @@ class MLExperimentRunner:
         predictions: list[int],
         probabilities: list[float],
     ) -> None:
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=[
-                    "row",
-                    "feature_date",
-                    "label_start_date",
-                    "label_end_date",
-                    "prediction",
-                    "probability",
-                    "label",
-                ],
-            )
-            writer.writeheader()
-            for index, prediction in enumerate(predictions):
-                writer.writerow({
-                    "row": index,
-                    "feature_date": dataset.feature_dates[index],
-                    "label_start_date": dataset.label_start_dates[index],
-                    "label_end_date": dataset.label_end_dates[index],
-                    "prediction": prediction,
-                    "probability": probabilities[index],
-                    "label": dataset.labels[index],
-                })
+        self._artifact_writer().write_predictions(
+            path,
+            dataset,
+            predictions,
+            probabilities,
+        )
 
     def _write_prediction_artifacts(
         self,
@@ -1933,122 +1564,19 @@ class MLExperimentRunner:
         test_sample_count: int | None = None,
         generated_at: str | None = None,
     ) -> None:
-        rows = []
-        provenance = self._prediction_artifact_provenance(
+        self._artifact_writer().write_prediction_artifacts(
+            csv_path,
+            metadata_path,
             dataset,
             split,
+            holdout_probabilities,
+            holdout_auxiliary_predictions,
             dataset_hash=dataset_hash,
             source_dataset_row_count=source_dataset_row_count,
             train_sample_count=train_sample_count,
             test_sample_count=test_sample_count,
             generated_at=generated_at,
         )
-        provenance = {
-            "source_dataset_row_count": int(provenance["source_dataset_row_count"]),
-            "train_sample_count": int(provenance["train_sample_count"]),
-            "test_sample_count": int(provenance["test_sample_count"]),
-            "generated_at": str(provenance["generated_at"]),
-            "dataset_hash": str(provenance["dataset_hash"]),
-        }
-        for fold in rolling_walk_forward(
-            dataset,
-            self.experiment_config.walk_forward_folds,
-        ):
-            model = build_ml_model(
-                self.experiment_config.model_type,
-                random_seed=self.experiment_config.random_seed,
-                class_weight=self._class_weight(),
-                model_config=self.config.get("ml", {}),
-            )
-            self._fit_research_model(model, fold.split.train)
-            probabilities, auxiliary_predictions = self._predict_research_model(
-                model,
-                fold.split.test,
-                prediction_context=self._prediction_context(fold.split),
-            )
-            rows.extend(
-                self._prediction_artifact_rows(
-                    fold.split.test,
-                    probabilities,
-                    auxiliary_predictions,
-                    split_name="out_of_fold",
-                    fold=fold.fold_number,
-                    provenance=provenance,
-                )
-            )
-        rows.extend(
-            self._prediction_artifact_rows(
-                split.test,
-                holdout_probabilities,
-                holdout_auxiliary_predictions,
-                split_name="holdout",
-                fold="holdout",
-                provenance=provenance,
-            )
-        )
-        auxiliary_fieldnames = self._prediction_artifact_auxiliary_fieldnames(rows)
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames = [
-            "artifact_schema_version",
-            "profile",
-            "model_name",
-            "date",
-            "prediction_date",
-            "symbol",
-            "rebalance_date",
-            "feature_id",
-            "variant_id",
-            "config_path",
-            "model_type",
-            "label_type",
-            "split",
-            "fold",
-            "actual_label",
-            "predicted_probability",
-            "raw_probability",
-            "calibrated_probability",
-            "prediction",
-            "decision_threshold",
-            "source_dataset_row_count",
-            "train_sample_count",
-            "test_sample_count",
-            "generated_at",
-            "dataset_hash",
-            "research_label",
-            *auxiliary_fieldnames,
-        ]
-        with csv_path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
-        metadata_path.write_text(json.dumps({
-            "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
-            "profile": self.config.get("ml", {}).get("profile", ""),
-            "model_name": self._prediction_artifact_model_name(),
-            "model_type": self.experiment_config.model_type,
-            "label_type": self.experiment_config.label_type,
-            "feature_set": self.experiment_config.feature_set,
-            "config_path": self.config.get("ml", {}).get("config_path", ""),
-            "config_hash": self._hash_payload(self.config),
-            "data_hash": provenance["dataset_hash"],
-            "dataset_hash": provenance["dataset_hash"],
-            "source_dataset_row_count": provenance["source_dataset_row_count"],
-            "train_sample_count": provenance["train_sample_count"],
-            "test_sample_count": provenance["test_sample_count"],
-            "generated_at": provenance["generated_at"],
-            "git_commit": self._git_commit(),
-            "validation_method": "rolling_walk_forward_out_of_fold_plus_holdout",
-            "row_count": len(rows),
-            "auxiliary_targets": self._multitask_regression_targets(),
-            "auxiliary_prediction_columns": [
-                name for name in auxiliary_fieldnames if name.startswith("predicted_")
-            ],
-            "auxiliary_actual_columns": [
-                name for name in auxiliary_fieldnames if name.startswith("actual_")
-            ],
-            "trading_impact": "none",
-            "research_only": True,
-        }, indent=2), encoding="utf-8")
 
     def _prediction_artifact_provenance(
         self,
@@ -2061,25 +1589,15 @@ class MLExperimentRunner:
         test_sample_count: int | None = None,
         generated_at: str | None = None,
     ) -> dict[str, str | int]:
-        return {
-            "dataset_hash": dataset_hash or self._dataset_hash(dataset),
-            "source_dataset_row_count": (
-                dataset.sample_count
-                if source_dataset_row_count is None
-                else source_dataset_row_count
-            ),
-            "train_sample_count": (
-                split.train.sample_count
-                if train_sample_count is None
-                else train_sample_count
-            ),
-            "test_sample_count": (
-                split.test.sample_count
-                if test_sample_count is None
-                else test_sample_count
-            ),
-            "generated_at": generated_at or datetime.utcnow().isoformat() + "Z",
-        }
+        return self._artifact_writer().prediction_artifact_provenance(
+            dataset,
+            split,
+            dataset_hash=dataset_hash,
+            source_dataset_row_count=source_dataset_row_count,
+            train_sample_count=train_sample_count,
+            test_sample_count=test_sample_count,
+            generated_at=generated_at,
+        )
 
     def _prediction_artifact_rows(
         self,
@@ -2090,65 +1608,17 @@ class MLExperimentRunner:
         fold: int | str,
         provenance: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        rows = []
-        provenance = provenance or {}
-        auxiliary_predictions = auxiliary_predictions or [{} for _ in probabilities]
-        for index, probability in enumerate(probabilities):
-            metadata = dataset.metadata[index] if dataset.metadata else {}
-            feature_id = (
-                dataset.feature_ids[index]
-                if dataset.feature_ids
-                else dataset.feature_dates[index]
-            )
-            row = {
-                "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
-                "profile": self.config.get("ml", {}).get("profile", ""),
-                "model_name": self._prediction_artifact_model_name(),
-                "date": dataset.feature_dates[index],
-                "prediction_date": dataset.feature_dates[index],
-                "symbol": metadata.get("symbol", ""),
-                "rebalance_date": metadata.get("rebalance_date", dataset.feature_dates[index]),
-                "feature_id": feature_id,
-                "variant_id": metadata.get("variant_id", ""),
-                "config_path": self.config.get("ml", {}).get("config_path", ""),
-                "model_type": self.experiment_config.model_type,
-                "label_type": self.experiment_config.label_type,
-                "split": split_name,
-                "fold": fold,
-                "actual_label": dataset.labels[index],
-                "predicted_probability": float(probability),
-                "raw_probability": float(probability),
-                "calibrated_probability": "",
-                "prediction": int(
-                    probability >= self.experiment_config.decision_threshold
-                ),
-                "decision_threshold": self.experiment_config.decision_threshold,
-                "source_dataset_row_count": provenance.get(
-                    "source_dataset_row_count", ""
-                ),
-                "train_sample_count": provenance.get("train_sample_count", ""),
-                "test_sample_count": provenance.get("test_sample_count", ""),
-                "generated_at": provenance.get("generated_at", ""),
-                "dataset_hash": provenance.get("dataset_hash", ""),
-                "research_label": self.research_label,
-            }
-            row.update(
-                self._prediction_artifact_auxiliary_values(
-                    dataset,
-                    index,
-                    auxiliary_predictions[index] if index < len(auxiliary_predictions) else {},
-                )
-            )
-            rows.append(row)
-        return rows
+        return self._artifact_writer().prediction_artifact_rows(
+            dataset,
+            probabilities,
+            auxiliary_predictions,
+            split_name,
+            fold,
+            provenance,
+        )
 
     def _prediction_artifact_model_name(self) -> str:
-        ml_config = self.config.get("ml", {})
-        return str(
-            ml_config.get("model_name")
-            or ml_config.get("research_label")
-            or self.experiment_config.model_type
-        )
+        return self._artifact_writer().prediction_artifact_model_name()
 
     def _prediction_artifact_auxiliary_values(
         self,
@@ -2156,52 +1626,24 @@ class MLExperimentRunner:
         index: int,
         auxiliary_prediction: dict[str, float],
     ) -> dict[str, float | str]:
-        values: dict[str, float | str] = {}
-        targets = self._multitask_regression_targets()
-        actuals = dataset.auxiliary_targets[index] if dataset.auxiliary_targets else {}
-        for target in targets:
-            prediction_key = f"predicted_{target}"
-            actual_key = f"actual_{target}"
-            if prediction_key in auxiliary_prediction:
-                values[prediction_key] = float(auxiliary_prediction[prediction_key])
-            else:
-                values[prediction_key] = ""
-            actual_value = actuals.get(target) if actuals else None
-            values[actual_key] = "" if actual_value is None else float(actual_value)
-        for key, value in auxiliary_prediction.items():
-            if key.startswith("predicted_") and key not in values:
-                values[key] = float(value)
-        return values
+        return self._artifact_writer().prediction_artifact_auxiliary_values(
+            dataset,
+            index,
+            auxiliary_prediction,
+        )
 
     @staticmethod
     def _prediction_artifact_auxiliary_fieldnames(
         rows: list[dict[str, Any]],
     ) -> list[str]:
-        names: list[str] = []
-        for row in rows:
-            for name in row:
-                if name == "actual_label":
-                    continue
-                if name == "predicted_probability":
-                    continue
-                if (name.startswith("predicted_") or name.startswith("actual_")) and name not in names:
-                    names.append(name)
-        return sorted(names)
+        return MLCoreArtifactWriter.prediction_artifact_auxiliary_fieldnames(rows)
 
     def _write_feature_importance(
         self,
         path: Path,
         feature_importances: dict[str, float],
     ) -> None:
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["feature", "importance"])
-            writer.writeheader()
-            for feature, importance in sorted(
-                feature_importances.items(),
-                key=lambda item: item[1],
-                reverse=True,
-            ):
-                writer.writerow({"feature": feature, "importance": importance})
+        self._artifact_writer().write_feature_importance(path, feature_importances)
 
     def _write_confusion_matrix(
         self,
@@ -2209,27 +1651,7 @@ class MLExperimentRunner:
         dataset: MLDataset,
         predictions: list[int],
     ) -> None:
-        counts = {
-            "true_positive": 0,
-            "true_negative": 0,
-            "false_positive": 0,
-            "false_negative": 0,
-        }
-        for actual, prediction in zip(dataset.labels, predictions):
-            if actual == prediction == 1:
-                counts["true_positive"] += 1
-            elif actual == prediction == 0:
-                counts["true_negative"] += 1
-            elif actual == 0 and prediction == 1:
-                counts["false_positive"] += 1
-            elif actual == 1 and prediction == 0:
-                counts["false_negative"] += 1
-
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["bucket", "count"])
-            writer.writeheader()
-            for bucket, count in counts.items():
-                writer.writerow({"bucket": bucket, "count": count})
+        self._artifact_writer().write_confusion_matrix(path, dataset, predictions)
 
     def _write_metadata(
         self,
@@ -2237,90 +1659,22 @@ class MLExperimentRunner:
         dataset: MLDataset,
         split: ChronologicalSplit,
     ) -> None:
-        dataset_hash = self._source_dataset_hash(dataset)
-        payload = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "config_hash": self._hash_payload(self.config),
-            "data_hash": dataset_hash,
-            "dataset_hash": dataset_hash,
-            "source_dataset_row_count": dataset.sample_count,
-            "git_commit": self._git_commit(),
-            "model_type": self.experiment_config.model_type,
-            "feature_set": self.experiment_config.feature_set,
-            "label_type": self.experiment_config.label_type,
-            "random_seed": self.experiment_config.random_seed,
-            "experiment_config": self.experiment_config.to_dict(),
-            "validation": {
-                "method": "purged_chronological_holdout",
-                "train_sample_count": split.train.sample_count,
-                "test_sample_count": split.test.sample_count,
-                "test_start_date": split.test_start_date,
-                "purged_train_samples": split.purged_train_samples,
-            },
-            "research_only": True,
-        }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._artifact_writer().write_metadata(path, dataset, split)
 
     def _dataset_hash(self, dataset: MLDataset) -> str:
-        return self._source_dataset_hash(dataset)
+        return self._artifact_writer().dataset_hash(dataset)
 
     def _source_dataset_hash(self, dataset: MLDataset) -> str:
-        return self._hash_payload(self._source_dataset_identity(dataset))
+        return self._artifact_writer().source_dataset_hash(dataset)
 
     def _source_dataset_identity(self, dataset: MLDataset) -> dict[str, Any]:
-        rows = []
-        for index in range(dataset.sample_count):
-            metadata = dataset.metadata[index] if index < len(dataset.metadata) else {}
-            rows.append({
-                "feature_date": dataset.feature_dates[index],
-                "label_start_date": dataset.label_start_dates[index],
-                "label_end_date": dataset.label_end_dates[index],
-                "label": dataset.labels[index],
-                "rebalance_date": metadata.get(
-                    "rebalance_date",
-                    dataset.feature_dates[index],
-                ),
-                "variant_id": metadata.get("variant_id", ""),
-                "symbol": metadata.get("symbol", ""),
-                "selected_symbols": metadata.get("selected_symbols", ""),
-                "variant_universe": metadata.get("variant_universe", ""),
-                "variant_rebalance_frequency": metadata.get(
-                    "variant_rebalance_frequency",
-                    "",
-                ),
-                "variant_weighting": metadata.get("variant_weighting", ""),
-            })
-        rows.sort(key=lambda row: tuple(str(value) for value in row.values()))
-        return {
-            "label_type": self.experiment_config.label_type,
-            "rows": rows,
-        }
+        return self._artifact_writer().source_dataset_identity(dataset)
 
     def _model_input_hash(self, dataset: MLDataset) -> str:
-        return self._hash_payload({
-            "features": dataset.features,
-            "labels": dataset.labels,
-            "feature_ids": dataset.feature_ids,
-            "feature_dates": dataset.feature_dates,
-            "label_start_dates": dataset.label_start_dates,
-            "label_end_dates": dataset.label_end_dates,
-            "auxiliary_targets": dataset.auxiliary_targets,
-        })
+        return self._artifact_writer().model_input_hash(dataset)
 
     def _hash_payload(self, payload: Any) -> str:
-        serialized = json.dumps(payload, sort_keys=True, default=str)
-        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        return MLCoreArtifactWriter.hash_payload(payload)
 
     def _git_commit(self) -> str | None:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except OSError:
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip() or None
+        return MLCoreArtifactWriter.git_commit()
