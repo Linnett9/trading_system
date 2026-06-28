@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -41,25 +40,3 @@ class MetaEnsembleResult:
     trading_research_leaderboard_csv_path: Path
     trading_research_leaderboard_json_path: Path
     trading_research_leaderboard_markdown_path: Path
-
-
-@dataclass
-class MetaLearnerModel:
-    model_type: str
-    feature_names: list[str]
-    estimator: Any = None
-    constant_probability: float | None = None
-
-    def predict_proba(self, features: list[dict[str, float]]) -> list[float]:
-        if self.constant_probability is not None:
-            return [self.constant_probability for _ in features]
-        matrix = _feature_matrix(features, self.feature_names)
-        probabilities = self.estimator.predict_proba(matrix)[:, 1].tolist()
-        return [float(value) for value in probabilities]
-
-
-def _feature_matrix(
-    features: list[dict[str, float]],
-    feature_names: list[str],
-) -> list[list[float]]:
-    return [[float(row.get(name, 0.0)) for name in feature_names] for row in features]
