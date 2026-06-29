@@ -5,7 +5,7 @@ from datetime import datetime
 
 from core.entities.candle import Candle
 from core.research.ml.artifacts.feature_cache import MLFeatureCache
-from core.research.ml.features import MLFeatureBuildResult
+from core.research.ml.features.features import MLFeatureBuildResult
 
 
 def test_feature_cache_writes_and_loads_historical_feature_rows(tmp_path):

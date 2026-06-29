@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from core.research.dual_momentum_experiments import (
+from core.research.dual_momentum.experiments import (
     walk_forward_candidate_hard_filter,
 )
-from core.research.dual_momentum_scoring import (
+from core.research.dual_momentum.scoring import (
     classify_walk_forward_fold_result,
     fold_gap_label,
 )

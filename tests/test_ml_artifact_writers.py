@@ -8,9 +8,9 @@ import pytest
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
-from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.labels import MLLabelBuildResult
+from core.research.ml.data.datasets import MLDataset
+from core.research.ml.features.features import MLFeatureBuildResult
+from core.research.ml.features.labels import MLLabelBuildResult
 from core.research.ml.validation import ChronologicalSplit
 
 

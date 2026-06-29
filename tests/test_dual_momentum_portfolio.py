@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from core.entities.candle import Candle
-from core.research.dual_momentum_portfolio import (
+from core.research.dual_momentum.portfolio import (
     DualMomentumPortfolioBacktester,
 )
 

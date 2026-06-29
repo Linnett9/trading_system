@@ -5,7 +5,12 @@ output_suffix: benchmark
 cache_dir: cache/ml/benchmark
 report_dir: reports/ml/benchmark
 batch_workers: 4
-model_threads: 2
-torch_num_threads: 2
-sklearn_n_jobs: 2
-feature_workers: 1
+model_threads: 1
+torch_num_threads: 1
+sklearn_n_jobs: 1
+feature_workers: 4
+stock_alpha_feature_n_jobs: 4
+stock_ranker_model_n_jobs: 4
+stock_target_comparison_n_jobs: 4
+stock_portfolio_policy_sweep_n_jobs: 4
+numpy_num_threads: 1

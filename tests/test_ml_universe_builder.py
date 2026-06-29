@@ -4,7 +4,7 @@ import json
 
 import yaml
 
-from core.research.ml.universe_builder import build_universe_files
+from core.research.ml.data.universe_builder import build_universe_files
 
 
 def test_universe_builder_filters_by_history_latest_date_and_liquidity(tmp_path):

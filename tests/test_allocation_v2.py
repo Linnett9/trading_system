@@ -8,22 +8,18 @@ from statistics import mean
 
 import pytest
 
-from core.research.ml import (
-    allocation_optimizer,
-    allocation_v2,
-    allocation_v2_variants,
-    meta_auxiliary,
-)
-from core.research.ml.allocation_optimizer import (
+from core.research.ml import meta_auxiliary
+from core.research.ml.allocation.allocation_optimizer import (
     build_optimizer_sampler,
     optuna_is_available,
     score_optimizer_candidate,
 )
-from core.research.ml.allocation_v2 import (
+from core.research.ml.allocation.allocation_v2 import (
     _forecast_values,
     _policy_exposures,
     write_allocation_v2_reports,
 )
+from core.research.ml.allocation import allocation_optimizer, allocation_v2, allocation_v2_variants
 
 
 def test_allocation_policies_use_probability_and_multitask_forecasts():

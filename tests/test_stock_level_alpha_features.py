@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 import pytest
@@ -63,6 +64,42 @@ def test_future_prices_do_not_change_earlier_features():
         {feature: row[feature] for feature in ENGINEERED_FEATURE_COLUMNS}
         for row in second
     ]
+
+
+def test_parallel_feature_generation_matches_single_worker_output():
+    single_rows, single_audit = build_stock_level_alpha_features(
+        _rows(),
+        _histories(),
+        n_jobs=1,
+    )
+    parallel_rows, parallel_audit = build_stock_level_alpha_features(
+        _rows(),
+        _histories(),
+        n_jobs=2,
+        executor_cls=ThreadPoolExecutor,
+    )
+
+    assert parallel_rows == single_rows
+    assert parallel_audit["parallelism"]["stock_alpha_feature_n_jobs"] == 2
+    assert parallel_audit["parallelism"]["effective_workers"] == 2
+    assert parallel_audit["parallelism"]["elapsed_seconds"] >= 0
+    assert single_audit["parallelism"]["stock_alpha_feature_n_jobs"] == 1
+
+
+def test_parallel_feature_generation_output_order_is_deterministic():
+    rows = list(reversed(_rows()))
+    enriched, audit = build_stock_level_alpha_features(
+        rows,
+        _histories(),
+        n_jobs=2,
+        executor_cls=ThreadPoolExecutor,
+    )
+
+    assert [(row["rebalance_date"], row["symbol"]) for row in enriched] == sorted(
+        (row["rebalance_date"], row["symbol"]) for row in enriched
+    )
+    assert audit["source_columns_preserved"] is True
+    assert audit["parallelism"]["output_order"] == "rebalance_date_symbol"
 
 
 def test_enrichment_preserves_source_columns_and_audits_availability():

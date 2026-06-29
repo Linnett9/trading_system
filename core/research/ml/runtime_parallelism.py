@@ -67,6 +67,17 @@ def apply_worker_thread_environment(model_threads: int) -> None:
         os.environ[name] = str(model_threads)
 
 
+def apply_stock_alpha_worker_caps(config: dict[str, Any]) -> dict[str, int]:
+    """Cap nested native/torch pools beneath stock-alpha outer workers."""
+    ml = config.get("ml", {})
+    numpy_threads = _positive_int(ml.get("numpy_num_threads", 1), "numpy_num_threads")
+    torch_threads = _positive_int(ml.get("torch_num_threads", 1), "torch_num_threads")
+    for name in THREAD_ENV_VARS:
+        os.environ[name] = str(numpy_threads)
+    _apply_torch_threads(torch_threads)
+    return {"numpy_num_threads": numpy_threads, "torch_num_threads": torch_threads, "sklearn_n_jobs": _positive_int(ml.get("sklearn_n_jobs", 1), "sklearn_n_jobs")}
+
+
 def format_runtime_settings(settings: MLRuntimeSettings) -> str:
     return (
         f"num_workers={settings.num_workers} | "

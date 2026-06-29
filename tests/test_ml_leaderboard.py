@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from core.research.ml.leaderboard import write_leaderboard, write_source_leaderboard
+from core.research.ml.metrics.leaderboard import write_leaderboard, write_source_leaderboard
 
 
 def test_leaderboard_writes_json_and_markdown(tmp_path):

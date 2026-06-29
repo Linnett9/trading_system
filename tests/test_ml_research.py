@@ -8,34 +8,34 @@ import pytest
 
 from core.entities.candle import Candle
 from core.research.portfolio_utils import rebalance_key
-from core.research.ml.drawdown_review import build_drawdown_event_review
+from core.research.ml.overlays.drawdown_review import build_drawdown_event_review
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.artifacts.experiment_paths import MLExperimentPathBuilder
 from core.research.ml.experiment_runner import MLExperimentResult, MLExperimentRunner
-from core.research.ml.features import HistoricalFeatureBuilder, add_champion_state_features
-from core.research.ml.labels import (
+from core.research.ml.features.features import HistoricalFeatureBuilder, add_champion_state_features
+from core.research.ml.features.labels import (
     DrawdownRiskLabelBuilder,
     RiskRegimeLabelBuilder,
     ShouldReduceExposureLabelBuilder,
 )
 from core.research.ml.models import LogisticRegressionMLModel, NoOpMLModel
-from core.research.ml.rule_overlay import (
+from core.research.ml.overlays.rule_overlay import (
     run_drawdown_risk_diagnostics,
     run_rule_exposure_study,
 )
 from core.research.ml.validation import chronological_holdout, rolling_walk_forward
-from core.research.ml.datasets import MLDataset, build_dataset
-from core.research.ml.history_coverage import assess_history_coverage
-from core.research.ml.rebalance_dataset import (
+from core.research.ml.data.datasets import MLDataset, build_dataset
+from core.research.ml.data.history_coverage import assess_history_coverage
+from core.research.ml.data.rebalance_dataset import (
     build_champion_rebalance_rows,
     build_expanded_rebalance_rows,
 )
-from core.research.ml.calibration import (
+from core.research.ml.metrics.calibration import (
     build_probability_calibration,
     compare_calibration_methods,
 )
-from core.research.ml.sector_reference import load_sector_by_symbol
-from core.research.ml.diagnostics import (
+from core.research.ml.data.sector_reference import load_sector_by_symbol
+from core.research.ml.metrics.diagnostics import (
     build_ranking_diagnostics,
     probability_summary,
     rolling_base_rate_probabilities,
@@ -804,7 +804,7 @@ def test_expanded_rebalance_audit_reports_effective_research_years(monkeypatch):
             )
 
     monkeypatch.setattr(
-        "core.research.ml.rebalance_dataset.build_dual_momentum_tester",
+        "core.research.ml.data.rebalance_dataset.build_dual_momentum_tester",
         lambda config, variant_config: FakeTester(),
     )
 

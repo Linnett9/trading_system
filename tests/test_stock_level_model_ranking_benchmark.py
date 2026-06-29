@@ -47,6 +47,7 @@ def test_walk_forward_never_trains_on_future_dates():
     assert folds
     assert payload["walk_forward"]["all_chronological_guards_passed"] is True
     assert payload["parallelism"]["stock_ranker_model_n_jobs"] == 1
+    assert payload["model_timings"]
     assert all(fold["train_end_date"] < fold["test_start_date"] for fold in folds)
     assert all(
         all(fold["train_end_date"] < date for date in fold["embargoed_dates"])
@@ -63,6 +64,16 @@ def test_predictions_are_one_row_per_symbol_and_date():
     assert len(predictions) == payload["oos_row_count"]
     assert all(f"{PREDICTION_PREFIX}ridge" in row for row in predictions)
     assert all(f"{PREDICTION_PREFIX}dlinear" in row for row in predictions)
+
+
+def test_oos_predictions_preserve_engineered_target_columns():
+    rows = _rows()
+    for index, row in enumerate(rows):
+        row.update({"actual_market_residual_return_10d": str(index / 100), "actual_vol_adjusted_forward_return_10d": str(index / 10), "actual_drawdown_adjusted_forward_return_10d": str(index / 200), "actual_rank_normalized_forward_return_10d": str((index % 10) / 9), "actual_top_decile_label_10d": str(int(index % 10 == 9))})
+    predictions, _ = build_stock_level_model_ranking_benchmark(rows, min_train_dates=2, test_window_dates=2, embargo_dates=1, model_factories={"ridge": MomentumRegressor}, include_sequence_models=False)
+    assert predictions
+    assert all(row["actual_market_residual_return_10d"] is not None for row in predictions)
+    assert all(row["actual_rank_normalized_forward_return_10d"] is not None for row in predictions)
 
 
 def test_baseline_comparison_uses_the_same_oos_rows():

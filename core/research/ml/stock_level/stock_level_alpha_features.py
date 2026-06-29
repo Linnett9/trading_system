@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import math
+import time
 from bisect import bisect_left
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, pstdev
@@ -12,6 +14,9 @@ from core.research.framework.data import CsvRowRepository
 from core.research.framework.logging import ResearchStageLogger
 from core.research.framework.registry import FeatureRegistry
 from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
+from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
+from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
 
 
 RESEARCH_METADATA = {
@@ -75,6 +80,7 @@ def write_stock_level_alpha_features(
     config: dict[str, Any],
 ) -> StockLevelAlphaFeaturePaths:
     settings = StockLevelResearchConfig.from_mapping(config)
+    apply_stock_alpha_worker_caps(config)
     output_dir = settings.output_dir
     source_path = settings.base_artifact_path
     if not source_path.exists():
@@ -83,6 +89,7 @@ def write_stock_level_alpha_features(
     repository = CsvRowRepository()
     with logger.stage("loading"):
         rows = repository.read(source_path)
+        rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
     symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
     spy_symbol = settings.spy_symbol
     with logger.stage("feature_generation"):
@@ -95,7 +102,10 @@ def write_stock_level_alpha_features(
             price_histories,
             spy_symbol=spy_symbol,
             source_path=str(source_path),
+            n_jobs=settings.alpha_feature_n_jobs,
         )
+        audit.update(run_profile)
+        audit.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=source_path))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = StockLevelAlphaFeaturePaths(
@@ -119,24 +129,89 @@ def build_stock_level_alpha_features(
     *,
     spy_symbol: str = "SPY",
     source_path: str | None = None,
+    n_jobs: int = 1,
+    executor_cls: type | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if n_jobs < 1:
+        raise ValueError("stock_alpha_feature_n_jobs must be at least one")
+    started = time.perf_counter()
     prepared_histories = {
         symbol.upper(): _prepare_history(history)
         for symbol, history in price_histories.items()
     }
     spy_history = prepared_histories.get(spy_symbol.upper(), [])
-    enriched_rows: list[dict[str, Any]] = []
+    enriched_rows = _build_symbol_level_features(
+        rows,
+        prepared_histories,
+        spy_history,
+        n_jobs=n_jobs,
+        executor_cls=executor_cls or ProcessPoolExecutor,
+    )
+    enriched_rows.sort(
+        key=lambda row: (
+            str(row.get("rebalance_date", "")),
+            str(row.get("symbol", "")).upper(),
+        )
+    )
+    _add_cross_sectional_features(enriched_rows)
+    audit = _audit(rows, enriched_rows, prepared_histories, source_path, n_jobs)
+    symbol_count = len({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
+    audit["parallelism"].update({"requested_workers": n_jobs, "effective_workers": min(n_jobs, symbol_count), "symbol_count": symbol_count, "elapsed_seconds": time.perf_counter() - started})
+    return enriched_rows, audit
+
+
+def _build_symbol_level_features(
+    rows: list[dict[str, Any]],
+    histories: dict[str, list[dict[str, float | str]]],
+    spy_history: list[dict[str, float | str]],
+    *,
+    n_jobs: int,
+    executor_cls: type,
+) -> list[dict[str, Any]]:
+    rows_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        rows_by_symbol.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
+    symbols = sorted(rows_by_symbol)
+    tasks = [
+        (
+            rows_by_symbol[symbol],
+            histories.get(symbol, []),
+            spy_history,
+        )
+        for symbol in symbols
+    ]
+    if n_jobs == 1 or len(tasks) <= 1:
+        return [
+            row
+            for task in tasks
+            for row in _build_symbol_rows(task)
+        ]
+    max_workers = min(n_jobs, len(tasks))
+    with executor_cls(max_workers=max_workers) as executor:
+        return [
+            row
+            for symbol_rows in executor.map(_build_symbol_rows, tasks)
+            for row in symbol_rows
+        ]
+
+
+def _build_symbol_rows(
+    task: tuple[
+        list[dict[str, Any]],
+        list[dict[str, float | str]],
+        list[dict[str, float | str]],
+    ],
+) -> list[dict[str, Any]]:
+    rows, history, spy_history = task
+    output = []
     for source in rows:
         row = dict(source)
-        symbol = str(row.get("symbol", "")).upper()
         rebalance_date = str(row.get("rebalance_date", ""))
-        history = _history_before(prepared_histories.get(symbol, []), rebalance_date)
+        history_before = _history_before(history, rebalance_date)
         spy_before = _history_before(spy_history, rebalance_date)
-        row.update(_time_series_features(history, spy_before))
-        enriched_rows.append(row)
-    _add_cross_sectional_features(enriched_rows)
-    audit = _audit(rows, enriched_rows, prepared_histories, source_path)
-    return enriched_rows, audit
+        row.update(_time_series_features(history_before, spy_before))
+        output.append(row)
+    return output
 
 
 def _time_series_features(
@@ -434,6 +509,7 @@ def _audit(
     rows: list[dict[str, Any]],
     histories: dict[str, list[dict[str, float | str]]],
     source_path: str | None,
+    n_jobs: int,
 ) -> dict[str, Any]:
     features = []
     for feature in ENGINEERED_FEATURE_COLUMNS:
@@ -448,6 +524,10 @@ def _audit(
             }
         )
     source_columns = list(source_rows[0]) if source_rows else []
+    source_by_key = {
+        (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()): row
+        for row in source_rows
+    }
     return {
         "mode": "stock_level_alpha_features_research_only",
         "source_path": source_path,
@@ -456,14 +536,23 @@ def _audit(
         "source_column_count": len(source_columns),
         "engineered_feature_count": len(ENGINEERED_FEATURE_COLUMNS),
         "source_columns_preserved": all(
-            all(row.get(column) == source.get(column) for column in source_columns)
-            for source, row in zip(source_rows, rows)
+            all(row.get(column) == source_by_key.get(
+                (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()),
+                {},
+            ).get(column) for column in source_columns)
+            for row in rows
         ),
         "unique_symbol_date_rows": len(
             {(row.get("rebalance_date"), row.get("symbol")) for row in rows}
         )
         == len(rows),
         "price_history_symbol_count": sum(bool(history) for history in histories.values()),
+        "parallelism": {
+            "stock_alpha_feature_n_jobs": n_jobs,
+            "partition": "symbol_level_time_series_features",
+            "cross_sectional_features_after_parallel_assembly": True,
+            "output_order": "rebalance_date_symbol",
+        },
         "industry_metadata_available": any(str(row.get("industry", "")).strip() for row in rows),
         "features": features,
         **RESEARCH_METADATA,
@@ -554,6 +643,8 @@ def _markdown(audit: dict[str, Any]) -> str:
         f"- Source columns preserved: {audit['source_columns_preserved']}",
         f"- Unique symbol/date rows: {audit['unique_symbol_date_rows']}",
         f"- Industry metadata available: {audit['industry_metadata_available']}",
+        f"- Alpha feature workers: {audit['parallelism']['stock_alpha_feature_n_jobs']}",
+        f"- Parallel partition: {audit['parallelism']['partition']}",
         "- Promotion thresholds changed: false",
         "",
         "| Feature | Populated | Missing | Availability | Definition |",

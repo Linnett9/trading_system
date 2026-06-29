@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from core.research.ml.canonical_continuous_equity_replay import (
+from core.research.ml.replay.canonical_continuous_equity_replay import (
     build_canonical_replay,
 )
-from core.research.ml.data_anomaly_quarantine import (
+from core.research.ml.data.data_anomaly_quarantine import (
     build_anomaly_quarantine_report,
 )
 from core.research.ml.audits.profit_concentration_audit import (

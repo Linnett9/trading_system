@@ -7,7 +7,7 @@ import pytest
 
 from core.entities.candle import Candle
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.features import MLFeatureBuildResult
+from core.research.ml.features.features import MLFeatureBuildResult
 from core.research.ml.pipelines.label_pipeline import MLLabelPipeline
 
 

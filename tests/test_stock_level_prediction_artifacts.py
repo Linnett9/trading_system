@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import inspect
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -100,6 +101,29 @@ def test_missing_early_history_baseline_features_are_reported():
     assert audit["missing_prediction_counts"]["predicted_momentum_120d"] == 1
 
 
+def test_market_residual_is_generated_without_market_in_tradable_universe():
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01")], artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
+        market_symbol="SPY",
+    )
+    assert rows[0]["actual_market_residual_return_10d"] != ""
+    assert audit["market_residual_label_generation"]["market_symbol_loaded"] is True
+    assert audit["market_residual_label_generation"]["market_symbol_is_tradable_candidate"] is False
+
+
+def test_risk_aware_targets_are_populated_with_required_history():
+    rebalance = (date(2024, 1, 1) + timedelta(days=30)).isoformat()
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded(rebalance)], artifact_rows=[], universe_symbols=["AAA", "BBB"],
+        closes_by_symbol={"AAA": _long_closes(100, 1.0), "BBB": _long_closes(80, .4), "SPY": _long_closes(200, .3)},
+    )
+    assert all(row["actual_vol_adjusted_forward_return_10d"] != "" for row in rows)
+    assert all(row["actual_market_residual_return_10d"] != "" for row in rows)
+    assert all(row["actual_rank_normalized_forward_return_10d"] != "" for row in rows)
+
+
 def test_existing_artifact_level_files_are_preserved(tmp_path):
     output_dir = tmp_path / "reports" / "meta"
     cache_dir = tmp_path / "cache"
@@ -173,6 +197,11 @@ def _closes(start: float) -> dict[str, dict[str, float]]:
         close[date] = start + index
         dollar_volume[date] = (start + index) * 1_000_000
     return {"close": close, "dollar_volume": dollar_volume}
+
+
+def _long_closes(start: float, step: float) -> dict[str, dict[str, float]]:
+    closes = {(date(2024, 1, 1) + timedelta(days=index)).isoformat(): start + step * index + (index % 3) * .05 for index in range(50)}
+    return {"close": closes, "dollar_volume": {key: value * 1_000_000 for key, value in closes.items()}}
 
 
 def _history_around_rebalance(after_jump: float) -> dict[str, dict[str, float]]:

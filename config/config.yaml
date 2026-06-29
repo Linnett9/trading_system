@@ -108,6 +108,70 @@ alerts:
 ml:
   enabled: false
   mode: "research"
+  stock_ranker_target_column: actual_forward_return_10d
+  stock_ranker_market_symbol: SPY
+  stock_alpha_dev_required_symbols:
+    - SPY
+  stock_ranker_target_comparison_enabled: true
+  stock_ranker_target_columns:
+    - actual_forward_return_10d
+    - actual_market_residual_return_10d
+    - actual_vol_adjusted_forward_return_10d
+    - actual_rank_normalized_forward_return_10d
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_run_size: benchmark
+  stock_alpha_dev_max_dates: 80
+  stock_alpha_dev_max_symbols: 120
+  stock_alpha_dev_recent_dates_only: true
+  stock_alpha_resume_existing_outputs: true
+  stock_alpha_force_refresh: false
+  stock_target_comparison_n_jobs: 4
+  stock_alpha_feature_n_jobs: 4
+  stock_ranker_model_n_jobs: 4
+  stock_alpha_overnight_stage_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  numpy_num_threads: 1
+  stock_feature_attribution_max_models: 4
+  stock_feature_attribution_max_features: 12
+  stock_feature_attribution_permutation_repeats: 1
+  stock_portfolio_replay_enabled: true
+  stock_portfolio_replay_top_n: 25
+  stock_portfolio_replay_top_decile: true
+  stock_portfolio_replay_cost_bps: 10
+  stock_portfolio_replay_slippage_bps: 5
+  stock_portfolio_replay_max_position_weight: 0.05
+  stock_portfolio_replay_min_position_weight: 0.0
+  stock_portfolio_replay_rebalance_frequency: existing_rebalance_dates
+  stock_portfolio_replay_allow_short: false
+  stock_portfolio_replay_signal_columns:
+    - stock_level_predicted_forward_return_10d_elastic_net
+    - stock_level_predicted_forward_return_10d_random_forest
+    - predicted_momentum_120d
+  stock_alpha_overnight_run_portfolio_replay: true
+  stock_portfolio_policy_sweep_enabled: true
+  stock_portfolio_policy_sweep_n_jobs: 4
+  stock_portfolio_policy_sweep_signals:
+    - stock_level_predicted_forward_return_10d_elastic_net
+    - stock_level_predicted_forward_return_10d_random_forest
+    - predicted_momentum_120d
+  stock_portfolio_policy_sweep_top_n_values: [10, 25, 50]
+  stock_portfolio_policy_sweep_max_position_weights: [0.03, 0.05, 0.10]
+  stock_portfolio_policy_sweep_cost_bps_values: [5, 10, 25]
+  stock_portfolio_policy_sweep_slippage_bps_values: [5]
+  stock_portfolio_policy_sweep_turnover_caps: [null, 0.50, 1.00]
+  stock_portfolio_policy_sweep_volatility_targets: [null, 0.10, 0.15]
+  stock_portfolio_policy_sweep_allow_short: false
+  stock_portfolio_policy_sweep_max_configs_dev: 40
+  stock_portfolio_policy_sweep_max_configs_benchmark: 250
+  stock_portfolio_policy_sweep_max_configs_full: 1000
+  stock_alpha_experiment_report_enabled: true
+  stock_alpha_experiment_report_max_age_hours: 24
+  stock_alpha_experiment_report_require_all_outputs: false
+  stock_alpha_experiment_registry_path: reports/ml/stock_alpha_experiment_registry.csv
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha
+  stock_alpha_allow_legacy_output_paths: false
+  stock_alpha_experiment_report_level: dev_smoke
   research_years: 10
   minimum_history_years: 9
   history_coverage_tolerance_days: 10

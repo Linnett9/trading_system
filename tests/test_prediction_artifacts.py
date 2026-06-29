@@ -12,7 +12,7 @@ from core.research.ml.artifacts.artifact_validator import (
     validate_prediction_artifacts,
 )
 from core.entities.candle import Candle
-from core.research.ml.datasets import MLDataset
+from core.research.ml.data.datasets import MLDataset
 from core.research.ml.experiment_runner import MLExperimentRunner
 from core.research.ml.validation import chronological_holdout
 

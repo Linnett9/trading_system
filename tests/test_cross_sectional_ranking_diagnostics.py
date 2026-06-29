@@ -6,7 +6,7 @@ import json
 import pytest
 
 from core.research.ml import cross_sectional_ranking_diagnostics
-from core.research.ml.cross_sectional_ranking_diagnostics import (
+from core.research.ml.metrics.cross_sectional_ranking_diagnostics import (
     build_cross_sectional_ranking_diagnostics,
     write_cross_sectional_ranking_diagnostics,
 )

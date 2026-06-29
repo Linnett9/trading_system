@@ -63,6 +63,15 @@ def apply_research_profile(config: dict[str, Any], profile_name: str | None) -> 
         profile.get("sklearn_n_jobs", profile["model_threads"])
     )
     ml_config["feature_workers"] = int(profile.get("feature_workers", 1))
+    for key in (
+        "stock_alpha_feature_n_jobs",
+        "stock_ranker_model_n_jobs",
+        "stock_target_comparison_n_jobs",
+        "stock_portfolio_policy_sweep_n_jobs",
+        "numpy_num_threads",
+    ):
+        if key in profile:
+            ml_config[key] = int(profile[key])
     ml_config["expanded_rebalance_dataset_path"] = str(
         cache_dir / "expanded_rebalance_dataset.csv"
     )

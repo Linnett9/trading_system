@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
+from core.research.ml.data.datasets import MLDataset
 from core.research.ml.reports import MLCalibrationReportWriter
 from core.research.ml.validation import ChronologicalSplit
 

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from core.entities.candle import Candle
-from core.research.multi_strategy_portfolio import (
+from core.research.multi_strategy.portfolio import (
     MultiStrategyPortfolioBacktester,
 )
 

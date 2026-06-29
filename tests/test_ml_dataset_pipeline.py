@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.pipelines.dataset_pipeline import MLDatasetPipeline
-from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.labels import MLLabelBuildResult
+from core.research.ml.features.features import MLFeatureBuildResult
+from core.research.ml.features.labels import MLLabelBuildResult
 
 
 def test_dataset_pipeline_builds_dataset_and_split():

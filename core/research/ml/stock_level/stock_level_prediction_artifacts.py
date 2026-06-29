@@ -9,15 +9,17 @@ from typing import Any
 
 import yaml
 
-from core.research.ml.sector_reference import load_sector_by_symbol
+from core.research.ml.data.sector_reference import load_sector_by_symbol
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 
 
 RESEARCH_METADATA = {
     "research_only": True,
     "trading_impact": "none",
     "production_validated": False,
+    "promotion_thresholds_changed": False,
 }
 NOTICE = "Research only. Trading impact: none. Production validated: false."
 PREDICTION_COLUMNS = (
@@ -50,7 +52,20 @@ ACTUAL_COLUMNS = (
     "actual_future_volatility",
     "actual_future_drawdown",
     "actual_max_adverse_excursion",
+    "actual_market_residual_return_10d",
+    "actual_vol_adjusted_forward_return_10d",
+    "actual_drawdown_adjusted_forward_return_10d",
+    "actual_rank_normalized_forward_return_10d",
+    "actual_top_decile_label_10d",
 )
+TARGET_TYPES = {
+    "actual_forward_return_10d": "raw",
+    "actual_market_residual_return_10d": "residual",
+    "actual_vol_adjusted_forward_return_10d": "volatility-adjusted",
+    "actual_drawdown_adjusted_forward_return_10d": "drawdown-adjusted",
+    "actual_rank_normalized_forward_return_10d": "rank-normalized",
+    "actual_top_decile_label_10d": "classification",
+}
 CONTEXT_COLUMNS = (
     "breadth_above_sma_200",
     "spy_realized_volatility_21d",
@@ -84,12 +99,14 @@ def write_stock_level_prediction_artifacts(
         universe_symbols=_universe_symbols(config),
         closes_by_symbol=_load_closes_by_symbol(config),
         sector_by_symbol=sector_by_symbol,
+        market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
     )
     paths = StockLevelPredictionArtifactsPaths(
         csv_path=output_dir / "stock_level_prediction_artifacts.csv",
         json_path=output_dir / "stock_level_prediction_artifacts.json",
         markdown_path=output_dir / "stock_level_prediction_artifacts.md",
     )
+    audit.update(stock_alpha_report_metadata(config, output_dir, generated_artifact_paths=[paths.csv_path, paths.json_path, paths.markdown_path]))
     _write_csv(paths.csv_path, rows)
     writer = ResearchArtifactWriter()
     writer.write_json(paths.json_path, audit)
@@ -104,6 +121,7 @@ def build_stock_level_prediction_artifacts(
     universe_symbols: list[str],
     closes_by_symbol: dict[str, dict[str, dict[str, float]]],
     sector_by_symbol: dict[str, str] | None = None,
+    market_symbol: str = "SPY",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     sector_by_symbol = sector_by_symbol or {}
     dates = _artifact_dates(artifact_rows) or _expanded_dates(expanded_rows)
@@ -114,6 +132,8 @@ def build_stock_level_prediction_artifacts(
         symbol: _prepare_symbol_data(closes_by_symbol.get(symbol, {}))
         for symbol in symbols
     }
+    market_symbol = market_symbol.upper()
+    market_data = _prepare_symbol_data(closes_by_symbol.get(market_symbol, {}))
     rows: list[dict[str, Any]] = []
     for date in dates:
         context = context_by_date.get(date, {})
@@ -150,11 +170,18 @@ def build_stock_level_prediction_artifacts(
             for column in PREDICTION_COLUMNS:
                 row[column] = source.get(column, "")
             row.update(_baseline_predictions(symbol_data, date))
-            row.update(_actual_targets(symbol_data, date))
+            row.update(_actual_targets(symbol_data, date, market_data=market_data))
             for column in CONTEXT_COLUMNS:
                 row[column] = context.get(column, "")
             rows.append(row)
+    _add_cross_sectional_targets(rows)
     audit = _audit(rows, symbols, dates, artifact_rows)
+    audit["market_residual_label_generation"] = {
+        "market_symbol": market_symbol,
+        "market_symbol_loaded": bool(market_data.get("close_dates")),
+        "market_symbol_is_tradable_candidate": market_symbol in symbols,
+        "computed_before_dev_symbol_filtering": True,
+    }
     return rows, audit
 
 
@@ -303,7 +330,12 @@ def _trailing_liquidity_score(
     return math.log1p(mean(values)) if values else ""
 
 
-def _actual_targets(symbol_data: dict[str, Any], rebalance_date: str) -> dict[str, Any]:
+def _actual_targets(
+    symbol_data: dict[str, Any],
+    rebalance_date: str,
+    *,
+    market_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     closes_by_date = symbol_data.get("close", {})
     dates = symbol_data.get("close_dates", [])
     if rebalance_date not in closes_by_date:
@@ -330,13 +362,60 @@ def _actual_targets(symbol_data: dict[str, Any], rebalance_date: str) -> dict[st
         if future_prices[i - 1] > 0.0
     ]
     drawdowns = [(price / start) - 1.0 for price in future_prices]
+    raw_10d = forward[1][1]
+    market_10d = _forward_return(market_data or {}, rebalance_date, 10)
+    pre_vol = _trailing_volatility(dates, symbol_data.get("close_values", []), rebalance_date, lookback=20)
+    adverse = min(drawdowns) if drawdowns else ""
     return {
         "actual_forward_return_5d": forward[0][1],
         "actual_forward_return_10d": forward[1][1],
         "actual_future_volatility": pstdev(returns) if len(returns) > 1 else "",
         "actual_future_drawdown": min(drawdowns) if drawdowns else "",
         "actual_max_adverse_excursion": min(drawdowns) if drawdowns else "",
+        "actual_market_residual_return_10d": (
+            raw_10d - market_10d if raw_10d != "" and market_10d != "" else ""
+        ),
+        "actual_vol_adjusted_forward_return_10d": (
+            raw_10d / pre_vol
+            if raw_10d != "" and pre_vol != "" and pre_vol > 0.0
+            else ""
+        ),
+        "actual_drawdown_adjusted_forward_return_10d": (
+            raw_10d - abs(min(0.0, adverse))
+            if raw_10d != "" and adverse != ""
+            else ""
+        ),
+        "actual_rank_normalized_forward_return_10d": "",
+        "actual_top_decile_label_10d": "",
     }
+
+
+def _forward_return(data: dict[str, Any], date: str, horizon: int) -> float | str:
+    dates = data.get("close_dates", [])
+    closes = data.get("close", {})
+    if date not in closes:
+        return ""
+    index = dates.index(date)
+    if index + horizon >= len(dates) or closes[date] <= 0.0:
+        return ""
+    return closes[dates[index + horizon]] / closes[date] - 1.0
+
+
+def _add_cross_sectional_targets(rows: list[dict[str, Any]]) -> None:
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("actual_forward_return_10d") != "":
+            by_date.setdefault(str(row["rebalance_date"]), []).append(row)
+    for date_rows in by_date.values():
+        ordered = sorted(date_rows, key=lambda row: (float(row["actual_forward_return_10d"]), str(row["symbol"])))
+        count = len(ordered)
+        top_count = max(1, math.ceil(count * 0.1))
+        top_symbols = {row["symbol"] for row in ordered[-top_count:]}
+        for index, row in enumerate(ordered):
+            row["actual_rank_normalized_forward_return_10d"] = (
+                index / (count - 1) if count > 1 else 0.5
+            )
+            row["actual_top_decile_label_10d"] = int(row["symbol"] in top_symbols)
 
 
 def _average_dollar_volume(
@@ -375,6 +454,16 @@ def _audit(
         column: sum(row.get(column) in (None, "") for row in rows)
         for column in ACTUAL_COLUMNS
     }
+    target_audit = {
+        column: {
+            "target_type": target_type,
+            "available": any(row.get(column) not in (None, "") for row in rows),
+            "missing_values": missing_actuals[column],
+            "date_coverage": len({row["rebalance_date"] for row in rows if row.get(column) not in (None, "")}),
+            "symbol_coverage": len({row["symbol"] for row in rows if row.get(column) not in (None, "")}),
+        }
+        for column, target_type in TARGET_TYPES.items()
+    }
     artifact_symbol_rows = sum(1 for row in artifact_rows if row.get("symbol"))
     return {
         "mode": "stock_level_prediction_artifacts_research_only",
@@ -396,6 +485,7 @@ def _audit(
         "missing_prediction_counts": missing_predictions,
         "populated_prediction_counts": populated_predictions,
         "missing_actual_target_counts": missing_actuals,
+        "target_audit": target_audit,
         "artifact_rows_with_symbol_predictions": artifact_symbol_rows,
         "true_stock_level_rows": bool(rows),
         "usable_for_stock_level_ranking": (
@@ -478,7 +568,10 @@ def _load_closes_by_symbol(config: dict[str, Any]) -> dict[str, dict[str, dict[s
         str(config.get("ml", {}).get("stooq_parquet_dir", "data/processed/stooq_parquet"))
     )
     closes = {}
-    for symbol in _universe_symbols(config):
+    ml = config.get("ml", {})
+    required = ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])
+    symbols = {*_universe_symbols(config), *(str(symbol).upper() for symbol in required)}
+    for symbol in sorted(symbols):
         path = parquet_dir / f"{symbol.upper()}.parquet"
         if path.exists():
             closes[symbol.upper()] = _read_parquet_closes(path)

@@ -9,18 +9,18 @@ import pytest
 
 from core.research.ml.artifacts import MLFeatureCache
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.features import MLFeatureBuildResult
+from core.research.ml.features.features import MLFeatureBuildResult
 from core.research.ml.pipelines import MLRebalancePipeline
 
 
 @pytest.fixture(autouse=True)
 def _restore_rebalance_dataset_module():
-    previous = sys.modules.get("core.research.ml.rebalance_dataset")
+    previous = sys.modules.get("core.research.ml.data.rebalance_dataset")
     yield
     if previous is None:
-        sys.modules.pop("core.research.ml.rebalance_dataset", None)
+        sys.modules.pop("core.research.ml.data.rebalance_dataset", None)
     else:
-        sys.modules["core.research.ml.rebalance_dataset"] = previous
+        sys.modules["core.research.ml.data.rebalance_dataset"] = previous
 
 
 def test_rebalance_pipeline_reads_existing_expanded_dataset(tmp_path):
@@ -199,10 +199,10 @@ def _candle(date_text: str, close: float) -> SimpleNamespace:
 
 def _install_yaml_stub() -> None:
     sys.modules.setdefault("yaml", SimpleNamespace(safe_load=lambda _: {}))
-    module = ModuleType("core.research.ml.rebalance_dataset")
+    module = ModuleType("core.research.ml.data.rebalance_dataset")
     module.write_rebalance_dataset = _write_rebalance_dataset
     module.build_champion_rebalance_rows = lambda *args, **kwargs: []
-    sys.modules["core.research.ml.rebalance_dataset"] = module
+    sys.modules["core.research.ml.data.rebalance_dataset"] = module
 
 
 def _write_rebalance_dataset(path, rows) -> None:

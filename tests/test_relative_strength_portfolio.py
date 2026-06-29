@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from core.entities.candle import Candle
-from core.research.relative_strength_portfolio import (
+from core.research.relative_strength.portfolio import (
     RelativeStrengthPortfolioBacktester,
 )
 

@@ -8,7 +8,7 @@ import pytest
 from core.research.ml.models.news_analysis_transformer_model import (
     NewsAnalysisTransformerMLModel,
 )
-from core.research.ml.news_sentiment import (
+from core.research.ml.features.news_sentiment import (
     NewsEvent,
     aggregate_news_sentiment_features,
 )

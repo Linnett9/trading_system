@@ -72,7 +72,9 @@ def write_stock_level_feature_attribution(
             predictions_path=str(predictions_path),
             random_seed=settings.random_seed,
             sklearn_n_jobs=settings.sklearn_n_jobs,
-            permutation_repeats=settings.permutation_repeats,
+            permutation_repeats=(settings.attribution_permutation_repeats if settings.run_size == "dev" else settings.permutation_repeats),
+            max_models=settings.attribution_max_models if settings.run_size == "dev" else None,
+            max_features=settings.attribution_max_features if settings.run_size == "dev" else None,
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +103,8 @@ def build_stock_level_feature_attribution(
     sklearn_n_jobs: int = 1,
     permutation_repeats: int = 3,
     model_factories: dict[str, Callable[[], Any]] | None = None,
+    max_models: int | None = None,
+    max_features: int | None = None,
 ) -> dict[str, Any]:
     if permutation_repeats < 0:
         raise ValueError("permutation_repeats cannot be negative")
@@ -116,6 +120,9 @@ def build_stock_level_feature_attribution(
 
     completed = set(benchmark.get("completed_models", []))
     model_names = [name for name in TABULAR_MODEL_NAMES if name in completed]
+    if max_models is not None:
+        model_names = model_names[:max_models]
+    feature_columns = FEATURE_COLUMNS[:max_features] if max_features is not None else FEATURE_COLUMNS
     factories = model_factories or {
         name: _TabularAttributionFactory(name, random_seed, sklearn_n_jobs)
         for name in model_names
@@ -143,6 +150,7 @@ def build_stock_level_feature_attribution(
                     reference_metrics=reference_by_model.get(model_name),
                     permutation_repeats=permutation_repeats,
                     random_seed=random_seed + model_index * 100_000,
+                    feature_columns=feature_columns,
                 )
             )
         except Exception as exc:  # isolated research-model boundary
@@ -261,6 +269,7 @@ def _attribute_model(
     reference_metrics: dict[str, Any] | None,
     permutation_repeats: int,
     random_seed: int,
+    feature_columns: tuple[str, ...] = FEATURE_COLUMNS,
 ) -> dict[str, Any]:
     attribution_by_feature = {
         feature: {
@@ -270,9 +279,9 @@ def _attribute_model(
             "permutation_ic_drops": [],
             "permutation_records": [],
         }
-        for feature in FEATURE_COLUMNS
+        for feature in feature_columns
     }
-    ablation_predictions = {feature: [] for feature in FEATURE_COLUMNS}
+    ablation_predictions = {feature: [] for feature in feature_columns}
     fold_count = 0
     for fold_id, train_rows, test_rows, _, _, _ in _walk_forward_partitions(
         prepared_rows,
@@ -282,9 +291,9 @@ def _attribute_model(
         embargo_dates=embargo_dates,
     ):
         fold_count += 1
-        x_train = _matrix(train_rows, FEATURE_COLUMNS)
+        x_train = _matrix(train_rows, feature_columns)
         y_train = [row[TARGET_COLUMN] for row in train_rows]
-        x_test = _matrix(test_rows, FEATURE_COLUMNS)
+        x_test = _matrix(test_rows, feature_columns)
         model = factory()
         model.fit(x_train, y_train)
         full_values = [float(value) for value in model.predict(x_test)]
@@ -292,8 +301,8 @@ def _attribute_model(
         full_fold_metrics = _metrics(
             _evaluate_signal(full_fold_rows, model_name, "prediction", kind="ml_model")
         )
-        extracted = _extract_model_attribution(model, FEATURE_COLUMNS)
-        for feature in FEATURE_COLUMNS:
+        extracted = _extract_model_attribution(model, feature_columns)
+        for feature in feature_columns:
             coefficient = extracted["coefficients"].get(feature)
             importance = extracted["feature_importances"].get(feature)
             if coefficient is not None:
@@ -306,7 +315,7 @@ def _attribute_model(
                     importance
                 )
 
-        for feature_index, feature in enumerate(FEATURE_COLUMNS):
+        for feature_index, feature in enumerate(feature_columns):
             if permutation_repeats > 0:
                 for repeat in range(permutation_repeats):
                     permuted = _permuted_matrix(

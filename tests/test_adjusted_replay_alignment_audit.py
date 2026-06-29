@@ -6,7 +6,7 @@ from core.research.ml.audits import adjusted_replay_alignment_audit
 from core.research.ml.audits.adjusted_replay_alignment_audit import (
     build_adjusted_replay_alignment_audit,
 )
-from core.research.ml.canonical_continuous_equity_replay import (
+from core.research.ml.replay.canonical_continuous_equity_replay import (
     build_canonical_replay,
 )
 

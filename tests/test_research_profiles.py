@@ -168,7 +168,7 @@ def test_research_profile_sets_batch_runtime_options():
     profiled = apply_research_profile(config, "benchmark")
 
     assert profiled["ml_research_batch"]["max_workers"] == 4
-    assert profiled["ml_research_batch"]["model_threads"] == 2
+    assert profiled["ml_research_batch"]["model_threads"] == 1
     assert profiled["ml_research_batch"]["profile"] == "benchmark"
 
 
@@ -191,7 +191,8 @@ def test_research_profiles_apply_ml_parallelism_values():
     assert development["ml"]["sklearn_n_jobs"] == 4
     assert development["ml"]["feature_workers"] == 1
     assert benchmark["ml"]["num_workers"] == 4
-    assert benchmark["ml"]["model_threads"] == 2
-    assert benchmark["ml"]["torch_num_threads"] == 2
-    assert benchmark["ml"]["sklearn_n_jobs"] == 2
-    assert benchmark["ml"]["feature_workers"] == 1
+    assert benchmark["ml"]["model_threads"] == 1
+    assert benchmark["ml"]["torch_num_threads"] == 1
+    assert benchmark["ml"]["sklearn_n_jobs"] == 1
+    assert benchmark["ml"]["feature_workers"] == 4
+    assert benchmark["ml"]["stock_ranker_model_n_jobs"] == 4

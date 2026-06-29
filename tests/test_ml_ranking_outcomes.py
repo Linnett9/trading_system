@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.research.ml.labels import MLLabelBuildResult
+from core.research.ml.features.labels import MLLabelBuildResult
 from core.research.ml.reports.ranking_outcomes import (
     future_drawdown_event,
     outcomes_by_feature_date,

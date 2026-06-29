@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import application.cli as cli
-from core.research.ml.data_inventory import build_data_inventory, inspect_symbol_file
+from core.research.ml.data.data_inventory import build_data_inventory, inspect_symbol_file
 
 
 def test_data_inventory_writes_reports_for_small_parquet_files(tmp_path):

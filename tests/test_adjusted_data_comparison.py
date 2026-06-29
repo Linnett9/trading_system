@@ -11,7 +11,7 @@ from core.research.ml.audits.adjusted_data_comparison import (
 from core.research.ml.audits.benchmark_relative_validation import (
     build_benchmark_relative_validation,
 )
-from core.research.ml.canonical_continuous_equity_replay import (
+from core.research.ml.replay.canonical_continuous_equity_replay import (
     build_canonical_replay,
 )
 from infrastructure.data.adjusted_price_csv_data_feed import (

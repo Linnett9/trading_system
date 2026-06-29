@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.research.ml.overlay import (
+from core.research.ml.overlays.overlay import (
     overlay_decision_rule,
     should_reduce_exposure,
     simulate_shadow_overlay,

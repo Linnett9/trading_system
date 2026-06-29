@@ -47,8 +47,15 @@ from application.services.ml_commands import (
     run_ml_research,
     run_ml_return_mechanics_audit,
     run_ml_stock_level_alpha_benchmark,
+    run_ml_stock_level_target_comparison,
+    run_ml_stock_level_portfolio_replay,
+    run_ml_stock_level_portfolio_policy_sweep,
+    run_ml_stock_alpha_experiment_report,
+    run_ml_stock_alpha_dev_smoke,
+    run_ml_stock_alpha_parallelism_audit,
     run_ml_stock_level_feature_attribution,
     run_ml_stock_level_alpha_features,
+    run_ml_overnight_stock_alpha,
     run_ml_validate_artifacts,
 )
 from application.services.stooq_bulk_commands import run_stooq_bulk_import
@@ -104,8 +111,15 @@ def parse_args():
             "ml-benchmark-return-audit",
             "ml-refresh-adjusted-prices",
             "ml-stock-level-alpha-benchmark",
+            "ml-stock-level-target-comparison",
+            "ml-stock-level-portfolio-replay",
+            "ml-stock-level-portfolio-policy-sweep",
+            "ml-stock-alpha-experiment-report",
+            "ml-stock-alpha-dev-smoke",
+            "ml-stock-alpha-parallelism-audit",
             "ml-stock-level-feature-attribution",
             "ml-stock-level-alpha-features",
+            "ml-overnight-stock-alpha",
             "import-stooq-bulk",
             "champion-robustness",
         ],
@@ -325,11 +339,32 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-level-alpha-benchmark":
         run_ml_stock_level_alpha_benchmark(config)
         return
+    if args.mode == "ml-stock-level-target-comparison":
+        run_ml_stock_level_target_comparison(config)
+        return
+    if args.mode == "ml-stock-level-portfolio-replay":
+        run_ml_stock_level_portfolio_replay(config)
+        return
+    if args.mode == "ml-stock-level-portfolio-policy-sweep":
+        run_ml_stock_level_portfolio_policy_sweep(config)
+        return
+    if args.mode == "ml-stock-alpha-experiment-report":
+        run_ml_stock_alpha_experiment_report(config)
+        return
+    if args.mode == "ml-stock-alpha-dev-smoke":
+        run_ml_stock_alpha_dev_smoke(config)
+        return
+    if args.mode == "ml-stock-alpha-parallelism-audit":
+        run_ml_stock_alpha_parallelism_audit(config)
+        return
     if args.mode == "ml-stock-level-feature-attribution":
         run_ml_stock_level_feature_attribution(config)
         return
     if args.mode == "ml-stock-level-alpha-features":
         run_ml_stock_level_alpha_features(config)
+        return
+    if args.mode == "ml-overnight-stock-alpha":
+        run_ml_overnight_stock_alpha(config)
         return
     if args.mode == "champion-robustness":
         run_champion_robustness(config, feed)
@@ -485,8 +520,15 @@ def run_cli():
         "ml-refresh-adjusted-prices",
         "ml-research-batch",
         "ml-stock-level-alpha-benchmark",
+        "ml-stock-level-target-comparison",
+        "ml-stock-level-portfolio-replay",
+        "ml-stock-level-portfolio-policy-sweep",
+        "ml-stock-alpha-experiment-report",
+        "ml-stock-alpha-dev-smoke",
+        "ml-stock-alpha-parallelism-audit",
         "ml-stock-level-feature-attribution",
         "ml-stock-level-alpha-features",
+        "ml-overnight-stock-alpha",
     }
     feed = None if args.mode in feedless_modes else build_feed(config)
 
