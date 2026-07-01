@@ -10,7 +10,10 @@ from typing import Any, Callable, Mapping
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import CsvRowRepository
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
-from core.research.ml.stock_level.stock_alpha_news_contract import validate_news_contract
+from core.research.ml.stock_level.stock_alpha_news_contract import (
+    REQUIRED_NEWS_AGGREGATE_FEATURES,
+    check_news_transformer_readiness,
+)
 from core.research.ml.stock_level.stock_level_model_ranking_benchmark import _factories_for_model_set
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_model_set
 from core.research.ml.stock_level_benchmark_data import _available_feature_columns, _prepare_rows
@@ -152,9 +155,12 @@ def write_stock_alpha_deep_model_diagnostics(config: Mapping[str, Any]) -> DeepM
     settings = StockLevelResearchConfig.from_mapping(config); output = stock_alpha_output_dir(config); caps = apply_stock_alpha_worker_caps(dict(config))
     rows = CsvRowRepository().read(settings.artifact_path); features = _available_feature_columns(rows, include_engineered=settings.include_engineered_features)
     if target != TARGET_COLUMN: rows = [dict(row, **{TARGET_COLUMN: row.get(target, "")}) for row in rows]
+    news_readiness = check_news_transformer_readiness(config, rows)
+    if news_readiness.transformer_available:
+        rows = _merge_news_features(config, rows)
+    features = _available_feature_columns(rows, include_engineered=settings.include_engineered_features)
     prepared, _ = _prepare_rows(rows, features); dates = sorted({r["rebalance_date"] for r in prepared}); model_set = resolve_stock_alpha_model_set("full")
-    news_contract = validate_news_contract(config, rows)
-    _, factories = _factories_for_model_set(settings, model_set, sklearn_n_jobs=1, torch_num_threads=caps["torch_num_threads"]); news = tuple(c for c in (rows[0] if rows else {}) if c.startswith("news_") or "sentiment" in c.lower())
+    _, factories = _factories_for_model_set(settings, model_set, sklearn_n_jobs=1, torch_num_threads=caps["torch_num_threads"]); news = tuple(column for column in REQUIRED_NEWS_AGGREGATE_FEATURES if rows and column in rows[0])
     paths: DeepModelDiagnosticPaths | None = None
     for model_name in models:
         paths = _write_one_model_diagnostics(
@@ -168,7 +174,8 @@ def write_stock_alpha_deep_model_diagnostics(config: Mapping[str, Any]) -> DeepM
             features=features,
             factories=factories,
             news=news,
-            news_contract_available=news_contract.available,
+            news_transformer_available=news_readiness.transformer_available,
+            news_unavailable_reason=news_readiness.unavailable_reason,
         )
     _write_index(output)
     if paths is None:
@@ -188,12 +195,15 @@ def _write_one_model_diagnostics(
     features: tuple[str, ...],
     factories: Mapping[str, Callable[[], Any]],
     news: tuple[str, ...],
-    news_contract_available: bool,
+    news_transformer_available: bool,
+    news_unavailable_reason: str,
 ) -> DeepModelDiagnosticPaths:
     model_output = output / "deep_diagnostics" / model_name
-    unavailable = "missing point-in-time symbol-level news/sentiment features" if model_name == "news_analysis_transformer" and not news else None
-    if model_name == "news_analysis_transformer" and news and not news_contract_available:
-        unavailable = "news_analysis_transformer unavailable: missing valid point-in-time news contract"
+    unavailable = None
+    if model_name == "news_analysis_transformer" and not news_transformer_available:
+        unavailable = news_unavailable_reason or "missing_valid_point_in_time_news_features"
+    elif model_name == "news_analysis_transformer" and not news:
+        unavailable = "missing_valid_point_in_time_news_features"
     auxiliary_columns = AUXILIARY_TARGET_COLUMNS if model_name == "multitask_transformer" else ()
     missing_auxiliary = _missing_auxiliary_targets(rows, auxiliary_columns)
     if missing_auxiliary:
@@ -214,6 +224,27 @@ def _write_one_model_diagnostics(
     paths.json_path.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8"); paths.markdown_path.write_text(_markdown(payload), encoding="utf-8")
     with paths.csv_path.open("w", newline="", encoding="utf-8") as handle: writer = csv.DictWriter(handle, fieldnames=REQUIRED_FIELDS); writer.writeheader(); writer.writerows(diagnostics)
     return paths
+
+
+def _merge_news_features(config: Mapping[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    path_value = dict(config.get("ml", {}) or {}).get("stock_alpha_news_features_path")
+    if not path_value:
+        return rows
+    feature_rows = CsvRowRepository().read(Path(str(path_value)))
+    by_key = {
+        (str(row.get("rebalance_date", ""))[:10], str(row.get("symbol", "")).strip().upper()): row
+        for row in feature_rows
+    }
+    merged: list[dict[str, Any]] = []
+    for row in rows:
+        key = (str(row.get("rebalance_date", ""))[:10], str(row.get("symbol", "")).strip().upper())
+        feature_row = by_key.get(key, {})
+        additions = {
+            column: feature_row.get(column, "")
+            for column in REQUIRED_NEWS_AGGREGATE_FEATURES
+        }
+        merged.append({**row, **additions})
+    return merged
 
 
 def _finite(value: Any) -> bool:

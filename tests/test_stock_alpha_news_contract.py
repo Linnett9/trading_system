@@ -7,7 +7,9 @@ from config.config_loader import load_config
 
 from core.research.ml.stock_level.stock_alpha_news_contract import (
     REQUIRED_NEWS_AGGREGATE_FEATURES,
+    REQUIRED_NEWS_FEATURE_COLUMNS,
     build_stock_alpha_news_features,
+    check_news_transformer_readiness,
     validate_news_contract,
     write_stock_alpha_news_features,
     write_stock_alpha_news_features_from_config,
@@ -108,6 +110,130 @@ def test_transformer_remains_unavailable_without_valid_contract(tmp_path):
 
     assert validation.available is False
     assert validation.reason == "missing ml.stock_alpha_news_contract_path"
+
+
+def test_news_transformer_readiness_unavailable_when_features_missing(tmp_path):
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(tmp_path / "missing_features.csv"),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    assert readiness.transformer_available is False
+    assert readiness.unavailable_reason == "news_features_file_not_found"
+
+
+def test_news_transformer_readiness_requires_enable_flag(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_enable_transformer": False,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    assert readiness.transformer_available is False
+    assert readiness.unavailable_reason == "stock_alpha_news_enable_transformer_false"
+
+
+def test_news_transformer_readiness_rejects_missing_required_columns(tmp_path):
+    features = tmp_path / "features.csv"
+    features.write_text("rebalance_date,symbol,news_random_score\n2024-01-02,AAPL,1\n", encoding="utf-8")
+
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_enable_transformer": True,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    assert readiness.transformer_available is False
+    assert readiness.unavailable_reason == "missing_required_news_feature_columns"
+    assert "news_count_1d" in readiness.required_columns_missing
+
+
+def test_news_transformer_readiness_rejects_alignment_and_coverage_failures(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features, symbol="MSFT")
+
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(symbols=("AAPL",)),
+    )
+
+    assert readiness.transformer_available is False
+    assert readiness.unavailable_reason == "news_feature_symbol_coverage_below_minimum"
+    assert readiness.aligned_stock_row_count == 0
+
+
+def test_news_transformer_readiness_available_only_with_valid_features_and_enable_flag(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    assert readiness.transformer_available is True
+    assert readiness.unavailable_reason == ""
+    assert set(readiness.required_columns_found) == set(REQUIRED_NEWS_FEATURE_COLUMNS)
+    assert readiness.payload()["research_only"] is True
+
+
+def test_news_transformer_readiness_rejects_feature_timestamp_leakage(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features, extra_fields={"published_at_utc": "2024-01-03T00:00:00Z"})
+
+    readiness = check_news_transformer_readiness(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    assert readiness.transformer_available is False
+    assert readiness.unavailable_reason == "news_feature_rows_contain_future_timestamps"
+    assert readiness.pit_violation_count == 1
 
 
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
@@ -456,12 +582,17 @@ def _write_news(
         )
 
 
-def _write_features(path):
+def _write_features(path, *, symbol="AAPL", extra_fields=None):
+    extra_fields = dict(extra_fields or {})
     with path.open("w", newline="", encoding="utf-8") as handle:
-        fieldnames = ["rebalance_date", "symbol", *REQUIRED_NEWS_AGGREGATE_FEATURES]
+        fieldnames = ["rebalance_date", "symbol", *REQUIRED_NEWS_AGGREGATE_FEATURES, "news_has_coverage_30d", *extra_fields]
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerow({column: "0.1" for column in fieldnames} | {"rebalance_date": "2024-01-02", "symbol": "AAPL"})
+        writer.writerow(
+            {column: "0.1" for column in fieldnames}
+            | {"rebalance_date": "2024-01-02", "symbol": symbol, "news_has_coverage_30d": "true"}
+            | extra_fields
+        )
 
 
 def _guardrails():

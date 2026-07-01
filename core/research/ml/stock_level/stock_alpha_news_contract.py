@@ -39,6 +39,12 @@ REQUIRED_NEWS_AGGREGATE_FEATURES = (
     "mna_news_count_30d",
     "news_volume_zscore",
 )
+REQUIRED_NEWS_FEATURE_COLUMNS = (
+    "rebalance_date",
+    "symbol",
+    *REQUIRED_NEWS_AGGREGATE_FEATURES,
+    "news_has_coverage_30d",
+)
 GUARDRAILS = {
     "research_only": True,
     "trading_impact": "none",
@@ -114,6 +120,107 @@ class NewsFeatureAggregationPaths:
     features_csv_path: Path
     audit_json_path: Path
     audit_markdown_path: Path
+
+
+@dataclass(frozen=True)
+class NewsTransformerReadiness:
+    transformer_available: bool
+    unavailable_reason: str
+    required_columns_found: tuple[str, ...]
+    required_columns_missing: tuple[str, ...]
+    feature_row_count: int
+    aligned_stock_row_count: int
+    symbol_coverage: float
+    date_coverage: float
+    pit_violation_count: int
+    guardrail_failures: tuple[str, ...]
+    transformer_enabled: bool
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "transformer_available": self.transformer_available,
+            "unavailable_reason": self.unavailable_reason,
+            "required_columns_found": list(self.required_columns_found),
+            "required_columns_missing": list(self.required_columns_missing),
+            "feature_row_count": self.feature_row_count,
+            "aligned_stock_row_count": self.aligned_stock_row_count,
+            "coverage_summary": {
+                "symbol_coverage": self.symbol_coverage,
+                "date_coverage": self.date_coverage,
+            },
+            "pit_violation_count": self.pit_violation_count,
+            "guardrail_failures": list(self.guardrail_failures),
+            "stock_alpha_news_enable_transformer": self.transformer_enabled,
+            **GUARDRAILS,
+        }
+
+
+def check_news_transformer_readiness(
+    config: Mapping[str, Any],
+    stock_rows: list[Mapping[str, Any]],
+) -> NewsTransformerReadiness:
+    ml = dict(config.get("ml", {}) or {})
+    transformer_enabled = bool(ml.get("stock_alpha_news_enable_transformer", False))
+    guardrail_failures = tuple(
+        key for key, expected in GUARDRAILS.items() if ml.get(key) != expected
+    )
+    min_symbol = float(_ml_value(ml, "stock_alpha_news_min_symbol_coverage", "stock_news_min_symbol_coverage", default=0.80))
+    min_date = float(_ml_value(ml, "stock_alpha_news_min_date_coverage", "stock_news_min_date_coverage", default=0.80))
+    path_value = ml.get("stock_alpha_news_features_path")
+    if not transformer_enabled:
+        return _readiness(False, "stock_alpha_news_enable_transformer_false", (), REQUIRED_NEWS_FEATURE_COLUMNS, 0, 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    if guardrail_failures:
+        return _readiness(False, "research_guardrails_invalid", (), REQUIRED_NEWS_FEATURE_COLUMNS, 0, 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    if not path_value:
+        return _readiness(False, "missing_news_features_path", (), REQUIRED_NEWS_FEATURE_COLUMNS, 0, 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    path = Path(str(path_value))
+    if not path.exists():
+        return _readiness(False, "news_features_file_not_found", (), REQUIRED_NEWS_FEATURE_COLUMNS, 0, 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    rows = CsvRowRepository().read(path)
+    if not rows:
+        return _readiness(False, "news_features_file_empty", (), REQUIRED_NEWS_FEATURE_COLUMNS, 0, 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    columns = tuple(rows[0])
+    found = tuple(column for column in REQUIRED_NEWS_FEATURE_COLUMNS if column in columns)
+    missing = tuple(column for column in REQUIRED_NEWS_FEATURE_COLUMNS if column not in columns)
+    if missing:
+        return _readiness(False, "missing_required_news_feature_columns", found, missing, len(rows), 0, 0.0, 0.0, 0, guardrail_failures, transformer_enabled)
+    pit_violations = _feature_pit_violation_count(rows)
+    aligned, symbol_coverage, date_coverage = _news_feature_alignment(rows, stock_rows)
+    if pit_violations:
+        return _readiness(False, "news_feature_rows_contain_future_timestamps", found, (), len(rows), aligned, symbol_coverage, date_coverage, pit_violations, guardrail_failures, transformer_enabled)
+    if symbol_coverage < min_symbol:
+        return _readiness(False, "news_feature_symbol_coverage_below_minimum", found, (), len(rows), aligned, symbol_coverage, date_coverage, 0, guardrail_failures, transformer_enabled)
+    if date_coverage < min_date:
+        return _readiness(False, "news_feature_date_coverage_below_minimum", found, (), len(rows), aligned, symbol_coverage, date_coverage, 0, guardrail_failures, transformer_enabled)
+    return _readiness(True, "", found, (), len(rows), aligned, symbol_coverage, date_coverage, 0, guardrail_failures, transformer_enabled)
+
+
+def _readiness(
+    available: bool,
+    reason: str,
+    found: tuple[str, ...],
+    missing: tuple[str, ...],
+    feature_rows: int,
+    aligned_rows: int,
+    symbol_coverage: float,
+    date_coverage: float,
+    pit_violations: int,
+    guardrail_failures: tuple[str, ...],
+    transformer_enabled: bool,
+) -> NewsTransformerReadiness:
+    return NewsTransformerReadiness(
+        available,
+        reason,
+        found,
+        missing,
+        feature_rows,
+        aligned_rows,
+        symbol_coverage,
+        date_coverage,
+        pit_violations,
+        guardrail_failures,
+        transformer_enabled,
+    )
 
 
 def write_stock_alpha_news_features(
@@ -300,6 +407,50 @@ def _validate_stock_rows(stock_rows: list[Mapping[str, Any]]) -> None:
             "stock-alpha news feature stock rows missing required fields: "
             + ", ".join(missing)
         )
+
+
+def _feature_pit_violation_count(rows: list[Mapping[str, Any]]) -> int:
+    timestamp_columns = [
+        column
+        for column in ("published_at_utc", "ingested_at")
+        if rows and column in rows[0]
+    ]
+    if not timestamp_columns:
+        return 0
+    violations = 0
+    for row in rows:
+        rebalance = _parse_date(row.get("rebalance_date"))
+        if rebalance is None:
+            continue
+        for column in timestamp_columns:
+            timestamp = _parse_datetime(row.get(column))
+            if timestamp is not None and timestamp > rebalance:
+                violations += 1
+    return violations
+
+
+def _news_feature_alignment(
+    feature_rows: list[Mapping[str, Any]],
+    stock_rows: list[Mapping[str, Any]],
+) -> tuple[int, float, float]:
+    stock_keys = {
+        (str(row.get("rebalance_date", ""))[:10], str(row.get("symbol", "")).strip().upper())
+        for row in stock_rows
+        if str(row.get("rebalance_date", "")) and str(row.get("symbol", ""))
+    }
+    feature_keys = {
+        (str(row.get("rebalance_date", ""))[:10], str(row.get("symbol", "")).strip().upper())
+        for row in feature_rows
+        if str(row.get("rebalance_date", "")) and str(row.get("symbol", ""))
+    }
+    aligned = stock_keys & feature_keys
+    stock_symbols = {symbol for _, symbol in stock_keys}
+    stock_dates = {date for date, _ in stock_keys}
+    aligned_symbols = {symbol for _, symbol in aligned}
+    aligned_dates = {date for date, _ in aligned}
+    symbol_coverage = len(aligned_symbols) / len(stock_symbols) if stock_symbols else 0.0
+    date_coverage = len(aligned_dates) / len(stock_dates) if stock_dates else 0.0
+    return len(aligned), symbol_coverage, date_coverage
 
 
 def write_stock_alpha_news_contract_validation(

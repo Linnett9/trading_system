@@ -443,15 +443,92 @@ def test_multitask_diagnostic_passes_aligned_auxiliary_targets(tmp_path, monkeyp
     assert row["finite_prediction_count"] == row["prediction_count"]
 
 
+def test_news_transformer_diagnostic_unavailable_without_valid_features(tmp_path, monkeypatch):
+    artifact = tmp_path / "stock_level_prediction_artifacts_enriched.csv"
+    _write_artifact(artifact)
+
+    from core.research.ml.stock_level import stock_alpha_deep_model_diagnostics as diagnostics
+
+    monkeypatch.setattr(diagnostics, "_available_feature_columns", lambda _rows, include_engineered: ("feature",))
+    monkeypatch.setattr(diagnostics, "_factories_for_model_set", lambda *args, **kwargs: ({}, {"news_analysis_transformer": object}))
+    paths = write_stock_alpha_deep_model_diagnostics(
+        {
+            "ml": {
+                "stock_alpha_report_root": str(tmp_path / "deep"),
+                "stock_alpha_run_size": "dev",
+                "stock_level_prediction_artifacts_path": str(artifact),
+                "stock_ranker_include_engineered_features": True,
+                "stock_deep_diagnostic_model": "news_analysis_transformer",
+                "stock_ranker_min_train_dates": 3,
+                "stock_ranker_test_window_dates": 2,
+                "stock_ranker_embargo_dates": 1,
+                "stock_ranker_sequence_length": 2,
+                "stock_alpha_news_features_path": str(tmp_path / "missing_news_features.csv"),
+                "stock_alpha_news_enable_transformer": False,
+                "research_only": True,
+                "trading_impact": "none",
+                "production_validated": False,
+                "promotion_thresholds_changed": False,
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    row = payload["diagnostics"][0]
+    assert row["skip_reason"] == "model_unavailable_by_design"
+    assert row["error_message"] == "stock_alpha_news_enable_transformer_false"
+
+
+def test_generic_news_columns_do_not_unlock_news_transformer(tmp_path, monkeypatch):
+    artifact = tmp_path / "stock_level_prediction_artifacts_enriched.csv"
+    _write_artifact(artifact, generic_news=True)
+    generic_features = tmp_path / "generic_news_features.csv"
+    generic_features.write_text("rebalance_date,symbol,news_random_score\n2024-01-01,AAA,1\n", encoding="utf-8")
+
+    from core.research.ml.stock_level import stock_alpha_deep_model_diagnostics as diagnostics
+
+    monkeypatch.setattr(diagnostics, "_available_feature_columns", lambda _rows, include_engineered: ("feature", "news_random_score"))
+    monkeypatch.setattr(diagnostics, "_factories_for_model_set", lambda *args, **kwargs: ({}, {"news_analysis_transformer": object}))
+    paths = write_stock_alpha_deep_model_diagnostics(
+        {
+            "ml": {
+                "stock_alpha_report_root": str(tmp_path / "deep"),
+                "stock_alpha_run_size": "dev",
+                "stock_level_prediction_artifacts_path": str(artifact),
+                "stock_ranker_include_engineered_features": True,
+                "stock_deep_diagnostic_model": "news_analysis_transformer",
+                "stock_ranker_min_train_dates": 3,
+                "stock_ranker_test_window_dates": 2,
+                "stock_ranker_embargo_dates": 1,
+                "stock_ranker_sequence_length": 2,
+                "stock_alpha_news_features_path": str(generic_features),
+                "stock_alpha_news_enable_transformer": True,
+                "research_only": True,
+                "trading_impact": "none",
+                "production_validated": False,
+                "promotion_thresholds_changed": False,
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    row = payload["diagnostics"][0]
+    assert row["skip_reason"] == "model_unavailable_by_design"
+    assert row["error_message"] == "missing_required_news_feature_columns"
+
+
 def test_diagnostics_module_has_no_operational_imports():
     from core.research.ml.stock_level import stock_alpha_deep_model_diagnostics
     source = inspect.getsource(stock_alpha_deep_model_diagnostics)
     assert all(term not in source for term in ("paper_trading", "live_trading", "infrastructure.broker", "core.entities.order"))
 
 
-def _write_artifact(path, *, auxiliary=False):
+def _write_artifact(path, *, auxiliary=False, generic_news=False):
     extra_header = ",actual_forward_return_5d,actual_future_volatility,actual_future_drawdown" if auxiliary else ""
     extra_row = ",0.05,0.10,-0.20" if auxiliary else ""
+    if generic_news:
+        extra_header += ",news_random_score,sentiment_blob"
+        extra_row += ",1.0,0.5"
     path.write_text(
         "\n".join(
             [
