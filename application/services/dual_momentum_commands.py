@@ -7,16 +7,16 @@ from application.reporting.dual_momentum_reporter import (
     print_dual_momentum_experiments,
     print_dual_momentum_result,
 )
-from core.research.dual_momentum_factory import build_dual_momentum_tester
-from core.research.dual_momentum_scoring import (
+from core.research.dual_momentum.factory import build_dual_momentum_tester
+from core.research.dual_momentum.scoring import (
     risk_regime_score,
     paper_safe_dual_momentum_score,
 )
-from core.research.dual_momentum_diagnostics import (
+from core.research.dual_momentum.diagnostics import (
     dual_momentum_diagnosis,
     save_dual_momentum_diagnosis,
 )
-from core.research.dual_momentum_experiments import (
+from core.research.dual_momentum.experiments import (
     dual_momentum_risk_regime_configs,
     run_dual_momentum_experiments,
     run_dual_momentum_fold_optimization,

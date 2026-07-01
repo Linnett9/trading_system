@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="900" viewBox="0 0 1280 900" role="img" aria-labelledby="title desc">
+  <title id="title">System architecture overview</title>
+  <desc id="desc">High-level repository architecture from CLI and application orchestration through config, core domain, research-only modules, infrastructure adapters, generated outputs, and tests, including a blocked research-to-execution path.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <marker id="redArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#dc2626"/>
+    </marker>
+    <style>
+      .page { fill:#ffffff; }
+      .region { fill:#f8fafc; stroke:#cbd5e1; stroke-width:1.5; rx:12; }
+      .appRegion { fill:#ecfeff; stroke:#0891b2; }
+      .configRegion { fill:#fff7ed; stroke:#ea580c; }
+      .coreRegion { fill:#eef2ff; stroke:#4f46e5; }
+      .researchRegion { fill:#f0fdf4; stroke:#16a34a; }
+      .infraRegion { fill:#f5f3ff; stroke:#7c3aed; }
+      .outputRegion { fill:#fefce8; stroke:#ca8a04; }
+      .executionRegion { fill:#fff1f2; stroke:#e11d48; }
+      .testRegion { fill:#f1f5f9; stroke:#64748b; }
+      .box { fill:#ffffff; stroke:#334155; stroke-width:1.4; rx:8; }
+      .appBox { fill:#cffafe; stroke:#0891b2; }
+      .configBox { fill:#ffedd5; stroke:#ea580c; }
+      .coreBox { fill:#e0e7ff; stroke:#4f46e5; }
+      .researchBox { fill:#dcfce7; stroke:#16a34a; }
+      .infraBox { fill:#ede9fe; stroke:#7c3aed; }
+      .outputBox { fill:#fef9c3; stroke:#ca8a04; }
+      .executionBox { fill:#ffe4e6; stroke:#e11d48; }
+      .testBox { fill:#e2e8f0; stroke:#64748b; }
+      .titleText { font:700 24px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .regionTitle { font:700 14px Arial, sans-serif; fill:#0f172a; letter-spacing:0; }
+      .label { font:700 13px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .note { font:12px Arial, sans-serif; fill:#475569; text-anchor:middle; }
+      .line { stroke:#334155; stroke-width:1.8; fill:none; marker-end:url(#arrow); }
+      .dash { stroke:#64748b; stroke-width:1.6; fill:none; stroke-dasharray:6 5; marker-end:url(#arrow); }
+      .blocked { stroke:#dc2626; stroke-width:2.4; fill:none; stroke-dasharray:8 6; marker-end:url(#redArrow); }
+      .blockedText { font:700 12px Arial, sans-serif; fill:#dc2626; text-anchor:middle; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="900" class="page"/>
+  <text x="640" y="36" class="titleText">System Architecture Overview</text>
+  <text x="640" y="58" class="note">Orchestration, domain logic, research, adapters, outputs, and test boundaries</text>
+
+  <rect x="410" y="82" width="460" height="92" class="region appRegion"/>
+  <text x="430" y="108" class="regionTitle">CLI entrypoints</text>
+  <rect x="455" y="124" width="145" height="34" class="box appBox"/>
+  <text x="528" y="146" class="label">main.py</text>
+  <rect x="680" y="124" width="170" height="34" class="box appBox"/>
+  <text x="765" y="146" class="label">application/cli.py</text>
+  <path d="M600 141 L680 141" class="line"/>
+
+  <rect x="60" y="215" width="350" height="160" class="region appRegion"/>
+  <text x="82" y="241" class="regionTitle">Application orchestration</text>
+  <rect x="95" y="270" width="140" height="44" class="box appBox"/>
+  <text x="165" y="288" class="label">application/</text>
+  <text x="165" y="306" class="small">services</text>
+  <rect x="255" y="270" width="120" height="44" class="box appBox"/>
+  <text x="315" y="288" class="label">application/</text>
+  <text x="315" y="306" class="small">reporting</text>
+  <rect x="170" y="325" width="150" height="34" class="box executionBox"/>
+  <text x="245" y="347" class="label">paper services</text>
+
+  <rect x="465" y="215" width="350" height="160" class="region configRegion"/>
+  <text x="487" y="241" class="regionTitle">Configuration</text>
+  <rect x="500" y="270" width="120" height="44" class="box configBox"/>
+  <text x="560" y="296" class="label">config/</text>
+  <rect x="660" y="270" width="120" height="44" class="box configBox"/>
+  <text x="720" y="296" class="label">configs/</text>
+  <rect x="555" y="325" width="170" height="34" class="box configBox"/>
+  <text x="640" y="347" class="label">dev / benchmark</text>
+
+  <rect x="870" y="215" width="350" height="160" class="region infraRegion"/>
+  <text x="892" y="241" class="regionTitle">Infrastructure adapters</text>
+  <rect x="905" y="270" width="130" height="44" class="box infraBox"/>
+  <text x="970" y="288" class="label">infrastructure/</text>
+  <text x="970" y="306" class="small">data</text>
+  <rect x="1055" y="270" width="130" height="44" class="box infraBox"/>
+  <text x="1120" y="288" class="label">broker</text>
+  <text x="1120" y="306" class="small">adapters</text>
+  <rect x="965" y="325" width="160" height="34" class="box infraBox"/>
+  <text x="1045" y="347" class="label">external systems</text>
+
+  <rect x="60" y="425" width="540" height="190" class="region coreRegion"/>
+  <text x="82" y="451" class="regionTitle">Domain core</text>
+  <rect x="95" y="480" width="120" height="44" class="box coreBox"/>
+  <text x="155" y="498" class="label">core/</text>
+  <text x="155" y="516" class="small">entities</text>
+  <rect x="235" y="480" width="120" height="44" class="box coreBox"/>
+  <text x="295" y="498" class="label">core/</text>
+  <text x="295" y="516" class="small">interfaces</text>
+  <rect x="375" y="480" width="120" height="44" class="box coreBox"/>
+  <text x="435" y="498" class="label">core/</text>
+  <text x="435" y="516" class="small">engine</text>
+  <rect x="95" y="545" width="120" height="44" class="box coreBox"/>
+  <text x="155" y="563" class="label">core/</text>
+  <text x="155" y="581" class="small">risk</text>
+  <rect x="235" y="545" width="120" height="44" class="box coreBox"/>
+  <text x="295" y="563" class="label">core/</text>
+  <text x="295" y="581" class="small">services</text>
+  <rect x="375" y="545" width="150" height="44" class="box coreBox"/>
+  <text x="450" y="571" class="label">strategies/</text>
+
+  <rect x="670" y="425" width="550" height="190" class="region researchRegion"/>
+  <text x="692" y="451" class="regionTitle">Research-only workflows</text>
+  <rect x="705" y="480" width="130" height="44" class="box researchBox"/>
+  <text x="770" y="498" class="label">core/</text>
+  <text x="770" y="516" class="small">research</text>
+  <rect x="855" y="480" width="135" height="44" class="box researchBox"/>
+  <text x="923" y="498" class="label">research/</text>
+  <text x="923" y="516" class="small">framework</text>
+  <rect x="1010" y="480" width="130" height="44" class="box researchBox"/>
+  <text x="1075" y="498" class="label">research/</text>
+  <text x="1075" y="516" class="small">ml</text>
+  <rect x="705" y="545" width="150" height="44" class="box researchBox"/>
+  <text x="780" y="563" class="label">dual momentum</text>
+  <text x="780" y="581" class="small">research</text>
+  <rect x="875" y="545" width="145" height="44" class="box researchBox"/>
+  <text x="948" y="563" class="label">relative strength</text>
+  <text x="948" y="581" class="small">research</text>
+  <rect x="1040" y="545" width="150" height="44" class="box researchBox"/>
+  <text x="1115" y="563" class="label">ml/stock_level</text>
+  <text x="1115" y="581" class="small">stock-alpha</text>
+
+  <rect x="60" y="665" width="540" height="140" class="region outputRegion"/>
+  <text x="82" y="691" class="regionTitle">Generated outputs</text>
+  <rect x="95" y="720" width="105" height="44" class="box outputBox"/>
+  <text x="148" y="746" class="label">cache/</text>
+  <rect x="220" y="720" width="105" height="44" class="box outputBox"/>
+  <text x="273" y="746" class="label">reports/</text>
+  <rect x="345" y="720" width="105" height="44" class="box outputBox"/>
+  <text x="398" y="746" class="label">logs/</text>
+  <rect x="470" y="720" width="105" height="44" class="box outputBox"/>
+  <text x="523" y="739" class="label">data/</text>
+  <text x="523" y="756" class="small">processed</text>
+
+  <rect x="670" y="665" width="250" height="140" class="region executionRegion"/>
+  <text x="692" y="691" class="regionTitle">Execution-adjacent surfaces</text>
+  <rect x="705" y="720" width="85" height="44" class="box executionBox"/>
+  <text x="748" y="739" class="label">paper</text>
+  <text x="748" y="756" class="small">state</text>
+  <rect x="810" y="720" width="85" height="44" class="box executionBox"/>
+  <text x="853" y="739" class="label">orders</text>
+  <text x="853" y="756" class="small">fills</text>
+
+  <rect x="970" y="665" width="250" height="140" class="region testRegion"/>
+  <text x="992" y="691" class="regionTitle">Validation</text>
+  <rect x="1020" y="720" width="150" height="44" class="box testBox"/>
+  <text x="1095" y="739" class="label">tests/</text>
+  <text x="1095" y="756" class="small">focused coverage</text>
+
+  <path d="M765 158 C765 190 230 180 230 270" class="line"/>
+  <path d="M765 158 C765 190 640 185 640 270" class="line"/>
+  <path d="M765 158 C765 190 1045 185 1045 270" class="line"/>
+  <path d="M235 375 C220 400 295 400 295 480" class="line"/>
+  <path d="M315 314 C360 385 435 390 435 480" class="line"/>
+  <path d="M560 314 C500 380 450 395 450 480" class="line"/>
+  <path d="M720 314 C830 375 923 390 923 480" class="line"/>
+  <path d="M970 314 C960 365 1075 395 1075 480" class="line"/>
+  <path d="M495 502 C570 500 620 500 705 502" class="dash"/>
+  <path d="M990 502 L1010 502" class="line"/>
+  <path d="M770 524 L780 545" class="line"/>
+  <path d="M923 524 L948 545" class="line"/>
+  <path d="M1075 524 L1115 545" class="line"/>
+  <path d="M780 589 C700 640 330 650 273 720" class="line"/>
+  <path d="M1115 589 C1000 650 360 650 273 720" class="line"/>
+  <path d="M295 589 C290 635 148 660 148 720" class="line"/>
+  <path d="M1045 359 C920 445 855 640 853 720" class="line"/>
+  <path d="M1095 720 C1010 635 870 610 770 589" class="dash"/>
+  <path d="M1095 720 C935 625 500 620 295 589" class="dash"/>
+
+  <path d="M1030 615 C950 675 900 705 895 735" class="blocked"/>
+  <text x="985" y="664" class="blockedText">research reports -X-&gt; paper/live trading</text>
+  <line x1="933" y1="682" x2="957" y2="706" stroke="#dc2626" stroke-width="4"/>
+  <line x1="957" y1="682" x2="933" y2="706" stroke="#dc2626" stroke-width="4"/>
+
+  <text x="640" y="858" class="note">Research reports and simulated replays are evidence only; production_validated: false blocks paper/live authorization.</text>
+</svg>

@@ -3,7 +3,7 @@ import json
 from types import SimpleNamespace
 
 from core.research.ml.stock_level.stock_alpha_dev_smoke import StockAlphaDevSmokeStages, write_stock_alpha_dev_smoke
-from core.research.ml.stock_level.stock_level_prediction_artifacts import TARGET_TYPES
+from core.research.ml.stock_level.prediction_artifacts.service import TARGET_TYPES
 
 
 def _artifact_header() -> str:

@@ -1,0 +1,33 @@
+ml:
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_benchmark_fast_full_grid
+  stock_alpha_run_size: benchmark
+  stock_alpha_portfolio_sweep_experiment_stage: full_grid
+  stock_alpha_portfolio_sweep_source_predictions_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_benchmark_fast/benchmark/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+  stock_alpha_portfolio_sweep_target_column: actual_forward_return_10d
+  stock_alpha_portfolio_sweep_signal_columns:
+    - stock_level_ensemble_average_rank_score
+    - stock_level_ensemble_trimmed_mean_rank_score
+    - predicted_momentum_120d
+    - predicted_risk_adjusted_momentum
+  stock_alpha_portfolio_sweep_top_n_values: [5, 10, 15, 20, 30]
+  stock_alpha_portfolio_sweep_max_position_weights: [0.05, 0.075, 0.10]
+  stock_alpha_portfolio_sweep_cash_buffers: [0.00, 0.05, 0.10]
+  stock_alpha_portfolio_sweep_minimum_signal_thresholds: [null, top_50_pct]
+  stock_alpha_portfolio_sweep_turnover_mode: strict_top_n
+  stock_alpha_portfolio_sweep_turnover_cap_initial_investment: true
+  stock_alpha_portfolio_sweep_underinvestment_threshold: 0.75
+  stock_alpha_portfolio_sweep_turnover_caps: [null, 0.25, 0.50]
+  stock_alpha_portfolio_sweep_cost_bps: 10
+  stock_alpha_portfolio_sweep_slippage_bps: 5
+  stock_alpha_portfolio_sweep_write_all_equity_curves: false
+  stock_alpha_portfolio_sweep_write_all_holdings: false
+  stock_alpha_portfolio_sweep_write_all_trades: false
+  stock_alpha_portfolio_sweep_write_top_policy_details: true
+  stock_alpha_portfolio_sweep_top_policy_detail_count: 10
+  stock_alpha_portfolio_sweep_max_policy_configs:
+  stock_alpha_portfolio_sweep_progress_every: 50
+  stock_alpha_portfolio_sweep_n_jobs: 4
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

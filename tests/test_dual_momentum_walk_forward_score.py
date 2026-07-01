@@ -7,6 +7,11 @@ from core.research.dual_momentum.scoring import (
     classify_walk_forward_fold_result,
     fold_gap_label,
 )
+from core.research.dual_momentum import scoring
+from core.research.dual_momentum.scoring_helpers import _bull_capture
+from core.research.dual_momentum.scoring_walk_forward import (
+    dual_momentum_walk_forward_summary as extracted_walk_forward_summary,
+)
 from main import dual_momentum_walk_forward_summary
 
 
@@ -90,6 +95,15 @@ def test_classify_walk_forward_fold_result_does_not_require_full_period_return()
 
     assert classify_walk_forward_fold_result(fold_result) == "fold pass"
     assert fold_gap_label(fold_result) == ""
+
+
+def test_scoring_facade_reexports_extracted_helpers():
+    assert scoring._bull_capture is _bull_capture
+    assert (
+        scoring.dual_momentum_walk_forward_summary
+        is extracted_walk_forward_summary
+    )
+    assert dual_momentum_walk_forward_summary is extracted_walk_forward_summary
 
 
 def test_walk_forward_candidate_hard_filter_rejects_fragile_config():

@@ -1,0 +1,39 @@
+ml:
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_diagnostic
+  stock_alpha_run_size: dev
+  stock_alpha_news_contract_path:
+  stock_alpha_news_features_path:
+  stock_alpha_news_min_symbol_coverage: 0.8
+  stock_alpha_news_min_date_coverage: 0.8
+  stock_alpha_news_enable_transformer: false
+  stock_alpha_ensemble_method: average_rank
+  stock_alpha_ensemble_source_predictions_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_diagnostic/dev/enriched/stock_level_model_oos_predictions.csv
+  stock_alpha_ensemble_min_component_count: 2
+  stock_alpha_ensemble_methods:
+    - average_rank
+    - median_rank
+    - trimmed_mean_rank
+    - consensus
+    - confidence
+  stock_alpha_ensemble_trim_extremes: 1
+  stock_alpha_ensemble_trim_min_components: 4
+  stock_alpha_ensemble_rank_normalization_method: percentile
+  stock_alpha_ensemble_component_signal_columns:
+    - predicted_momentum_120d
+    - predicted_risk_adjusted_momentum
+    - stock_level_predicted_forward_return_10d_ridge
+    - stock_level_predicted_forward_return_10d_elastic_net
+    - stock_level_predicted_forward_return_10d_random_forest
+    - stock_level_predicted_forward_return_10d_gradient_boosting
+    - stock_level_predicted_forward_return_10d_dlinear
+    - stock_level_predicted_forward_return_10d_patchtst
+    - stock_level_predicted_forward_return_10d_transformer
+    - stock_level_predicted_forward_return_10d_itransformer
+    - stock_level_predicted_forward_return_10d_momentum_transformer
+    - stock_level_predicted_forward_return_10d_multitask_transformer
+    - stock_level_predicted_forward_return_10d_market_context_encoder
+    - stock_level_predicted_forward_return_10d_temporal_fusion_transformer
+  stock_alpha_ensemble_methods_future:
+    weighted_rank: research_stub_only
+    regime_weighted: research_stub_only
+    stacked_meta_model: research_stub_only

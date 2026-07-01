@@ -5,3 +5,16 @@ __pycache__/
 cache/
 reports/**/*.json
 reports/**/*.csv
+
+# Local/system/generated files
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Generated research outputs
+reports/
+logs/
+
+# Keep empty artifact directories if needed
+!reports/**/.gitkeep
+!logs/.gitkeep

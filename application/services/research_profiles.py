@@ -53,6 +53,7 @@ def apply_research_profile(config: dict[str, Any], profile_name: str | None) -> 
     ml_config = updated.setdefault("ml", {})
     ml_config["research_years"] = int(profile["research_years"])
     ml_config["profile"] = profile_name
+    ml_config["stock_alpha_run_size"] = "dev" if profile_name == "development" else "benchmark"
     ml_config["profile_output_suffix"] = str(profile["output_suffix"])
     ml_config["num_workers"] = int(profile["batch_workers"])
     ml_config["model_threads"] = int(profile["model_threads"])

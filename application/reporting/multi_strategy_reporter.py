@@ -1,4 +1,4 @@
-from core.research.multi_strategy_experiments import (
+from core.research.multi_strategy.experiments import (
     multi_strategy_quality_score,
 )
 

@@ -8,11 +8,11 @@ from core.research.champion_robustness import (
     build_champion_robustness_report,
     period_exclusion_summary,
 )
-from core.research.dual_momentum_diagnostics import (
+from core.research.dual_momentum.diagnostics import (
     aggregate_contributors,
     dual_momentum_diagnosis,
 )
-from core.research.dual_momentum_factory import build_dual_momentum_tester
+from core.research.dual_momentum.factory import build_dual_momentum_tester
 from core.research.ml.sector_reference import load_sector_by_symbol
 
 

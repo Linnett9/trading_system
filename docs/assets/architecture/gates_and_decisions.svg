@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
+  <title id="title">Gates and decisions</title>
+  <desc id="desc">Research run gate sequence from correctness and quality gates through triage, manual review, and deeper validation, with no direct trading authorization.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <marker id="block" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto">
+      <path d="M2,2 L10,10 M10,2 L2,10" stroke="#dc2626" stroke-width="2"/>
+    </marker>
+    <style>
+      .box { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:8; }
+      .red { fill:#fff1f2; stroke:#dc2626; }
+      .yellow { fill:#fefce8; stroke:#ca8a04; }
+      .green { fill:#f0fdf4; stroke:#16a34a; }
+      .label { font:14px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .title { font:22px Arial, sans-serif; font-weight:700; fill:#0f172a; text-anchor:middle; }
+      .line { stroke:#334155; stroke-width:1.8; fill:none; marker-end:url(#arrow); }
+      .blockLine { stroke:#dc2626; stroke-width:2.2; stroke-dasharray:7 5; fill:none; marker-end:url(#block); }
+    </style>
+  </defs>
+  <text x="560" y="36" class="title">Gates and Decisions</text>
+
+  <rect x="55" y="110" width="145" height="56" class="box"/>
+  <text x="127" y="134" class="label">Completed run</text>
+  <text x="127" y="154" class="small">research output</text>
+
+  <rect x="250" y="110" width="160" height="56" class="box"/>
+  <text x="330" y="134" class="label">Correctness gates</text>
+  <text x="330" y="154" class="small">paths data OOS</text>
+
+  <rect x="460" y="110" width="150" height="56" class="box"/>
+  <text x="535" y="134" class="label">Quality gates</text>
+  <text x="535" y="154" class="small">metrics costs risk</text>
+
+  <rect x="660" y="110" width="130" height="56" class="box"/>
+  <text x="725" y="134" class="label">Triage</text>
+  <text x="725" y="154" class="small">red yellow green</text>
+
+  <rect x="840" y="55" width="145" height="50" class="box red"/>
+  <text x="912" y="84" class="label">Red: reject/fix</text>
+
+  <rect x="840" y="130" width="145" height="50" class="box yellow"/>
+  <text x="912" y="159" class="label">Yellow: incomplete</text>
+
+  <rect x="840" y="205" width="145" height="50" class="box green"/>
+  <text x="912" y="234" class="label">Green: validate</text>
+
+  <rect x="665" y="320" width="145" height="56" class="box"/>
+  <text x="737" y="344" class="label">Manual review</text>
+  <text x="737" y="364" class="small">human decision</text>
+
+  <rect x="870" y="320" width="150" height="56" class="box"/>
+  <text x="945" y="344" class="label">Deeper validation</text>
+  <text x="945" y="364" class="small">benchmark/full</text>
+
+  <rect x="250" y="430" width="175" height="70" class="box yellow"/>
+  <text x="337" y="452" class="label">Research report</text>
+  <text x="337" y="472" class="small">research_only: true</text>
+  <text x="337" y="489" class="small">production_validated: false</text>
+
+  <rect x="690" y="430" width="170" height="56" class="box red"/>
+  <text x="775" y="454" class="label">Paper/live trading</text>
+  <text x="775" y="474" class="small">separate approval</text>
+
+  <path d="M200 138 L250 138" class="line"/>
+  <path d="M410 138 L460 138" class="line"/>
+  <path d="M610 138 L660 138" class="line"/>
+  <path d="M790 138 C820 95 820 80 840 80" class="line"/>
+  <path d="M790 138 L840 155" class="line"/>
+  <path d="M790 138 C820 190 820 230 840 230" class="line"/>
+  <path d="M912 180 C880 280 790 300 737 320" class="line"/>
+  <path d="M912 255 C875 295 800 310 737 320" class="line"/>
+  <path d="M810 348 L870 348" class="line"/>
+  <path d="M425 465 L690 458" class="blockLine"/>
+  <text x="555" y="445" class="small" style="fill:#dc2626">green still does not mean trade</text>
+</svg>

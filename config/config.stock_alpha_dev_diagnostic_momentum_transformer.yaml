@@ -1,0 +1,37 @@
+ml:
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_deep_diagnostic
+  stock_alpha_run_size: dev
+  stock_level_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_diagnostic/dev/stock_level_prediction_artifacts_enriched.csv
+  stock_ranker_include_engineered_features: true
+  stock_ranker_include_sequence_models: true
+  stock_ranker_model_set: full
+  stock_target_comparison_model_set: ultrafast
+  stock_deep_diagnostic_model: momentum_transformer
+  stock_deep_diagnostic_target: actual_forward_return_10d
+  stock_alpha_dev_max_dates: 180
+  stock_alpha_dev_max_symbols: 200
+  stock_alpha_dev_recent_dates_only: true
+  stock_alpha_dev_symbol_sample_method: deterministic_hash
+  stock_alpha_dev_required_symbols:
+    - SPY
+    - AAPL
+  stock_alpha_artifact_universe_paths:
+    - data/reference/universes/us_liquid_500.yaml
+  stock_alpha_artifact_max_symbols: 200
+  stock_alpha_artifact_symbol_sample_method: deterministic_hash
+  stock_ranker_min_train_dates: 40
+  stock_ranker_test_window_dates: 10
+  stock_ranker_embargo_dates: 2
+  stock_ranker_sequence_length: 13
+  stock_ranker_sequence_epochs: 1
+  stock_ranker_sequence_batch_size: 256
+  stock_alpha_stages:
+    stock_artifact: false
+    alpha_features: false
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: false
+    attribution: false

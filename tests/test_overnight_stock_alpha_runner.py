@@ -227,6 +227,62 @@ def test_stage_output_outside_canonical_root_fails_validation(tmp_path):
         raise AssertionError("Expected output-root validation failure")
 
 
+def test_disabled_alpha_features_uses_explicit_enriched_artifact_for_enriched_benchmark(tmp_path):
+    root = tmp_path / "stock_alpha"
+    output_dir = root / "dev"
+    cache_dir = tmp_path / "cache"
+    enriched_artifact = tmp_path / "existing" / "stock_level_prediction_artifacts_enriched.csv"
+    enriched_artifact.parent.mkdir(parents=True)
+    enriched_artifact.write_text("rebalance_date,symbol\n2024-01-01,AAA\n", encoding="utf-8")
+    (cache_dir / "expanded_rebalance_dataset.csv").parent.mkdir(parents=True)
+    (cache_dir / "expanded_rebalance_dataset.csv").write_text("feature_date,symbol\n2024-01-01,AAA\n", encoding="utf-8")
+    seen = {}
+
+    def benchmark(config):
+        output = Path(config["ml"]["output_dir"])
+        seen[output.name] = config["ml"]["stock_level_prediction_artifacts_path"]
+        output.mkdir(parents=True, exist_ok=True)
+        json_path = output / "stock_level_model_ranking_benchmark.json"
+        json_path.write_text(json.dumps(_enriched_payload()), encoding="utf-8")
+        predictions = output / "stock_level_model_oos_predictions.csv"
+        predictions.write_text("rebalance_date,symbol\n2024-01-01,AAA\n", encoding="utf-8")
+        return BenchmarkPaths(
+            output / "stock_level_model_ranking_benchmark.csv",
+            json_path,
+            output / "stock_level_model_ranking_benchmark.md",
+            predictions,
+        )
+
+    ticks = iter(float(index) for index in range(20))
+    write_overnight_stock_alpha_experiment(
+        {
+            "cache": {"ml_dir": str(cache_dir)},
+            "ml": {
+                "stock_alpha_report_root": str(root),
+                "stock_alpha_run_size": "dev",
+                "stock_level_prediction_artifacts_path": str(enriched_artifact),
+                "stock_ranker_include_sequence_models": False,
+                "stock_alpha_stages": {
+                    "stock_artifact": False,
+                    "alpha_features": False,
+                    "baseline_benchmark": False,
+                    "enriched_benchmark": True,
+                    "target_comparison": False,
+                    "portfolio_replay": False,
+                    "portfolio_policy_sweep": False,
+                    "experiment_report": False,
+                    "attribution": False,
+                },
+            },
+        },
+        stages=OvernightStockAlphaStages(benchmark=benchmark),
+        clock=lambda: next(ticks),
+    )
+
+    assert seen["enriched"] == str(enriched_artifact)
+    assert seen["enriched"] != str(output_dir / "stock_level_prediction_artifacts_enriched.csv")
+
+
 def _run(
     tmp_path: Path,
     *,

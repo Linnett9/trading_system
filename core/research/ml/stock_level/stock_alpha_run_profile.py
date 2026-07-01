@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
@@ -20,13 +21,28 @@ def apply_stock_alpha_run_profile(
     allowed_dates = set(selected_dates)
     candidates = [row for row in rows if str(row.get("rebalance_date", "")) in allowed_dates]
     symbols = sorted({str(row.get("symbol", "")).upper() for row in candidates if row.get("symbol")})
-    allowed_symbols = set(symbols[: settings.dev_max_symbols])
+    allowed_symbols = set(_select_dev_symbols(symbols, settings))
     subset = [
         row for row in candidates
         if str(row.get("symbol", "")).upper() in allowed_symbols
     ]
     subset.sort(key=lambda row: (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()))
     return subset, _counts(subset, settings.run_size)
+
+
+def _select_dev_symbols(
+    symbols: list[str],
+    settings: StockLevelResearchConfig,
+) -> list[str]:
+    required = [symbol for symbol in settings.dev_required_symbols if symbol in symbols]
+    remainder = [symbol for symbol in symbols if symbol not in set(required)]
+    if settings.dev_symbol_sample_method == "deterministic_hash":
+        remainder = sorted(
+            remainder,
+            key=lambda symbol: hashlib.sha256(symbol.encode("utf-8")).hexdigest(),
+        )
+    selected = [*dict.fromkeys(required), *remainder]
+    return selected[: settings.dev_max_symbols]
 
 
 def _counts(rows: list[dict[str, Any]], run_size: str) -> dict[str, Any]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 
 from core.research.ml.stock_level import stock_level_feature_attribution
-from core.research.ml.stock_level.stock_level_feature_attribution import (
+from core.research.ml.stock_level.feature_attribution.service import (
     build_stock_level_feature_attribution,
 )
 

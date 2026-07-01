@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
-from core.research.ml.stock_level.stock_level_model_ranking_benchmark import build_stock_level_model_ranking_benchmark
+from core.research.ml.stock_level.stock_level_model_ranking_benchmark import _factories_for_model_set, build_stock_level_model_ranking_benchmark
 from core.research.ml.stock_level_benchmark_data import _available_feature_columns
 from core.research.ml.stock_level_benchmark_data import _number
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
+from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_target_model_set
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ def write_stock_level_target_comparison(config: dict[str, Any]) -> StockLevelTar
     effective_workers = min(settings.target_comparison_n_jobs, len(settings.target_columns))
     nested_model_jobs = 1 if effective_workers > 1 else settings.model_n_jobs
     nested_sklearn_jobs = 1 if effective_workers > 1 else settings.sklearn_n_jobs
+    model_set = resolve_stock_alpha_target_model_set(settings.target_comparison_model_set, include_sequence_models=settings.include_sequence_models)
+    tabular_factories, sequence_factories = _factories_for_model_set(settings, model_set, sklearn_n_jobs=nested_sklearn_jobs, torch_num_threads=1 if effective_workers > 1 else thread_caps["torch_num_threads"])
 
     def run(target: str) -> dict[str, Any]:
         target_started = time.perf_counter()
@@ -53,6 +56,8 @@ def write_stock_level_target_comparison(config: dict[str, Any]) -> StockLevelTar
                 embargo_dates=settings.embargo_dates, random_seed=settings.random_seed,
                 sklearn_n_jobs=nested_sklearn_jobs, model_n_jobs=nested_model_jobs,
                 include_sequence_models=settings.include_sequence_models,
+                model_factories=tabular_factories,
+                sequence_model_factories=sequence_factories,
                 sequence_length=settings.sequence_length, sequence_epochs=settings.sequence_epochs,
                 sequence_batch_size=settings.sequence_batch_size, sequence_device=settings.sequence_device,
             )
@@ -75,6 +80,9 @@ def write_stock_level_target_comparison(config: dict[str, Any]) -> StockLevelTar
     writer.write_csv(paths.csv_path, summaries, fieldnames=fieldnames)
     skipped = [row for row in summaries if row["status"] != "completed"]
     payload = {"mode": "stock_level_target_comparison_research_only", "status": "completed_with_skips" if skipped else "completed", "started_at": stage_started_at, "completed_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": time.perf_counter() - stage_started, "skipped_target_count": len(skipped), "skipped_targets": skipped, "targets": summaries, "target_timings": {row["target_column"]: row["elapsed_seconds"] for row in summaries}, **run_profile, **stock_alpha_report_metadata(config, output, source_artifact_path=settings.artifact_path), "parallelism": {"requested_workers": settings.target_comparison_n_jobs, "effective_workers": effective_workers, "nested_stock_ranker_model_n_jobs": nested_model_jobs, "nested_sklearn_n_jobs": nested_sklearn_jobs, "nested_torch_num_threads": 1 if effective_workers > 1 else thread_caps["torch_num_threads"]}, "thread_caps": thread_caps, "promotion_thresholds_changed": False, "research_only": True, "trading_impact": "none", "production_validated": False}
+    payload.update(model_set.metadata())
+    payload["stock_target_comparison_model_set"] = settings.target_comparison_model_set
+    payload["target_comparison_model_set"] = model_set.metadata()
     writer.write_json(paths.json_path, payload)
     writer.write_markdown(paths.markdown_path, _markdown(payload))
     return paths
@@ -129,7 +137,7 @@ def _skipped_summary(target: str, availability: dict[str, Any], reason: str, rea
 
 
 def _markdown(payload: dict[str, Any]) -> str:
-    lines = ["# Stock-Level Target Comparison", "", "Research only. Trading impact: none. Production validated: false.", "", f"- Status: `{payload['status']}`", f"- Skipped targets: {payload['skipped_target_count']}", f"- Run size: `{payload.get('run_size', 'benchmark')}`", f"- Effective workers: {payload.get('parallelism', {}).get('effective_workers', 1)}", "", "| Target | Status | Eligible dates | OOS dates | Best IC | Best spread | Skip reason |", "|---|---|---:|---:|---|---|---|"]
+    lines = ["# Stock-Level Target Comparison", "", "Research only. Trading impact: none. Production validated: false.", "", f"- Status: `{payload['status']}`", f"- Skipped targets: {payload['skipped_target_count']}", f"- Run size: `{payload.get('run_size', 'benchmark')}`", f"- Target comparison model set: `{payload.get('effective_model_set')}`", f"- Included models: {payload.get('included_models', [])}", f"- Excluded models: {payload.get('excluded_models', [])}", f"- Effective workers: {payload.get('parallelism', {}).get('effective_workers', 1)}", "", "| Target | Status | Eligible dates | OOS dates | Best IC | Best spread | Skip reason |", "|---|---|---:|---:|---|---|---|"]
     for row in payload["targets"]:
         lines.append(f"| {row['target_column']} | {row['status']} | {row['eligible_date_count']} | {row['oos_date_count']} | {row['best_model_by_spearman_ic']} | {row['best_model_by_top_minus_bottom_spread']} | {row['skip_reason'] or ''} |")
     lines.extend(["", "Promotion thresholds changed: false.", ""])

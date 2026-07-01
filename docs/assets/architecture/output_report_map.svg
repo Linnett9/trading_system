@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="720" viewBox="0 0 1120 720" role="img" aria-labelledby="title desc">
+  <title id="title">Output and report map</title>
+  <desc id="desc">Major stock-alpha output files under the canonical output directory.</desc>
+  <defs>
+    <style>
+      .root { fill:#eff6ff; stroke:#2563eb; stroke-width:2; rx:10; }
+      .box { fill:#f8fafc; stroke:#334155; stroke-width:1.4; rx:8; }
+      .csv { fill:#f0fdf4; stroke:#16a34a; }
+      .json { fill:#fefce8; stroke:#ca8a04; }
+      .report { fill:#f5f3ff; stroke:#7c3aed; }
+      .label { font:14px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .title { font:22px Arial, sans-serif; font-weight:700; fill:#0f172a; text-anchor:middle; }
+    </style>
+  </defs>
+  <text x="560" y="36" class="title">Output and Report Map</text>
+
+  <rect x="90" y="65" width="940" height="62" class="root"/>
+  <text x="560" y="90" class="label">Canonical stock-alpha output directory</text>
+  <text x="560" y="111" class="small">reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/{run_size}/</text>
+
+  <rect x="80" y="175" width="220" height="62" class="box json"/>
+  <text x="190" y="199" class="label">prediction artifacts</text>
+  <text x="190" y="219" class="small">stock_level_prediction_artifacts</text>
+
+  <rect x="330" y="175" width="220" height="62" class="box csv"/>
+  <text x="440" y="199" class="label">enriched artifact</text>
+  <text x="440" y="219" class="small">stock_level_prediction_artifacts_enriched</text>
+
+  <rect x="580" y="175" width="220" height="62" class="box json"/>
+  <text x="690" y="199" class="label">feature audit</text>
+  <text x="690" y="219" class="small">stock_level_alpha_feature_audit</text>
+
+  <rect x="830" y="175" width="220" height="62" class="box report"/>
+  <text x="940" y="199" class="label">parallelism audit</text>
+  <text x="940" y="219" class="small">stock_alpha_parallelism_audit</text>
+
+  <rect x="80" y="290" width="220" height="62" class="box json"/>
+  <text x="190" y="314" class="label">model benchmark</text>
+  <text x="190" y="334" class="small">stock_level_model_ranking_benchmark</text>
+
+  <rect x="330" y="290" width="220" height="62" class="box csv"/>
+  <text x="440" y="314" class="label">OOS predictions</text>
+  <text x="440" y="334" class="small">stock_level_model_oos_predictions</text>
+
+  <rect x="580" y="290" width="220" height="62" class="box json"/>
+  <text x="690" y="314" class="label">target comparison</text>
+  <text x="690" y="334" class="small">stock_level_target_comparison</text>
+
+  <rect x="830" y="290" width="220" height="62" class="box json"/>
+  <text x="940" y="314" class="label">portfolio replay</text>
+  <text x="940" y="334" class="small">stock_level_portfolio_replay_summary</text>
+
+  <rect x="80" y="405" width="220" height="62" class="box json"/>
+  <text x="190" y="429" class="label">policy sweep</text>
+  <text x="190" y="449" class="small">stock_level_portfolio_policy_sweep</text>
+
+  <rect x="330" y="405" width="220" height="62" class="box report"/>
+  <text x="440" y="429" class="label">experiment report</text>
+  <text x="440" y="449" class="small">stock_alpha_experiment_report</text>
+
+  <rect x="580" y="405" width="220" height="62" class="box report"/>
+  <text x="690" y="429" class="label">overnight summary</text>
+  <text x="690" y="449" class="small">overnight_stock_alpha_summary</text>
+
+  <rect x="830" y="405" width="220" height="62" class="box csv"/>
+  <text x="940" y="429" class="label">curves and holdings</text>
+  <text x="940" y="449" class="small">replay/sweep detail CSVs</text>
+
+  <rect x="160" y="565" width="800" height="60" class="box"/>
+  <text x="560" y="590" class="label">Most summary outputs have JSON and Markdown; many also have CSV siblings.</text>
+  <text x="560" y="611" class="small">Generated outputs are research artifacts, not source code or trading instructions.</text>
+</svg>

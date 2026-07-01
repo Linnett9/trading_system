@@ -1,0 +1,151 @@
+name: stock_alpha_pc_full_dataset_experiment_sequence
+description: PC-ready research-only sequence for future full-dataset stock-alpha experiments.
+guardrails:
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
+python:
+  path: /Users/brandonlinnett/.pyenv/versions/3.11.6/bin/python
+  environment:
+    PYTHONDONTWRITEBYTECODE: "1"
+    OMP_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+    VECLIB_MAXIMUM_THREADS: "1"
+    NUMEXPR_NUM_THREADS: "1"
+steps:
+  - id: full_stock_alpha_enriched_benchmark
+    order: 1
+    command: "$PY main.py --mode ml-overnight-stock-alpha --config <reviewed-full-stock-alpha-config.yaml>"
+    config_path: "<reviewed-full-stock-alpha-config.yaml>"
+    config_status: dedicated_full_config_not_yet_present
+    expected_input_files:
+      - "<project stock-alpha full data inputs>"
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/full/enriched/stock_level_model_oos_predictions.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/full/overnight_stock_alpha_summary.json
+    approximate_run_size: full_dataset_heavy
+    safe_to_run_now: false
+    suitable_for_overnight: true
+    notes:
+      - Create or review a dedicated full config before running.
+      - Do not rely on benchmark defaults for a full run.
+  - id: full_ensemble_generation
+    order: 2
+    command: "$PY main.py --mode ml-stock-alpha-ensemble --config config/config.stock_alpha_ensemble_full_enriched.yaml"
+    config_path: config/config.stock_alpha_ensemble_full_enriched.yaml
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/full/enriched/stock_level_model_oos_predictions.csv
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+    approximate_run_size: full_oos_predictions_moderate_to_heavy
+    safe_to_run_now: false
+    suitable_for_overnight: true
+  - id: preflight_full_enriched_portfolio_coarse
+    order: 3
+    command: "$PY main.py --mode ml-stock-alpha-experiment-preflight --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml"
+    config_path: config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/preflight/stock_alpha_experiment_preflight.json
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/preflight/stock_alpha_experiment_preflight.md
+    approximate_run_size: inspection_only
+    safe_to_run_now: true
+    suitable_for_overnight: false
+  - id: run_full_enriched_portfolio_coarse
+    order: 4
+    command: "$PY main.py --mode ml-stock-alpha-ensemble-portfolio-sweep --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml"
+    config_path: config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/policy_sweep_raw.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/policy_sweep_ranked.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.md
+    approximate_run_size: coarse_grid_about_72_policies
+    safe_to_run_now: false
+    suitable_for_overnight: false
+  - id: inspect_coarse_exposure_drawdown_underinvestment
+    order: 5
+    command: "$PY -m json.tool reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json | less"
+    config_path: null
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+    expected_output_files: []
+    approximate_run_size: inspection_only
+    safe_to_run_now: false
+    suitable_for_overnight: false
+    inspect_fields:
+      - realized_exposure_bucket
+      - exposure_utilization_ratio
+      - underinvested_policy
+      - max_drawdown
+      - cost_adjusted_sharpe
+      - top_n_violation_ratio
+  - id: run_full_enriched_refine
+    order: 6
+    command: "$PY main.py --mode ml-stock-alpha-ensemble-portfolio-sweep --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml"
+    config_path: config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_refine/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_refine/full/portfolio_sweep/ensemble/policy_sweep_ranked.csv
+    approximate_run_size: refine_grid_about_256_policies
+    safe_to_run_now: false
+    suitable_for_overnight: true
+  - id: run_full_grid_overnight
+    order: 7
+    command: "caffeinate -dimsu env PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 NUMEXPR_NUM_THREADS=1 $PY main.py --mode ml-stock-alpha-ensemble-portfolio-sweep --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml"
+    config_path: config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml
+    expected_input_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_refine/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid/full/portfolio_sweep/ensemble/policy_sweep_ranked.csv
+    approximate_run_size: full_grid_about_1080_policies
+    safe_to_run_now: false
+    suitable_for_overnight: true
+    run_only_if:
+      - coarse_results_are_sane
+      - refine_results_are_sane
+      - no_material_underinvestment_or_holdings_semantics_issue
+  - id: news_feature_generation_full
+    order: 8
+    command: "$PY main.py --mode ml-stock-alpha-news-features --config config/config.stock_alpha_news_features_full_template.yaml"
+    config_path: config/config.stock_alpha_news_features_full_template.yaml
+    expected_input_files:
+      - data/news/stock_alpha_news_contract.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+    expected_output_files:
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_full/full/stock_alpha_news_features.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_full/full/news_features/stock_alpha_news_features_audit.json
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_full/full/news_features/stock_alpha_news_features_audit.md
+    approximate_run_size: full_stock_date_rows_by_real_article_count
+    safe_to_run_now: false
+    suitable_for_overnight: true
+    run_only_if:
+      - data/news/stock_alpha_news_contract.csv_exists
+      - news_contract_is_real_point_in_time_data
+  - id: news_analysis_transformer_gate
+    order: 9
+    command: "No command by default; keep stock_alpha_news_enable_transformer: false."
+    config_path: config/config.stock_alpha_news_features_full_template.yaml
+    expected_input_files:
+      - data/news/stock_alpha_news_contract.csv
+      - reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_full/full/stock_alpha_news_features.csv
+    expected_output_files: []
+    approximate_run_size: gate_only
+    safe_to_run_now: false
+    suitable_for_overnight: false
+    enable_only_if:
+      - point_in_time_news_contract_valid
+      - required_aggregate_news_features_exist
+      - minimum_symbol_coverage_passes
+      - minimum_date_coverage_passes
+      - no_synthetic_zero_news_fake_coverage
+      - no_future_article_leakage

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="650" viewBox="0 0 1100 650" role="img" aria-labelledby="title desc">
+  <title id="title">Research versus execution boundary</title>
+  <desc id="desc">Research-only modules produce reports and simulations while execution-adjacent modules handle paper and broker workflows.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <marker id="block" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto">
+      <path d="M2,2 L10,10 M10,2 L2,10" stroke="#dc2626" stroke-width="2"/>
+    </marker>
+    <style>
+      .zoneResearch { fill:#f0fdf4; stroke:#16a34a; stroke-width:2; rx:12; }
+      .zoneExec { fill:#fff1f2; stroke:#e11d48; stroke-width:2; rx:12; }
+      .box { fill:#ffffff; stroke:#334155; stroke-width:1.4; rx:8; }
+      .sim { fill:#ecfeff; stroke:#0891b2; }
+      .exec { fill:#fff7ed; stroke:#ea580c; }
+      .label { font:14px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .title { font:20px Arial, sans-serif; font-weight:700; fill:#0f172a; text-anchor:middle; }
+      .line { stroke:#334155; stroke-width:1.7; fill:none; marker-end:url(#arrow); }
+      .blockLine { stroke:#dc2626; stroke-width:2.2; stroke-dasharray:7 5; fill:none; marker-end:url(#block); }
+    </style>
+  </defs>
+
+  <text x="550" y="36" class="title">Research vs Execution Boundary</text>
+
+  <rect x="40" y="70" width="460" height="500" class="zoneResearch"/>
+  <text x="270" y="100" class="title" style="font-size:18px">Research-only</text>
+
+  <rect x="600" y="70" width="460" height="500" class="zoneExec"/>
+  <text x="830" y="100" class="title" style="font-size:18px">Execution-adjacent</text>
+
+  <rect x="90" y="135" width="170" height="46" class="box"/>
+  <text x="175" y="163" class="label">core/research/</text>
+  <rect x="285" y="135" width="170" height="46" class="box"/>
+  <text x="370" y="163" class="label">core/research/ml/</text>
+  <rect x="185" y="215" width="190" height="46" class="box"/>
+  <text x="280" y="243" class="label">ml/stock_level/</text>
+
+  <rect x="85" y="315" width="150" height="50" class="box sim"/>
+  <text x="160" y="335" class="label">metrics</text>
+  <text x="160" y="354" class="small">reports only</text>
+  <rect x="255" y="315" width="150" height="50" class="box sim"/>
+  <text x="330" y="335" class="label">portfolio replay</text>
+  <text x="330" y="354" class="small">simulation</text>
+  <rect x="170" y="400" width="150" height="50" class="box sim"/>
+  <text x="245" y="420" class="label">policy sweep</text>
+  <text x="245" y="439" class="small">simulation</text>
+  <rect x="170" y="485" width="150" height="50" class="box sim"/>
+  <text x="245" y="505" class="label">reports/</text>
+  <text x="245" y="524" class="small">research evidence</text>
+
+  <rect x="650" y="135" width="180" height="46" class="box exec"/>
+  <text x="740" y="163" class="label">paper_* services</text>
+  <rect x="850" y="135" width="160" height="46" class="box exec"/>
+  <text x="930" y="163" class="label">core/paper/</text>
+  <rect x="650" y="230" width="180" height="46" class="box exec"/>
+  <text x="740" y="258" class="label">core/execution/</text>
+  <rect x="850" y="230" width="160" height="46" class="box exec"/>
+  <text x="930" y="258" class="label">order.py</text>
+  <rect x="650" y="330" width="180" height="46" class="box exec"/>
+  <text x="740" y="358" class="label">broker/</text>
+  <rect x="850" y="330" width="160" height="46" class="box exec"/>
+  <text x="930" y="358" class="label">brokers/</text>
+
+  <text x="550" y="190" class="title" style="font-size:16px;fill:#dc2626">No order-placement path</text>
+  <text x="550" y="218" class="small" style="fill:#dc2626">production_validated: false</text>
+  <text x="550" y="237" class="small" style="fill:#dc2626">means no paper/live permission</text>
+
+  <path d="M260 158 L285 158" class="line"/>
+  <path d="M370 181 L310 215" class="line"/>
+  <path d="M280 261 L160 315" class="line"/>
+  <path d="M280 261 L330 315" class="line"/>
+  <path d="M330 365 L245 400" class="line"/>
+  <path d="M245 450 L245 485" class="line"/>
+
+  <path d="M500 510 L600 510" class="blockLine"/>
+  <path d="M830 181 L740 230" class="line"/>
+  <path d="M830 181 L930 230" class="line"/>
+  <path d="M740 276 L740 330" class="line"/>
+  <path d="M930 276 L930 330" class="line"/>
+</svg>

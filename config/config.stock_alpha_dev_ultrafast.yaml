@@ -1,0 +1,17 @@
+ml:
+  stock_alpha_run_size: dev
+  stock_ranker_model_set: fast
+  stock_target_comparison_model_set: ultrafast
+  stock_ranker_min_train_dates: 12
+  stock_ranker_test_window_dates: 4
+  stock_ranker_embargo_dates: 1
+  stock_alpha_stages:
+    stock_artifact: true
+    alpha_features: true
+    baseline_benchmark: true
+    enriched_benchmark: true
+    target_comparison: true
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: true
+    attribution: false

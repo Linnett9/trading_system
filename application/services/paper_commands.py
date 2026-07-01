@@ -24,7 +24,7 @@ from application.reporting.paper_reporter import (
     print_paper_weekly_summary,
     print_paper_promotion_checklist,
 )
-from core.research.dual_momentum_factory import build_dual_momentum_tester
+from core.research.dual_momentum.factory import build_dual_momentum_tester
 from application.services.paper_dry_run import write_dry_run_rebalance_plan
 
 

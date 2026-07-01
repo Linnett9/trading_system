@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="650" viewBox="0 0 1180 650" role="img" aria-labelledby="title desc">
+  <title id="title">Model evaluation loop</title>
+  <desc id="desc">Stock-alpha model evaluation loop with chronological walk-forward split and model families.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .box { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:8; }
+      .model { fill:#f5f3ff; stroke:#7c3aed; }
+      .metric { fill:#fefce8; stroke:#ca8a04; }
+      .note { fill:#fff1f2; stroke:#e11d48; }
+      .label { font:14px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .title { font:22px Arial, sans-serif; font-weight:700; fill:#0f172a; text-anchor:middle; }
+      .line { stroke:#334155; stroke-width:1.8; fill:none; marker-end:url(#arrow); }
+      .dash { stroke:#64748b; stroke-width:1.4; fill:none; stroke-dasharray:5 4; marker-end:url(#arrow); }
+    </style>
+  </defs>
+  <text x="590" y="36" class="title">Model Evaluation Loop</text>
+
+  <rect x="60" y="95" width="150" height="56" class="box"/>
+  <text x="135" y="119" class="label">Features</text>
+  <text x="135" y="139" class="small">base/enriched</text>
+
+  <rect x="60" y="195" width="150" height="56" class="box"/>
+  <text x="135" y="219" class="label">Target</text>
+  <text x="135" y="239" class="small">future label</text>
+
+  <rect x="275" y="145" width="160" height="56" class="box"/>
+  <text x="355" y="169" class="label">Walk-forward</text>
+  <text x="355" y="189" class="small">chronological split</text>
+
+  <rect x="500" y="95" width="150" height="56" class="box"/>
+  <text x="575" y="119" class="label">Train</text>
+  <text x="575" y="139" class="small">earlier dates</text>
+
+  <rect x="500" y="195" width="150" height="56" class="box"/>
+  <text x="575" y="219" class="label">Embargo</text>
+  <text x="575" y="239" class="small">gap dates</text>
+
+  <rect x="720" y="145" width="150" height="56" class="box"/>
+  <text x="795" y="169" class="label">Predict</text>
+  <text x="795" y="189" class="small">later OOS dates</text>
+
+  <rect x="930" y="95" width="160" height="56" class="box metric"/>
+  <text x="1010" y="119" class="label">Ranking metrics</text>
+  <text x="1010" y="139" class="small">IC spread Sharpe</text>
+
+  <rect x="930" y="195" width="160" height="56" class="box metric"/>
+  <text x="1010" y="219" class="label">OOS predictions</text>
+  <text x="1010" y="239" class="small">CSV output</text>
+
+  <rect x="930" y="295" width="160" height="56" class="box metric"/>
+  <text x="1010" y="319" class="label">Replay / sweep</text>
+  <text x="1010" y="339" class="small">research simulation</text>
+
+  <rect x="220" y="390" width="190" height="66" class="box model"/>
+  <text x="315" y="414" class="label">Baselines</text>
+  <text x="315" y="434" class="small">momentum_120d</text>
+  <text x="315" y="450" class="small">risk_adjusted_momentum</text>
+
+  <rect x="480" y="390" width="190" height="82" class="box model"/>
+  <text x="575" y="414" class="label">Tabular models</text>
+  <text x="575" y="434" class="small">Ridge ElasticNet</text>
+  <text x="575" y="450" class="small">RandomForest</text>
+  <text x="575" y="466" class="small">GradientBoosting</text>
+
+  <rect x="740" y="390" width="230" height="98" class="box model"/>
+  <text x="855" y="414" class="label">Sequence/context</text>
+  <text x="855" y="434" class="small">DLinear PatchTST Transformer</text>
+  <text x="855" y="450" class="small">iTransformer MomentumTransformer</text>
+  <text x="855" y="466" class="small">Multitask MarketContext TFT</text>
+  <text x="855" y="482" class="small">NewsAnalysis when covered</text>
+
+  <rect x="710" y="540" width="290" height="46" class="box note"/>
+  <text x="855" y="558" class="small">News transformer unavailable unless</text>
+  <text x="855" y="575" class="small">point-in-time news/sentiment columns exist.</text>
+
+  <path d="M210 123 C240 123 245 165 275 165" class="line"/>
+  <path d="M210 223 C240 223 245 181 275 181" class="line"/>
+  <path d="M435 173 C465 145 470 123 500 123" class="line"/>
+  <path d="M575 151 L575 195" class="line"/>
+  <path d="M650 223 C690 223 685 173 720 173" class="line"/>
+  <path d="M870 173 C900 145 900 123 930 123" class="line"/>
+  <path d="M870 173 C900 195 900 223 930 223" class="line"/>
+  <path d="M1010 251 L1010 295" class="line"/>
+  <path d="M315 390 C360 320 500 160 500 123" class="dash"/>
+  <path d="M575 390 L575 251" class="dash"/>
+  <path d="M855 390 C850 310 760 240 720 190" class="dash"/>
+  <path d="M855 488 L855 540" class="dash"/>
+</svg>

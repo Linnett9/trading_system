@@ -138,6 +138,32 @@ def test_registry_covers_the_model_zoo_and_reports_missing_news_inputs():
     )
 
 
+def test_news_transformer_requires_point_in_time_contract_when_news_columns_exist():
+    rows = _rows()
+    for row in rows:
+        row["news_sentiment_score"] = "0.1"
+
+    predictions, payload = build_stock_level_model_ranking_benchmark(
+        rows,
+        min_train_dates=2,
+        test_window_dates=2,
+        embargo_dates=1,
+        sequence_length=2,
+        model_factories={},
+        sequence_model_factories={"news_analysis_transformer": SequenceMomentumRegressor},
+    )
+
+    assert predictions
+    assert "news_analysis_transformer" not in payload["completed_models"]
+    assert payload["unavailable_models"] == [
+        {
+            "name": "news_analysis_transformer",
+            "status": "unavailable",
+            "reason": "news_analysis_transformer unavailable: missing valid point-in-time news contract",
+        }
+    ]
+
+
 def test_parallel_and_sequential_outputs_are_equivalent():
     common = {
         "rows": _rows(),

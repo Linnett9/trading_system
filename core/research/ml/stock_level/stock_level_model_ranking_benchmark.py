@@ -65,7 +65,9 @@ from core.research.framework.logging import ResearchStageLogger
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
+from core.research.ml.stock_level.stock_alpha_news_contract import validate_news_contract
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
+from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, StockAlphaModelSet, resolve_stock_alpha_model_set
 from datetime import datetime, timezone
 import time
 
@@ -91,11 +93,14 @@ def write_stock_level_model_ranking_benchmark(
         include_engineered=settings.include_engineered_features,
     )
     with logger.stage("training_and_evaluation"):
+        model_set = resolve_stock_alpha_model_set(settings.ranker_model_set, include_sequence_models=settings.include_sequence_models)
+        tabular_factories, sequence_factories = _factories_for_model_set(settings, model_set, sklearn_n_jobs=settings.sklearn_n_jobs, torch_num_threads=thread_caps["torch_num_threads"])
         predictions, payload = build_stock_level_model_ranking_benchmark(
             rows,
             target_column=settings.target_column,
             feature_columns=feature_columns,
             source_path=str(source_path),
+            config_path=str(config.get("config_path", "config/config.yaml")),
             min_train_dates=settings.min_train_dates,
             test_window_dates=settings.test_window_dates,
             embargo_dates=settings.embargo_dates,
@@ -103,12 +108,18 @@ def write_stock_level_model_ranking_benchmark(
             sklearn_n_jobs=settings.sklearn_n_jobs,
             model_n_jobs=settings.model_n_jobs,
             include_sequence_models=settings.include_sequence_models,
+            model_factories={name: factory for name, factory in tabular_factories.items() if name in model_set.included_models},
+            sequence_model_factories={name: factory for name, factory in sequence_factories.items() if name in model_set.included_models},
             sequence_length=settings.sequence_length,
             sequence_epochs=settings.sequence_epochs,
             sequence_batch_size=settings.sequence_batch_size,
             sequence_device=settings.sequence_device,
+            news_contract_available=validate_news_contract(config, rows).available,
         )
         payload.update(run_profile)
+        payload.update(model_set.metadata())
+        payload["stock_ranker_model_set"] = settings.ranker_model_set
+        payload["requested_models"] = list(model_set.included_models)
         payload.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=source_path))
         payload.update({"started_at": started_at, "completed_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": time.perf_counter() - started, "thread_caps": thread_caps})
 
@@ -136,10 +147,32 @@ def write_stock_level_model_ranking_benchmark(
     return paths
 
 
+def _factories_for_model_set(
+    settings: StockLevelResearchConfig,
+    model_set: StockAlphaModelSet,
+    *,
+    sklearn_n_jobs: int,
+    torch_num_threads: int,
+) -> tuple[dict[str, Callable[[], Any]], dict[str, Callable[[], Any]]]:
+    tabular = {name: factory for name, factory in _model_factories(settings.random_seed, sklearn_n_jobs).items() if name in model_set.included_models}
+    if not any(name in FULL_SEQUENCE_MODELS for name in model_set.included_models):
+        return tabular, {}
+    sequence = _sequence_model_factories(
+        sequence_length=settings.sequence_length,
+        epochs=settings.sequence_epochs,
+        batch_size=settings.sequence_batch_size,
+        random_seed=settings.random_seed,
+        device=settings.sequence_device,
+        torch_num_threads=torch_num_threads,
+    )
+    return tabular, {name: factory for name, factory in sequence.items() if name in model_set.included_models}
+
+
 def build_stock_level_model_ranking_benchmark(
     rows: list[dict[str, Any]],
     *,
     source_path: str | None = None,
+    config_path: str | None = None,
     min_train_dates: int = 52,
     test_window_dates: int = 13,
     embargo_dates: int = 2,
@@ -156,6 +189,7 @@ def build_stock_level_model_ranking_benchmark(
     executor_cls: type | None = None,
     feature_columns: tuple[str, ...] = FEATURE_COLUMNS,
     target_column: str = TARGET_COLUMN,
+    news_contract_available: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Create expanding-window predictions and an OOS ranking leaderboard."""
     _validate_split_settings(min_train_dates, test_window_dates, embargo_dates)
@@ -170,7 +204,17 @@ def build_stock_level_model_ranking_benchmark(
     if len(dates) <= first_test_index:
         raise ValueError(
             "Not enough rebalance dates for the requested walk-forward split: "
-            f"found {len(dates)}, need more than {first_test_index}"
+            f"found {len(dates)}, need more than {first_test_index}. "
+            f"available_rebalance_dates={len(dates)}; "
+            f"required_first_test_index={first_test_index}; "
+            f"min_train_dates={min_train_dates}; "
+            f"test_window_dates={test_window_dates}; "
+            f"embargo_dates={embargo_dates}; "
+            f"active_config_path={config_path or 'unknown'}; "
+            f"source_path={source_path or 'unknown'}. "
+            "For dev runs, reduce ml.stock_ranker_min_train_dates, "
+            "ml.stock_ranker_test_window_dates, or ml.stock_ranker_embargo_dates, "
+            "or use benchmark/full data."
         )
 
     effective_sklearn_n_jobs = 1 if model_n_jobs > 1 else sklearn_n_jobs
@@ -201,17 +245,22 @@ def build_stock_level_model_ranking_benchmark(
         if name.startswith("news_") or "sentiment" in name.lower()
     )
     unavailable_models: list[dict[str, str]] = []
-    if "news_analysis_transformer" in sequence_factories and not news_columns:
+    if "news_analysis_transformer" in sequence_factories and (not news_columns or not news_contract_available):
         sequence_factories = dict(sequence_factories)
         sequence_factories.pop("news_analysis_transformer")
+        reason = (
+            "news_analysis_transformer unavailable: missing valid point-in-time news contract"
+            if news_columns
+            else (
+                "The stock-level input contains no point-in-time symbol-level "
+                "news or sentiment features; synthetic news inputs are forbidden."
+            )
+        )
         unavailable_models.append(
             {
                 "name": "news_analysis_transformer",
                 "status": "unavailable",
-                "reason": (
-                    "The stock-level input contains no point-in-time symbol-level "
-                    "news or sentiment features; synthetic news inputs are forbidden."
-                ),
+                "reason": reason,
             }
         )
 

@@ -1,0 +1,311 @@
+# Stock-Alpha PC / Full-Dataset Runbook
+
+This runbook is for future PC/full-dataset stock-alpha experiments. It is
+research-only guidance and does not imply that any full run has been executed.
+
+Expected guardrails for every step:
+
+- `research_only: true`
+- `trading_impact: none`
+- `production_validated: false`
+- `promotion_thresholds_changed: false`
+
+Use the project Python and cap nested numeric-library threads:
+
+```bash
+PY=/Users/brandonlinnett/.pyenv/versions/3.11.6/bin/python
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export VECLIB_MAXIMUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+```
+
+Do not touch broker, paper, live, order execution, or production portfolio code
+for this workflow.
+
+## Sequence
+
+| Step | Purpose | Config | Safe to run now | Overnight suitable |
+|---|---|---|---|---|
+| 1 | Full stock-alpha enriched benchmark generation | `config/config.yaml` as template; create/review a dedicated full config before running | No | Yes, after config review |
+| 2 | Full ensemble generation | `config/config.stock_alpha_ensemble_full_enriched.yaml` | No, waits for step 1 output | Yes |
+| 3 | Preflight full-enriched portfolio coarse | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml` | Yes, inspection only; expected to fail until step 2 output exists | No |
+| 4 | Run full-enriched portfolio coarse | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml` | No, waits for step 2 output | Usually no; coarse is intended to be manageable |
+| 5 | Inspect realized exposure, drawdown, underinvestment | coarse sweep outputs | Yes after step 4 | No |
+| 6 | Run full-enriched refine | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml` | No, only after step 5 is sane | Possibly |
+| 7 | Run full-grid overnight only if coarse/refine are sane | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml` | No | Yes |
+| 8 | Generate news features after real news contract exists | `config/config.stock_alpha_news_features_full_template.yaml` | No, waits for `data/news/stock_alpha_news_contract.csv` | Possibly |
+| 9 | Keep news transformer disabled until PIT features pass gates | same news config family | No model enablement by default | No |
+
+## 1. Full Stock-Alpha Enriched Benchmark
+
+Current repository state has benchmark/dev stock-alpha configs and downstream
+full ensemble/sweep configs, but no dedicated full overnight stock-alpha config.
+Before running on a PC, create or review a full config derived from
+`config/config.yaml` that explicitly sets:
+
+```yaml
+ml:
+  stock_alpha_run_size: full
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
+```
+
+Command shape:
+
+```bash
+"$PY" main.py \
+  --mode ml-overnight-stock-alpha \
+  --config <reviewed-full-stock-alpha-config.yaml>
+```
+
+Expected input files:
+
+- project stock-alpha data inputs already used by the benchmark workflow
+- reviewed full stock-alpha config
+
+Expected output files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/full/enriched/stock_level_model_oos_predictions.csv`
+- full stock-alpha summary and manifest files under `.../stock_alpha/full/`
+
+Approximate run size: full dataset, heavy.
+
+Safe to run now: no. Create/review a dedicated full config first.
+
+## 2. Full Ensemble Generation
+
+Config:
+
+- `config/config.stock_alpha_ensemble_full_enriched.yaml`
+
+Command:
+
+```bash
+"$PY" main.py \
+  --mode ml-stock-alpha-ensemble \
+  --config config/config.stock_alpha_ensemble_full_enriched.yaml
+```
+
+Expected input files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/full/enriched/stock_level_model_oos_predictions.csv`
+
+Expected output files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv`
+- ensemble evaluation JSON, leaderboard CSV, and Markdown report under `.../stock_alpha_ensemble_full/full/ensemble/`
+
+Approximate run size: full OOS prediction rows, moderate to heavy.
+
+Safe to run now: no, unless the full enriched OOS predictions file exists.
+
+Suitable for overnight: yes.
+
+## 3. Preflight Full-Enriched Portfolio Coarse
+
+Config:
+
+- `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml`
+
+Command:
+
+```bash
+"$PY" main.py \
+  --mode ml-stock-alpha-experiment-preflight \
+  --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml
+```
+
+Expected input files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv`
+
+Expected output files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/preflight/stock_alpha_experiment_preflight.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/preflight/stock_alpha_experiment_preflight.md`
+
+Approximate run size: inspection only; no portfolio sweep.
+
+Safe to run now: yes. It should report `safe_to_run: false` until the full
+ensemble predictions file exists.
+
+Suitable for overnight: no.
+
+## 4. Run Full-Enriched Portfolio Coarse
+
+Config:
+
+- `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml`
+
+Command:
+
+```bash
+"$PY" main.py \
+  --mode ml-stock-alpha-ensemble-portfolio-sweep \
+  --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse.yaml
+```
+
+Expected input files:
+
+- full ensemble predictions from step 2
+
+Expected output files:
+
+- `.../stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/policy_sweep_raw.csv`
+- `.../policy_sweep_ranked.csv`
+- `.../stock_alpha_ensemble_portfolio_policy_sweep.json`
+- `.../stock_alpha_ensemble_portfolio_policy_sweep.md`
+- top-policy detail files only
+
+Approximate run size: coarse grid, about 72 policies.
+
+Safe to run now: no, wait for successful preflight.
+
+Suitable for overnight: usually no; this is the first live PC sanity pass.
+
+## 5. Inspect Coarse Results
+
+Inspect:
+
+- realized exposure bucket, not only target exposure bucket
+- `underinvested_policy`
+- `exposure_utilization_ratio`
+- max drawdown
+- cost-adjusted Sharpe
+- cost-adjusted return
+- top-N violation diagnostics
+- whether holdings/trades are top-policy-scoped only
+
+Command:
+
+```bash
+"$PY" -m json.tool \
+  reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_portfolio_sweep_ensemble_full_enriched_coarse/full/portfolio_sweep/ensemble/stock_alpha_ensemble_portfolio_policy_sweep.json \
+  | less
+```
+
+Safe to run now: only after step 4.
+
+## 6. Run Full-Enriched Refine
+
+Config:
+
+- `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml`
+
+Command:
+
+```bash
+"$PY" main.py \
+  --mode ml-stock-alpha-ensemble-portfolio-sweep \
+  --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml
+```
+
+Expected input files:
+
+- full ensemble predictions from step 2
+- coarse report reviewed and sane
+
+Expected output files:
+
+- `.../stock_alpha_portfolio_sweep_ensemble_full_enriched_refine/full/portfolio_sweep/ensemble/policy_sweep_raw.csv`
+- `.../policy_sweep_ranked.csv`
+- `.../stock_alpha_ensemble_portfolio_policy_sweep.json`
+- `.../stock_alpha_ensemble_portfolio_policy_sweep.md`
+
+Approximate run size: refine grid, about 256 policies.
+
+Safe to run now: no, only after coarse is sane.
+
+Suitable for overnight: possibly, depending on PC runtime.
+
+## 7. Full Grid Overnight
+
+Config:
+
+- `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml`
+
+Command:
+
+```bash
+caffeinate -dimsu env \
+  PYTHONDONTWRITEBYTECODE=1 \
+  OMP_NUM_THREADS=1 \
+  MKL_NUM_THREADS=1 \
+  VECLIB_MAXIMUM_THREADS=1 \
+  NUMEXPR_NUM_THREADS=1 \
+  "$PY" main.py \
+  --mode ml-stock-alpha-ensemble-portfolio-sweep \
+  --config config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml
+```
+
+Expected input files:
+
+- full ensemble predictions from step 2
+- coarse and refine reports reviewed and sane
+
+Expected output files:
+
+- full-grid policy sweep raw/ranked CSV, JSON, Markdown, and top-policy detail files under `.../stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid/full/portfolio_sweep/ensemble/`
+
+Approximate run size: full grid, about 1080 policies.
+
+Safe to run now: no.
+
+Suitable for overnight: yes, only after coarse/refine are sane.
+
+## 8. News Feature Generation
+
+Config:
+
+- `config/config.stock_alpha_news_features_full_template.yaml`
+
+Command:
+
+```bash
+"$PY" main.py \
+  --mode ml-stock-alpha-news-features \
+  --config config/config.stock_alpha_news_features_full_template.yaml
+```
+
+Expected input files:
+
+- `data/news/stock_alpha_news_contract.csv`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_full/full/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv`
+
+Expected output files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_full/full/stock_alpha_news_features.csv`
+- `.../stock_alpha_news_features_full/full/news_features/stock_alpha_news_features_audit.json`
+- `.../stock_alpha_news_features_full/full/news_features/stock_alpha_news_features_audit.md`
+
+Approximate run size: proportional to full stock/date rows and real article
+count.
+
+Safe to run now: no, only after real point-in-time
+`data/news/stock_alpha_news_contract.csv` exists.
+
+Suitable for overnight: possibly.
+
+## 9. News Transformer Gate
+
+`news_analysis_transformer` remains disabled unless:
+
+- `stock_alpha_news_enable_transformer: true` is explicitly set in a reviewed config
+- the real point-in-time news contract validates
+- generated news features contain all required aggregate columns
+- symbol/date coverage thresholds pass
+- no synthetic zero-news fake coverage is present
+- no future article leakage is detected
+
+Default safe state:
+
+```yaml
+stock_alpha_news_enable_transformer: false
+```
+
+Do not enable it in full/all-deep/portfolio configs until the news feature
+validation reports are clean.

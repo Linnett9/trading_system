@@ -9,10 +9,11 @@ from pathlib import Path
 import yaml
 
 from core.research.ml.stock_level import stock_level_prediction_artifacts
-from core.research.ml.stock_level.stock_level_prediction_artifacts import (
+from core.research.ml.stock_level.prediction_artifacts.service import (
     build_stock_level_prediction_artifacts,
     write_stock_level_prediction_artifacts,
 )
+from core.research.ml.stock_level.prediction_artifacts.sources import _universe_symbols
 
 
 def test_stock_level_artifacts_create_one_row_per_symbol_date():
@@ -163,6 +164,32 @@ def test_existing_artifact_level_files_are_preserved(tmp_path):
     assert old_artifact.read_text(encoding="utf-8") == "sentinel\n"
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["existing_artifact_level_files_preserved"] is True
+
+
+def test_stock_alpha_artifact_universe_uses_diagnostic_limit_and_required_symbols(tmp_path):
+    universe_path = tmp_path / "universe.yaml"
+    symbols = ["AAA", "AAPL", "BBB", "CCC", "DDD", "EEE", "SPY", "ZZZ"]
+    universe_path.write_text(yaml.safe_dump({"symbols": symbols}), encoding="utf-8")
+    config = {
+        "ml": {
+            "stock_alpha_artifact_universe_paths": [str(universe_path)],
+            "stock_alpha_artifact_max_symbols": 5,
+            "stock_alpha_artifact_symbol_sample_method": "deterministic_hash",
+            "stock_alpha_dev_required_symbols": ["SPY", "AAPL"],
+            "expanded_rebalance_dataset": {
+                "universe_paths": ["data/reference/universes/current_32.yaml"],
+                "max_symbols": 1,
+            },
+        }
+    }
+
+    first = _universe_symbols(config)
+    second = _universe_symbols(config)
+
+    assert first == second
+    assert len(first) == 5
+    assert first[:2] == ["SPY", "AAPL"]
+    assert set(first).issubset(set(symbols))
 
 
 def test_stock_level_prediction_artifacts_has_no_operational_imports():

@@ -36,3 +36,24 @@ def test_dev_subset_preserves_target_columns():
     assert selected[0]["actual_market_residual_return_10d"] == 0.1
     assert selected[0]["actual_vol_adjusted_forward_return_10d"] == 1.2
     assert selected[0]["actual_rank_normalized_forward_return_10d"] == 0.5
+
+
+def test_dev_hash_sample_is_deterministic_and_preserves_required_symbols():
+    rows = [
+        {"rebalance_date": "2024-03-01", "symbol": symbol}
+        for symbol in ("AAA", "AAPL", "BBB", "CCC", "SPY", "ZZZ")
+    ]
+    settings = _settings(
+        stock_alpha_dev_max_dates=1,
+        stock_alpha_dev_max_symbols=3,
+        stock_alpha_dev_symbol_sample_method="deterministic_hash",
+        stock_alpha_dev_required_symbols=["SPY", "AAPL"],
+    )
+
+    first, _ = apply_stock_alpha_run_profile(list(reversed(rows)), settings)
+    second, _ = apply_stock_alpha_run_profile(rows, settings)
+    symbols = {row["symbol"] for row in first}
+
+    assert first == second
+    assert {"SPY", "AAPL"}.issubset(symbols)
+    assert len(symbols) == 3

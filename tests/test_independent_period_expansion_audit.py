@@ -87,6 +87,20 @@ def test_independent_period_expansion_audit_has_no_operational_imports():
     assert "order_execution" not in source
 
 
+def test_top_level_independent_period_expansion_audit_reexports_helpers():
+    from core.research.ml import independent_period_expansion_audit as top_level
+
+    assert (
+        top_level.build_independent_period_expansion_audit
+        is build_independent_period_expansion_audit
+    )
+    assert top_level.REPORT_CANDIDATES == independent_period_expansion_audit.REPORT_CANDIDATES
+    assert top_level._compound([0.10, -0.05]) == 0.04499999999999993
+    assert top_level._normalized_expansion_config({})["settings"][0]["name"] == (
+        "current_strict_non_overlap"
+    )
+
+
 def _adjusted_replay() -> dict:
     rows = [
         _row("2024-01-01", "2024-02-15", 0.10, included=True),

@@ -1,0 +1,14 @@
+ml:
+  stock_alpha_run_size: benchmark
+  stock_ranker_model_set: fast
+  stock_target_comparison_model_set: ultrafast
+  stock_alpha_stages:
+    stock_artifact: false
+    alpha_features: false
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: true
+    experiment_report: true
+    attribution: false

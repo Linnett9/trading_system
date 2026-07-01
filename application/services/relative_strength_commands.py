@@ -3,11 +3,11 @@ from application.reporting.relative_strength_reporter import (
     print_relative_strength_experiments,
     print_relative_strength_result,
 )
-from core.research.relative_strength_experiments import (
+from core.research.relative_strength.experiments import (
     run_relative_strength_experiments,
     save_relative_strength_experiments,
 )
-from core.research.relative_strength_portfolio import (
+from core.research.relative_strength.portfolio import (
     RelativeStrengthPortfolioBacktester,
 )
 

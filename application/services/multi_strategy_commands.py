@@ -4,8 +4,8 @@ from application.reporting.multi_strategy_reporter import (
     print_multi_strategy_walk_forward,
     print_multi_strategy_experiments,
 )
-from core.research.dual_momentum_experiments import parse_config_date
-from core.research.multi_strategy_experiments import (
+from core.research.dual_momentum.experiments import parse_config_date
+from core.research.multi_strategy.experiments import (
     run_multi_strategy_fold_optimization,
     run_multi_strategy_experiments,
     save_multi_strategy_experiments,

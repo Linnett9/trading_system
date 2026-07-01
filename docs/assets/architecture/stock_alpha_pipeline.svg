@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">Stock-alpha pipeline</title>
+  <desc id="desc">Stock-alpha stages from data and config through artifacts, OOS predictions, reports, and overnight summary.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#334155"/>
+    </marker>
+    <style>
+      .box { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:8; }
+      .data { fill:#eff6ff; stroke:#2563eb; }
+      .stage { fill:#f0fdf4; stroke:#16a34a; }
+      .model { fill:#f5f3ff; stroke:#7c3aed; }
+      .report { fill:#fefce8; stroke:#ca8a04; }
+      .label { font:14px Arial, sans-serif; fill:#0f172a; text-anchor:middle; }
+      .small { font:12px Arial, sans-serif; fill:#334155; text-anchor:middle; }
+      .title { font:22px Arial, sans-serif; font-weight:700; fill:#0f172a; text-anchor:middle; }
+      .line { stroke:#334155; stroke-width:1.8; fill:none; marker-end:url(#arrow); }
+      .dash { stroke:#64748b; stroke-width:1.4; fill:none; stroke-dasharray:5 4; marker-end:url(#arrow); }
+    </style>
+  </defs>
+  <text x="590" y="36" class="title">Stock-Alpha Pipeline</text>
+
+  <rect x="45" y="100" width="150" height="56" class="box data"/>
+  <text x="120" y="124" class="label">Inputs</text>
+  <text x="120" y="144" class="small">universe/data/config</text>
+
+  <rect x="240" y="100" width="160" height="56" class="box stage"/>
+  <text x="320" y="124" class="label">Stock artifact</text>
+  <text x="320" y="144" class="small">symbol x date rows</text>
+
+  <rect x="450" y="100" width="160" height="56" class="box stage"/>
+  <text x="530" y="124" class="label">Alpha features</text>
+  <text x="530" y="144" class="small">engineered inputs</text>
+
+  <rect x="660" y="55" width="170" height="56" class="box model"/>
+  <text x="745" y="79" class="label">Baseline ranking</text>
+  <text x="745" y="99" class="small">base artifact</text>
+
+  <rect x="660" y="145" width="170" height="56" class="box model"/>
+  <text x="745" y="169" class="label">Enriched ranking</text>
+  <text x="745" y="189" class="small">feature artifact</text>
+
+  <rect x="890" y="100" width="160" height="56" class="box model"/>
+  <text x="970" y="124" class="label">OOS predictions</text>
+  <text x="970" y="144" class="small">test dates only</text>
+
+  <rect x="240" y="265" width="160" height="56" class="box report"/>
+  <text x="320" y="289" class="label">Target compare</text>
+  <text x="320" y="309" class="small">target robustness</text>
+
+  <rect x="450" y="265" width="160" height="56" class="box report"/>
+  <text x="530" y="289" class="label">Portfolio replay</text>
+  <text x="530" y="309" class="small">simulation</text>
+
+  <rect x="660" y="265" width="160" height="56" class="box report"/>
+  <text x="740" y="289" class="label">Policy sweep</text>
+  <text x="740" y="309" class="small">simulation grid</text>
+
+  <rect x="870" y="265" width="160" height="56" class="box report"/>
+  <text x="950" y="289" class="label">Experiment report</text>
+  <text x="950" y="309" class="small">validation</text>
+
+  <rect x="870" y="405" width="160" height="56" class="box report"/>
+  <text x="950" y="429" class="label">Overnight summary</text>
+  <text x="950" y="449" class="small">run rollup</text>
+
+  <rect x="450" y="405" width="160" height="56" class="box report"/>
+  <text x="530" y="429" class="label">Attribution</text>
+  <text x="530" y="449" class="small">optional</text>
+
+  <path d="M195 128 L240 128" class="line"/>
+  <path d="M400 128 L450 128" class="line"/>
+  <path d="M400 116 C520 40 600 80 660 83" class="line"/>
+  <path d="M610 128 C630 128 640 173 660 173" class="line"/>
+  <path d="M830 83 C870 83 850 128 890 128" class="line"/>
+  <path d="M830 173 C870 173 850 128 890 128" class="line"/>
+  <path d="M970 156 C940 220 370 220 320 265" class="line"/>
+  <path d="M970 156 C940 225 555 225 530 265" class="line"/>
+  <path d="M970 156 C940 225 760 225 740 265" class="line"/>
+  <path d="M400 293 L450 293" class="dash"/>
+  <path d="M610 293 L660 293" class="dash"/>
+  <path d="M820 293 L870 293" class="line"/>
+  <path d="M950 321 L950 405" class="line"/>
+  <path d="M970 156 C1040 230 625 380 530 405" class="dash"/>
+  <path d="M610 433 L870 433" class="dash"/>
+
+  <text x="590" y="545" class="small">Canonical roots: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/{dev,benchmark,full}/</text>
+</svg>

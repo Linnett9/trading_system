@@ -27,6 +27,7 @@ POLICIES = (
 )
 SIZING = ("equal_weight", "score_weighted", "rank_weighted", "softmax_score_weighted", "inverse_volatility_weighted", "score_times_inverse_volatility")
 GUARDRAILS = {"research_only": True, "trading_impact": "none", "production_validated": False, "promotion_thresholds_changed": False}
+SIGNAL_THRESHOLDS = ("none", "positive")
 
 
 @dataclass(frozen=True)
@@ -54,12 +55,16 @@ def build_policy_grid(config: dict[str, Any], available_signals: list[str]) -> l
         ml.get("stock_portfolio_policy_sweep_slippage_bps_values", [5]),
         ml.get("stock_portfolio_policy_sweep_turnover_caps", [None, 0.5, 1.0]),
         ml.get("stock_portfolio_policy_sweep_volatility_targets", [None, 0.10, 0.15]),
+        ml.get("stock_portfolio_policy_sweep_gross_exposure_values", [1.0]),
+        ml.get("stock_portfolio_policy_sweep_signal_thresholds", ["none"]),
         signals,
     )
     grid = []
     for index, value in enumerate(values):
-        policy, sizing, top_n, cap, cost, slippage, turnover_cap, vol_target, signal = value
-        grid.append({"config_id": f"policy_{index:06d}", "signal_column": signal, "policy": policy, "sizing_method": sizing, "top_n": int(top_n), "max_position_weight_limit": float(cap), "cost_bps": float(cost), "slippage_bps": float(slippage), "turnover_cap": turnover_cap, "volatility_target": vol_target})
+        policy, sizing, top_n, cap, cost, slippage, turnover_cap, vol_target, gross_exposure, signal_threshold, signal = value
+        if signal_threshold not in SIGNAL_THRESHOLDS:
+            raise ValueError("ml.stock_portfolio_policy_sweep_signal_thresholds values must be none or positive")
+        grid.append({"config_id": f"policy_{index:06d}", "signal_column": signal, "policy": policy, "sizing_method": sizing, "top_n": int(top_n), "max_position_weight_limit": float(cap), "max_position_weight": float(cap), "cost_bps": float(cost), "slippage_bps": float(slippage), "turnover_cap": turnover_cap, "volatility_target": vol_target, "gross_exposure": float(gross_exposure), "signal_threshold": signal_threshold})
     limit = int(ml.get(f"stock_portfolio_policy_sweep_max_configs_{run_size}", {"dev": 40, "benchmark": 250, "full": 1000}[run_size]))
     return grid[:limit]
 
@@ -99,7 +104,8 @@ def write_stock_level_portfolio_policy_sweep(config: dict[str, Any]) -> StockLev
     coverage = {"baseline_signal_available": bool(found_baselines), "baseline_signal_columns_found": found_baselines, "baseline_signal_columns_missing": [name for name in baseline_names if name not in available], "baseline_missing_reason": None if found_baselines else "No configured baseline signal columns are present in OOS predictions"}
     winners = _winners(summaries)
     warnings = _negative_return_warnings(summaries)
-    payload = {"mode": "stock_level_portfolio_policy_sweep_research_only", "started_at": stage_started_at, "completed_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": time.perf_counter() - stage_started, **profile, **stock_alpha_report_metadata(config, settings.output_dir, source_artifact_path=settings.oos_predictions_path), "policy_config_count": len(grid), "policy_timings": {row["config_id"]: row["elapsed_seconds"] for row in summaries}, "parallelism": {"requested_workers": int(ml.get("stock_portfolio_policy_sweep_n_jobs", 1)), "effective_workers": workers, "nested_workers": 1, "nested_sklearn_n_jobs": 1, "nested_torch_num_threads": 1}, "thread_caps": thread_caps, "baseline_coverage": coverage, **warnings, "summary": summaries, "winners": winners, **GUARDRAILS}
+    risk_controls = _risk_control_metadata(config, grid)
+    payload = {"mode": "stock_level_portfolio_policy_sweep_research_only", "started_at": stage_started_at, "completed_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": time.perf_counter() - stage_started, **profile, **stock_alpha_report_metadata(config, settings.output_dir, source_artifact_path=settings.oos_predictions_path), "policy_config_count": len(grid), "policy_timings": {row["config_id"]: row["elapsed_seconds"] for row in summaries}, "parallelism": {"requested_workers": int(ml.get("stock_portfolio_policy_sweep_n_jobs", 1)), "effective_workers": workers, "nested_workers": 1, "nested_sklearn_n_jobs": 1, "nested_torch_num_threads": 1}, "thread_caps": thread_caps, "baseline_coverage": coverage, "risk_controls": risk_controls, **warnings, "summary": summaries, "winners": winners, **GUARDRAILS}
     output = settings.output_dir
     paths = StockLevelPortfolioPolicySweepPaths(output / "stock_level_portfolio_policy_sweep.csv", output / "stock_level_portfolio_policy_sweep.json", output / "stock_level_portfolio_policy_sweep.md", output / "stock_level_portfolio_policy_sweep_equity_curves.csv", output / "stock_level_portfolio_policy_sweep_top_holdings.csv")
     writer = ResearchArtifactWriter()
@@ -141,7 +147,10 @@ def _evaluate_config(rows: list[dict[str, Any]], spec: dict[str, Any], *, min_po
         size = max(1, math.ceil(len(ordered) * 0.1)) if "decile" in spec["policy"] else spec["top_n"]
         selected = ordered[:min(size, max_positions)]
         if len(selected) < min_positions: infeasible = "minimum_positions_not_met"; break
-        exposure = 1.0 - cash_buffer
+        exposure = max(0.0, min(float(spec.get("gross_exposure", 1.0)), 1.0 - cash_buffer))
+        if spec.get("signal_threshold") == "positive":
+            selected = [row for row in selected if float(row[signal]) > 0.0]
+            if len(selected) < min_positions: infeasible = "minimum_signal_threshold_not_met"; break
         weights = build_sizing_weights(selected, signal, spec["sizing_method"], exposure, spec["max_position_weight_limit"])
         if spec["policy"].startswith("long_short"):
             bottom = ordered[-min(size, max_positions):]
@@ -159,14 +168,16 @@ def _evaluate_config(rows: list[dict[str, Any]], spec: dict[str, Any], *, min_po
         cost_drag = turnover * spec["cost_bps"] / 10000; slippage_drag = turnover * spec["slippage_bps"] / 10000
         borrow_drag = sum(abs(v) for v in weights.values() if v < 0) * borrow_cost_bps / 10000
         net = gross - cost_drag - slippage_drag - borrow_drag; equity *= 1 + net
-        periods.append({"rebalance_date": rebalance_date, "strategy_id": spec["config_id"], "gross_return": gross, "net_return": net, "transaction_cost_drag": cost_drag + slippage_drag + borrow_drag, "slippage_drag": slippage_drag, "turnover": turnover, "equity": equity})
+        periods.append({"rebalance_date": rebalance_date, "strategy_id": spec["config_id"], "gross_return": gross, "net_return": net, "transaction_cost_drag": cost_drag + slippage_drag + borrow_drag, "slippage_drag": slippage_drag, "turnover": turnover, "equity": equity, "gross_exposure": sum(abs(value) for value in weights.values())})
         holdings.extend({"rebalance_date": rebalance_date, "strategy_id": spec["config_id"], "symbol": symbol, "weight": weight} for symbol, weight in sorted(weights.items()))
         previous = weights
     if infeasible:
         return ({**spec, "status": "infeasible", "infeasible_reason": infeasible}, [], [])
     metric = _metrics(signal, spec["policy"], periods, [{**row, "signal_column": signal, "policy": spec["policy"], "side": "long" if row["weight"] > 0 else "short"} for row in holdings])
     returns = [row["net_return"] for row in periods]; turns = sorted(row["turnover"] for row in periods); concentrations = sorted(max((abs(h["weight"]) for h in holdings if h["rebalance_date"] == row["rebalance_date"]), default=0) for row in periods)
-    metric.update(spec); metric.update({"status": "completed", "infeasible_reason": None, "slippage_drag": sum(row["slippage_drag"] for row in periods), "performance_by_year": _by_year(periods), "worst_20_period_drawdown": min((math.prod(1 + value for value in returns[i:i+20]) - 1 for i in range(len(returns))), default=None), "best_20_period_return": max((math.prod(1 + value for value in returns[i:i+20]) - 1 for i in range(len(returns))), default=None), "percentage_of_periods_in_cash": mean([sum(abs(h["weight"]) for h in holdings if h["rebalance_date"] == row["rebalance_date"]) < 0.999 for row in periods]) if periods else None, "turnover_percentile_95": _percentile(turns, .95), "position_concentration_percentile_95": _percentile(concentrations, .95)})
+    realized_gross = [row["gross_exposure"] for row in periods]
+    target = spec.get("volatility_target")
+    metric.update(spec); metric.update({"status": "completed", "infeasible_reason": None, "cost_drag": metric.get("transaction_cost_drag"), "slippage_drag": sum(row["slippage_drag"] for row in periods), "performance_by_year": _by_year(periods), "worst_20_period_drawdown": min((math.prod(1 + value for value in returns[i:i+20]) - 1 for i in range(len(returns))), default=None), "best_20_period_return": max((math.prod(1 + value for value in returns[i:i+20]) - 1 for i in range(len(returns))), default=None), "percentage_of_periods_in_cash": mean([sum(abs(h["weight"]) for h in holdings if h["rebalance_date"] == row["rebalance_date"]) < 0.999 for row in periods]) if periods else None, "percentage_periods_in_cash": mean([sum(abs(h["weight"]) for h in holdings if h["rebalance_date"] == row["rebalance_date"]) < 0.999 for row in periods]) if periods else None, "average_positions": metric.get("average_number_of_positions"), "realized_average_gross_exposure": mean(realized_gross) if realized_gross else None, "volatility_target_hit_rate": mean([row["gross_exposure"] < float(spec.get("gross_exposure", 1.0)) for row in periods]) if periods and target is not None else None, "turnover_percentile_95": _percentile(turns, .95), "position_concentration_percentile_95": _percentile(concentrations, .95)})
     return metric, periods, holdings
 
 
@@ -187,7 +198,23 @@ def _best(rows: list[dict[str, Any]], metric: str, *, kind: str | None = None, l
 
 def _winners(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ml = _best(rows, "net_return", kind="ml_model"); momentum = _best([r for r in rows if r.get("signal_column") == "predicted_momentum_120d"], "net_return")
-    return {"best_by_total_return": _best(rows, "total_return"), "best_by_net_return_after_costs": _best(rows, "net_return"), "best_by_sharpe": _best(rows, "sharpe"), "best_by_calmar": _best(rows, "calmar_ratio"), "best_by_max_drawdown": _best(rows, "max_drawdown"), "best_by_lowest_turnover": _best(rows, "average_turnover", lowest=True), "best_ml_policy": ml, "best_baseline_policy": _best(rows, "net_return", kind="baseline"), "best_ml_vs_momentum_120d": {"ml_available": ml is not None, "momentum_120d_available": momentum is not None, "comparison_available": ml is not None and momentum is not None, "beats_momentum_120d": bool(ml and momentum and ml["net_return"] > momentum["net_return"]), "net_return_delta": ml["net_return"] - momentum["net_return"] if ml and momentum else None, "comparison_missing_reason": None if ml and momentum else "Both a feasible ML policy and momentum_120d baseline policy are required"}, "best_policy_under_turnover_cap": _best([r for r in rows if r.get("turnover_cap") is not None], "net_return"), "best_policy_under_max_drawdown_limit": _best([r for r in rows if r.get("max_drawdown", -1) >= -0.20], "net_return")}
+    lower_dd = _best([r for r in rows if ml and r.get("kind") == "ml_model" and r.get("max_drawdown") is not None and momentum and float(r["max_drawdown"]) >= float(momentum["max_drawdown"])], "net_return")
+    higher_sharpe = _best([r for r in rows if r.get("kind") == "ml_model" and r.get("sharpe") is not None and momentum and momentum.get("sharpe") is not None and float(r["sharpe"]) > float(momentum["sharpe"])], "net_return")
+    return {"best_by_total_return": _best(rows, "total_return"), "best_by_net_return_after_costs": _best(rows, "net_return"), "best_by_sharpe": _best(rows, "sharpe"), "best_by_calmar": _best(rows, "calmar_ratio"), "best_by_max_drawdown": _best(rows, "max_drawdown"), "best_by_lowest_turnover": _best(rows, "average_turnover", lowest=True), "best_ml_policy": ml, "best_baseline_policy": _best(rows, "net_return", kind="baseline"), "best_ml_vs_momentum_120d": {"ml_available": ml is not None, "momentum_120d_available": momentum is not None, "comparison_available": ml is not None and momentum is not None, "beats_momentum_120d": bool(ml and momentum and ml["net_return"] > momentum["net_return"]), "net_return_delta": ml["net_return"] - momentum["net_return"] if ml and momentum else None, "comparison_missing_reason": None if ml and momentum else "Both a feasible ML policy and momentum_120d baseline policy are required"}, "best_under_drawdown_limit": _best([r for r in rows if r.get("max_drawdown", -1) >= -0.20], "net_return"), "best_under_turnover_limit": _best([r for r in rows if r.get("average_turnover") is not None and float(r["average_turnover"]) <= 0.30], "net_return"), "best_under_cost_drag_limit": _best([r for r in rows if r.get("cost_drag") is not None and float(r["cost_drag"]) <= 0.10], "net_return"), "best_policy_under_turnover_cap": _best([r for r in rows if r.get("turnover_cap") is not None], "net_return"), "best_policy_under_max_drawdown_limit": _best([r for r in rows if r.get("max_drawdown", -1) >= -0.20], "net_return"), "best_ml_policy_with_lower_drawdown_than_momentum": lower_dd, "best_ml_policy_with_higher_sharpe_than_momentum": higher_sharpe, "return_sacrificed_vs_best_return_for_drawdown_reduction": (ml["net_return"] - lower_dd["net_return"] if ml and lower_dd else None)}
+
+
+def _risk_control_metadata(config: dict[str, Any], grid: list[dict[str, Any]]) -> dict[str, Any]:
+    ml = config.get("ml", {})
+    return {
+        "active": True,
+        "max_position_weight_values": sorted({row["max_position_weight_limit"] for row in grid}),
+        "turnover_caps": list(ml.get("stock_portfolio_policy_sweep_turnover_caps", [None, 0.5, 1.0])),
+        "volatility_targets": list(ml.get("stock_portfolio_policy_sweep_volatility_targets", [None, 0.10, 0.15])),
+        "gross_exposure_values": sorted({row["gross_exposure"] for row in grid}),
+        "signal_thresholds": sorted({row["signal_threshold"] for row in grid}),
+        "market_regime_filter": {"available": False, "reason": "No dedicated point-in-time market regime filter is applied by this sweep."},
+        "rebalance_frequency": {"available": False, "reason": "Sweep uses the existing prediction rebalance dates."},
+    }
 
 
 def _negative_return_warnings(rows: list[dict[str, Any]]) -> dict[str, bool]:
@@ -197,4 +224,4 @@ def _negative_return_warnings(rows: list[dict[str, Any]]) -> dict[str, bool]:
 
 def _markdown(payload: dict[str, Any]) -> str:
     winner = payload["winners"].get("best_by_net_return_after_costs") or {}
-    return "\n".join(["# Stock-Level Portfolio Policy Sweep", "", "Research only. Trading impact: none. Production validated: false.", "", f"- Run size: `{payload['run_size']}`", f"- Policy configs: {payload['policy_config_count']}", f"- Baseline available: {payload['baseline_coverage']['baseline_signal_available']}", f"- Baselines found: {payload['baseline_coverage']['baseline_signal_columns_found']}", f"- All candidate net returns negative: {payload['all_candidate_net_returns_negative']}", f"- Best return is negative: {payload['best_return_is_negative']}", f"- Best signal: {winner.get('signal_column')}", f"- Best policy: {winner.get('policy')}", f"- Best sizing: {winner.get('sizing_method')}", "- Promotion thresholds changed: false", ""])
+    return "\n".join(["# Stock-Level Portfolio Policy Sweep", "", "Research only. Trading impact: none. Production validated: false.", "", f"- Run size: `{payload['run_size']}`", f"- Policy configs: {payload['policy_config_count']}", f"- Risk controls active: {payload['risk_controls']['active']}", f"- Gross exposure values: {payload['risk_controls']['gross_exposure_values']}", f"- Signal thresholds: {payload['risk_controls']['signal_thresholds']}", f"- Baseline available: {payload['baseline_coverage']['baseline_signal_available']}", f"- Baselines found: {payload['baseline_coverage']['baseline_signal_columns_found']}", f"- All candidate net returns negative: {payload['all_candidate_net_returns_negative']}", f"- Best return is negative: {payload['best_return_is_negative']}", f"- Best signal: {winner.get('signal_column')}", f"- Best policy: {winner.get('policy')}", f"- Best sizing: {winner.get('sizing_method')}", "- Promotion thresholds changed: false", ""])
