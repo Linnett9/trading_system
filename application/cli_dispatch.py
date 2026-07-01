@@ -95,6 +95,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-pipeline-preflight":
         _commands("ml_commands").run_ml_stock_alpha_news_pipeline_preflight(config)
         return
+    if args.mode == "ml-stock-alpha-news-pipeline-inspect":
+        _commands("ml_commands").run_ml_stock_alpha_news_pipeline_inspect(config)
+        return
     if args.mode == "ml-stock-alpha-news-readiness-preflight":
         _commands("ml_commands").run_ml_stock_alpha_news_readiness_preflight(config)
         return

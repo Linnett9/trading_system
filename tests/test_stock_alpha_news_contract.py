@@ -10,6 +10,7 @@ from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_contract_ingest,
     run_ml_stock_alpha_news_coverage_audit,
     run_ml_stock_alpha_news_pipeline_preflight,
+    run_ml_stock_alpha_news_pipeline_inspect,
     run_ml_stock_alpha_news_provider_audit,
 )
 from config.config_loader import load_config
@@ -38,6 +39,9 @@ from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import (
     build_stock_alpha_news_pipeline_preflight,
     write_stock_alpha_news_pipeline_preflight,
+)
+from core.research.ml.stock_level.stock_alpha_news_pipeline_inspect import (
+    write_stock_alpha_news_pipeline_inspect,
 )
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
     build_stock_alpha_news_readiness_preflight,
@@ -1243,6 +1247,83 @@ def test_stock_alpha_news_pipeline_preflight_tiny_fixture_stops_at_disabled_tran
     assert stages["readiness_preflight"]["blocking_issues"] == [
         "stock_alpha_news_enable_transformer_false"
     ]
+
+
+def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    dev_dir = tmp_path / "dev"
+    ml["stock_alpha_report_root"] = str(tmp_path)
+    ml["stock_alpha_news_contract_path"] = str(dev_dir / "stock_alpha_news_contract.csv")
+    ml["stock_alpha_news_features_path"] = str(dev_dir / "stock_alpha_news_features.csv")
+    ml["stock_alpha_news_coverage_audit_dir"] = str(dev_dir / "news_coverage_audit")
+    ml["stock_alpha_news_pipeline_preflight_output_dir"] = str(dev_dir)
+    ml["stock_alpha_news_pipeline_inspect_output_dir"] = str(dev_dir)
+
+    paths = write_stock_alpha_news_pipeline_inspect(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["next_action"] == "run_pipeline_preflight"
+    assert payload["existence_checks"]["raw_provider_file_exists"] is True
+    assert payload["existence_checks"]["stock_rows_file_exists"] is True
+    assert payload["existence_checks"]["nearby_feature_audit_path_coherent"] is True
+    assert payload["config_summary"]["stock_alpha_news_enable_transformer"] is False
+    assert payload["stage_order"] == [
+        "provider_audit", "contract_ingest", "coverage_audit",
+        "feature_generation", "readiness_preflight",
+    ]
+    assert payload["inspection_only"] is True
+    assert payload["files_ingested"] is False
+    assert payload["features_generated"] is False
+    assert payload["model_training_invoked"] is False
+    assert payload["diagnostics_invoked"] is False
+    assert not Path(ml["stock_alpha_news_contract_path"]).exists()
+    assert not Path(ml["stock_alpha_news_features_path"]).exists()
+
+
+def test_news_pipeline_inspect_real_missing_raw_reports_next_action(tmp_path, capsys):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_real_template.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_raw_path"] = str(tmp_path / "missing.csv")
+    config["ml"]["stock_alpha_news_pipeline_inspect_output_dir"] = str(tmp_path / "inspect")
+
+    run_ml_stock_alpha_news_pipeline_inspect(config)
+    output = capsys.readouterr().out
+    payload = json.loads(
+        (tmp_path / "inspect" / "stock_alpha_news_pipeline_inspect.json").read_text(encoding="utf-8")
+    )
+
+    assert payload["next_action"] == "provide_raw_news_file"
+    assert "next_action=provide_raw_news_file" in output
+    assert "stock_alpha_news_enable_transformer=false" in output
+    assert "model_training_invoked=false" in output
+    assert "diagnostics_invoked=false" in output
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("stock_alpha_news_coverage_min_symbol_coverage", "bad", "must be numeric"),
+        ("stock_alpha_news_unknown_min_rate", 0.5, "unknown stock-alpha news threshold"),
+    ],
+)
+def test_news_pipeline_inspect_malformed_thresholds_fail_cleanly(key, value, message, capsys):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"][key] = value
+
+    with pytest.raises(SystemExit) as exc:
+        run_ml_stock_alpha_news_pipeline_inspect(config)
+
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().out
 
 
 def test_stock_alpha_news_pipeline_preflight_real_template_missing_raw_is_clean(tmp_path, capsys):
