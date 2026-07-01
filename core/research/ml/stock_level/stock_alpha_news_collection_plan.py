@@ -78,6 +78,7 @@ def build_stock_alpha_news_collection_plan(config: Mapping[str, Any]) -> dict[st
         "recommended_max_articles_per_provider": recommended_cap,
         "recommended_providers": {
             "alpha_vantage": {"enabled": True, "reason": "currently_usable"},
+            "sec_edgar": {"enabled": True, "reason": "no_key_official_filings_source"},
             "finnhub": {"enabled": False, "optional": True, "reason": "wider_window_if_alpha_vantage_insufficient"},
             "gdelt": {"enabled": False, "optional": True, "reason": "prior_http_429"},
             "fmp": {"enabled": False, "reason": "prior_http_402"},
@@ -98,7 +99,7 @@ def _next_action(*, configured_symbols: int, recommended_symbols: int, current_a
         return "increase_alpha_vantage_article_cap"
     if finnhub_enabled and current_symbols < min_symbols:
         return "try_finnhub_wider_window"
-    return "run_broader_alpha_vantage_dry_run"
+    return "run_alpha_vantage_sec_edgar_dry_run"
 
 
 def _symbols(values: Any) -> list[str]:

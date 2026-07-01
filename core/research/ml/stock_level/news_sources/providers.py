@@ -11,9 +11,25 @@ from urllib.request import Request, urlopen
 
 HttpGet = Callable[[str, int], Any]
 
+PROVIDER_METADATA = {
+    "alpha_vantage": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
+    "finnhub": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
+    "gdelt": {"statuses": ["experimental_no_key", "rate_limited_or_retry_later"], "api_key_required": False},
+    "sec_edgar": {"statuses": ["official_filings_source", "experimental_no_key"], "api_key_required": False},
+    "fmp": {"statuses": ["disabled_payment_required", "needs_key"], "api_key_required": True},
+    "newsapi": {"statuses": ["disabled_upgrade_required", "needs_key"], "api_key_required": True},
+}
+
+SEC_CIK_BY_SYMBOL = {
+    "AAPL": "0000320193", "MSFT": "0000789019", "NVDA": "0001045810",
+    "AMZN": "0001018724", "GOOGL": "0001652044", "META": "0001326801",
+    "TSLA": "0001318605", "JPM": "0000019617", "XOM": "0000034088",
+    "WMT": "0000104169", "KO": "0000021344", "PEP": "0000077476",
+}
+
 
 def standard_library_json_get(url: str, timeout: int) -> Any:
-    request = Request(url, headers={"User-Agent": "stock-alpha-research/1.0"})
+    request = Request(url, headers={"User-Agent": "stock-alpha-research/1.0 research-contact@example.invalid"})
     with urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded configured research endpoints
         return json.loads(response.read().decode("utf-8"))
 
@@ -98,8 +114,55 @@ class NewsApiNewsSource(NewsSource):
         return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("publishedAt"), source=(item.get("source") or {}).get("name"), headline=item.get("title"), body=item.get("description") or item.get("content"), language="en") for item in payload.get("articles", [])]
 
 
+class SecEdgarNewsSource(NewsSource):
+    name, api_key_required = "sec_edgar", False
+
+    def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
+        cik = SEC_CIK_BY_SYMBOL.get(symbol.upper())
+        if not cik:
+            return ""
+        return f"https://data.sec.gov/submissions/CIK{cik}.json"
+
+    def collect(self, *, symbols: list[str], start_date: str, end_date: str, limit: int, timeout: int, api_key: str = "") -> list[dict[str, Any]]:
+        supported = [symbol for symbol in symbols if symbol.upper() in SEC_CIK_BY_SYMBOL]
+        rows = super().collect(symbols=supported, start_date=start_date, end_date=end_date, limit=limit, timeout=timeout, api_key="")
+        return [
+            row for row in rows
+            if (not start_date or row["published_at_utc"][:10] >= start_date)
+            and (not end_date or row["published_at_utc"][:10] <= end_date)
+        ][:limit]
+
+    def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
+        recent = ((payload.get("filings") or {}).get("recent") or {})
+        columns = ("accessionNumber", "filingDate", "acceptanceDateTime", "form", "primaryDocument")
+        values = [list(recent.get(column, [])) for column in columns]
+        rows = []
+        for accession, filing_date, accepted, form, document in zip(*values):
+            if form not in {"8-K", "10-Q", "10-K", "4", "3", "5"}:
+                continue
+            accession_path = str(accession).replace("-", "")
+            cik = str(int(SEC_CIK_BY_SYMBOL[symbol.upper()]))
+            url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_path}/{document}"
+            rows.append(self._normalized(
+                symbol=symbol, provider_id=accession, url=url,
+                published=accepted or filing_date, source="SEC EDGAR",
+                headline=f"{symbol.upper()} filed Form {form}",
+                body=f"Official SEC filing metadata for Form {form}.",
+                sentiment="", relevance="", novelty="",
+                event_type=_sec_event_type(str(form)), language="en",
+            ))
+        return rows
+
+
 def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mapping[str, NewsSource]:
-    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get))}
+    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
+
+
+def _sec_event_type(form: str) -> str:
+    if form == "8-K": return "company_event"
+    if form in {"10-Q", "10-K"}: return "earnings"
+    if form in {"3", "4", "5"}: return "ownership"
+    return "filing"
 
 
 def _blank_or_value(value: Any) -> Any:
