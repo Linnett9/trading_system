@@ -119,9 +119,14 @@ def run_ml_stock_alpha_news_features(config):
     print(f"Audit Markdown: {result.audit_markdown_path}")
 
 def run_ml_stock_alpha_news_contract_ingest(config):
-    result = write_stock_alpha_news_contract_ingest(config)
     print("\nSTOCK-ALPHA NEWS CONTRACT INGEST")
     print("mode=research | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_contract_ingest(config)
+    except (FileNotFoundError, ValueError) as exc:
+        print("safe_to_generate_features=false")
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
     print(f"Contract CSV: {result.contract_path}")
     print(f"Audit JSON: {result.audit_json_path}")
     print(f"Audit Markdown: {result.audit_markdown_path}")

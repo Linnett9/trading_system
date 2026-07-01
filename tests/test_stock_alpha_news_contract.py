@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from application.services.ml_commands_stock import run_ml_stock_alpha_news_contract_ingest
 from config.config_loader import load_config
 from core.research.framework.data import CsvRowRepository
 
@@ -371,6 +372,25 @@ def test_news_contract_ingest_missing_source_path_fails_without_contract(tmp_pat
     with pytest.raises(FileNotFoundError, match="raw source file not found"):
         write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
 
+    assert not contract.exists()
+
+
+def test_news_contract_ingest_wrapper_reports_missing_source_cleanly(tmp_path, capsys):
+    raw = tmp_path / "missing.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+
+    with pytest.raises(SystemExit) as exc:
+        run_ml_stock_alpha_news_contract_ingest(
+            _ingest_config(raw, contract, tmp_path / "audit")
+        )
+
+    output = capsys.readouterr().out
+    assert exc.value.code == 1
+    assert "STOCK-ALPHA NEWS CONTRACT INGEST" in output
+    assert "mode=research" in output
+    assert "safe_to_generate_features=false" in output
+    assert "blocking_issue=stock-alpha news raw source file not found" in output
+    assert str(raw) in output
     assert not contract.exists()
 
 
