@@ -12,6 +12,7 @@ from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_pipeline_preflight,
     run_ml_stock_alpha_news_pipeline_inspect,
     run_ml_stock_alpha_news_provider_audit,
+    run_ml_stock_alpha_news_provider_sample_check,
 )
 from config.config_loader import load_config
 from core.research.framework.data import CsvRowRepository
@@ -35,6 +36,9 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 )
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
+)
+from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import (
+    write_stock_alpha_news_provider_sample_check,
 )
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import (
     build_stock_alpha_news_pipeline_preflight,
@@ -1247,6 +1251,103 @@ def test_stock_alpha_news_pipeline_preflight_tiny_fixture_stops_at_disabled_tran
     assert stages["readiness_preflight"]["blocking_issues"] == [
         "stock_alpha_news_enable_transformer_false"
     ]
+
+
+def test_provider_sample_check_canonical_tiny_is_compatible_and_read_only(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_provider_sample_check_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_provider_sample_check_output_dir"] = str(tmp_path / "check")
+    contract = tmp_path / "contract.csv"
+    features = tmp_path / "features.csv"
+    config["ml"]["stock_alpha_news_contract_path"] = str(contract)
+    config["ml"]["stock_alpha_news_features_path"] = str(features)
+
+    paths = write_stock_alpha_news_provider_sample_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["compatible_with_contract_ingest"] is True
+    assert payload["next_action"] == "run_provider_audit"
+    assert set(payload["canonical_columns_present_directly"]) == set(REQUIRED_NEWS_CONTRACT_COLUMNS)
+    assert payload["timestamp_parseability"]["published_at_utc"]["invalid_count"] == 0
+    assert payload["ingested_before_published_count"] == 1
+    assert payload["article_id_uniqueness_preview"]["duplicate_count"] == 1
+    assert payload["canonical_contract_written"] is False
+    assert payload["features_generated"] is False
+    assert payload["model_training_invoked"] is False
+    assert payload["diagnostics_invoked"] is False
+    assert not contract.exists()
+    assert not features.exists()
+
+
+def test_provider_sample_check_alias_mapping_is_compatible(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_provider_sample_check_output_dir"] = str(tmp_path)
+
+    paths = write_stock_alpha_news_provider_sample_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["compatible_with_contract_ingest"] is True
+    assert payload["provider_mapping_used"] is True
+    assert payload["missing_mapped_provider_columns"] == []
+    assert payload["symbol_normalization_preview"][0]["normalized"] == "AAPL"
+
+
+def test_provider_sample_check_missing_file_blocks_cleanly(tmp_path, capsys):
+    config = load_config(
+        "config/config.stock_alpha_news_provider_sample_check_real_template.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_raw_path"] = str(tmp_path / "missing.csv")
+    config["ml"]["stock_alpha_news_provider_sample_check_output_dir"] = str(tmp_path / "check")
+
+    run_ml_stock_alpha_news_provider_sample_check(config)
+    output = capsys.readouterr().out
+    payload = json.loads(
+        (tmp_path / "check" / "stock_alpha_news_provider_sample_check.json").read_text(encoding="utf-8")
+    )
+
+    assert payload["compatible_with_contract_ingest"] is False
+    assert payload["next_action"] == "provide_raw_news_file"
+    assert "next_action=provide_raw_news_file" in output
+
+
+def test_provider_sample_check_missing_mapped_column_is_incompatible(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_provider_column_map"]["article_id"] = "missing_id"
+    config["ml"]["stock_alpha_news_provider_sample_check_output_dir"] = str(tmp_path)
+
+    paths = write_stock_alpha_news_provider_sample_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["compatible_with_contract_ingest"] is False
+    assert payload["next_action"] == "fix_missing_provider_columns"
+    assert payload["missing_mapped_provider_columns"] == ["missing_id"]
+
+
+def test_provider_sample_check_bad_timestamps_are_incompatible(tmp_path):
+    raw = tmp_path / "raw.csv"
+    _write_raw_news_csv(raw, published="not-a-timestamp")
+    config = {
+        "ml": {
+            "stock_alpha_news_raw_path": str(raw),
+            "stock_alpha_news_provider_sample_check_output_dir": str(tmp_path / "check"),
+        }
+    }
+
+    paths = write_stock_alpha_news_provider_sample_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["compatible_with_contract_ingest"] is False
+    assert payload["next_action"] == "fix_timestamp_columns"
+    assert payload["timestamp_parseability"]["published_at_utc"]["invalid_count"] == 1
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
