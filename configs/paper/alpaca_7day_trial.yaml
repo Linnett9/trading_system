@@ -31,6 +31,34 @@ broker:
   position_tolerance: 1.0e-06
 ml:
   historical_data_provider: alpaca
+  rebalance_policy: model_triggered
+  model_triggered_rebalance:
+    research_only: false
+    paper_only: true
+    allow_paper_submit: false
+    evaluate_every_run: true
+    candidate:
+      source: dual_momentum
+      top_n: 5
+      weighting: equal
+      target_gross_exposure: 0.90
+      max_single_name_weight: 0.20
+    gates:
+      minimum_net_improvement: 0.03
+      maximum_turnover: 0.25
+      maximum_replacements: 2
+      minimum_trade_weight: 0.03
+      minimum_confidence: 0.60
+      persistence_observations: 1
+      persistence_window: 3
+      cooldown_trading_days: 0
+    costs:
+      transaction_cost_bps: 10
+      slippage_bps: 5
+    safety:
+      allow_live_trading: false
+      allow_champion_mutation: false
+      execution_audit_required: true
 research:
   intraday_opening_range:
     enabled: false

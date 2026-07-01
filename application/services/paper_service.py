@@ -12,8 +12,15 @@ from core.paper.paper_trading_engine import PaperTradingEngine
 
 
 def create_paper_decision(config, feed, build_dual_momentum_tester):
-    dual_config = active_dual_momentum_config(config)
+    dual_config = dict(active_dual_momentum_config(config))
     paper_config = config.get("paper_trading", {})
+    model_triggered = config.get("ml", {}).get("model_triggered_rebalance", {})
+    evaluate_every_run = bool(model_triggered.get("evaluate_every_run", False))
+    if (
+        config.get("ml", {}).get("rebalance_policy") == "model_triggered"
+        and evaluate_every_run
+    ):
+        dual_config["rebalance_frequency"] = "daily"
     symbols = list(dict.fromkeys([
         *dual_config.get("symbols", config["backtest"]["symbols"]),
         dual_config.get("regime_symbol", "SPY"),
@@ -59,6 +66,9 @@ def create_paper_decision(config, feed, build_dual_momentum_tester):
                 correlations.append(_correlation(left_returns, right_returns))
     decision.model_context["benchmark_available"] = bool(candles_by_symbol.get(dual_config.get("regime_symbol", "SPY")))
     decision.model_context["max_pairwise_correlation"] = max(correlations, default=0.0)
+    decision.model_context["candidate_source"] = "dual_momentum"
+    decision.model_context["evaluate_every_run"] = evaluate_every_run
+    decision.model_context["fixed_schedule_gate_bypassed_for_candidate_evaluation"] = evaluate_every_run
     return decision
 
 

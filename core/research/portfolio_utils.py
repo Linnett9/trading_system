@@ -42,6 +42,9 @@ def timestamp_index(timestamps, timestamp):
 
 
 def rebalance_key(timestamp, frequency):
+    if frequency == "daily":
+        return timestamp.year, timestamp.month, timestamp.day
+
     if frequency == "weekly":
         calendar = timestamp.isocalendar()
         return calendar.year, calendar.week

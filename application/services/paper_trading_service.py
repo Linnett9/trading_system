@@ -37,6 +37,7 @@ from application.services.paper_trading_reporting import (
     report_dir,
     save_broker_reconciliation_report,
     save_metrics_summary,
+    save_model_triggered_rebalance_audit,
     save_order_preview,
     save_reconciliation_report,
     save_risk_report,
@@ -49,6 +50,10 @@ from application.services.paper_trading_runtime import (
 )
 from application.services.paper_trading_types import PaperTradingRunResult
 from core.research.dual_momentum.factory import build_dual_momentum_tester
+from core.rebalance.model_triggered import (
+    evaluate_model_triggered_rebalance,
+    validate_rebalance_policy,
+)
 from core.risk.paper_risk import (
     model_kill_switch_checks,
     post_trade_risk_checks,
@@ -72,6 +77,7 @@ class PaperTradingService:
         submit: bool = False,
     ) -> PaperTradingRunResult:
         self._validate_mode()
+        validate_rebalance_policy(self.config)
         paper_config = self.config.get("paper_trading", {})
         submission_disabled = submit and not paper_config.get("submit_orders", True)
 
@@ -90,8 +96,22 @@ class PaperTradingService:
             build_dual_momentum_tester,
         )
 
+        rebalance_evaluation = evaluate_model_triggered_rebalance(
+            self.config, decision, submit_requested=submit and not dry_run,
+        )
+        if rebalance_evaluation is not None:
+            save_model_triggered_rebalance_audit(
+                self.config, rebalance_evaluation.to_dict(),
+            )
+
         reproducibility = self._reproducibility_metadata(candidate_id)
         blocked_reason = self._blocked_reason(decision)
+
+        if (
+            rebalance_evaluation is not None
+            and not rebalance_evaluation.paper_submit_allowed
+        ):
+            blocked_reason = "model_triggered_no_trade"
 
         if submission_disabled:
             blocked_reason = "paper_submission_disabled"
@@ -191,6 +211,14 @@ class PaperTradingService:
                 decision,
                 fill_record,
                 post_trade_checks,
+            )
+
+        if rebalance_evaluation is not None:
+            rebalance_evaluation = rebalance_evaluation.with_submission_result(
+                fill_record is not None,
+            )
+            save_model_triggered_rebalance_audit(
+                self.config, rebalance_evaluation.to_dict(),
             )
 
         journal_path = self._append_journal(

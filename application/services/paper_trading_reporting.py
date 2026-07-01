@@ -18,6 +18,16 @@ def report_dir(config: dict[str, Any]) -> Path:
     )
 
 
+def save_model_triggered_rebalance_audit(
+    config: dict[str, Any],
+    payload: dict[str, Any],
+) -> Path:
+    path = report_dir(config) / "model_triggered_rebalance_decision.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
 def save_order_preview(config: dict[str, Any], decision: Any) -> Path:
     path = (
         report_dir(config)

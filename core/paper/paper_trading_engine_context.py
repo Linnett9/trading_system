@@ -33,6 +33,7 @@ class PaperTradingEngineContextMixin:
             ),
             "target_weight_sum": target_weight_sum,
             "selected_count": len(selection.symbols),
+            "scores": dict(selection.scores or {}),
             "skipped_assets": self._skipped_assets(config, selection),
             "explanation": self._selection_explanation(config, selection),
         }
@@ -104,4 +105,3 @@ class PaperTradingEngineContextMixin:
             })
 
         return skipped
-
