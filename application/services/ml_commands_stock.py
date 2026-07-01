@@ -13,6 +13,8 @@ from core.research.ml.stock_level.stock_alpha_ensemble import write_stock_alpha_
 from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import write_stock_alpha_ensemble_portfolio_sweep
 from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_stock_alpha_experiment_preflight
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
+from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
+from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
 from core.research.ml.stock_level.run_manifest.service import write_stock_alpha_run_status
 
@@ -115,6 +117,21 @@ def run_ml_stock_alpha_news_features(config):
     print(f"Features CSV: {result.features_csv_path}")
     print(f"Audit JSON: {result.audit_json_path}")
     print(f"Audit Markdown: {result.audit_markdown_path}")
+
+def run_ml_stock_alpha_news_contract_ingest(config):
+    result = write_stock_alpha_news_contract_ingest(config)
+    print("\nSTOCK-ALPHA NEWS CONTRACT INGEST")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Contract CSV: {result.contract_path}")
+    print(f"Audit JSON: {result.audit_json_path}")
+    print(f"Audit Markdown: {result.audit_markdown_path}")
+
+def run_ml_stock_alpha_news_readiness_preflight(config):
+    result = write_stock_alpha_news_readiness_preflight(config)
+    print("\nSTOCK-ALPHA NEWS READINESS PREFLIGHT")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_alpha_dev_smoke(config):
     result = write_stock_alpha_dev_smoke(config)

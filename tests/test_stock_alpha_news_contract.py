@@ -4,6 +4,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from config.config_loader import load_config
 from core.research.framework.data import CsvRowRepository
 
@@ -17,6 +19,9 @@ from core.research.ml.stock_level.stock_alpha_news_contract import (
     write_stock_alpha_news_features,
     write_stock_alpha_news_features_from_config,
     write_stock_alpha_news_contract_validation,
+)
+from core.research.ml.stock_level.stock_alpha_news_contract_ingest import (
+    write_stock_alpha_news_contract_ingest,
 )
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
     build_stock_alpha_news_readiness_preflight,
@@ -335,6 +340,110 @@ def test_news_readiness_preflight_writes_json_and_markdown(tmp_path):
     assert paths.markdown_path.exists()
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["safe_to_train_news_transformer"] is False
+
+
+def test_news_contract_ingest_writes_canonical_csv_and_audit(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    audit_dir = tmp_path / "audit"
+    _write_raw_news_csv(raw, symbol=" aapl ", event_type="EPS beat")
+
+    paths = write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, audit_dir))
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+    assert paths.contract_path == contract
+    assert paths.audit_markdown_path.exists()
+    assert rows[0]["symbol"] == "AAPL"
+    assert rows[0]["event_type"] == "earnings"
+    assert rows[0]["published_at_utc"].endswith("Z")
+    assert list(rows[0]) == list(REQUIRED_NEWS_CONTRACT_COLUMNS)
+    assert audit["raw_row_count"] == 1
+    assert audit["valid_row_count"] == 1
+    assert audit["safe_to_generate_features"] is True
+    assert audit["event_type_counts"] == {"earnings": 1}
+
+
+def test_news_contract_ingest_missing_source_path_fails_without_contract(tmp_path):
+    raw = tmp_path / "missing.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+
+    with pytest.raises(FileNotFoundError, match="raw source file not found"):
+        write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    assert not contract.exists()
+
+
+def test_news_contract_ingest_dedupes_duplicate_article_id(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    _write_raw_news_csv(raw, rows=[_raw_news_row(article_id="dup-1"), _raw_news_row(article_id="dup-1", symbol="MSFT")])
+
+    paths = write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "AAPL"
+    assert audit["duplicate_article_id_count"] == 1
+
+
+def test_news_contract_ingest_rejects_ingested_before_published(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    _write_raw_news_csv(
+        raw,
+        published="2024-01-02T10:00:00Z",
+        ingested="2024-01-02T09:59:00Z",
+    )
+
+    paths = write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+    assert rows == []
+    assert audit["ingested_before_published_count"] == 1
+    assert audit["safe_to_generate_features"] is False
+
+
+def test_news_contract_ingest_missing_required_input_columns_blocks_generation(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    raw.write_text("article_id,symbol,published_at_utc\n1,AAPL,2024-01-01T00:00:00Z\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing required columns"):
+        write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    assert not contract.exists()
+
+
+def test_news_contract_ingest_uppercases_symbols(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    _write_raw_news_csv(raw, symbol=" msft ")
+
+    paths = write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    assert rows[0]["symbol"] == "MSFT"
+
+
+def test_news_contract_ingest_normalizes_event_types(tmp_path):
+    raw = tmp_path / "raw_news.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    _write_raw_news_csv(
+        raw,
+        rows=[
+            _raw_news_row(article_id="1", event_type="M&A"),
+            _raw_news_row(article_id="2", event_type="CEO change"),
+            _raw_news_row(article_id="3", event_type="unexpected blob"),
+        ],
+    )
+
+    paths = write_stock_alpha_news_contract_ingest(_ingest_config(raw, contract, tmp_path / "audit"))
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    assert [row["event_type"] for row in rows] == ["mna", "management", "other"]
 
 
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
@@ -808,6 +917,71 @@ def _write_stock_rows_csv(tmp_path: Path) -> Path:
     path = tmp_path / "stock_rows.csv"
     path.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
     return path
+
+
+def _ingest_config(raw_path: Path, contract_path: Path, audit_dir: Path) -> dict:
+    return {
+        "ml": {
+            "stock_alpha_news_raw_path": str(raw_path),
+            "stock_alpha_news_contract_path": str(contract_path),
+            "stock_alpha_news_contract_ingest_audit_dir": str(audit_dir),
+            **_guardrails(),
+        }
+    }
+
+
+def _write_raw_news_csv(
+    path: Path,
+    *,
+    rows: list[dict] | None = None,
+    symbol: str = "AAPL",
+    published: str = "2024-01-01T00:00:00Z",
+    ingested: str = "2024-01-01T00:01:00Z",
+    event_type: str = "earnings",
+) -> None:
+    rows = rows or [
+        _raw_news_row(
+            symbol=symbol,
+            published=published,
+            ingested=ingested,
+            event_type=event_type,
+        )
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=REQUIRED_NEWS_CONTRACT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _raw_news_row(
+    *,
+    article_id: str = "raw-1",
+    symbol: str = "AAPL",
+    published: str = "2024-01-01T00:00:00Z",
+    ingested: str = "2024-01-01T00:01:00Z",
+    source: str = "vendor",
+    headline: str = "AAPL reports earnings",
+    body: str = "A real vendor news summary.",
+    sentiment: str = "0.2",
+    relevance: str = "0.9",
+    novelty: str = "0.8",
+    event_type: str = "earnings",
+    language: str = "en",
+) -> dict:
+    return {
+        "article_id": article_id,
+        "symbol": symbol,
+        "published_at_utc": published,
+        "ingested_at": ingested,
+        "source": source,
+        "headline": headline,
+        "body_or_summary": body,
+        "sentiment_score": sentiment,
+        "relevance_score": relevance,
+        "novelty_score": novelty,
+        "event_type": event_type,
+        "language": language,
+    }
 
 
 def _news_row(article_id, symbol, published, ingested, sentiment, event_type):

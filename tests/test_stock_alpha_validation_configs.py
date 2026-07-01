@@ -188,6 +188,22 @@ def test_real_news_feature_and_preflight_templates_are_disabled_research_only():
     assert preflight_config["ml"]["stock_alpha_news_stock_rows_path"].endswith("stock_alpha_ensemble_average_rank_predictions.csv")
 
 
+def test_real_news_contract_ingest_template_loads_with_research_guardrails():
+    config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_real_template.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+
+    assert ml["stock_alpha_news_raw_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+    assert ml["stock_alpha_news_contract_path"] == "data/news/stock_alpha_news_contract.csv"
+    assert ml["stock_alpha_news_contract_ingest_audit_dir"].endswith("news_contract_ingest")
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

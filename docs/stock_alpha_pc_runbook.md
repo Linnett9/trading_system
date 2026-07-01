@@ -381,7 +381,24 @@ These templates are placeholders for a future real point-in-time news archive.
 They do not assume `data/news/stock_alpha_news_contract.csv` exists, and they
 do not enable the transformer by default.
 
-1. Generate real-data news features after the PIT archive and stock rows exist:
+1. Ingest a raw provider/export news CSV into the canonical PIT contract:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-contract-ingest \
+  --config config/config.stock_alpha_news_contract_ingest_real_template.yaml
+```
+
+Expected outputs:
+
+- `data/news/stock_alpha_news_contract.csv`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_real/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_real/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.md`
+
+If the raw source file is missing or required columns are absent, the ingest
+must fail clearly and must not write a fake contract.
+
+2. Generate canonical news features after the PIT contract and stock rows exist:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -389,7 +406,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_features_real_template.yaml
 ```
 
-2. Run the readiness preflight with the transformer still disabled:
+3. Run the readiness preflight with the transformer still disabled:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -397,8 +414,9 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_readiness_preflight_real_template.yaml
 ```
 
-3. Inspect the feature audit and preflight outputs:
+4. Inspect the ingest audit, feature audit, and preflight outputs:
 
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_real/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/news_features/stock_alpha_news_features_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.md`
@@ -407,7 +425,7 @@ The preflight should remain not-safe while
 `stock_alpha_news_enable_transformer: false`. Review missing columns, coverage,
 PIT audit metadata, and any blocking issues before changing templates.
 
-4. Only after preflight passes, use the enabled diagnostic template:
+Only after preflight passes, use the enabled diagnostic template:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
