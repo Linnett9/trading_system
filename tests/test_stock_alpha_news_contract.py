@@ -466,6 +466,66 @@ def test_news_contract_ingest_normalizes_event_types(tmp_path):
     assert [row["event_type"] for row in rows] == ["mna", "management", "other"]
 
 
+def test_tiny_raw_provider_ingest_smoke_runs_contract_features_and_preflight():
+    ingest_config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    ingest_paths = write_stock_alpha_news_contract_ingest(ingest_config)
+
+    contract_rows = CsvRowRepository().read(ingest_paths.contract_path)
+    ingest_audit = json.loads(ingest_paths.audit_json_path.read_text(encoding="utf-8"))
+    assert ingest_paths.audit_markdown_path.exists()
+    assert len(contract_rows) == 5
+    assert ingest_audit["raw_row_count"] == 7
+    assert ingest_audit["valid_row_count"] == 5
+    assert ingest_audit["duplicate_article_id_count"] == 1
+    assert ingest_audit["ingested_before_published_count"] == 1
+    assert ingest_audit["event_type_counts"] == {
+        "analyst": 1,
+        "earnings": 1,
+        "guidance": 1,
+        "litigation": 1,
+        "mna": 1,
+    }
+    assert {row["symbol"] for row in contract_rows} == {"AAPL", "MSFT"}
+    assert "tiny-bad-msft-1" not in {row["article_id"] for row in contract_rows}
+    assert sum(1 for row in contract_rows if row["article_id"] == "tiny-analyst-aapl-1") == 1
+
+    features_config = load_config(
+        "config/config.stock_alpha_news_features_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+    features_paths = write_stock_alpha_news_features_from_config(features_config)
+    feature_rows = CsvRowRepository().read(features_paths.features_csv_path)
+
+    assert features_paths.audit_markdown_path.exists()
+    assert set(REQUIRED_NEWS_FEATURE_COLUMNS).issubset(feature_rows[0])
+    assert len(feature_rows) == 10
+    assert _feature_row(feature_rows, "2024-01-06", "AAPL")["mna_news_count_30d"] == "1"
+    assert _feature_row(feature_rows, "2024-01-03", "AAPL")["analyst_news_count_14d"] == "1"
+    assert _feature_row(feature_rows, "2024-01-03", "AAPL")["negative_news_count_7d"] == "1"
+    assert _feature_row(feature_rows, "2024-01-05", "MSFT")["guidance_news_count_30d"] == "1"
+    assert _feature_row(feature_rows, "2024-01-05", "MSFT")["litigation_news_count_30d"] == "1"
+    assert _feature_row(feature_rows, "2024-01-05", "MSFT")["negative_news_count_7d"] == "1"
+    no_news_row = _feature_row(feature_rows, "2024-01-02", "MSFT")
+    assert no_news_row["avg_sentiment_1d"] == ""
+    assert no_news_row["news_has_coverage_30d"] == "False"
+
+    preflight_config = load_config(
+        "config/config.stock_alpha_news_readiness_preflight_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+    preflight_paths = write_stock_alpha_news_readiness_preflight(preflight_config)
+    preflight = json.loads(preflight_paths.json_path.read_text(encoding="utf-8"))
+    assert preflight_paths.markdown_path.exists()
+    assert preflight["source_features_exists"] is True
+    assert preflight["stock_rows_exists"] is True
+    assert preflight["safe_to_train_news_transformer"] is False
+    assert preflight["enable_flag"] is False
+    assert "stock_alpha_news_enable_transformer_false" in preflight["blocking_issues"]
+
+
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
     news = tmp_path / "news.csv"
     _write_news(news)
@@ -937,6 +997,13 @@ def _write_stock_rows_csv(tmp_path: Path) -> Path:
     path = tmp_path / "stock_rows.csv"
     path.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
     return path
+
+
+def _feature_row(rows: list[dict], rebalance_date: str, symbol: str) -> dict:
+    for row in rows:
+        if row["rebalance_date"] == rebalance_date and row["symbol"] == symbol:
+            return row
+    raise AssertionError(f"missing feature row for {rebalance_date} {symbol}")
 
 
 def _ingest_config(raw_path: Path, contract_path: Path, audit_dir: Path) -> dict:

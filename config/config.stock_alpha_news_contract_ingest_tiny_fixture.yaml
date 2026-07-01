@@ -1,0 +1,8 @@
+ml:
+  stock_alpha_news_raw_path: tests/fixtures/stock_alpha_news/raw_provider_export_tiny.csv
+  stock_alpha_news_contract_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_tiny_fixture/dev/stock_alpha_news_contract.csv
+  stock_alpha_news_contract_ingest_audit_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_tiny_fixture/dev/news_contract_ingest
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

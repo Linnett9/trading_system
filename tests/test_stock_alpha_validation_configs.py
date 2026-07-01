@@ -204,6 +204,36 @@ def test_real_news_contract_ingest_template_loads_with_research_guardrails():
     assert ml["promotion_thresholds_changed"] is False
 
 
+def test_tiny_raw_news_ingest_smoke_configs_load_with_research_guardrails():
+    ingest = load_config(
+        "config/config.stock_alpha_news_contract_ingest_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    features = load_config(
+        "config/config.stock_alpha_news_features_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+    preflight = load_config(
+        "config/config.stock_alpha_news_readiness_preflight_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+
+    assert ingest["ml"]["stock_alpha_news_raw_path"] == "tests/fixtures/stock_alpha_news/raw_provider_export_tiny.csv"
+    assert ingest["ml"]["stock_alpha_news_contract_path"].endswith("stock_alpha_news_contract.csv")
+    assert features["ml"]["stock_alpha_news_contract_path"] == ingest["ml"]["stock_alpha_news_contract_path"]
+    assert features["ml"]["stock_alpha_news_stock_rows_path"] == "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"
+    assert preflight["ml"]["stock_alpha_news_features_path"] == features["ml"]["stock_alpha_news_features_path"]
+    assert preflight["ml"]["stock_alpha_news_stock_rows_path"] == "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"
+    for config in (ingest, features, preflight):
+        ml = config["ml"]
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+    assert features["ml"]["stock_alpha_news_enable_transformer"] is False
+    assert preflight["ml"]["stock_alpha_news_enable_transformer"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

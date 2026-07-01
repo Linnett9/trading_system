@@ -1,0 +1,8 @@
+article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at
+tiny-earnings-aapl-1,aapl,2024-01-01T10:00:00Z,tiny_vendor,AAPL earnings beat,AAPL reports stronger earnings than expected,0.45,0.95,0.70,EPS beat,en,2024-01-01T10:05:00Z
+tiny-analyst-aapl-1,AAPL,2024-01-02T09:00:00Z,tiny_vendor,AAPL analyst downgrade,Analyst lowers rating after channel checks,-0.40,0.90,0.60,analyst downgrade,en,2024-01-02T09:02:00Z
+tiny-analyst-aapl-1,AAPL,2024-01-02T09:10:00Z,tiny_vendor,AAPL duplicate analyst row,Duplicate provider export row should be deduped,-0.35,0.80,0.40,analyst downgrade,en,2024-01-02T09:12:00Z
+tiny-guidance-msft-1,msft,2024-01-03T11:00:00Z,tiny_vendor,MSFT guidance raised,MSFT lifts full-year cloud guidance,0.30,0.92,0.75,guidance update,en,2024-01-03T11:03:00Z
+tiny-litigation-msft-1,MSFT,2024-01-04T12:00:00Z,tiny_vendor,MSFT litigation risk,MSFT faces litigation over product claims,-0.55,0.88,0.65,lawsuit,en,2024-01-04T12:04:00Z
+tiny-mna-aapl-1,AAPL,2024-01-05T13:00:00Z,tiny_vendor,AAPL M&A report,AAPL explores acquisition of supplier,0.20,0.85,0.80,M&A,en,2024-01-05T13:05:00Z
+tiny-bad-msft-1,MSFT,2024-01-04T15:00:00Z,tiny_vendor,MSFT bad timestamp,This row should be rejected because ingest precedes publish,0.10,0.75,0.50,product launch,en,2024-01-04T14:59:00Z

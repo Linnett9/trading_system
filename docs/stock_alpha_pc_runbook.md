@@ -375,6 +375,45 @@ Expected fixture outputs:
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_fixture/dev/news_features/stock_alpha_news_features_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_deep_diagnostic_tiny_news/dev/deep_diagnostics/news_analysis_transformer/stock_alpha_deep_model_diagnostics.json`
 
+## Tiny Raw News Ingest Smoke
+
+This smoke path starts from a committed raw-provider-style export and proves the
+safe plumbing only: raw export to canonical PIT contract, generated features,
+and disabled readiness preflight. It does not train a model and is not evidence
+of model performance.
+
+Ingest the tiny raw provider/export fixture:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-contract-ingest \
+  --config config/config.stock_alpha_news_contract_ingest_tiny_fixture.yaml
+```
+
+Generate features from the canonical contract produced by ingest:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-features \
+  --config config/config.stock_alpha_news_features_tiny_ingest_fixture.yaml
+```
+
+Run readiness preflight. It should remain not safe while
+`stock_alpha_news_enable_transformer: false`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-readiness-preflight \
+  --config config/config.stock_alpha_news_readiness_preflight_tiny_ingest_fixture.yaml
+```
+
+Expected tiny-ingest outputs:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_tiny_fixture/dev/stock_alpha_news_contract.csv`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_tiny_fixture/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_ingest_fixture/dev/stock_alpha_news_features.csv`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_tiny_ingest_fixture/dev/stock_alpha_news_readiness_preflight.json`
+
 ## Real PIT News Development Templates
 
 These templates are placeholders for a future real point-in-time news archive.
