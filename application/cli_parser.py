@@ -59,6 +59,7 @@ def parse_args():
             "ml-stock-alpha-experiment-preflight",
             "ml-stock-alpha-news-features",
             "ml-stock-alpha-news-contract-ingest",
+            "ml-stock-alpha-news-coverage-audit",
             "ml-stock-alpha-news-provider-audit",
             "ml-stock-alpha-news-readiness-preflight",
             "ml-stock-alpha-dev-smoke",

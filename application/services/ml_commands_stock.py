@@ -14,6 +14,7 @@ from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import wr
 from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_stock_alpha_experiment_preflight
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
+from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_stock_alpha_news_provider_audit
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
@@ -140,6 +141,19 @@ def run_ml_stock_alpha_news_provider_audit(config):
 
     payload = json.loads(result.json_path.read_text(encoding="utf-8"))
     print(f"safe_for_pit_research={str(payload.get('safe_for_pit_research', False)).lower()}")
+    for issue in payload.get("blocking_issues", []):
+        print(f"blocking_issue={issue}")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_coverage_audit(config):
+    print("\nSTOCK-ALPHA NEWS COVERAGE AUDIT")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    result = write_stock_alpha_news_coverage_audit(config)
+    import json
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"safe_for_feature_generation={str(payload.get('safe_for_feature_generation', False)).lower()}")
     for issue in payload.get("blocking_issues", []):
         print(f"blocking_issue={issue}")
     print(f"JSON: {result.json_path}")

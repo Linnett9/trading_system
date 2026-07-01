@@ -8,6 +8,7 @@ import pytest
 
 from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_contract_ingest,
+    run_ml_stock_alpha_news_coverage_audit,
     run_ml_stock_alpha_news_provider_audit,
 )
 from config.config_loader import load_config
@@ -26,6 +27,9 @@ from core.research.ml.stock_level.stock_alpha_news_contract import (
 )
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import (
     write_stock_alpha_news_contract_ingest,
+)
+from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
+    write_stock_alpha_news_coverage_audit,
 )
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
@@ -688,6 +692,115 @@ def test_provider_audit_wrapper_reports_missing_source_cleanly(tmp_path, capsys)
     assert payload["safe_for_pit_research"] is False
     assert not contract.exists()
     assert not features.exists()
+
+
+def test_tiny_news_coverage_audit_reports_alignment_metrics():
+    ingest_config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    write_stock_alpha_news_contract_ingest(ingest_config)
+    config = load_config(
+        "config/config.stock_alpha_news_coverage_audit_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+
+    paths = write_stock_alpha_news_coverage_audit(config)
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert paths.markdown_path.exists()
+    assert payload["safe_for_feature_generation"] is True
+    assert payload["news_row_count"] == 5
+    assert payload["stock_row_count"] == 10
+    assert payload["news_symbol_count"] == 2
+    assert payload["stock_symbol_count"] == 2
+    assert payload["rebalance_date_count"] == 5
+    assert payload["covered_symbol_count"] == 2
+    assert payload["symbol_coverage"] == 1.0
+    assert payload["covered_rebalance_date_count"] == 5
+    assert payload["date_coverage"] == 1.0
+    assert payload["covered_stock_row_count"] == 8
+    assert payload["stock_row_coverage"] == 0.8
+    assert payload["no_news_stock_row_count"] == 2
+    assert payload["no_news_stock_row_rate"] == 0.2
+    assert payload["event_type_counts"] == {
+        "analyst": 1,
+        "earnings": 1,
+        "guidance": 1,
+        "litigation": 1,
+        "mna": 1,
+    }
+    assert payload["event_type_covered_stock_rows"]["mna"] == 1
+    assert payload["freshness_bucket_counts"]["30d"] > 0
+    assert payload["pit_violation_count"] == 10
+
+
+def test_news_coverage_audit_missing_contract_path_blocks_cleanly(tmp_path, capsys):
+    contract = tmp_path / "missing_contract.csv"
+    features = tmp_path / "stock_alpha_news_features.csv"
+
+    run_ml_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv",
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+            }
+        }
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "audit" / "stock_alpha_news_coverage_audit.json").read_text(encoding="utf-8"))
+    assert "STOCK-ALPHA NEWS COVERAGE AUDIT" in output
+    assert "safe_for_feature_generation=false" in output
+    assert "blocking_issue=news contract file not found" in output
+    assert payload["safe_for_feature_generation"] is False
+    assert not contract.exists()
+    assert not features.exists()
+
+
+def test_news_coverage_audit_missing_stock_rows_path_blocks_cleanly(tmp_path, capsys):
+    contract = tmp_path / "contract.csv"
+    _write_news(contract)
+
+    run_ml_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": str(tmp_path / "missing_stock_rows.csv"),
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+            }
+        }
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "audit" / "stock_alpha_news_coverage_audit.json").read_text(encoding="utf-8"))
+    assert "safe_for_feature_generation=false" in output
+    assert "blocking_issue=stock rows file not found" in output
+    assert payload["safe_for_feature_generation"] is False
+
+
+def test_news_coverage_audit_missing_required_columns_blocks(tmp_path):
+    contract = tmp_path / "contract.csv"
+    stock_rows = tmp_path / "stock_rows.csv"
+    contract.write_text("article_id,symbol,published_at_utc\n1,AAPL,2024-01-01T00:00:00Z\n", encoding="utf-8")
+    stock_rows.write_text("rebalance_date,not_symbol\n2024-01-02,AAPL\n", encoding="utf-8")
+
+    paths = write_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": str(stock_rows),
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_for_feature_generation"] is False
+    assert "source" in payload["missing_required_news_columns"]
+    assert payload["missing_required_stock_row_columns"] == ["symbol"]
+    assert any("missing required news contract columns" in issue for issue in payload["blocking_issues"])
 
 
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):

@@ -1,0 +1,13 @@
+ml:
+  stock_alpha_news_contract_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_tiny_fixture/dev/stock_alpha_news_contract.csv
+  stock_alpha_news_stock_rows_path: tests/fixtures/stock_alpha_news/stock_rows_tiny.csv
+  stock_alpha_news_coverage_audit_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_coverage_audit_tiny_ingest_fixture/dev/news_coverage_audit
+  stock_alpha_news_coverage_min_symbol_coverage: 1.0
+  stock_alpha_news_coverage_min_date_coverage: 1.0
+  stock_alpha_news_coverage_min_article_count: 5
+  stock_alpha_news_coverage_min_covered_stock_rows: 7
+  stock_alpha_news_coverage_max_pit_violation_count: 10
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

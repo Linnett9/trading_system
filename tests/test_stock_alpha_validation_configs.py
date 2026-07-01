@@ -278,6 +278,31 @@ def test_news_provider_audit_configs_load_with_research_guardrails():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_coverage_audit_configs_load_with_research_guardrails():
+    tiny = load_config(
+        "config/config.stock_alpha_news_coverage_audit_tiny_ingest_fixture.yaml",
+        overlay_project_config=True,
+    )
+    real = load_config(
+        "config/config.stock_alpha_news_coverage_audit_real_template.yaml",
+        overlay_project_config=True,
+    )
+
+    assert tiny["ml"]["stock_alpha_news_contract_path"].endswith("stock_alpha_news_contract.csv")
+    assert tiny["ml"]["stock_alpha_news_stock_rows_path"] == "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"
+    assert tiny["ml"]["stock_alpha_news_coverage_min_symbol_coverage"] == 1.0
+    assert real["ml"]["stock_alpha_news_contract_path"] == "data/news/stock_alpha_news_contract.csv"
+    assert real["ml"]["stock_alpha_news_stock_rows_path"].endswith("stock_alpha_ensemble_average_rank_predictions.csv")
+    assert real["ml"]["stock_alpha_news_coverage_min_symbol_coverage"] == 0.60
+    for config in (tiny, real):
+        ml = config["ml"]
+        assert ml["stock_alpha_news_coverage_audit_dir"].endswith("news_coverage_audit")
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

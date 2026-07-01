@@ -470,9 +470,33 @@ The safe real-data sequence is:
 
 1. Provider audit
 2. Contract ingest
-3. Feature generation
-4. Readiness preflight
-5. Enabled diagnostic only if safe
+3. Coverage alignment audit
+4. Feature generation
+5. Readiness preflight
+6. Enabled diagnostic only if safe
+
+## News Coverage Alignment Audit
+
+Run the coverage audit after contract ingest and before feature generation. It
+checks whether canonical PIT news has usable symbol/date coverage for the active
+stock rows. It is inspection-only and does not generate contracts, features, or
+models.
+
+Tiny ingest fixture coverage audit:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-coverage-audit \
+  --config config/config.stock_alpha_news_coverage_audit_tiny_ingest_fixture.yaml
+```
+
+Real template coverage audit:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-coverage-audit \
+  --config config/config.stock_alpha_news_coverage_audit_real_template.yaml
+```
 
 ## Real PIT News Development Templates
 
@@ -497,7 +521,15 @@ Expected outputs:
 If the raw source file is missing or required columns are absent, the ingest
 must fail clearly and must not write a fake contract.
 
-2. Generate canonical news features after the PIT contract and stock rows exist:
+2. Run coverage alignment audit after the PIT contract and stock rows exist:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-coverage-audit \
+  --config config/config.stock_alpha_news_coverage_audit_real_template.yaml
+```
+
+3. Generate canonical news features after coverage alignment is reviewed:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -505,7 +537,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_features_real_template.yaml
 ```
 
-3. Run the readiness preflight with the transformer still disabled:
+4. Run the readiness preflight with the transformer still disabled:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -513,9 +545,10 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_readiness_preflight_real_template.yaml
 ```
 
-4. Inspect the ingest audit, feature audit, and preflight outputs:
+5. Inspect the ingest audit, coverage audit, feature audit, and preflight outputs:
 
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_real/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_coverage_audit_real/dev/news_coverage_audit/stock_alpha_news_coverage_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/news_features/stock_alpha_news_features_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.md`
