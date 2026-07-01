@@ -401,6 +401,23 @@ def test_news_feature_diagnostics_configs_load_with_research_guardrails():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_source_diagnostics_configs_load_with_research_guardrails():
+    configs = [
+        load_config("config/config.stock_alpha_news_source_diagnostics_tiny_fixture.yaml", overlay_project_config=True),
+        load_config("config/config.stock_alpha_news_source_diagnostics_real_template.yaml", overlay_project_config=True),
+    ]
+    assert configs[0]["ml"]["stock_alpha_news_contract_path"].endswith("news_contract_tiny.csv")
+    assert configs[1]["ml"]["stock_alpha_news_contract_path"] == "data/news/stock_alpha_news_contract.csv"
+    for config in configs:
+        ml = config["ml"]
+        assert ml["stock_alpha_news_source_diagnostics_report_dir"].endswith("/dev")
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

@@ -21,6 +21,7 @@ from core.research.ml.stock_level.stock_alpha_news_pipeline_inspect import write
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_stock_alpha_news_provider_audit
 from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import write_stock_alpha_news_provider_sample_check
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
+from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
 from core.research.ml.stock_level.run_manifest.service import write_stock_alpha_run_status
 
@@ -211,6 +212,27 @@ def run_ml_stock_alpha_news_readiness_preflight(config):
     result = write_stock_alpha_news_readiness_preflight(config)
     print("\nSTOCK-ALPHA NEWS READINESS PREFLIGHT")
     print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_source_diagnostics(config):
+    print("\nSTOCK-ALPHA NEWS SOURCE DIAGNOSTICS")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_source_diagnostics(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"next_action={payload['next_action']}")
+    for issue in payload["blocking_issues"]: print(f"blocking_issue={issue}")
+    print("features_generated=false")
+    print("files_ingested=false")
+    print("readiness_invoked=false")
+    print("model_training_invoked=false")
+    print("diagnostics_invoked=false")
+    print("news_transformer_enabled=false")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
 

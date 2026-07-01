@@ -14,6 +14,7 @@ from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_pipeline_inspect,
     run_ml_stock_alpha_news_provider_audit,
     run_ml_stock_alpha_news_provider_sample_check,
+    run_ml_stock_alpha_news_source_diagnostics,
 )
 from config.config_loader import load_config
 from core.research.framework.data import CsvRowRepository
@@ -54,6 +55,9 @@ from core.research.ml.stock_level.stock_alpha_news_pipeline_inspect import (
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
     build_stock_alpha_news_readiness_preflight,
     write_stock_alpha_news_readiness_preflight,
+)
+from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import (
+    write_stock_alpha_news_source_diagnostics,
 )
 
 
@@ -1432,6 +1436,64 @@ def test_news_feature_diagnostics_no_news_missing_sentiment_and_labels_skip(tmp_
     assert payload["exploratory_correlations"]["status"] == "skipped_labels_absent"
 
 
+def test_news_source_diagnostics_missing_inputs_block_cleanly(tmp_path, capsys):
+    stock = _write_stock_rows_csv(tmp_path)
+    config = _source_diagnostics_config(tmp_path / "missing.csv", stock, tmp_path / "report")
+    run_ml_stock_alpha_news_source_diagnostics(config)
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "report" / "stock_alpha_news_source_diagnostics.json").read_text(encoding="utf-8"))
+    assert payload["next_action"] == "provide_news_contract"
+    assert "blocking_issue=news_contract_file_not_found" in output
+
+    paths = write_stock_alpha_news_source_diagnostics(
+        _source_diagnostics_config(Path("tests/fixtures/stock_alpha_news/news_contract_tiny.csv"), tmp_path / "missing-stock.csv", tmp_path / "report-2")
+    )
+    assert json.loads(paths.json_path.read_text(encoding="utf-8"))["next_action"] == "provide_stock_rows"
+
+
+def test_news_source_diagnostics_tiny_is_read_only_and_exploratory(tmp_path):
+    config = load_config("config/config.stock_alpha_news_source_diagnostics_tiny_fixture.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_source_diagnostics_report_dir"] = str(tmp_path)
+    paths = write_stock_alpha_news_source_diagnostics(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["input_status"]["source_identifier_column"] == "source"
+    assert payload["pit_safety"]["future_article_excluded_count"] > 0
+    assert payload["pit_safety"]["included_future_article_count"] == 0
+    assert payload["exploratory_label_relationship"]["status"] == "computed"
+    for key in ("features_generated", "files_ingested", "readiness_invoked", "model_training_invoked", "diagnostics_invoked", "news_transformer_enabled"):
+        assert payload[key] is False
+
+
+def test_news_source_diagnostics_multiple_sources_agreement_duplication_and_label_skip(tmp_path):
+    contract = tmp_path / "contract.csv"
+    rows = [
+        _raw_news_row(article_id="a1", source="one", headline="same", sentiment="0.8"),
+        _raw_news_row(article_id="a2", source="one", headline="same", sentiment="0.7"),
+        _raw_news_row(article_id="b1", source="two", headline="different", sentiment="-0.8"),
+    ]
+    _write_raw_news_csv(contract, rows=rows)
+    stock = tmp_path / "stock.csv"
+    stock.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
+    paths = write_stock_alpha_news_source_diagnostics(_source_diagnostics_config(contract, stock, tmp_path / "report"))
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["cross_source_agreement"]["multi_source_window_count"] == 1
+    assert payload["cross_source_agreement"]["windows"][0]["sentiment_disagreement_score"] > 1.0
+    assert "one" in payload["source_quality"]["sources_with_duplicate_headlines"]
+    assert "source_duplication_detected" in payload["warning_issues"]
+    assert payload["exploratory_label_relationship"]["status"] == "skipped_labels_absent"
+
+
+def test_news_source_diagnostics_true_timestamp_leakage_blocks(tmp_path):
+    contract = tmp_path / "contract.csv"
+    _write_raw_news_csv(contract, published="2024-01-02T00:00:00Z", ingested="2024-01-01T00:00:00Z")
+    paths = write_stock_alpha_news_source_diagnostics(
+        _source_diagnostics_config(contract, _write_stock_rows_csv(tmp_path), tmp_path / "report")
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "fix_timestamp_leakage"
+    assert "timestamp_leakage_detected" in payload["blocking_issues"]
+
+
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
@@ -1655,6 +1717,16 @@ def _feature_diagnostics_config(features: Path, stock_rows: Path, report_dir: Pa
         "stock_alpha_news_features_path": str(features),
         "stock_alpha_stock_rows_path": str(stock_rows),
         "stock_alpha_news_feature_diagnostics_report_dir": str(report_dir),
+    }}
+
+
+def _source_diagnostics_config(contract: Path, stock_rows: Path, report_dir: Path) -> dict:
+    return {"ml": {
+        "stock_alpha_news_contract_path": str(contract),
+        "stock_alpha_stock_rows_path": str(stock_rows),
+        "stock_alpha_news_source_diagnostics_report_dir": str(report_dir),
+        "stock_alpha_news_source_column": "source",
+        "stock_alpha_news_provider_column": "provider",
     }}
 
 
