@@ -32,6 +32,7 @@ FEEDLESS_MODES = {
         "ml-stock-alpha-news-features",
         "ml-stock-alpha-news-feature-diagnostics",
         "ml-stock-alpha-news-contract-ingest",
+        "ml-stock-alpha-news-collect-free-sources",
         "ml-stock-alpha-news-coverage-audit",
         "ml-stock-alpha-news-provider-audit",
         "ml-stock-alpha-news-provider-sample-check",

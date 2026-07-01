@@ -14,6 +14,7 @@ from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import wr
 from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_stock_alpha_experiment_preflight
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
+from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
@@ -141,6 +142,28 @@ def run_ml_stock_alpha_news_feature_diagnostics(config):
         print(f"blocking_issue={issue}")
     print("features_generated=false")
     print("files_ingested=false")
+    print("readiness_invoked=false")
+    print("diagnostics_invoked=false")
+    print("model_training_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_collect_free_sources(config):
+    print("\nSTOCK-ALPHA FREE NEWS SOURCE COLLECTION")
+    print("mode=research | collection_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_free_source_collect(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"dry_run={str(payload['dry_run']).lower()}")
+    print(f"next_action={payload['next_action']}")
+    print(f"providers_skipped_missing_key={','.join(payload['providers_skipped_missing_key']) or 'none'}")
+    print(f"output_written={str(payload['output_written']).lower()}")
+    print("features_generated=false")
     print("readiness_invoked=false")
     print("diagnostics_invoked=false")
     print("model_training_invoked=false")
