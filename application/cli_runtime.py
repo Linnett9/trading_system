@@ -34,6 +34,7 @@ FEEDLESS_MODES = {
         "ml-stock-alpha-news-coverage-audit",
         "ml-stock-alpha-news-provider-audit",
         "ml-stock-alpha-news-pipeline-preflight",
+        "ml-stock-alpha-news-pipeline-inspect",
         "ml-stock-alpha-news-readiness-preflight",
         "ml-stock-alpha-dev-smoke",
         "ml-stock-alpha-parallelism-audit",

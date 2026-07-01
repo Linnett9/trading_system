@@ -339,6 +339,29 @@ def test_news_pipeline_preflight_configs_load_with_research_guardrails():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_pipeline_inspect_configs_load_with_research_guardrails():
+    tiny = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    real = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_real_template.yaml",
+        overlay_project_config=True,
+    )
+
+    assert tiny["ml"]["stock_alpha_news_raw_path"].endswith("raw_provider_export_alias_tiny.csv")
+    assert real["ml"]["stock_alpha_news_raw_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+    for config in (tiny, real):
+        ml = config["ml"]
+        assert ml["stock_alpha_run_size"] == "dev"
+        assert ml["stock_alpha_news_pipeline_inspect_output_dir"].endswith("/dev")
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
