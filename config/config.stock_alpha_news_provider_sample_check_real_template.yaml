@@ -1,0 +1,8 @@
+ml:
+  stock_alpha_news_raw_path: data/news/raw/stock_alpha_news_provider_export.csv
+  stock_alpha_news_provider_sample_check_output_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_provider_sample_check_real/dev
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

@@ -18,6 +18,7 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_s
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
 from core.research.ml.stock_level.stock_alpha_news_pipeline_inspect import write_stock_alpha_news_pipeline_inspect
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_stock_alpha_news_provider_audit
+from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import write_stock_alpha_news_provider_sample_check
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
 from core.research.ml.stock_level.run_manifest.service import write_stock_alpha_run_status
@@ -145,6 +146,27 @@ def run_ml_stock_alpha_news_provider_audit(config):
     print(f"safe_for_pit_research={str(payload.get('safe_for_pit_research', False)).lower()}")
     for issue in payload.get("blocking_issues", []):
         print(f"blocking_issue={issue}")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_provider_sample_check(config):
+    print("\nSTOCK-ALPHA NEWS PROVIDER SAMPLE CHECK")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_provider_sample_check(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    compatible = payload["compatible_with_contract_ingest"]
+    print(f"compatible_with_contract_ingest={str(compatible).lower()}")
+    print(f"next_action={payload['next_action']}")
+    print("canonical_contract_written=false")
+    print("features_generated=false")
+    print("model_training_invoked=false")
+    print("diagnostics_invoked=false")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
 
