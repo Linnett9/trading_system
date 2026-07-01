@@ -83,6 +83,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-features":
         _commands("ml_commands").run_ml_stock_alpha_news_features(config)
         return
+    if args.mode == "ml-stock-alpha-news-feature-diagnostics":
+        _commands("ml_commands").run_ml_stock_alpha_news_feature_diagnostics(config)
+        return
     if args.mode == "ml-stock-alpha-news-contract-ingest":
         _commands("ml_commands").run_ml_stock_alpha_news_contract_ingest(config)
         return

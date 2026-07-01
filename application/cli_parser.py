@@ -58,6 +58,7 @@ def parse_args():
             "ml-stock-alpha-ensemble-portfolio-sweep",
             "ml-stock-alpha-experiment-preflight",
             "ml-stock-alpha-news-features",
+            "ml-stock-alpha-news-feature-diagnostics",
             "ml-stock-alpha-news-contract-ingest",
             "ml-stock-alpha-news-coverage-audit",
             "ml-stock-alpha-news-provider-audit",

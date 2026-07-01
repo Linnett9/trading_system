@@ -9,6 +9,7 @@ import pytest
 from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_contract_ingest,
     run_ml_stock_alpha_news_coverage_audit,
+    run_ml_stock_alpha_news_feature_diagnostics,
     run_ml_stock_alpha_news_pipeline_preflight,
     run_ml_stock_alpha_news_pipeline_inspect,
     run_ml_stock_alpha_news_provider_audit,
@@ -33,6 +34,9 @@ from core.research.ml.stock_level.stock_alpha_news_contract_ingest import (
 )
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
     write_stock_alpha_news_coverage_audit,
+)
+from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
+    write_stock_alpha_news_feature_diagnostics,
 )
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
@@ -1350,6 +1354,84 @@ def test_provider_sample_check_bad_timestamps_are_incompatible(tmp_path):
     assert payload["timestamp_parseability"]["published_at_utc"]["invalid_count"] == 1
 
 
+def test_news_feature_diagnostics_missing_inputs_block_cleanly(tmp_path, capsys):
+    stock = _write_stock_rows_csv(tmp_path)
+    run_ml_stock_alpha_news_feature_diagnostics(
+        _feature_diagnostics_config(tmp_path / "missing.csv", stock, tmp_path / "report")
+    )
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "report" / "stock_alpha_news_feature_diagnostics.json").read_text(encoding="utf-8"))
+    assert payload["next_action"] == "provide_news_features"
+    assert "blocking_issue=news_features_file_not_found" in output
+
+    features = tmp_path / "features.csv"
+    _write_features(features)
+    paths = write_stock_alpha_news_feature_diagnostics(
+        _feature_diagnostics_config(features, tmp_path / "missing-stock.csv", tmp_path / "report-2")
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "provide_stock_rows"
+
+
+def test_news_feature_diagnostics_tiny_report_is_read_only(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_feature_diagnostics_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_feature_diagnostics_report_dir"] = str(tmp_path)
+    paths = write_stock_alpha_news_feature_diagnostics(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["input_status"]["required_columns_present"] is True
+    assert payload["pit_safety_diagnostics"]["future_article_excluded_count"] > 0
+    assert payload["pit_safety_diagnostics"]["pit_violation_count"] == 0
+    assert payload["exploratory_correlations"]["status"] == "computed"
+    for key in ("features_generated", "files_ingested", "readiness_invoked", "diagnostics_invoked", "model_training_invoked", "news_transformer_enabled"):
+        assert payload[key] is False
+
+
+def test_news_feature_diagnostics_enforces_columns_and_audit_safety(tmp_path):
+    stock = _write_stock_rows_csv(tmp_path)
+    incomplete = tmp_path / "incomplete.csv"
+    incomplete.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
+    paths = write_stock_alpha_news_feature_diagnostics(_feature_diagnostics_config(incomplete, stock, tmp_path / "missing-columns"))
+    assert json.loads(paths.json_path.read_text(encoding="utf-8"))["next_action"] == "fix_missing_required_feature_columns"
+
+    for name, audit, action in (
+        ("pit", {"pit_violation_count": 1, "future_article_excluded_count": 3}, "investigate_pit_violation"),
+        ("synthetic", {"pit_violation_count": 0, "synthetic_news_features_created": True}, "investigate_synthetic_features"),
+    ):
+        directory = tmp_path / name
+        directory.mkdir()
+        features = directory / "features.csv"
+        _write_features(features)
+        audit_dir = directory / "news_features"
+        audit_dir.mkdir()
+        (audit_dir / "stock_alpha_news_features_audit.json").write_text(json.dumps(audit), encoding="utf-8")
+        paths = write_stock_alpha_news_feature_diagnostics(_feature_diagnostics_config(features, stock, directory / "report"))
+        payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+        assert payload["next_action"] == action
+        assert payload["model_readiness_diagnostics"]["suitable_for_disabled_diagnostic_merge_check"] is False
+
+
+def test_news_feature_diagnostics_no_news_missing_sentiment_and_labels_skip(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+    rows = list(csv.DictReader(features.open(encoding="utf-8")))
+    rows[0]["news_has_coverage_30d"] = "false"
+    for column in ("avg_sentiment_1d", "avg_sentiment_3d", "sentiment_change_3d"):
+        rows[0][column] = ""
+    with features.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    stock = tmp_path / "stock.csv"
+    stock.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
+    paths = write_stock_alpha_news_feature_diagnostics(_feature_diagnostics_config(features, stock, tmp_path / "report"))
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["missingness_diagnostics"]["no_news_fake_neutral_sentiment_row_count"] == 0
+    assert payload["exploratory_correlations"]["status"] == "skipped_labels_absent"
+
+
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
@@ -1566,6 +1648,14 @@ def _guardrails():
         "production_validated": False,
         "promotion_thresholds_changed": False,
     }
+
+
+def _feature_diagnostics_config(features: Path, stock_rows: Path, report_dir: Path) -> dict:
+    return {"ml": {
+        "stock_alpha_news_features_path": str(features),
+        "stock_alpha_stock_rows_path": str(stock_rows),
+        "stock_alpha_news_feature_diagnostics_report_dir": str(report_dir),
+    }}
 
 
 def _write_stock_rows_csv(tmp_path: Path) -> Path:
