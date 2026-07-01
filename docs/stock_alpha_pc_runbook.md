@@ -309,3 +309,50 @@ stock_alpha_news_enable_transformer: false
 
 Do not enable it in full/all-deep/portfolio configs until the news feature
 validation reports are clean.
+
+## Local Tiny News Fixture Smoke
+
+This smoke path uses committed tiny fixtures under
+`tests/fixtures/stock_alpha_news/`. It proves the local point-in-time news
+feature and readiness gates work end to end. It is not evidence of model
+performance and must not be used for promotion decisions.
+
+Generate tiny fixture news features:
+
+```bash
+PY=/Users/brandonlinnett/.pyenv/versions/3.11.6/bin/python
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-features \
+  --config config/config.stock_alpha_news_features_tiny_fixture.yaml
+```
+
+Run the disabled readiness diagnostic. This should report
+`stock_alpha_news_enable_transformer_false`:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-deep-diagnostics \
+  --config config/config.stock_alpha_dev_diagnostic_news_transformer_tiny_fixture_disabled.yaml \
+  --profile development
+```
+
+Run the enabled-readiness diagnostic only for fixture smoke validation. This
+keeps the fixture config isolated and research-only:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-deep-diagnostics \
+  --config config/config.stock_alpha_dev_diagnostic_news_transformer_tiny_fixture_enabled.yaml \
+  --profile development
+```
+
+Expected fixture inputs:
+
+- `tests/fixtures/stock_alpha_news/news_contract_tiny.csv`
+- `tests/fixtures/stock_alpha_news/stock_rows_tiny.csv`
+
+Expected fixture outputs:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_fixture/dev/stock_alpha_news_features.csv`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_fixture/dev/news_features/stock_alpha_news_features_audit.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_deep_diagnostic_tiny_news/dev/deep_diagnostics/news_analysis_transformer/stock_alpha_deep_model_diagnostics.json`

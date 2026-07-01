@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 from config.config_loader import load_config
+from core.research.framework.data import CsvRowRepository
 
 from core.research.ml.stock_level.stock_alpha_news_contract import (
     REQUIRED_NEWS_AGGREGATE_FEATURES,
@@ -541,6 +543,59 @@ def test_news_feature_template_configs_load():
     assert full["ml"]["stock_alpha_news_enable_transformer"] is False
     assert benchmark["ml"]["research_only"] is True
     assert full["ml"]["trading_impact"] == "none"
+
+
+def test_tiny_news_fixture_contract_is_real_shaped_and_unique():
+    news_rows = CsvRowRepository().read(Path("tests/fixtures/stock_alpha_news/news_contract_tiny.csv"))
+    stock_rows = CsvRowRepository().read(Path("tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"))
+
+    assert set(REQUIRED_NEWS_CONTRACT_COLUMNS) <= set(news_rows[0])
+    assert {"rebalance_date", "symbol"} <= set(stock_rows[0])
+    article_ids = [row["article_id"] for row in news_rows]
+    assert len(article_ids) == len(set(article_ids))
+    assert {row["symbol"] for row in stock_rows} == {"AAPL", "MSFT"}
+
+
+def test_tiny_news_fixture_generates_features_and_readiness(tmp_path):
+    config = load_config("config/config.stock_alpha_news_features_tiny_fixture.yaml", overlay_project_config=True)
+    features_path = tmp_path / "stock_alpha_news_features.csv"
+    config["ml"]["stock_alpha_report_root"] = str(tmp_path / "reports")
+    config["ml"]["stock_alpha_news_features_path"] = str(features_path)
+
+    paths = write_stock_alpha_news_features_from_config(config)
+    feature_rows = CsvRowRepository().read(paths.features_csv_path)
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+
+    assert paths.features_csv_path.exists()
+    assert paths.audit_json_path.exists()
+    assert paths.audit_markdown_path.exists()
+    assert set(REQUIRED_NEWS_FEATURE_COLUMNS) <= set(feature_rows[0])
+    by_key = {(row["rebalance_date"], row["symbol"]): row for row in feature_rows}
+    assert int(by_key[("2024-01-04", "AAPL")]["negative_news_count_7d"]) == 1
+    assert int(by_key[("2024-01-04", "AAPL")]["earnings_news_count_14d"]) == 1
+    assert int(by_key[("2024-01-04", "AAPL")]["analyst_news_count_14d"]) == 1
+    assert int(by_key[("2024-01-06", "AAPL")]["guidance_news_count_30d"]) == 1
+    assert int(by_key[("2024-01-06", "MSFT")]["litigation_news_count_30d"]) == 1
+    assert int(by_key[("2024-01-06", "MSFT")]["mna_news_count_30d"]) == 1
+    assert by_key[("2024-01-02", "AAPL")]["news_volume_zscore"] == ""
+    assert by_key[("2024-01-02", "MSFT")]["avg_sentiment_1d"] == ""
+    assert int(by_key[("2024-01-04", "MSFT")]["guidance_news_count_30d"]) == 0
+    assert audit["pit_violation_count"] > 0
+    assert audit["transformer_available"] is False
+
+    stock_rows = CsvRowRepository().read(Path("tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"))
+    disabled = check_news_transformer_readiness(
+        {**config, "ml": {**config["ml"], "stock_alpha_news_enable_transformer": False}},
+        stock_rows,
+    )
+    enabled = check_news_transformer_readiness(
+        {**config, "ml": {**config["ml"], "stock_alpha_news_enable_transformer": True}},
+        stock_rows,
+    )
+    assert disabled.transformer_available is False
+    assert disabled.unavailable_reason == "stock_alpha_news_enable_transformer_false"
+    assert enabled.transformer_available is True
+    assert set(enabled.required_columns_found) == set(REQUIRED_NEWS_FEATURE_COLUMNS)
 
 
 def test_news_feature_writer_rejects_invalid_contract(tmp_path):

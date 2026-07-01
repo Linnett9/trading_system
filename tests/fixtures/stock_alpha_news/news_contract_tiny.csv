@@ -1,0 +1,7 @@
+article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at
+tiny-aapl-earnings-1,AAPL,2024-01-01T10:00:00Z,vendor,AAPL beats earnings,AAPL reported stronger than expected earnings.,0.45,0.95,0.70,earnings,en,2024-01-01T10:05:00Z
+tiny-aapl-analyst-1,AAPL,2024-01-03T11:00:00Z,vendor,Analyst cuts AAPL target,An analyst lowered the price target on softer demand.,-0.35,0.90,0.65,analyst,en,2024-01-03T11:10:00Z
+tiny-aapl-guidance-1,AAPL,2024-01-05T09:00:00Z,vendor,AAPL updates guidance,AAPL issued updated revenue guidance.,0.10,0.80,0.60,guidance,en,2024-01-05T09:05:00Z
+tiny-msft-litigation-1,MSFT,2024-01-02T12:00:00Z,vendor,MSFT faces litigation,MSFT disclosed a new litigation matter.,-0.50,0.85,0.75,litigation,en,2024-01-02T12:15:00Z
+tiny-msft-mna-1,MSFT,2024-01-04T13:00:00Z,vendor,MSFT acquisition update,MSFT announced an acquisition update.,0.25,0.88,0.80,mna,en,2024-01-04T13:20:00Z
+tiny-msft-future-ingest-1,MSFT,2024-01-03T08:00:00Z,vendor,MSFT guidance detail,MSFT guidance details were distributed later.,0.20,0.70,0.55,guidance,en,2024-01-05T08:00:00Z

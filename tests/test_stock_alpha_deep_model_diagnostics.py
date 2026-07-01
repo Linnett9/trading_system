@@ -5,6 +5,7 @@ import math
 import pytest
 
 from config.config_loader import load_config
+from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.ml.stock_level.stock_alpha_deep_model_diagnostics import REQUIRED_FIELDS, diagnose_sequence_fold, write_stock_alpha_deep_model_diagnostics
 from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, MODEL_SETS, TARGET_MODEL_SETS, TABULAR_MODELS
@@ -515,6 +516,67 @@ def test_generic_news_columns_do_not_unlock_news_transformer(tmp_path, monkeypat
     row = payload["diagnostics"][0]
     assert row["skip_reason"] == "model_unavailable_by_design"
     assert row["error_message"] == "missing_required_news_feature_columns"
+
+
+def test_tiny_news_transformer_diagnostic_disabled_reports_unavailable(tmp_path, monkeypatch):
+    features_config = load_config("config/config.stock_alpha_news_features_tiny_fixture.yaml", overlay_project_config=True)
+    features_path = tmp_path / "stock_alpha_news_features.csv"
+    features_config["ml"]["stock_alpha_report_root"] = str(tmp_path / "news_reports")
+    features_config["ml"]["stock_alpha_news_features_path"] = str(features_path)
+    write_stock_alpha_news_features_from_config(features_config)
+
+    config = load_config("config/config.stock_alpha_dev_diagnostic_news_transformer_tiny_fixture_disabled.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_report_root"] = str(tmp_path / "deep")
+    config["ml"]["stock_alpha_news_features_path"] = str(features_path)
+
+    from core.research.ml.stock_level import stock_alpha_deep_model_diagnostics as diagnostics
+
+    monkeypatch.setattr(diagnostics, "_available_feature_columns", lambda _rows, include_engineered: ("feature",))
+    monkeypatch.setattr(diagnostics, "_factories_for_model_set", lambda *args, **kwargs: ({}, {"news_analysis_transformer": object}))
+    paths = write_stock_alpha_deep_model_diagnostics(config)
+
+    row = json.loads(paths.json_path.read_text(encoding="utf-8"))["diagnostics"][0]
+    assert row["skip_reason"] == "model_unavailable_by_design"
+    assert row["error_message"] == "stock_alpha_news_enable_transformer_false"
+
+
+def test_tiny_news_transformer_diagnostic_enabled_reaches_model_branch(tmp_path, monkeypatch):
+    features_config = load_config("config/config.stock_alpha_news_features_tiny_fixture.yaml", overlay_project_config=True)
+    features_path = tmp_path / "stock_alpha_news_features.csv"
+    features_config["ml"]["stock_alpha_report_root"] = str(tmp_path / "news_reports")
+    features_config["ml"]["stock_alpha_news_features_path"] = str(features_path)
+    write_stock_alpha_news_features_from_config(features_config)
+
+    class FakeNewsSequenceModel:
+        def __init__(self):
+            self.diagnostics = {"train_loss_finite": True, "model_parameters_finite": True}
+
+        def fit(self, sequences, targets, auxiliary_targets=None):
+            assert sequences
+            assert len(sequences) == len(targets)
+
+        def predict(self, sequences):
+            return [0.05 for _ in sequences]
+
+    config = load_config("config/config.stock_alpha_dev_diagnostic_news_transformer_tiny_fixture_enabled.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_report_root"] = str(tmp_path / "deep")
+    config["ml"]["stock_alpha_news_features_path"] = str(features_path)
+
+    from core.research.ml.stock_level import stock_alpha_deep_model_diagnostics as diagnostics
+
+    monkeypatch.setattr(
+        diagnostics,
+        "_factories_for_model_set",
+        lambda *args, **kwargs: ({}, {"news_analysis_transformer": FakeNewsSequenceModel}),
+    )
+    paths = write_stock_alpha_deep_model_diagnostics(config)
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    rows = payload["diagnostics"]
+    assert rows
+    assert any(row["prediction_count"] > 0 for row in rows)
+    assert all(row["skip_reason"] in {None, "test_sequence_windows_missing"} for row in rows)
+    assert any(row["skip_reason"] is None for row in rows)
 
 
 def test_diagnostics_module_has_no_operational_imports():
