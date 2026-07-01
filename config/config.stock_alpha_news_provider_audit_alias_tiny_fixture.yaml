@@ -1,0 +1,26 @@
+ml:
+  stock_alpha_news_raw_path: tests/fixtures/stock_alpha_news/raw_provider_export_alias_tiny.csv
+  stock_alpha_news_provider_audit_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_provider_audit_alias_tiny_fixture/dev/news_provider_audit
+  stock_alpha_news_provider_column_map:
+    article_id: id
+    symbol: ticker
+    published_at_utc: published_at
+    source: provider
+    headline: title
+    body_or_summary: summary
+    sentiment_score: sentiment
+    relevance_score: relevance
+    novelty_score: novelty
+    event_type: category
+    language: lang
+    ingested_at: collected_at
+  stock_alpha_news_provider_audit_min_symbol_count: 2
+  stock_alpha_news_provider_audit_min_article_count: 4
+  stock_alpha_news_provider_audit_max_missing_body_rate: 0.25
+  stock_alpha_news_provider_audit_max_duplicate_headline_rate: 0.20
+  stock_alpha_news_provider_audit_max_invalid_timestamp_rate: 0.0
+  stock_alpha_news_provider_audit_max_ingested_before_published_rate: 0.20
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

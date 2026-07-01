@@ -441,9 +441,38 @@ ml:
     ingested_at: collected_at
 ```
 
-The safe real-data sequence is unchanged: ingest raw provider/export news,
-generate canonical news features, run readiness preflight, and only then run the
-enabled diagnostic template if the preflight is safe.
+Once mapping is configured, use the provider audit before ingesting the raw
+provider/export news.
+
+## Provider Quality Audit
+
+Run the provider audit before contract ingest when evaluating a new raw archive.
+It is data quality and point-in-time inspection only; it does not write a news
+contract, generate features, train models, or prove model performance.
+
+Alias fixture audit:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-provider-audit \
+  --config config/config.stock_alpha_news_provider_audit_alias_tiny_fixture.yaml
+```
+
+Real template audit:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-provider-audit \
+  --config config/config.stock_alpha_news_provider_audit_real_template.yaml
+```
+
+The safe real-data sequence is:
+
+1. Provider audit
+2. Contract ingest
+3. Feature generation
+4. Readiness preflight
+5. Enabled diagnostic only if safe
 
 ## Real PIT News Development Templates
 

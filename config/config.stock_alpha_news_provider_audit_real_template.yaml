@@ -1,0 +1,13 @@
+ml:
+  stock_alpha_news_raw_path: data/news/raw/stock_alpha_news_provider_export.csv
+  stock_alpha_news_provider_audit_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_provider_audit_real/dev/news_provider_audit
+  stock_alpha_news_provider_audit_min_symbol_count: 25
+  stock_alpha_news_provider_audit_min_article_count: 100
+  stock_alpha_news_provider_audit_max_missing_body_rate: 0.10
+  stock_alpha_news_provider_audit_max_duplicate_headline_rate: 0.05
+  stock_alpha_news_provider_audit_max_invalid_timestamp_rate: 0.0
+  stock_alpha_news_provider_audit_max_ingested_before_published_rate: 0.0
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

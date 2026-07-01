@@ -254,6 +254,30 @@ def test_alias_raw_news_ingest_config_loads_with_provider_column_map():
     assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_provider_audit_configs_load_with_research_guardrails():
+    alias = load_config(
+        "config/config.stock_alpha_news_provider_audit_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    real = load_config(
+        "config/config.stock_alpha_news_provider_audit_real_template.yaml",
+        overlay_project_config=True,
+    )
+
+    assert alias["ml"]["stock_alpha_news_raw_path"] == "tests/fixtures/stock_alpha_news/raw_provider_export_alias_tiny.csv"
+    assert alias["ml"]["stock_alpha_news_provider_column_map"]["article_id"] == "id"
+    assert alias["ml"]["stock_alpha_news_provider_audit_min_symbol_count"] == 2
+    assert real["ml"]["stock_alpha_news_raw_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+    assert real["ml"]["stock_alpha_news_provider_audit_min_article_count"] == 100
+    for config in (alias, real):
+        ml = config["ml"]
+        assert ml["stock_alpha_news_provider_audit_dir"].endswith("news_provider_audit")
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

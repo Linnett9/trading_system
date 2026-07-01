@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from application.services.ml_commands_stock import run_ml_stock_alpha_news_contract_ingest
+from application.services.ml_commands_stock import (
+    run_ml_stock_alpha_news_contract_ingest,
+    run_ml_stock_alpha_news_provider_audit,
+)
 from config.config_loader import load_config
 from core.research.framework.data import CsvRowRepository
 
@@ -23,6 +26,9 @@ from core.research.ml.stock_level.stock_alpha_news_contract import (
 )
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import (
     write_stock_alpha_news_contract_ingest,
+)
+from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
+    write_stock_alpha_news_provider_audit,
 )
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
     build_stock_alpha_news_readiness_preflight,
@@ -589,6 +595,99 @@ def test_alias_provider_column_map_missing_provider_column_fails_without_contrac
     assert audit["provider_column_map_used"] is True
     assert audit["missing_mapped_provider_columns"] == ["collected_at"]
     assert audit["safe_to_generate_features"] is False
+
+
+def test_provider_audit_alias_fixture_reports_quality_metrics():
+    config = load_config(
+        "config/config.stock_alpha_news_provider_audit_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+
+    paths = write_stock_alpha_news_provider_audit(config)
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert paths.markdown_path.exists()
+    assert payload["safe_for_pit_research"] is True
+    assert payload["provider_column_map_used"] is True
+    assert payload["provider_column_map"]["article_id"] == "id"
+    assert payload["missing_mapped_provider_columns"] == []
+    assert payload["raw_row_count"] == 6
+    assert payload["article_id_count"] == 5
+    assert payload["duplicate_article_id_count"] == 1
+    assert payload["ingested_before_published_count"] == 1
+    assert payload["invalid_timestamp_count"] == 0
+    assert payload["symbol_count"] == 2
+    assert payload["source_count"] == 1
+    assert payload["language_counts"] == {"en": 6}
+    assert payload["event_type_counts"]["mna"] == 1
+    assert payload["article_count_by_symbol"] == {"AAPL": 4, "MSFT": 2}
+    assert payload["article_count_by_source"] == {"alias_vendor": 6}
+    assert payload["sentiment_present_count"] == 6
+    assert payload["sentiment_missing_count"] == 0
+    assert payload["relevance_present_count"] == 6
+    assert payload["novelty_present_count"] == 6
+
+
+def test_provider_audit_missing_mapped_provider_column_blocks(tmp_path):
+    raw = tmp_path / "alias_missing.csv"
+    raw.write_text(
+        "id,ticker,published_at,provider,title,summary,sentiment,relevance,novelty,category,lang\n"
+        "1,AAPL,2024-01-01T00:00:00Z,vendor,title,summary,0.1,0.9,0.8,earnings,en\n",
+        encoding="utf-8",
+    )
+    config = {
+        "ml": {
+            "stock_alpha_news_raw_path": str(raw),
+            "stock_alpha_news_provider_audit_dir": str(tmp_path / "audit"),
+            "stock_alpha_news_provider_column_map": {
+                "article_id": "id",
+                "symbol": "ticker",
+                "published_at_utc": "published_at",
+                "source": "provider",
+                "headline": "title",
+                "body_or_summary": "summary",
+                "sentiment_score": "sentiment",
+                "relevance_score": "relevance",
+                "novelty_score": "novelty",
+                "event_type": "category",
+                "language": "lang",
+                "ingested_at": "collected_at",
+            },
+        }
+    }
+
+    paths = write_stock_alpha_news_provider_audit(config)
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_for_pit_research"] is False
+    assert payload["missing_mapped_provider_columns"] == ["collected_at"]
+    assert any("missing mapped provider columns" in issue for issue in payload["blocking_issues"])
+
+
+def test_provider_audit_wrapper_reports_missing_source_cleanly(tmp_path, capsys):
+    raw = tmp_path / "missing_provider.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    features = tmp_path / "stock_alpha_news_features.csv"
+
+    run_ml_stock_alpha_news_provider_audit(
+        {
+            "ml": {
+                "stock_alpha_news_raw_path": str(raw),
+                "stock_alpha_news_provider_audit_dir": str(tmp_path / "audit"),
+            }
+        }
+    )
+
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "audit" / "stock_alpha_news_provider_audit.json").read_text(encoding="utf-8"))
+    assert "STOCK-ALPHA NEWS PROVIDER AUDIT" in output
+    assert "mode=research | inspection_only=true" in output
+    assert "safe_for_pit_research=false" in output
+    assert "blocking_issue=raw source file not found" in output
+    assert str(raw) in output
+    assert payload["safe_for_pit_research"] is False
+    assert not contract.exists()
+    assert not features.exists()
 
 
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
