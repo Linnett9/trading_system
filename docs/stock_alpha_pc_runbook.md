@@ -36,7 +36,8 @@ for this workflow.
 | 6 | Run full-enriched refine | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml` | No, only after step 5 is sane | Possibly |
 | 7 | Run full-grid overnight only if coarse/refine are sane | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml` | No | Yes |
 | 8 | Generate news features after real news contract exists | `config/config.stock_alpha_news_features_full_template.yaml` | No, waits for `data/news/stock_alpha_news_contract.csv` | Possibly |
-| 9 | Keep news transformer disabled until PIT features pass gates | same news config family | No model enablement by default | No |
+| 9 | Run news transformer readiness preflight | `config/config.stock_alpha_news_readiness_preflight_tiny_fixture.yaml` as command template | Yes, inspection only; expected not safe while disabled | No |
+| 10 | Keep news transformer disabled until PIT features pass gates | same news config family | No model enablement by default | No |
 
 ## 1. Full Stock-Alpha Enriched Benchmark
 
@@ -326,6 +327,23 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_features_tiny_fixture.yaml
 ```
 
+Run the research-only readiness preflight before attempting any
+`news_analysis_transformer` diagnostics or training:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-readiness-preflight \
+  --config config/config.stock_alpha_news_readiness_preflight_tiny_fixture.yaml
+```
+
+Expected output files:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_tiny_fixture/dev/stock_alpha_news_readiness_preflight.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_tiny_fixture/dev/stock_alpha_news_readiness_preflight.md`
+
+The preflight does not train a model. If `stock_alpha_news_enable_transformer`
+is false, `safe_to_train_news_transformer` must be false.
+
 Run the disabled readiness diagnostic. This should report
 `stock_alpha_news_enable_transformer_false`:
 
@@ -356,3 +374,57 @@ Expected fixture outputs:
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_fixture/dev/stock_alpha_news_features.csv`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_fixture/dev/news_features/stock_alpha_news_features_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_deep_diagnostic_tiny_news/dev/deep_diagnostics/news_analysis_transformer/stock_alpha_deep_model_diagnostics.json`
+
+## Real PIT News Development Templates
+
+These templates are placeholders for a future real point-in-time news archive.
+They do not assume `data/news/stock_alpha_news_contract.csv` exists, and they
+do not enable the transformer by default.
+
+1. Generate real-data news features after the PIT archive and stock rows exist:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-features \
+  --config config/config.stock_alpha_news_features_real_template.yaml
+```
+
+2. Run the readiness preflight with the transformer still disabled:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-readiness-preflight \
+  --config config/config.stock_alpha_news_readiness_preflight_real_template.yaml
+```
+
+3. Inspect the feature audit and preflight outputs:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/news_features/stock_alpha_news_features_audit.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_real/dev/stock_alpha_news_readiness_preflight.md`
+
+The preflight should remain not-safe while
+`stock_alpha_news_enable_transformer: false`. Review missing columns, coverage,
+PIT audit metadata, and any blocking issues before changing templates.
+
+4. Only after preflight passes, use the enabled diagnostic template:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-deep-diagnostics \
+  --config config/config.stock_alpha_dev_diagnostic_news_transformer_real_enabled_template.yaml \
+  --profile development
+```
+
+The default diagnostic template for real data is disabled:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-deep-diagnostics \
+  --config config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml \
+  --profile development
+```
+
+Both diagnostic templates are dev-sized and limited to
+`news_analysis_transformer`; neither should be promoted or used in benchmark/full
+configs without separate review.

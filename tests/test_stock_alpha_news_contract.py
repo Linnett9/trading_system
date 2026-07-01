@@ -18,6 +18,10 @@ from core.research.ml.stock_level.stock_alpha_news_contract import (
     write_stock_alpha_news_features_from_config,
     write_stock_alpha_news_contract_validation,
 )
+from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
+    build_stock_alpha_news_readiness_preflight,
+    write_stock_alpha_news_readiness_preflight,
+)
 
 
 def test_valid_contract_passes_when_features_and_transformer_enabled(tmp_path):
@@ -253,6 +257,84 @@ def test_news_transformer_readiness_rejects_feature_timestamp_leakage(tmp_path):
     assert readiness.transformer_available is False
     assert readiness.unavailable_reason == "news_feature_rows_contain_future_timestamps"
     assert readiness.pit_violation_count == 1
+
+
+def test_news_readiness_preflight_blocks_when_transformer_disabled(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+
+    payload = build_stock_alpha_news_readiness_preflight(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_stock_rows_path": str(_write_stock_rows_csv(tmp_path)),
+                "stock_alpha_news_enable_transformer": False,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        }
+    )
+
+    assert payload["safe_to_train_news_transformer"] is False
+    assert payload["readiness_available"] is False
+    assert payload["enable_flag"] is False
+    assert "stock_alpha_news_enable_transformer_false" in payload["blocking_issues"]
+    assert payload["row_count"] == 1
+    assert payload["symbol_count"] == 1
+    assert payload["date_count"] == 1
+
+
+def test_news_readiness_preflight_safe_only_with_enabled_valid_features_and_audit(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+    audit_dir = tmp_path / "news_features"
+    audit_dir.mkdir()
+    (audit_dir / "stock_alpha_news_features_audit.json").write_text(
+        json.dumps({"pit_violation_count": 0}),
+        encoding="utf-8",
+    )
+
+    payload = build_stock_alpha_news_readiness_preflight(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_stock_rows_path": str(_write_stock_rows_csv(tmp_path)),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        }
+    )
+
+    assert payload["safe_to_train_news_transformer"] is True
+    assert payload["readiness_available"] is True
+    assert payload["blocking_issues"] == []
+    assert payload["pit_audit_summary"]["audit_metadata_available"] is True
+
+
+def test_news_readiness_preflight_writes_json_and_markdown(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+
+    paths = write_stock_alpha_news_readiness_preflight(
+        {
+            "ml": {
+                "stock_alpha_report_root": str(tmp_path / "reports"),
+                "stock_alpha_run_size": "dev",
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_stock_rows_path": str(_write_stock_rows_csv(tmp_path)),
+                "stock_alpha_news_enable_transformer": False,
+                **_guardrails(),
+            }
+        }
+    )
+
+    assert paths.json_path.exists()
+    assert paths.markdown_path.exists()
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_to_train_news_transformer"] is False
 
 
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
@@ -720,6 +802,12 @@ def _guardrails():
         "production_validated": False,
         "promotion_thresholds_changed": False,
     }
+
+
+def _write_stock_rows_csv(tmp_path: Path) -> Path:
+    path = tmp_path / "stock_rows.csv"
+    path.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n", encoding="utf-8")
+    return path
 
 
 def _news_row(article_id, symbol, published, ingested, sentiment, event_type):

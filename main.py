@@ -10,10 +10,10 @@ from application.services.runtime_overrides import (
     limit_strategy_grids,
     limited_grid,
 )
-from core.research.dual_momentum_experiments import (
+from core.research.dual_momentum.experiments import (
     dual_momentum_candidate_configs,
 )
-from core.research.dual_momentum_scoring import (
+from core.research.dual_momentum.scoring import (
     dual_momentum_walk_forward_summary,
 )
 

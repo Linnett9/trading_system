@@ -1,0 +1,14 @@
+ml:
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real
+  stock_alpha_run_size: dev
+  stock_alpha_news_contract_path: data/news/stock_alpha_news_contract.csv
+  stock_alpha_news_stock_rows_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_dev_diagnostic/dev/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+  stock_alpha_news_features_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/stock_alpha_news_features.csv
+  stock_alpha_news_min_symbol_coverage: 0.60
+  stock_alpha_news_min_date_coverage: 0.60
+  stock_alpha_news_negative_sentiment_threshold: 0.0
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

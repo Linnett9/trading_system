@@ -1,0 +1,46 @@
+ml:
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_deep_diagnostic_news_real
+  stock_alpha_run_size: dev
+  stock_level_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_dev_diagnostic/dev/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+  stock_alpha_news_contract_path: data/news/stock_alpha_news_contract.csv
+  stock_alpha_news_features_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/stock_alpha_news_features.csv
+  stock_alpha_news_min_symbol_coverage: 0.60
+  stock_alpha_news_min_date_coverage: 0.60
+  stock_alpha_news_enable_transformer: false
+  stock_ranker_include_engineered_features: true
+  stock_ranker_include_sequence_models: true
+  stock_ranker_model_set: standard
+  stock_target_comparison_model_set: ultrafast
+  stock_deep_diagnostic_model: news_analysis_transformer
+  stock_deep_diagnostic_target: actual_forward_return_10d
+  stock_alpha_dev_max_dates: 60
+  stock_alpha_dev_max_symbols: 25
+  stock_alpha_dev_recent_dates_only: true
+  stock_alpha_dev_symbol_sample_method: deterministic_hash
+  stock_alpha_dev_required_symbols:
+    - SPY
+    - AAPL
+  stock_alpha_artifact_universe_paths:
+    - data/reference/universes/us_liquid_100.yaml
+  stock_alpha_artifact_max_symbols: 25
+  stock_alpha_artifact_symbol_sample_method: deterministic_hash
+  stock_ranker_min_train_dates: 20
+  stock_ranker_test_window_dates: 5
+  stock_ranker_embargo_dates: 1
+  stock_ranker_sequence_length: 10
+  stock_ranker_sequence_epochs: 1
+  stock_ranker_sequence_batch_size: 64
+  stock_alpha_stages:
+    stock_artifact: false
+    alpha_features: false
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: false
+    attribution: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

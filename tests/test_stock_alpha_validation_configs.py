@@ -144,6 +144,81 @@ def test_news_transformer_diagnostic_configs_are_disabled_templates():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_readiness_preflight_tiny_fixture_config_is_disabled_research_only():
+    config = load_config(
+        "config/config.stock_alpha_news_readiness_preflight_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+
+    assert ml["stock_alpha_run_size"] == "dev"
+    assert ml["stock_alpha_news_stock_rows_path"] == "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"
+    assert ml["stock_alpha_news_features_path"].endswith("stock_alpha_news_features.csv")
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
+
+
+def test_real_news_feature_and_preflight_templates_are_disabled_research_only():
+    feature_config = load_config(
+        "config/config.stock_alpha_news_features_real_template.yaml",
+        overlay_project_config=True,
+    )
+    preflight_config = load_config(
+        "config/config.stock_alpha_news_readiness_preflight_real_template.yaml",
+        overlay_project_config=True,
+    )
+
+    for config in (feature_config, preflight_config):
+        ml = config["ml"]
+        assert ml["stock_alpha_run_size"] == "dev"
+        assert ml["stock_alpha_news_features_path"].endswith("stock_alpha_news_features.csv")
+        assert ml["stock_alpha_news_min_symbol_coverage"] == 0.60
+        assert ml["stock_alpha_news_min_date_coverage"] == 0.60
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+    assert feature_config["ml"]["stock_alpha_news_contract_path"] == "data/news/stock_alpha_news_contract.csv"
+    assert feature_config["ml"]["stock_alpha_news_stock_rows_path"].endswith("stock_alpha_ensemble_average_rank_predictions.csv")
+    assert preflight_config["ml"]["stock_alpha_news_stock_rows_path"].endswith("stock_alpha_ensemble_average_rank_predictions.csv")
+
+
+def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
+    disabled = load_config(
+        "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
+        overlay_project_config=True,
+    )
+    enabled = load_config(
+        "config/config.stock_alpha_dev_diagnostic_news_transformer_real_enabled_template.yaml",
+        overlay_project_config=True,
+    )
+
+    assert disabled["ml"]["stock_alpha_news_enable_transformer"] is False
+    assert enabled["ml"]["stock_alpha_news_enable_transformer"] is True
+    assert enabled["ml"]["stock_alpha_news_transformer_enablement_note"] == "preflight_passed_required_before_use"
+    for config in (disabled, enabled):
+        ml = config["ml"]
+        assert ml["stock_deep_diagnostic_model"] == "news_analysis_transformer"
+        assert ml["stock_alpha_run_size"] == "dev"
+        assert ml["stock_alpha_dev_max_dates"] == 60
+        assert ml["stock_alpha_dev_max_symbols"] == 25
+        assert ml["stock_ranker_sequence_epochs"] == 1
+        assert ml["stock_ranker_sequence_batch_size"] == 64
+        assert ml["stock_alpha_news_contract_path"] == "data/news/stock_alpha_news_contract.csv"
+        assert ml["stock_alpha_news_features_path"].endswith("stock_alpha_news_features.csv")
+        assert ml["stock_alpha_stages"]["portfolio_replay"] is False
+        assert ml["stock_alpha_stages"]["portfolio_policy_sweep"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_benchmark_risk_controls_only_fails_clearly_without_enriched_predictions():
     config = load_config("config/config.stock_alpha_benchmark_risk_controls_only.yaml", overlay_project_config=True)
     settings = StockLevelResearchConfig.from_mapping(config)
