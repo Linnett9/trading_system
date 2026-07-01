@@ -10,11 +10,10 @@ from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
 
 
-REQUIRED_NEWS_FIELDS = (
+REQUIRED_NEWS_CONTRACT_COLUMNS = (
     "article_id",
     "symbol",
     "published_at_utc",
-    "ingested_at",
     "source",
     "headline",
     "body_or_summary",
@@ -23,7 +22,9 @@ REQUIRED_NEWS_FIELDS = (
     "novelty_score",
     "event_type",
     "language",
+    "ingested_at",
 )
+REQUIRED_NEWS_FIELDS = REQUIRED_NEWS_CONTRACT_COLUMNS
 REQUIRED_NEWS_AGGREGATE_FEATURES = (
     "news_count_1d",
     "news_count_3d",
@@ -235,7 +236,12 @@ def write_stock_alpha_news_features(
         raise ValueError(f"cannot aggregate stock-alpha news features: {validation.reason}")
     contract_path = Path(str(_ml_value(ml, "stock_alpha_news_contract_path", "stock_news_contract_path")))
     news_rows = [_normalize_news_row(row) for row in CsvRowRepository().read(contract_path)]
-    feature_rows, audit = build_stock_alpha_news_features(news_rows, stock_rows)
+    negative_threshold = float(ml.get("stock_alpha_news_negative_sentiment_threshold", 0.0))
+    feature_rows, audit = build_stock_alpha_news_features(
+        news_rows,
+        stock_rows,
+        negative_sentiment_threshold=negative_threshold,
+    )
     output = stock_alpha_output_dir(config) / "news_features"
     configured_features_path = ml.get("stock_alpha_news_features_path")
     features_path = Path(str(configured_features_path)) if configured_features_path else output / "stock_alpha_news_features.csv"
@@ -305,6 +311,8 @@ def write_stock_alpha_news_features_from_config(
 def build_stock_alpha_news_features(
     news_rows: list[Mapping[str, Any]],
     stock_rows: list[Mapping[str, Any]],
+    *,
+    negative_sentiment_threshold: float = 0.0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     normalized_news = [_normalize_news_row(row) for row in news_rows]
     invalid_timestamps = sum(
@@ -348,7 +356,11 @@ def build_stock_alpha_news_features(
             "avg_sentiment_1d": _average_sentiment(windows["1d"]),
             "avg_sentiment_3d": _average_sentiment(windows["3d"]),
             "sentiment_change_3d": _sentiment_change_3d(windows["3d"], rebalance),
-            "negative_news_count_7d": _event_count(windows["7d"], negative=True),
+            "negative_news_count_7d": _event_count(
+                windows["7d"],
+                negative=True,
+                negative_sentiment_threshold=negative_sentiment_threshold,
+            ),
             "earnings_news_count_14d": _event_count(windows["14d"], event_markers=("earnings",)),
             "analyst_news_count_14d": _event_count(windows["14d"], event_markers=("analyst",)),
             "guidance_news_count_30d": _event_count(windows["30d"], event_markers=("guidance",)),
@@ -359,21 +371,32 @@ def build_stock_alpha_news_features(
             "news_article_count_30d": len(windows["30d"]),
         }
         rows.append(row)
+    coverage_summary = _feature_coverage_summary(rows, stock_rows)
     audit = {
         "row_count": len(rows),
         "stock_row_count": len(stock_rows),
         "feature_row_count": len(rows),
         "news_article_count": len(normalized_news),
         "article_count": len(normalized_news),
+        "raw_article_count": len(news_rows),
+        "valid_article_count": len(normalized_news) - invalid_timestamps,
         "symbol_count": len({row["symbol"] for row in rows}),
         "rebalance_date_count": len({row["rebalance_date"] for row in rows}),
         "invalid_timestamp_count": invalid_timestamps,
         "future_article_candidate_count": future_article_count,
+        "pit_violation_count": future_article_count,
         "pit_violations_count": future_article_count,
         "missing_or_invalid_timestamp_count": invalid_timestamps,
         "feature_columns": list(REQUIRED_NEWS_AGGREGATE_FEATURES),
+        "required_news_contract_columns": list(REQUIRED_NEWS_CONTRACT_COLUMNS),
+        "required_news_feature_columns": list(REQUIRED_NEWS_FEATURE_COLUMNS),
         "coverage_row_count": sum(1 for row in rows if row["news_has_coverage_30d"]),
         "missing_coverage_row_count": sum(1 for row in rows if not row["news_has_coverage_30d"]),
+        "symbol_coverage": coverage_summary["symbol_coverage"],
+        "date_coverage": coverage_summary["date_coverage"],
+        "event_type_coverage": _event_type_coverage(normalized_news),
+        "missing_feature_counts": _missing_feature_counts(rows),
+        "negative_sentiment_threshold": negative_sentiment_threshold,
         "synthetic_news_features_created": False,
         "point_in_time_filters": {
             "published_at_utc_lte_rebalance_date": True,
@@ -407,6 +430,52 @@ def _validate_stock_rows(stock_rows: list[Mapping[str, Any]]) -> None:
             "stock-alpha news feature stock rows missing required fields: "
             + ", ".join(missing)
         )
+
+
+def _feature_coverage_summary(
+    feature_rows: list[Mapping[str, Any]],
+    stock_rows: list[Mapping[str, Any]],
+) -> dict[str, float]:
+    stock_symbols = {
+        str(row.get("symbol", "")).strip().upper()
+        for row in stock_rows
+        if str(row.get("symbol", "")).strip()
+    }
+    stock_dates = {
+        str(row.get("rebalance_date", ""))[:10]
+        for row in stock_rows
+        if str(row.get("rebalance_date", "")).strip()
+    }
+    covered_symbols = {
+        str(row.get("symbol", "")).strip().upper()
+        for row in feature_rows
+        if row.get("news_has_coverage_30d")
+    }
+    covered_dates = {
+        str(row.get("rebalance_date", ""))[:10]
+        for row in feature_rows
+        if row.get("news_has_coverage_30d")
+    }
+    return {
+        "symbol_coverage": len(stock_symbols & covered_symbols) / len(stock_symbols) if stock_symbols else 0.0,
+        "date_coverage": len(stock_dates & covered_dates) / len(stock_dates) if stock_dates else 0.0,
+    }
+
+
+def _event_type_coverage(news_rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    coverage: dict[str, int] = {}
+    for row in news_rows:
+        event_type = str(row.get("event_type", "")).strip().lower()
+        if event_type:
+            coverage[event_type] = coverage.get(event_type, 0) + 1
+    return dict(sorted(coverage.items()))
+
+
+def _missing_feature_counts(feature_rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    return {
+        column: sum(row.get(column) in {"", None} for row in feature_rows)
+        for column in REQUIRED_NEWS_AGGREGATE_FEATURES
+    }
 
 
 def _feature_pit_violation_count(rows: list[Mapping[str, Any]]) -> int:
@@ -763,6 +832,7 @@ def _event_count(
     *,
     event_markers: tuple[str, ...] = (),
     negative: bool = False,
+    negative_sentiment_threshold: float = 0.0,
 ) -> int:
     count = 0
     for row in rows:
@@ -770,7 +840,7 @@ def _event_count(
         sentiment = _float_or_none(row.get("sentiment_score"))
         if event_markers and any(marker in event_type for marker in event_markers):
             count += 1
-        elif negative and sentiment is not None and sentiment < 0:
+        elif negative and sentiment is not None and sentiment < negative_sentiment_threshold:
             count += 1
     return count
 

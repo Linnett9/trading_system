@@ -7,6 +7,7 @@ from config.config_loader import load_config
 
 from core.research.ml.stock_level.stock_alpha_news_contract import (
     REQUIRED_NEWS_AGGREGATE_FEATURES,
+    REQUIRED_NEWS_CONTRACT_COLUMNS,
     REQUIRED_NEWS_FEATURE_COLUMNS,
     build_stock_alpha_news_features,
     check_news_transformer_readiness,
@@ -45,6 +46,22 @@ def test_missing_required_fields_fails(tmp_path):
     assert validation.available is False
     assert validation.reason == "missing required news contract fields"
     assert "ingested_at" in validation.missing_fields
+
+
+def test_phase6_required_raw_fields_include_event_relevance_and_novelty(tmp_path):
+    news = tmp_path / "news.csv"
+    news.write_text(
+        "article_id,symbol,published_at_utc,ingested_at,source,headline,body_or_summary,sentiment_score,language\n"
+        "1,AAPL,2024-01-01T00:00:00Z,2024-01-01T00:00:00Z,vendor,h,b,0.1,en\n",
+        encoding="utf-8",
+    )
+
+    validation = validate_news_contract(_config(news), _stock_rows())
+
+    assert set(REQUIRED_NEWS_CONTRACT_COLUMNS) >= {"event_type", "relevance_score", "novelty_score"}
+    assert validation.available is False
+    assert validation.reason == "missing required news contract fields"
+    assert set(validation.missing_fields) >= {"event_type", "relevance_score", "novelty_score"}
 
 
 def test_future_published_at_fails(tmp_path):
@@ -278,6 +295,47 @@ def test_news_feature_aggregation_enforces_point_in_time_windows():
     assert second["analyst_news_count_14d"] == 1
     assert audit["point_in_time_filters"]["future_statistics_used"] is False
     assert audit["synthetic_news_features_created"] is False
+    assert audit["raw_article_count"] == 2
+    assert audit["valid_article_count"] == 2
+    assert audit["event_type_coverage"] == {"analyst": 1, "earnings": 1}
+    assert audit["symbol_coverage"] == 1.0
+    assert audit["date_coverage"] == 1.0
+
+
+def test_news_feature_aggregation_does_not_count_future_articles_in_windows():
+    news_rows = [
+        _news_row("a1", "AAPL", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z", "0.5", "earnings"),
+        _news_row("a2", "AAPL", "2024-01-03T00:00:00Z", "2024-01-03T00:00:00Z", "-0.5", "analyst"),
+    ]
+
+    features, audit = build_stock_alpha_news_features(
+        news_rows,
+        [{"rebalance_date": "2024-01-02", "symbol": "AAPL"}],
+    )
+
+    assert features[0]["news_count_7d"] == 1
+    assert features[0]["analyst_news_count_14d"] == 0
+    assert audit["pit_violation_count"] == 1
+
+
+def test_negative_news_count_uses_configurable_threshold():
+    news_rows = [
+        _news_row("a1", "AAPL", "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z", "-0.05", "analyst"),
+        _news_row("a2", "AAPL", "2024-01-01T01:00:00Z", "2024-01-01T01:00:00Z", "-0.25", "guidance"),
+    ]
+
+    default_features, _ = build_stock_alpha_news_features(
+        news_rows,
+        [{"rebalance_date": "2024-01-02", "symbol": "AAPL"}],
+    )
+    threshold_features, _ = build_stock_alpha_news_features(
+        news_rows,
+        [{"rebalance_date": "2024-01-02", "symbol": "AAPL"}],
+        negative_sentiment_threshold=-0.10,
+    )
+
+    assert default_features[0]["negative_news_count_7d"] == 2
+    assert threshold_features[0]["negative_news_count_7d"] == 1
 
 
 def test_news_feature_aggregation_keeps_missing_news_as_missing_not_neutral():
@@ -292,6 +350,7 @@ def test_news_feature_aggregation_keeps_missing_news_as_missing_not_neutral():
     assert row["avg_sentiment_3d"] == ""
     assert row["sentiment_change_3d"] == ""
     assert row["news_has_coverage_30d"] is False
+    assert row["news_count_7d"] == 0
 
 
 def test_news_feature_writer_outputs_features_and_audit_then_gate_can_validate(tmp_path):
@@ -326,7 +385,11 @@ def test_news_feature_writer_outputs_features_and_audit_then_gate_can_validate(t
     assert audit["rebalance_date_count"] == 1
     assert audit["feature_row_count"] == 1
     assert audit["pit_violations_count"] == 0
+    assert audit["pit_violation_count"] == 0
     assert audit["missing_or_invalid_timestamp_count"] == 0
+    assert audit["missing_feature_counts"]["avg_sentiment_1d"] == 0
+    assert audit["required_news_contract_columns"] == list(REQUIRED_NEWS_CONTRACT_COLUMNS)
+    assert audit["required_news_feature_columns"] == list(REQUIRED_NEWS_FEATURE_COLUMNS)
     assert audit["transformer_available"] is False
 
     disabled = validate_news_contract(
