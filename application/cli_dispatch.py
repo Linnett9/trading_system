@@ -28,6 +28,7 @@ from application.services.ml_commands import (
     run_ml_stock_alpha_news_contract_ingest,
     run_ml_stock_alpha_news_coverage_audit,
     run_ml_stock_alpha_news_features,
+    run_ml_stock_alpha_news_pipeline_preflight,
     run_ml_stock_alpha_news_provider_audit,
     run_ml_stock_alpha_news_readiness_preflight,
     run_ml_stock_alpha_parallelism_audit,
@@ -152,6 +153,9 @@ def dispatch(args, config, feed):
         return
     if args.mode == "ml-stock-alpha-news-provider-audit":
         run_ml_stock_alpha_news_provider_audit(config)
+        return
+    if args.mode == "ml-stock-alpha-news-pipeline-preflight":
+        run_ml_stock_alpha_news_pipeline_preflight(config)
         return
     if args.mode == "ml-stock-alpha-news-readiness-preflight":
         run_ml_stock_alpha_news_readiness_preflight(config)

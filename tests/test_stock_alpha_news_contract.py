@@ -9,6 +9,7 @@ import pytest
 from application.services.ml_commands_stock import (
     run_ml_stock_alpha_news_contract_ingest,
     run_ml_stock_alpha_news_coverage_audit,
+    run_ml_stock_alpha_news_pipeline_preflight,
     run_ml_stock_alpha_news_provider_audit,
 )
 from config.config_loader import load_config
@@ -33,6 +34,10 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 )
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
+)
+from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import (
+    build_stock_alpha_news_pipeline_preflight,
+    write_stock_alpha_news_pipeline_preflight,
 )
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
     build_stock_alpha_news_readiness_preflight,
@@ -1170,6 +1175,79 @@ def test_news_feature_writer_rejects_invalid_contract(tmp_path):
         raise AssertionError("invalid point-in-time news contract should not aggregate")
 
 
+def test_stock_alpha_news_pipeline_preflight_tiny_fixture_stops_at_disabled_transformer(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_preflight_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    _redirect_pipeline_outputs(config, tmp_path)
+
+    paths = write_stock_alpha_news_pipeline_preflight(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    stages = payload["stages"]
+
+    assert payload["pipeline_safe_for_news_transformer_training"] is False
+    assert payload["pipeline_completed"] is True
+    assert payload["stopped_stage"] is None
+    assert payload["model_training_invoked"] is False
+    assert payload["diagnostics_invoked"] is False
+    assert stages["provider_audit"]["attempted"] is True
+    assert stages["provider_audit"]["completed"] is True
+    assert stages["provider_audit"]["safe"] is True
+    assert stages["contract_ingest"]["completed"] is True
+    assert stages["contract_ingest"]["safe"] is True
+    assert stages["coverage_audit"]["completed"] is True
+    assert stages["coverage_audit"]["safe"] is True
+    assert stages["feature_generation"]["completed"] is True
+    assert stages["feature_generation"]["safe"] is True
+    assert stages["readiness_preflight"]["completed"] is True
+    assert stages["readiness_preflight"]["safe"] is False
+    assert stages["readiness_preflight"]["blocking_issues"] == [
+        "stock_alpha_news_enable_transformer_false"
+    ]
+
+
+def test_stock_alpha_news_pipeline_preflight_real_template_missing_raw_is_clean(tmp_path, capsys):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_preflight_real_template.yaml",
+        overlay_project_config=True,
+    )
+    _redirect_pipeline_outputs(config, tmp_path)
+    config["ml"]["stock_alpha_news_raw_path"] = str(tmp_path / "missing_raw.csv")
+
+    run_ml_stock_alpha_news_pipeline_preflight(config)
+    output = capsys.readouterr().out
+    payload = json.loads((tmp_path / "dev" / "stock_alpha_news_pipeline_preflight.json").read_text(encoding="utf-8"))
+
+    assert "STOCK-ALPHA NEWS PIPELINE PREFLIGHT" in output
+    assert "pipeline_safe_for_news_transformer_training=false" in output
+    assert "stopped_stage=provider_audit" in output
+    assert "missing_raw.csv" in output
+    assert payload["stopped_stage"] == "provider_audit"
+    assert payload["stages"]["contract_ingest"]["attempted"] is False
+    assert not Path(config["ml"]["stock_alpha_news_contract_path"]).exists()
+    assert not Path(config["ml"]["stock_alpha_news_features_path"]).exists()
+
+
+def test_stock_alpha_news_pipeline_preflight_stops_before_features_when_coverage_unsafe(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_preflight_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    _redirect_pipeline_outputs(config, tmp_path)
+    config["ml"]["stock_alpha_news_coverage_min_symbol_coverage"] = 1.01
+
+    payload = build_stock_alpha_news_pipeline_preflight(config)
+
+    assert payload["stopped_stage"] == "coverage_audit"
+    assert payload["stages"]["coverage_audit"]["attempted"] is True
+    assert payload["stages"]["coverage_audit"]["safe"] is False
+    assert "coverage_audit: symbol coverage below minimum" in payload["blocking_issues"]
+    assert payload["stages"]["feature_generation"]["attempted"] is False
+    assert payload["stages"]["readiness_preflight"]["attempted"] is False
+    assert not Path(config["ml"]["stock_alpha_news_features_path"]).exists()
+
+
 def _config(
     news,
     features=None,
@@ -1299,6 +1377,18 @@ def _ingest_config(raw_path: Path, contract_path: Path, audit_dir: Path) -> dict
             **_guardrails(),
         }
     }
+
+
+def _redirect_pipeline_outputs(config: dict, output_dir: Path) -> None:
+    ml = config["ml"]
+    ml["stock_alpha_report_root"] = str(output_dir)
+    dev_dir = output_dir / "dev"
+    ml["stock_alpha_news_contract_path"] = str(dev_dir / "stock_alpha_news_contract.csv")
+    ml["stock_alpha_news_features_path"] = str(dev_dir / "stock_alpha_news_features.csv")
+    ml["stock_alpha_news_provider_audit_dir"] = str(dev_dir / "news_provider_audit")
+    ml["stock_alpha_news_contract_ingest_audit_dir"] = str(dev_dir / "news_contract_ingest")
+    ml["stock_alpha_news_coverage_audit_dir"] = str(dev_dir / "news_coverage_audit")
+    ml["stock_alpha_news_pipeline_preflight_output_dir"] = str(dev_dir)
 
 
 def _write_raw_news_csv(

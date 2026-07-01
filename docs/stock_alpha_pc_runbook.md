@@ -35,8 +35,8 @@ for this workflow.
 | 5 | Inspect realized exposure, drawdown, underinvestment | coarse sweep outputs | Yes after step 4 | No |
 | 6 | Run full-enriched refine | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_refine.yaml` | No, only after step 5 is sane | Possibly |
 | 7 | Run full-grid overnight only if coarse/refine are sane | `config/config.stock_alpha_portfolio_sweep_ensemble_full_enriched_full_grid.yaml` | No | Yes |
-| 8 | Generate news features after real news contract exists | `config/config.stock_alpha_news_features_full_template.yaml` | No, waits for `data/news/stock_alpha_news_contract.csv` | Possibly |
-| 9 | Run news transformer readiness preflight | `config/config.stock_alpha_news_readiness_preflight_tiny_fixture.yaml` as command template | Yes, inspection only; expected not safe while disabled | No |
+| 8 | Run news pipeline preflight | `config/config.stock_alpha_news_pipeline_preflight_real_template.yaml` | Yes, inspection only; expected to block until real data exists | No |
+| 9 | Generate news features after real news contract exists | `config/config.stock_alpha_news_features_full_template.yaml` | No, waits for `data/news/stock_alpha_news_contract.csv` | Possibly |
 | 10 | Keep news transformer disabled until PIT features pass gates | same news config family | No model enablement by default | No |
 
 ## 1. Full Stock-Alpha Enriched Benchmark
@@ -468,12 +468,9 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
 
 The safe real-data sequence is:
 
-1. Provider audit
-2. Contract ingest
-3. Coverage alignment audit
-4. Feature generation
-5. Readiness preflight
-6. Enabled diagnostic only if safe
+1. News pipeline preflight
+2. Inspect provider/ingest/coverage/feature/readiness reports
+3. Enabled diagnostic only if every data gate passes and transformer enablement is intentional
 
 ## News Coverage Alignment Audit
 
@@ -498,13 +495,64 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_coverage_audit_real_template.yaml
 ```
 
+## News Pipeline Preflight
+
+The pipeline preflight is the one-command safety check for the whole stock-alpha
+news data chain. It runs or checks provider audit, contract ingest, coverage
+alignment audit, feature generation, and readiness preflight in order. It stops
+before downstream stages when an upstream gate is unsafe. It does not train
+models, run deep diagnostics, or touch broker/paper/live/order execution.
+
+Tiny fixture:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-pipeline-preflight \
+  --config config/config.stock_alpha_news_pipeline_preflight_tiny_fixture.yaml
+```
+
+Real template:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-pipeline-preflight \
+  --config config/config.stock_alpha_news_pipeline_preflight_real_template.yaml
+```
+
+Expected outputs:
+
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_tiny_fixture/dev/stock_alpha_news_pipeline_preflight.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_tiny_fixture/dev/stock_alpha_news_pipeline_preflight.md`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_real/dev/stock_alpha_news_pipeline_preflight.json`
+- `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_real/dev/stock_alpha_news_pipeline_preflight.md`
+
+The tiny fixture should complete the data stages but remain not safe for
+news-transformer training while `stock_alpha_news_enable_transformer: false`.
+The real template should block cleanly if the placeholder raw provider export is
+missing; it must not write fake contracts or features.
+
+Use the manual provider, ingest, coverage, feature, and readiness commands above
+and below when debugging a specific failed stage.
+
 ## Real PIT News Development Templates
 
 These templates are placeholders for a future real point-in-time news archive.
 They do not assume `data/news/stock_alpha_news_contract.csv` exists, and they
 do not enable the transformer by default.
 
-1. Ingest a raw provider/export news CSV into the canonical PIT contract:
+1. Run the top-level pipeline preflight:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
+  --mode ml-stock-alpha-news-pipeline-preflight \
+  --config config/config.stock_alpha_news_pipeline_preflight_real_template.yaml
+```
+
+2. Inspect the provider, ingest, coverage, feature, and readiness reports. The
+pipeline summary points to each stage report it created.
+
+3. For stage-level debugging, ingest a raw provider/export news CSV into the
+canonical PIT contract:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -521,7 +569,7 @@ Expected outputs:
 If the raw source file is missing or required columns are absent, the ingest
 must fail clearly and must not write a fake contract.
 
-2. Run coverage alignment audit after the PIT contract and stock rows exist:
+4. Run coverage alignment audit after the PIT contract and stock rows exist:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -529,7 +577,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_coverage_audit_real_template.yaml
 ```
 
-3. Generate canonical news features after coverage alignment is reviewed:
+5. Generate canonical news features after coverage alignment is reviewed:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -537,7 +585,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_features_real_template.yaml
 ```
 
-4. Run the readiness preflight with the transformer still disabled:
+6. Run the readiness preflight with the transformer still disabled:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
@@ -545,7 +593,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \
   --config config/config.stock_alpha_news_readiness_preflight_real_template.yaml
 ```
 
-5. Inspect the ingest audit, coverage audit, feature audit, and preflight outputs:
+7. Inspect the ingest audit, coverage audit, feature audit, and preflight outputs:
 
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_real/dev/news_contract_ingest/stock_alpha_news_contract_ingest_audit.json`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_coverage_audit_real/dev/news_coverage_audit/stock_alpha_news_coverage_audit.json`
@@ -557,7 +605,8 @@ The preflight should remain not-safe while
 `stock_alpha_news_enable_transformer: false`. Review missing columns, coverage,
 PIT audit metadata, and any blocking issues before changing templates.
 
-Only after preflight passes, use the enabled diagnostic template:
+Only after every data gate passes and `stock_alpha_news_enable_transformer` is
+intentionally enabled in a reviewed config, use the enabled diagnostic template:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 "$PY" main.py \

@@ -15,6 +15,7 @@ from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
+from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_stock_alpha_news_provider_audit
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
@@ -163,6 +164,23 @@ def run_ml_stock_alpha_news_readiness_preflight(config):
     result = write_stock_alpha_news_readiness_preflight(config)
     print("\nSTOCK-ALPHA NEWS READINESS PREFLIGHT")
     print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_pipeline_preflight(config):
+    result = write_stock_alpha_news_pipeline_preflight(config)
+    import json
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print("\nSTOCK-ALPHA NEWS PIPELINE PREFLIGHT")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    print(
+        "pipeline_safe_for_news_transformer_training="
+        f"{str(payload.get('pipeline_safe_for_news_transformer_training', False)).lower()}"
+    )
+    print(f"stopped_stage={payload.get('stopped_stage') or 'none'}")
+    for issue in payload.get("blocking_issues", []):
+        print(f"blocking_issue={issue}")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
 
