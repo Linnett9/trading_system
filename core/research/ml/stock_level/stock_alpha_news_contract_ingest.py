@@ -49,6 +49,7 @@ def write_stock_alpha_news_contract_ingest(
     raw_path = _required_path(ml, "stock_alpha_news_raw_path")
     contract_path = _required_path(ml, "stock_alpha_news_contract_path")
     audit_dir = _required_path(ml, "stock_alpha_news_contract_ingest_audit_dir")
+    provider_column_map = _provider_column_map(ml)
 
     if not raw_path.exists():
         raise FileNotFoundError(
@@ -56,7 +57,10 @@ def write_stock_alpha_news_contract_ingest(
         )
 
     raw_rows = CsvRowRepository().read(raw_path)
-    normalized_rows, audit = build_stock_alpha_news_contract_rows(raw_rows)
+    normalized_rows, audit = build_stock_alpha_news_contract_rows(
+        raw_rows,
+        provider_column_map=provider_column_map,
+    )
     audit.update(
         {
             "raw_source_path": str(raw_path),
@@ -64,6 +68,12 @@ def write_stock_alpha_news_contract_ingest(
             **GUARDRAILS,
         }
     )
+    if audit["missing_mapped_provider_columns"]:
+        _write_audit(audit_dir, audit)
+        raise ValueError(
+            "stock-alpha news raw source missing mapped provider columns: "
+            + ", ".join(audit["missing_mapped_provider_columns"])
+        )
     if audit["missing_required_column_names"]:
         _write_audit(audit_dir, audit)
         raise ValueError(
@@ -87,8 +97,12 @@ def write_stock_alpha_news_contract_ingest(
 
 def build_stock_alpha_news_contract_rows(
     raw_rows: list[Mapping[str, Any]],
+    *,
+    provider_column_map: Mapping[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    missing_columns = _missing_required_columns(raw_rows)
+    mapping = dict(provider_column_map or {})
+    mapped_rows, mapping_audit = _apply_provider_column_map(raw_rows, mapping)
+    missing_columns = _missing_required_columns(mapped_rows)
     if missing_columns:
         return [], _audit_payload(
             raw_rows,
@@ -98,6 +112,7 @@ def build_stock_alpha_news_contract_rows(
             missing_required_field_counts={field: 0 for field in REQUIRED_NON_EMPTY_FIELDS},
             invalid_timestamp_count=0,
             ingested_before_published_count=0,
+            **mapping_audit,
         )
 
     valid_rows: list[dict[str, Any]] = []
@@ -107,7 +122,7 @@ def build_stock_alpha_news_contract_rows(
     invalid_timestamp_count = 0
     ingested_before_published_count = 0
 
-    for raw_row in raw_rows:
+    for raw_row in mapped_rows:
         row = {column: str(raw_row.get(column, "")).strip() for column in REQUIRED_NEWS_CONTRACT_COLUMNS}
         missing_fields = [field for field in REQUIRED_NON_EMPTY_FIELDS if not row[field]]
         for field in missing_fields:
@@ -144,6 +159,7 @@ def build_stock_alpha_news_contract_rows(
         missing_required_field_counts=missing_required_field_counts,
         invalid_timestamp_count=invalid_timestamp_count,
         ingested_before_published_count=ingested_before_published_count,
+        **mapping_audit,
     )
     return valid_rows, audit
 
@@ -153,6 +169,68 @@ def _required_path(ml: Mapping[str, Any], key: str) -> Path:
     if not value:
         raise ValueError(f"missing ml.{key}")
     return Path(str(value))
+
+
+def _provider_column_map(ml: Mapping[str, Any]) -> dict[str, str]:
+    raw = ml.get("stock_alpha_news_provider_column_map", {}) or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("ml.stock_alpha_news_provider_column_map must be a mapping")
+    return {
+        str(canonical).strip(): str(provider).strip()
+        for canonical, provider in raw.items()
+        if str(canonical).strip() and str(provider).strip()
+    }
+
+
+def _apply_provider_column_map(
+    raw_rows: list[Mapping[str, Any]],
+    provider_column_map: Mapping[str, str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not provider_column_map:
+        return [dict(row) for row in raw_rows], _mapping_audit(
+            raw_rows,
+            provider_column_map={},
+            missing_mapped_provider_columns=[],
+            canonical_columns_after_mapping=list(raw_rows[0]) if raw_rows else [],
+        )
+
+    raw_columns = set(raw_rows[0]) if raw_rows else set()
+    missing_provider_columns = [
+        provider_column
+        for provider_column in provider_column_map.values()
+        if provider_column not in raw_columns
+    ]
+    mapped_rows = [
+        {
+            canonical_column: row.get(provider_column, "")
+            for canonical_column, provider_column in provider_column_map.items()
+        }
+        for row in raw_rows
+    ]
+    return mapped_rows, _mapping_audit(
+        raw_rows,
+        provider_column_map=provider_column_map,
+        missing_mapped_provider_columns=missing_provider_columns,
+        canonical_columns_after_mapping=list(mapped_rows[0]) if mapped_rows else list(provider_column_map),
+    )
+
+
+def _mapping_audit(
+    raw_rows: list[Mapping[str, Any]],
+    *,
+    provider_column_map: Mapping[str, str],
+    missing_mapped_provider_columns: list[str],
+    canonical_columns_after_mapping: list[str],
+) -> dict[str, Any]:
+    raw_columns = set(raw_rows[0]) if raw_rows else set()
+    mapped_provider_columns = set(provider_column_map.values())
+    return {
+        "provider_column_map_used": bool(provider_column_map),
+        "provider_column_map": dict(provider_column_map),
+        "missing_mapped_provider_columns": list(missing_mapped_provider_columns),
+        "unmapped_provider_columns": sorted(raw_columns - mapped_provider_columns),
+        "canonical_columns_after_mapping": list(canonical_columns_after_mapping),
+    }
 
 
 def _missing_required_columns(raw_rows: list[Mapping[str, Any]]) -> list[str]:
@@ -213,6 +291,11 @@ def _audit_payload(
     missing_required_field_counts: dict[str, int],
     invalid_timestamp_count: int,
     ingested_before_published_count: int,
+    provider_column_map_used: bool,
+    provider_column_map: dict[str, str],
+    missing_mapped_provider_columns: list[str],
+    unmapped_provider_columns: list[str],
+    canonical_columns_after_mapping: list[str],
 ) -> dict[str, Any]:
     invalid_row_count = (
         len(raw_rows)
@@ -229,6 +312,11 @@ def _audit_payload(
         "invalid_row_count": max(0, invalid_row_count),
         "duplicate_article_id_count": duplicate_article_id_count,
         "missing_required_column_names": list(missing_required_column_names),
+        "provider_column_map_used": provider_column_map_used,
+        "provider_column_map": dict(provider_column_map),
+        "missing_mapped_provider_columns": list(missing_mapped_provider_columns),
+        "unmapped_provider_columns": list(unmapped_provider_columns),
+        "canonical_columns_after_mapping": list(canonical_columns_after_mapping),
         "missing_required_field_counts": dict(missing_required_field_counts),
         "invalid_timestamp_count": invalid_timestamp_count,
         "ingested_before_published_count": ingested_before_published_count,
@@ -254,6 +342,7 @@ def _write_audit(audit_dir: Path, audit: Mapping[str, Any]) -> NewsContractInges
 
 def _markdown(audit: Mapping[str, Any]) -> str:
     missing_columns = audit.get("missing_required_column_names", []) or ["none"]
+    missing_mapped_columns = audit.get("missing_mapped_provider_columns", []) or ["none"]
     missing_fields = dict(audit.get("missing_required_field_counts", {}) or {})
     event_counts = dict(audit.get("event_type_counts", {}) or {})
     return "\n".join(
@@ -269,7 +358,11 @@ def _markdown(audit: Mapping[str, Any]) -> str:
             f"- Symbols: {audit.get('symbol_count', 0)}",
             f"- Sources: {audit.get('source_count', 0)}",
             f"- Safe to generate features: {audit.get('safe_to_generate_features', False)}",
+            f"- Provider column map used: {audit.get('provider_column_map_used', False)}",
             f"- Output contract: {audit.get('output_contract_path', '')}",
+            "",
+            "## Missing Mapped Provider Columns",
+            *[f"- {column}" for column in missing_mapped_columns],
             "",
             "## Missing Required Columns",
             *[f"- {column}" for column in missing_columns],

@@ -1,0 +1,21 @@
+ml:
+  stock_alpha_news_raw_path: tests/fixtures/stock_alpha_news/raw_provider_export_alias_tiny.csv
+  stock_alpha_news_contract_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_alias_tiny_fixture/dev/stock_alpha_news_contract.csv
+  stock_alpha_news_contract_ingest_audit_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_contract_ingest_alias_tiny_fixture/dev/news_contract_ingest
+  stock_alpha_news_provider_column_map:
+    article_id: id
+    symbol: ticker
+    published_at_utc: published_at
+    source: provider
+    headline: title
+    body_or_summary: summary
+    sentiment_score: sentiment
+    relevance_score: relevance
+    novelty_score: novelty
+    event_type: category
+    language: lang
+    ingested_at: collected_at
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

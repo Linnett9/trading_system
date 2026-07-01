@@ -414,6 +414,37 @@ Expected tiny-ingest outputs:
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_tiny_ingest_fixture/dev/stock_alpha_news_features.csv`
 - `reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_readiness_preflight_tiny_ingest_fixture/dev/stock_alpha_news_readiness_preflight.json`
 
+## Provider Column Mapping
+
+Real provider exports should be adapted through
+`stock_alpha_news_provider_column_map` instead of manually editing CSV files.
+The ingest step maps provider-specific headers into the canonical point-in-time
+contract, then applies the same validation, dedupe, timestamp, and event-type
+rules.
+
+Example:
+
+```yaml
+ml:
+  stock_alpha_news_provider_column_map:
+    article_id: id
+    symbol: ticker
+    published_at_utc: published_at
+    source: provider
+    headline: title
+    body_or_summary: summary
+    sentiment_score: sentiment
+    relevance_score: relevance
+    novelty_score: novelty
+    event_type: category
+    language: lang
+    ingested_at: collected_at
+```
+
+The safe real-data sequence is unchanged: ingest raw provider/export news,
+generate canonical news features, run readiness preflight, and only then run the
+enabled diagnostic template if the preflight is safe.
+
 ## Real PIT News Development Templates
 
 These templates are placeholders for a future real point-in-time news archive.

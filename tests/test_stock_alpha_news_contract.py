@@ -526,6 +526,71 @@ def test_tiny_raw_provider_ingest_smoke_runs_contract_features_and_preflight():
     assert "stock_alpha_news_enable_transformer_false" in preflight["blocking_issues"]
 
 
+def test_alias_provider_column_map_ingest_writes_canonical_contract():
+    config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+
+    paths = write_stock_alpha_news_contract_ingest(config)
+
+    rows = CsvRowRepository().read(paths.contract_path)
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+    assert paths.audit_markdown_path.exists()
+    assert len(rows) == 4
+    assert list(rows[0]) == list(REQUIRED_NEWS_CONTRACT_COLUMNS)
+    assert "ticker" not in rows[0]
+    assert "published_at" not in rows[0]
+    assert {row["symbol"] for row in rows} == {"AAPL", "MSFT"}
+    assert _contract_row(rows, "alias-guidance-msft-1")["symbol"] == "MSFT"
+    assert _contract_row(rows, "alias-mna-aapl-1")["event_type"] == "mna"
+    assert sum(1 for row in rows if row["article_id"] == "alias-analyst-aapl-1") == 1
+    assert "alias-bad-msft-1" not in {row["article_id"] for row in rows}
+    assert audit["provider_column_map_used"] is True
+    assert audit["provider_column_map"]["article_id"] == "id"
+    assert audit["missing_mapped_provider_columns"] == []
+    assert audit["unmapped_provider_columns"] == ["provider_note"]
+    assert audit["canonical_columns_after_mapping"] == list(REQUIRED_NEWS_CONTRACT_COLUMNS)
+    assert audit["duplicate_article_id_count"] == 1
+    assert audit["ingested_before_published_count"] == 1
+
+
+def test_alias_provider_column_map_missing_provider_column_fails_without_contract(tmp_path):
+    raw = tmp_path / "alias_missing.csv"
+    contract = tmp_path / "stock_alpha_news_contract.csv"
+    raw.write_text(
+        "id,ticker,published_at,provider,title,summary,sentiment,relevance,novelty,category,lang\n"
+        "1,AAPL,2024-01-01T00:00:00Z,vendor,title,summary,0.1,0.9,0.8,earnings,en\n",
+        encoding="utf-8",
+    )
+
+    config = _ingest_config(raw, contract, tmp_path / "audit")
+    config["ml"]["stock_alpha_news_provider_column_map"] = {
+        "article_id": "id",
+        "symbol": "ticker",
+        "published_at_utc": "published_at",
+        "source": "provider",
+        "headline": "title",
+        "body_or_summary": "summary",
+        "sentiment_score": "sentiment",
+        "relevance_score": "relevance",
+        "novelty_score": "novelty",
+        "event_type": "category",
+        "language": "lang",
+        "ingested_at": "collected_at",
+    }
+
+    with pytest.raises(ValueError, match="missing mapped provider columns"):
+        write_stock_alpha_news_contract_ingest(config)
+
+    audit_path = tmp_path / "audit" / "stock_alpha_news_contract_ingest_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert not contract.exists()
+    assert audit["provider_column_map_used"] is True
+    assert audit["missing_mapped_provider_columns"] == ["collected_at"]
+    assert audit["safe_to_generate_features"] is False
+
+
 def test_contract_report_writes_json_markdown_and_coverage(tmp_path):
     news = tmp_path / "news.csv"
     _write_news(news)
@@ -1004,6 +1069,13 @@ def _feature_row(rows: list[dict], rebalance_date: str, symbol: str) -> dict:
         if row["rebalance_date"] == rebalance_date and row["symbol"] == symbol:
             return row
     raise AssertionError(f"missing feature row for {rebalance_date} {symbol}")
+
+
+def _contract_row(rows: list[dict], article_id: str) -> dict:
+    for row in rows:
+        if row["article_id"] == article_id:
+            return row
+    raise AssertionError(f"missing contract row for {article_id}")
 
 
 def _ingest_config(raw_path: Path, contract_path: Path, audit_dir: Path) -> dict:

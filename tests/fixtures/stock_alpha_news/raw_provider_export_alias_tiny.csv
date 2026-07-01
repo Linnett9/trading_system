@@ -1,0 +1,7 @@
+id,ticker,published_at,provider,title,summary,sentiment,relevance,novelty,category,lang,collected_at,provider_note
+alias-earnings-aapl-1,aapl,2024-01-01T10:00:00Z,alias_vendor,AAPL earnings beat,AAPL reports stronger earnings than expected,0.45,0.95,0.70,EPS beat,en,2024-01-01T10:05:00Z,kept unmapped
+alias-analyst-aapl-1,AAPL,2024-01-02T09:00:00Z,alias_vendor,AAPL analyst downgrade,Analyst lowers rating after channel checks,-0.40,0.90,0.60,analyst downgrade,en,2024-01-02T09:02:00Z,kept unmapped
+alias-analyst-aapl-1,AAPL,2024-01-02T09:10:00Z,alias_vendor,AAPL duplicate analyst row,Duplicate provider export row should be deduped,-0.35,0.80,0.40,analyst downgrade,en,2024-01-02T09:12:00Z,kept unmapped
+alias-guidance-msft-1,MsFt,2024-01-03T11:00:00Z,alias_vendor,MSFT guidance raised,MSFT lifts full-year cloud guidance,0.30,0.92,0.75,guidance update,en,2024-01-03T11:03:00Z,kept unmapped
+alias-mna-aapl-1,AAPL,2024-01-05T13:00:00Z,alias_vendor,AAPL M&A report,AAPL explores acquisition of supplier,0.20,0.85,0.80,M&A,en,2024-01-05T13:05:00Z,kept unmapped
+alias-bad-msft-1,MSFT,2024-01-04T15:00:00Z,alias_vendor,MSFT bad timestamp,This row should be rejected because ingest precedes publish,0.10,0.75,0.50,product launch,en,2024-01-04T14:59:00Z,kept unmapped

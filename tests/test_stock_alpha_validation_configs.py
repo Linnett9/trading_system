@@ -234,6 +234,26 @@ def test_tiny_raw_news_ingest_smoke_configs_load_with_research_guardrails():
     assert preflight["ml"]["stock_alpha_news_enable_transformer"] is False
 
 
+def test_alias_raw_news_ingest_config_loads_with_provider_column_map():
+    config = load_config(
+        "config/config.stock_alpha_news_contract_ingest_alias_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    column_map = ml["stock_alpha_news_provider_column_map"]
+
+    assert ml["stock_alpha_news_raw_path"] == "tests/fixtures/stock_alpha_news/raw_provider_export_alias_tiny.csv"
+    assert ml["stock_alpha_news_contract_path"].endswith("stock_alpha_news_contract.csv")
+    assert column_map["article_id"] == "id"
+    assert column_map["symbol"] == "ticker"
+    assert column_map["published_at_utc"] == "published_at"
+    assert column_map["ingested_at"] == "collected_at"
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
