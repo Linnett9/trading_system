@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from core.research.framework.reporting import ResearchArtifactWriter
-from core.research.ml.stock_level.news_sources import default_news_sources
+from core.research.ml.stock_level.news_sources import PROVIDER_METADATA, default_news_sources
 from core.research.ml.stock_level.stock_alpha_news_contract import REQUIRED_NEWS_CONTRACT_COLUMNS
 
 
@@ -61,7 +61,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     symbols = [str(value).strip().upper() for value in settings.get("symbols", []) if str(value).strip()]
     provider_settings = dict(settings.get("providers", {}) or {})
     adapters = dict(sources or default_news_sources())
-    requested, attempted, skipped, failures, counts, collected = [], [], [], {}, {}, []
+    requested, attempted, skipped, rate_limited, failures, counts, collected = [], [], [], [], {}, {}, []
     for name, provider_config in provider_settings.items():
         provider_config = dict(provider_config or {})
         if not bool(provider_config.get("enabled", False)):
@@ -85,12 +85,16 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         except Exception as exc:  # provider isolation is intentional
             message = str(exc).replace(api_key, "[REDACTED]") if api_key else str(exc)
             failures[name] = f"{type(exc).__name__}: {message}"
+            if name == "gdelt" and getattr(exc, "code", None) == 429:
+                rate_limited.append(name)
     deduplicated = _deduplicate(collected)
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
     payload["total_rows_collected"] = len(collected)
     payload["providers_returned_zero_rows"] = sorted(name for name, count in counts.items() if count == 0)
-    payload["next_action"] = _next_action(dry_run, requested, attempted, skipped, failures, counts, deduplicated)
+    payload["providers_rate_limited"] = sorted(rate_limited)
+    payload["provider_policy"] = {name: PROVIDER_METADATA.get(name, {"statuses": ["unclassified"]}) for name in provider_settings}
+    payload["next_action"] = _next_action(dry_run, requested, attempted, skipped, rate_limited, failures, counts, deduplicated)
     return payload, deduplicated
 
 
@@ -122,6 +126,7 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_skipped_missing_key": skipped, "providers_failed": failures,
         "provider_row_counts": counts, "total_rows_collected": total,
         "providers_returned_zero_rows": [],
+        "providers_rate_limited": [], "provider_policy": {},
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
         "files_ingested": False, "features_generated": False, "readiness_invoked": False,
         "diagnostics_invoked": False, "model_training_invoked": False,
@@ -130,8 +135,9 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
     }
 
 
-def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skipped: list[str], failures: Mapping[str, str], counts: Mapping[str, int], rows: list[dict[str, Any]]) -> str:
+def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skipped: list[str], rate_limited: list[str], failures: Mapping[str, str], counts: Mapping[str, int], rows: list[dict[str, Any]]) -> str:
     if skipped and not attempted: return "configure_api_keys"
+    if "gdelt" in rate_limited: return "retry_gdelt_later_or_reduce_request"
     if any(name in {"fmp", "newsapi"} and ("402" in message or "426" in message) for name, message in failures.items()): return "disable_paid_or_upgrade_required_sources"
     if counts.get("finnhub") == 0: return "adjust_finnhub_symbols_or_date_range"
     if failures: return "review_collection_report"
@@ -149,4 +155,4 @@ def _required_path(ml: Mapping[str, Any], key: str) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])

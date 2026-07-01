@@ -14,6 +14,7 @@ PROVIDER_KEYS = {
     "finnhub": "FINNHUB_API_KEY",
     "fmp": "FMP_API_KEY",
     "newsapi": "NEWSAPI_API_KEY",
+    "sec_edgar": None,
 }
 
 

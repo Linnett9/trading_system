@@ -39,7 +39,8 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import GdeltNewsSource
+from core.research.ml.stock_level.news_sources import GdeltNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
+from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
 )
@@ -1740,6 +1741,38 @@ def test_news_collection_planner_handles_missing_stock_rows(tmp_path):
     assert payload["input_status"]["stock_rows_exists"] is False
     assert payload["stock_row_symbols_available"] == []
     assert payload["recommended_symbol_list"]
+
+
+def test_sec_edgar_fake_response_normalizes_official_filings_without_sentiment():
+    payload = {"filings": {"recent": {
+        "accessionNumber": ["0000320193-26-000001", "0000320193-26-000002"],
+        "filingDate": ["2026-01-02", "2026-01-03"],
+        "acceptanceDateTime": ["2026-01-02T12:30:00Z", "2026-01-03T13:30:00Z"],
+        "form": ["8-K", "10-Q"],
+        "primaryDocument": ["event.htm", "quarter.htm"],
+    }}}
+    source = SecEdgarNewsSource(lambda url, timeout: payload)
+    rows = source.collect(symbols=["AAPL"], start_date="2026-01-01", end_date="2026-01-31", limit=5, timeout=2)
+    assert source.api_key_required is False
+    assert [row["event_type"] for row in rows] == ["company_event", "earnings"]
+    assert all(row["provider"] == "sec_edgar" for row in rows)
+    assert all(row["source"] == "SEC EDGAR" for row in rows)
+    assert all(row["sentiment_score"] == "" for row in rows)
+    assert all(row["relevance_score"] == "" and row["novelty_score"] == "" for row in rows)
+    assert "official_filings_source" in PROVIDER_METADATA["sec_edgar"]["statuses"]
+
+
+def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):
+    class RateLimited:
+        api_key_required = False
+        def collect(self, **kwargs):
+            raise HTTPError("https://gdelt.test", 429, "Too Many Requests", None, None)
+    config = _collection_config(tmp_path, dry_run=True)
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": RateLimited()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["providers_rate_limited"] == ["gdelt"]
+    assert payload["next_action"] == "retry_gdelt_later_or_reduce_request"
+    assert "rate_limited_or_retry_later" in payload["provider_policy"]["gdelt"]["statuses"]
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
