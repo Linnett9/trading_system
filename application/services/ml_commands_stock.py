@@ -23,6 +23,7 @@ from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_s
 from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import write_stock_alpha_news_provider_sample_check
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
+from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
 from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
 from core.research.ml.stock_level.run_manifest.service import write_stock_alpha_run_status
 
@@ -255,6 +256,22 @@ def run_ml_stock_alpha_news_source_diagnostics(config):
     print("readiness_invoked=false")
     print("model_training_invoked=false")
     print("diagnostics_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_source_setup_check(config):
+    print("\nSTOCK-ALPHA NEWS SOURCE SETUP CHECK")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    result = write_stock_alpha_news_source_setup_check(config)
+    import json
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"next_action={payload['next_action']}")
+    print(f"providers_enabled={','.join(payload['providers_enabled']) or 'none'}")
+    print(f"providers_missing_key={','.join(payload['enabled_providers_missing_key']) or 'none'}")
+    print("collection_invoked=false")
+    print("raw_export_written=false")
+    print("model_training_invoked=false")
     print("news_transformer_enabled=false")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
