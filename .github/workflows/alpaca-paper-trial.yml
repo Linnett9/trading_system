@@ -31,11 +31,6 @@ jobs:
 
       - name: Generate approval and submit Alpaca paper orders
         run: |
-          if [ "$(date -u +%F)" \> "2026-06-28" ]; then
-            echo "The seven-day trial window has ended; no market-data request was made."
-            exit 0
-          fi
-
           rm -rf reports/paper/alpaca_7day_trial
           mkdir -p reports/paper/alpaca_7day_trial
 

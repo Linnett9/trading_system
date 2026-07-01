@@ -55,3 +55,14 @@ def test_submission_status_requires_allowed_evaluation():
     submitted = result.with_submission_result(True)
     assert submitted.decision == "PAPER_REBALANCE_SUBMITTED"
     assert submitted.orders_submitted is True
+
+
+def test_recommended_dry_run_does_not_claim_submission_permission():
+    config = _config()
+    config["ml"]["model_triggered_rebalance"]["allow_paper_submit"] = True
+    result = evaluate_model_triggered_rebalance(
+        config, _decision(), submit_requested=False,
+    )
+    assert result.decision == "PAPER_REBALANCE_RECOMMENDED"
+    assert result.paper_submit_requested is False
+    assert result.paper_submit_allowed is False

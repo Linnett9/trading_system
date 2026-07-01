@@ -12,7 +12,6 @@ paper_trading:
   report_dir: reports/paper/alpaca_7day_trial
   event_log_path: reports/paper/alpaca_7day_trial/events.jsonl
   dashboard_path: reports/paper/alpaca_7day_trial/dashboard.csv
-  trial_end_date: '2026-06-28'
   broker_state_source: broker
   sync_broker_state_before_decision: true
 risk:
@@ -35,7 +34,7 @@ ml:
   model_triggered_rebalance:
     research_only: false
     paper_only: true
-    allow_paper_submit: false
+    allow_paper_submit: true
     evaluate_every_run: true
     candidate:
       source: dual_momentum

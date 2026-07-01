@@ -107,11 +107,15 @@ class PaperTradingService:
         reproducibility = self._reproducibility_metadata(candidate_id)
         blocked_reason = self._blocked_reason(decision)
 
-        if (
-            rebalance_evaluation is not None
-            and not rebalance_evaluation.paper_submit_allowed
-        ):
-            blocked_reason = "model_triggered_no_trade"
+        if rebalance_evaluation is not None:
+            if rebalance_evaluation.decision == "NO_TRADE":
+                blocked_reason = "model_triggered_no_trade"
+            elif (
+                submit
+                and not dry_run
+                and not rebalance_evaluation.paper_submit_allowed
+            ):
+                blocked_reason = "model_triggered_submission_not_allowed"
 
         if submission_disabled:
             blocked_reason = "paper_submission_disabled"
