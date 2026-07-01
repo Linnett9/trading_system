@@ -49,6 +49,7 @@ def build_stock_alpha_news_readiness_preflight(
     feature_rows = _read_rows_if_present(features_path)
     stock_rows = _read_rows_if_present(stock_rows_path)
     readiness = check_news_transformer_readiness(config, stock_rows) if stock_rows_exists else None
+    feature_audit = _nearby_audit_payload(features_path)
 
     required_columns_missing = _required_columns_missing(feature_rows, source_features_exists)
     blocking_issues: list[str] = []
@@ -76,6 +77,8 @@ def build_stock_alpha_news_readiness_preflight(
         blocking_issues.append(readiness.unavailable_reason)
     if readiness is not None and readiness.pit_violation_count > 0:
         blocking_issues.append("news_feature_rows_contain_future_timestamps")
+    if int(feature_audit.get("pit_violation_count", 0) or 0) > 0:
+        blocking_issues.append("news_features_audit_reports_pit_violations")
     if source_features_exists and "stock_alpha_news_features_audit.json" not in _nearby_audit_names(features_path):
         warning_issues.append("pit_audit_metadata_unavailable")
         blocking_issues.append("pit_audit_metadata_unavailable")
@@ -155,7 +158,7 @@ def _coverage_summary(readiness: Any) -> dict[str, Any]:
 
 def _pit_audit_summary(readiness: Any, features_path: Path | None) -> dict[str, Any]:
     audit_paths = _nearby_audit_paths(features_path)
-    audit_payload = _read_audit_payload(audit_paths[0]) if audit_paths else {}
+    audit_payload = _nearby_audit_payload(features_path)
     return {
         "pit_violation_count": readiness.pit_violation_count if readiness else 0,
         "audit_metadata_available": bool(audit_paths),
@@ -164,6 +167,11 @@ def _pit_audit_summary(readiness: Any, features_path: Path | None) -> dict[str, 
         "audit_synthetic_news_features_created": audit_payload.get("synthetic_news_features_created"),
         "audit_point_in_time_filters": audit_payload.get("point_in_time_filters", {}),
     }
+
+
+def _nearby_audit_payload(features_path: Path | None) -> dict[str, Any]:
+    audit_paths = _nearby_audit_paths(features_path)
+    return _read_audit_payload(audit_paths[0]) if audit_paths else {}
 
 
 def _nearby_audit_names(features_path: Path | None) -> list[str]:

@@ -324,7 +324,7 @@ def build_stock_alpha_news_features(
         raise ValueError("news feature aggregation requires valid published_at_utc and ingested_at timestamps")
     rows: list[dict[str, Any]] = []
     prior_counts_by_symbol: dict[str, list[float]] = {}
-    future_article_count = 0
+    future_article_candidate_count = 0
     for stock_row in sorted(stock_rows, key=lambda row: (str(row.get("symbol", "")).upper(), str(row.get("rebalance_date", "")))):
         symbol = str(stock_row.get("symbol", "")).strip().upper()
         rebalance = _parse_date(stock_row.get("rebalance_date"))
@@ -337,7 +337,7 @@ def build_stock_alpha_news_features(
             "14d": _window_articles(normalized_news, symbol, rebalance, 14),
             "30d": _window_articles(normalized_news, symbol, rebalance, 30),
         }
-        future_article_count += sum(
+        future_article_candidate_count += sum(
             1
             for row in normalized_news
             if row.get("symbol") == symbol
@@ -383,9 +383,11 @@ def build_stock_alpha_news_features(
         "symbol_count": len({row["symbol"] for row in rows}),
         "rebalance_date_count": len({row["rebalance_date"] for row in rows}),
         "invalid_timestamp_count": invalid_timestamps,
-        "future_article_candidate_count": future_article_count,
-        "pit_violation_count": future_article_count,
-        "pit_violations_count": future_article_count,
+        "future_article_candidate_count": future_article_candidate_count,
+        "future_article_excluded_count": future_article_candidate_count,
+        "pit_violation_count": 0,
+        # Backwards-compatible alias. This now counts true violations only.
+        "pit_violations_count": 0,
         "missing_or_invalid_timestamp_count": invalid_timestamps,
         "feature_columns": list(REQUIRED_NEWS_AGGREGATE_FEATURES),
         "required_news_contract_columns": list(REQUIRED_NEWS_CONTRACT_COLUMNS),
@@ -579,7 +581,7 @@ def validate_news_contract(
     invalid_published = sum(1 for row in normalized_rows if row["published_at_utc"] is None)
     invalid_ingested = sum(1 for row in normalized_rows if row["ingested_at"] is None)
     synthetic = sum(1 for row in normalized_rows if _looks_like_synthetic_zero_news(row))
-    future = _future_article_count(normalized_rows, stock_rows)
+    future = _future_article_candidate_count(normalized_rows, stock_rows)
     if invalid_article_ids:
         return _invalid("news contract contains empty article_id", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_article_ids=invalid_article_ids)
     if invalid_symbols:
@@ -590,14 +592,11 @@ def validate_news_contract(
         return _invalid("news contract contains invalid ingested_at", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_ingested=invalid_ingested)
     if synthetic:
         return _invalid("news contract contains synthetic zero-news fake coverage", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, synthetic=synthetic)
-    if future:
-        return _invalid("news contract contains future articles", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, future=future)
-
     coverage = _coverage_summary(normalized_rows, stock_rows, min_symbol, min_date)
     if coverage["symbol_coverage"] < min_symbol:
-        return _from_coverage("news contract symbol coverage below minimum", normalized_rows, coverage, transformer_enabled)
+        return _from_coverage("news contract symbol coverage below minimum", normalized_rows, coverage, transformer_enabled, future_article_count=future)
     if coverage["date_coverage"] < min_date:
-        return _from_coverage("news contract date coverage below minimum", normalized_rows, coverage, transformer_enabled)
+        return _from_coverage("news contract date coverage below minimum", normalized_rows, coverage, transformer_enabled, future_article_count=future)
 
     aggregate_valid, missing_aggregate = _validate_aggregate_features(ml)
     contract_valid = True
@@ -610,6 +609,7 @@ def validate_news_contract(
             contract_valid=contract_valid,
             aggregate_features_valid=False,
             missing_aggregate_features=missing_aggregate,
+            future_article_count=future,
         )
     if not transformer_enabled:
         return _from_coverage(
@@ -620,6 +620,7 @@ def validate_news_contract(
             contract_valid=contract_valid,
             aggregate_features_valid=aggregate_valid,
             missing_aggregate_features=missing_aggregate,
+            future_article_count=future,
         )
     return _from_coverage(
         "news contract satisfied",
@@ -629,6 +630,7 @@ def validate_news_contract(
         available=True,
         contract_valid=contract_valid,
         aggregate_features_valid=aggregate_valid,
+        future_article_count=future,
     )
 
 
@@ -863,7 +865,7 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _future_article_count(news_rows: list[dict[str, Any]], stock_rows: list[Mapping[str, Any]]) -> int:
+def _future_article_candidate_count(news_rows: list[dict[str, Any]], stock_rows: list[Mapping[str, Any]]) -> int:
     max_rebalance = max((_parse_date(row.get("rebalance_date")) for row in stock_rows), default=None)
     if max_rebalance is None:
         return 0
@@ -931,7 +933,7 @@ def _markdown(validation: NewsContractValidation) -> str:
             f"- Row count: {payload['row_count']}",
             f"- Symbol coverage: {payload['symbol_coverage']}",
             f"- Date coverage: {payload['date_coverage']}",
-            f"- Future article count: {payload['future_article_count']}",
+            f"- Future article candidates after the final rebalance: {payload['future_article_count']}",
             f"- Synthetic zero-news count: {payload['synthetic_zero_news_count']}",
             f"- Missing aggregate features: {payload['missing_aggregate_features']}",
             "- Synthetic news features created: false",
@@ -955,6 +957,8 @@ def _feature_markdown(audit: Mapping[str, Any]) -> str:
             f"- Rows with 30d news coverage: {audit['coverage_row_count']}",
             f"- Rows missing 30d news coverage: {audit['missing_coverage_row_count']}",
             f"- Future article candidates excluded by PIT filters: {audit['future_article_candidate_count']}",
+            f"- Future article exclusions: {audit['future_article_excluded_count']}",
+            f"- PIT violations: {audit['pit_violation_count']}",
             "- published_at_utc <= rebalance_date enforced: true",
             "- ingested_at <= rebalance_date enforced: true",
             "- Synthetic news features created: false",

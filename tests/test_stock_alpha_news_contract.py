@@ -91,25 +91,23 @@ def test_phase6_required_raw_fields_include_event_relevance_and_novelty(tmp_path
     assert set(validation.missing_fields) >= {"event_type", "relevance_score", "novelty_score"}
 
 
-def test_future_published_at_fails(tmp_path):
+def test_future_published_at_is_a_diagnostic_candidate_not_contract_failure(tmp_path):
     news = tmp_path / "news.csv"
     _write_news(news, published="2024-01-03T00:00:00Z", ingested="2024-01-01T00:00:00Z")
 
     validation = validate_news_contract(_config(news, min_symbol=0.0, min_date=0.0), _stock_rows())
 
-    assert validation.available is False
-    assert validation.reason == "news contract contains future articles"
+    assert validation.contract_valid is True
     assert validation.future_article_count == 1
 
 
-def test_future_ingested_at_fails(tmp_path):
+def test_future_ingested_at_is_a_diagnostic_candidate_not_contract_failure(tmp_path):
     news = tmp_path / "news.csv"
     _write_news(news, published="2024-01-01T00:00:00Z", ingested="2024-01-03T00:00:00Z")
 
     validation = validate_news_contract(_config(news, min_symbol=0.0, min_date=0.0), _stock_rows())
 
-    assert validation.available is False
-    assert validation.reason == "news contract contains future articles"
+    assert validation.contract_valid is True
     assert validation.future_article_count == 1
 
 
@@ -333,6 +331,40 @@ def test_news_readiness_preflight_safe_only_with_enabled_valid_features_and_audi
     assert payload["readiness_available"] is True
     assert payload["blocking_issues"] == []
     assert payload["pit_audit_summary"]["audit_metadata_available"] is True
+
+
+def test_news_readiness_preflight_blocks_true_pit_violation_reported_by_audit(tmp_path):
+    features = tmp_path / "features.csv"
+    _write_features(features)
+    audit_dir = tmp_path / "news_features"
+    audit_dir.mkdir()
+    (audit_dir / "stock_alpha_news_features_audit.json").write_text(
+        json.dumps(
+            {
+                "future_article_candidate_count": 3,
+                "future_article_excluded_count": 3,
+                "pit_violation_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = build_stock_alpha_news_readiness_preflight(
+        {
+            "ml": {
+                "stock_alpha_news_features_path": str(features),
+                "stock_alpha_news_stock_rows_path": str(_write_stock_rows_csv(tmp_path)),
+                "stock_alpha_news_enable_transformer": True,
+                "stock_alpha_news_min_symbol_coverage": 1.0,
+                "stock_alpha_news_min_date_coverage": 1.0,
+                **_guardrails(),
+            }
+        }
+    )
+
+    assert payload["safe_to_train_news_transformer"] is False
+    assert "news_features_audit_reports_pit_violations" in payload["blocking_issues"]
+    assert payload["pit_audit_summary"]["audit_pit_violation_count"] == 1
 
 
 def test_news_readiness_preflight_writes_json_and_markdown(tmp_path):
@@ -737,7 +769,10 @@ def test_tiny_news_coverage_audit_reports_alignment_metrics():
     }
     assert payload["event_type_covered_stock_rows"]["mna"] == 1
     assert payload["freshness_bucket_counts"]["30d"] > 0
-    assert payload["pit_violation_count"] == 10
+    assert payload["future_article_candidate_count"] == 10
+    assert payload["future_article_excluded_count"] == 10
+    assert payload["pit_violation_count"] == 0
+    assert "future article candidates correctly excluded" in payload["warning_issues"][1]
 
 
 def test_news_coverage_audit_missing_contract_path_blocks_cleanly(tmp_path, capsys):
@@ -870,7 +905,10 @@ def test_news_feature_aggregation_does_not_count_future_articles_in_windows():
 
     assert features[0]["news_count_7d"] == 1
     assert features[0]["analyst_news_count_14d"] == 0
-    assert audit["pit_violation_count"] == 1
+    assert audit["future_article_candidate_count"] == 1
+    assert audit["future_article_excluded_count"] == 1
+    assert audit["pit_violation_count"] == 0
+    assert audit["pit_violations_count"] == 0
 
 
 def test_negative_news_count_uses_configurable_threshold():
@@ -1133,7 +1171,8 @@ def test_tiny_news_fixture_generates_features_and_readiness(tmp_path):
     assert by_key[("2024-01-02", "AAPL")]["news_volume_zscore"] == ""
     assert by_key[("2024-01-02", "MSFT")]["avg_sentiment_1d"] == ""
     assert int(by_key[("2024-01-04", "MSFT")]["guidance_news_count_30d"]) == 0
-    assert audit["pit_violation_count"] > 0
+    assert audit["future_article_excluded_count"] > 0
+    assert audit["pit_violation_count"] == 0
     assert audit["transformer_available"] is False
 
     stock_rows = CsvRowRepository().read(Path("tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"))
@@ -1151,28 +1190,27 @@ def test_tiny_news_fixture_generates_features_and_readiness(tmp_path):
     assert set(enabled.required_columns_found) == set(REQUIRED_NEWS_FEATURE_COLUMNS)
 
 
-def test_news_feature_writer_rejects_invalid_contract(tmp_path):
+def test_news_feature_writer_excludes_future_archive_rows(tmp_path):
     news = tmp_path / "news.csv"
     _write_news(news, published="2024-01-03T00:00:00Z")
 
-    try:
-        write_stock_alpha_news_features(
-            {
-                "ml": {
-                    "stock_alpha_report_root": str(tmp_path / "reports"),
-                    "stock_alpha_run_size": "dev",
-                    "stock_alpha_news_contract_path": str(news),
-                    "stock_alpha_news_min_symbol_coverage": 0.0,
-                    "stock_alpha_news_min_date_coverage": 0.0,
-                    **_guardrails(),
-                }
-            },
-            _stock_rows(),
-        )
-    except ValueError as exc:
-        assert "cannot aggregate stock-alpha news features" in str(exc)
-    else:
-        raise AssertionError("invalid point-in-time news contract should not aggregate")
+    paths = write_stock_alpha_news_features(
+        {
+            "ml": {
+                "stock_alpha_report_root": str(tmp_path / "reports"),
+                "stock_alpha_run_size": "dev",
+                "stock_alpha_news_contract_path": str(news),
+                "stock_alpha_news_min_symbol_coverage": 0.0,
+                "stock_alpha_news_min_date_coverage": 0.0,
+                **_guardrails(),
+            }
+        },
+        _stock_rows(),
+    )
+
+    audit = json.loads(paths.audit_json_path.read_text(encoding="utf-8"))
+    assert audit["future_article_excluded_count"] == 1
+    assert audit["pit_violation_count"] == 0
 
 
 def test_stock_alpha_news_pipeline_preflight_tiny_fixture_stops_at_disabled_transformer(tmp_path):

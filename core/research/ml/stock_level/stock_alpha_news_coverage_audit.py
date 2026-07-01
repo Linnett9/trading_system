@@ -185,7 +185,7 @@ def _coverage_metrics(
     covered_stock_row_count = 0
     event_type_covered_stock_rows: dict[str, int] = {}
     freshness_bucket_counts = {bucket: 0 for bucket in FRESHNESS_BUCKETS}
-    pit_violation_count = 0
+    future_article_candidate_count = 0
 
     for stock_row in stock_rows:
         symbol = str(stock_row.get("symbol", ""))
@@ -207,7 +207,7 @@ def _coverage_metrics(
                     if published >= rebalance - timedelta(days=days):
                         freshness_bucket_counts[bucket] += 1
             else:
-                pit_violation_count += 1
+                future_article_candidate_count += 1
         if eligible:
             covered_stock_row_count += 1
             covered_symbols.add(symbol)
@@ -236,7 +236,9 @@ def _coverage_metrics(
         "event_type_counts": dict(sorted(event_type_counts.items())),
         "event_type_covered_stock_rows": dict(sorted(event_type_covered_stock_rows.items())),
         "freshness_bucket_counts": freshness_bucket_counts,
-        "pit_violation_count": pit_violation_count,
+        "future_article_candidate_count": future_article_candidate_count,
+        "future_article_excluded_count": future_article_candidate_count,
+        "pit_violation_count": 0,
     }
 
 
@@ -259,9 +261,15 @@ def _threshold_blockers(
 
 
 def _warnings(metrics: Mapping[str, Any]) -> list[str]:
+    warnings = []
     if metrics["no_news_stock_row_count"]:
-        return [f"stock rows without eligible news: {metrics['no_news_stock_row_count']}"]
-    return []
+        warnings.append(f"stock rows without eligible news: {metrics['no_news_stock_row_count']}")
+    if metrics["future_article_excluded_count"]:
+        warnings.append(
+            "future article candidates correctly excluded by PIT filter: "
+            f"{metrics['future_article_excluded_count']}"
+        )
+    return warnings
 
 
 def _parse_rebalance_date(value: Any) -> datetime | None:
@@ -298,6 +306,8 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             f"- Date coverage: {payload.get('date_coverage', 0.0)}",
             f"- Stock-row coverage: {payload.get('stock_row_coverage', 0.0)}",
             f"- No-news stock rows: {payload.get('no_news_stock_row_count', 0)}",
+            f"- Future article candidates: {payload.get('future_article_candidate_count', 0)}",
+            f"- Future article exclusions: {payload.get('future_article_excluded_count', 0)}",
             f"- PIT violations: {payload.get('pit_violation_count', 0)}",
             "",
             "## Blocking Issues",
