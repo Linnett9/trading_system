@@ -28,6 +28,7 @@ from application.services.ml_commands import (
     run_ml_stock_alpha_news_contract_ingest,
     run_ml_stock_alpha_news_coverage_audit,
     run_ml_stock_alpha_news_features,
+    run_ml_stock_alpha_news_feature_diagnostics,
     run_ml_stock_alpha_news_pipeline_preflight,
     run_ml_stock_alpha_news_pipeline_inspect,
     run_ml_stock_alpha_news_provider_audit,
@@ -146,6 +147,9 @@ def dispatch(args, config, feed):
         return
     if args.mode == "ml-stock-alpha-news-features":
         run_ml_stock_alpha_news_features(config)
+        return
+    if args.mode == "ml-stock-alpha-news-feature-diagnostics":
+        run_ml_stock_alpha_news_feature_diagnostics(config)
         return
     if args.mode == "ml-stock-alpha-news-contract-ingest":
         run_ml_stock_alpha_news_contract_ingest(config)

@@ -13,6 +13,7 @@ from core.research.ml.stock_level.stock_alpha_ensemble import write_stock_alpha_
 from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import write_stock_alpha_ensemble_portfolio_sweep
 from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_stock_alpha_experiment_preflight
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
+from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
@@ -122,6 +123,29 @@ def run_ml_stock_alpha_news_features(config):
     print(f"Features CSV: {result.features_csv_path}")
     print(f"Audit JSON: {result.audit_json_path}")
     print(f"Audit Markdown: {result.audit_markdown_path}")
+
+def run_ml_stock_alpha_news_feature_diagnostics(config):
+    print("\nSTOCK-ALPHA NEWS FEATURE DIAGNOSTICS")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_feature_diagnostics(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"next_action={payload['next_action']}")
+    for issue in payload["blocking_issues"]:
+        print(f"blocking_issue={issue}")
+    print("features_generated=false")
+    print("files_ingested=false")
+    print("readiness_invoked=false")
+    print("diagnostics_invoked=false")
+    print("model_training_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_alpha_news_contract_ingest(config):
     print("\nSTOCK-ALPHA NEWS CONTRACT INGEST")
