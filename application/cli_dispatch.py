@@ -34,6 +34,7 @@ from application.services.ml_commands import (
     run_ml_stock_alpha_news_provider_audit,
     run_ml_stock_alpha_news_provider_sample_check,
     run_ml_stock_alpha_news_readiness_preflight,
+    run_ml_stock_alpha_news_source_diagnostics,
     run_ml_stock_alpha_parallelism_audit,
     run_ml_stock_alpha_run_status,
     run_ml_stock_level_alpha_benchmark,
@@ -171,6 +172,9 @@ def dispatch(args, config, feed):
         return
     if args.mode == "ml-stock-alpha-news-readiness-preflight":
         run_ml_stock_alpha_news_readiness_preflight(config)
+        return
+    if args.mode == "ml-stock-alpha-news-source-diagnostics":
+        run_ml_stock_alpha_news_source_diagnostics(config)
         return
     if args.mode == "ml-stock-alpha-dev-smoke":
         run_ml_stock_alpha_dev_smoke(config)
