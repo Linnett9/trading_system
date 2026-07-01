@@ -89,7 +89,8 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
     payload["total_rows_collected"] = len(collected)
-    payload["next_action"] = _next_action(dry_run, requested, attempted, skipped, failures, deduplicated)
+    payload["providers_returned_zero_rows"] = sorted(name for name, count in counts.items() if count == 0)
+    payload["next_action"] = _next_action(dry_run, requested, attempted, skipped, failures, counts, deduplicated)
     return payload, deduplicated
 
 
@@ -120,6 +121,7 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_requested": requested, "providers_attempted": attempted,
         "providers_skipped_missing_key": skipped, "providers_failed": failures,
         "provider_row_counts": counts, "total_rows_collected": total,
+        "providers_returned_zero_rows": [],
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
         "files_ingested": False, "features_generated": False, "readiness_invoked": False,
         "diagnostics_invoked": False, "model_training_invoked": False,
@@ -128,10 +130,13 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
     }
 
 
-def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skipped: list[str], failures: Mapping[str, str], rows: list[dict[str, Any]]) -> str:
+def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skipped: list[str], failures: Mapping[str, str], counts: Mapping[str, int], rows: list[dict[str, Any]]) -> str:
     if skipped and not attempted: return "configure_api_keys"
+    if any(name in {"fmp", "newsapi"} and ("402" in message or "426" in message) for name, message in failures.items()): return "disable_paid_or_upgrade_required_sources"
+    if counts.get("finnhub") == 0: return "adjust_finnhub_symbols_or_date_range"
     if failures: return "review_collection_report"
     if not requested: return "run_dry_collection"
+    if dry_run and counts.get("alpha_vantage", 0) > 0: return "write_alpha_vantage_bounded_export"
     if dry_run and rows: return "write_raw_provider_export"
     if dry_run: return "review_collection_report"
     return "run_provider_sample_check" if rows else "review_collection_report"
@@ -144,4 +149,4 @@ def _required_path(ml: Mapping[str, Any], key: str) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])

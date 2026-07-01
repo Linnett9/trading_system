@@ -163,6 +163,7 @@ def run_ml_stock_alpha_news_collect_free_sources(config):
     print(f"dry_run={str(payload['dry_run']).lower()}")
     print(f"next_action={payload['next_action']}")
     print(f"providers_skipped_missing_key={','.join(payload['providers_skipped_missing_key']) or 'none'}")
+    print(f"providers_returned_zero_rows={','.join(payload['providers_returned_zero_rows']) or 'none'}")
     print(f"output_written={str(payload['output_written']).lower()}")
     print("features_generated=false")
     print("readiness_invoked=false")
