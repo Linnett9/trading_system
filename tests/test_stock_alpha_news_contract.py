@@ -39,6 +39,10 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
+from core.research.ml.stock_level.news_sources import GdeltNewsSource
+from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
+    write_stock_alpha_news_free_source_collect,
+)
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
 )
@@ -1494,6 +1498,92 @@ def test_news_source_diagnostics_true_timestamp_leakage_blocks(tmp_path):
     assert "timestamp_leakage_detected" in payload["blocking_issues"]
 
 
+def test_gdelt_fake_response_normalizes_without_invented_scores():
+    source = GdeltNewsSource(lambda url, timeout: {"articles": [{
+        "url": "https://example.test/a", "seendate": "20240101T120000Z",
+        "domain": "example.test", "title": "AAPL headline", "language": "English",
+    }]})
+    rows = source.collect(symbols=["AAPL"], start_date="2024-01-01", end_date="2024-01-02", limit=5, timeout=2)
+    assert rows[0]["provider"] == "gdelt"
+    assert rows[0]["source"] == "example.test"
+    assert rows[0]["published_at_utc"] == "2024-01-01T12:00:00Z"
+    assert rows[0]["sentiment_score"] == ""
+    assert rows[0]["relevance_score"] == ""
+    assert rows[0]["novelty_score"] == ""
+
+
+def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):
+    for name in ("ALPHA_VANTAGE_API_KEY", "FINNHUB_API_KEY", "FMP_API_KEY", "NEWSAPI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    config = load_config("config/config.stock_alpha_news_collect_free_sources_dry_run.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_collect_report_dir"] = str(tmp_path / "report")
+    config["ml"]["stock_alpha_news_collect_output_path"] = str(tmp_path / "raw.csv")
+    paths = write_stock_alpha_news_free_source_collect(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert set(payload["providers_skipped_missing_key"]) == {"alpha_vantage", "finnhub", "fmp", "newsapi"}
+    assert payload["output_written"] is False
+    assert not paths.output_path.exists()
+    assert "API_KEY" not in paths.json_path.read_text(encoding="utf-8")
+    for key in ("files_ingested", "features_generated", "readiness_invoked", "diagnostics_invoked", "model_training_invoked", "news_transformer_enabled"):
+        assert payload[key] is False
+
+
+def test_free_source_collection_writes_deduplicated_canonical_csv(tmp_path):
+    class FakeSource:
+        api_key_required = False
+        def collect(self, **kwargs):
+            row = _collected_news_row("same", "gdelt")
+            return [row, dict(row)]
+    config = _collection_config(tmp_path, dry_run=False)
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": FakeSource()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    rows = list(csv.DictReader(paths.output_path.open(encoding="utf-8")))
+    assert payload["total_rows_collected"] == 2
+    assert payload["deduplicated_row_count"] == 1
+    assert payload["output_written"] is True
+    assert len(rows) == 1
+    assert set(REQUIRED_NEWS_CONTRACT_COLUMNS) <= set(rows[0])
+    assert rows[0]["provider"] == "gdelt"
+    assert rows[0]["source"] == "gdelt-source"
+
+
+def test_free_source_collection_protects_output_and_isolates_provider_error(tmp_path):
+    class Good:
+        api_key_required = False
+        def collect(self, **kwargs): return [_collected_news_row("good", "gdelt")]
+    class Bad:
+        api_key_required = False
+        def collect(self, **kwargs): raise RuntimeError("provider unavailable")
+    config = _collection_config(tmp_path, dry_run=False)
+    output = Path(config["ml"]["stock_alpha_news_collect_output_path"])
+    output.write_text("preserve-me", encoding="utf-8")
+    config["ml"]["stock_alpha_news_collect"]["providers"]["bad"] = {"enabled": True}
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": Good(), "bad": Bad()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert output.read_text(encoding="utf-8") == "preserve-me"
+    assert "bad" in payload["providers_failed"]
+    assert payload["output_written"] is False
+
+    config["ml"]["stock_alpha_news_collect"]["allow_overwrite"] = True
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": Good(), "bad": Bad()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["output_written"] is True
+    assert output.read_text(encoding="utf-8").startswith("article_id,symbol,")
+
+
+def test_free_source_collection_report_redacts_api_key(tmp_path, monkeypatch):
+    secret = "super-secret-test-key"
+    monkeypatch.setenv("TEST_NEWS_KEY", secret)
+    class FailingKeyed:
+        api_key_required = True
+        def collect(self, **kwargs): raise RuntimeError(f"request failed with {kwargs['api_key']}")
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {"keyed": {"enabled": True, "api_key_env": "TEST_NEWS_KEY"}}
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"keyed": FailingKeyed()})
+    assert secret not in paths.json_path.read_text(encoding="utf-8")
+    assert secret not in paths.markdown_path.read_text(encoding="utf-8")
+
+
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
@@ -1728,6 +1818,29 @@ def _source_diagnostics_config(contract: Path, stock_rows: Path, report_dir: Pat
         "stock_alpha_news_source_column": "source",
         "stock_alpha_news_provider_column": "provider",
     }}
+
+
+def _collection_config(tmp_path: Path, *, dry_run: bool) -> dict:
+    return {"ml": {
+        "stock_alpha_news_collect_report_dir": str(tmp_path / "report"),
+        "stock_alpha_news_collect_output_path": str(tmp_path / "raw.csv"),
+        "stock_alpha_news_collect": {
+            "enabled": True, "dry_run": dry_run, "allow_overwrite": False,
+            "max_articles_per_provider": 5, "request_timeout_seconds": 2,
+            "start_date": "2024-01-01", "end_date": "2024-01-02", "symbols": ["AAPL"],
+            "providers": {"gdelt": {"enabled": True}},
+        },
+    }}
+
+
+def _collected_news_row(article_id: str, provider: str) -> dict:
+    return {
+        "article_id": article_id, "symbol": "AAPL", "published_at_utc": "2024-01-01T10:00:00Z",
+        "source": f"{provider}-source", "headline": "Headline", "body_or_summary": "Summary",
+        "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "",
+        "language": "en", "ingested_at": "2024-01-01T10:05:00Z", "provider": provider,
+        "provider_article_id": article_id, "provider_url": f"https://example.test/{article_id}",
+    }
 
 
 def _write_stock_rows_csv(tmp_path: Path) -> Path:

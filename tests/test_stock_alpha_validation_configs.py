@@ -418,6 +418,24 @@ def test_news_source_diagnostics_configs_load_with_research_guardrails():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_free_source_collection_configs_load_with_safe_defaults():
+    configs = [
+        load_config("config/config.stock_alpha_news_collect_free_sources_dry_run.yaml", overlay_project_config=True),
+        load_config("config/config.stock_alpha_news_collect_free_sources_tiny_offline_fixture.yaml", overlay_project_config=True),
+    ]
+    for config in configs:
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        assert collect["dry_run"] is True
+        assert collect["allow_overwrite"] is False
+        assert collect["max_articles_per_provider"] <= 50
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
