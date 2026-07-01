@@ -1638,6 +1638,46 @@ def test_news_source_setup_check_disabled_keyed_provider_does_not_block_and_lite
     assert "literal-secret" not in paths.json_path.read_text(encoding="utf-8")
 
 
+def test_free_source_collection_reports_zero_rows_and_practical_next_actions(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "test-alpha-key")
+    monkeypatch.setenv("FINNHUB_API_KEY", "test-finnhub-key")
+    class Alpha:
+        api_key_required = True
+        def collect(self, **kwargs): return [_collected_news_row("alpha-1", "alpha_vantage")]
+    class Finnhub:
+        api_key_required = True
+        def collect(self, **kwargs): return []
+    config = load_config("config/config.stock_alpha_news_collect_alpha_vantage_finnhub_dry_run.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_collect_report_dir"] = str(tmp_path / "report")
+    config["ml"]["stock_alpha_news_collect_output_path"] = str(tmp_path / "raw.csv")
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"alpha_vantage": Alpha(), "finnhub": Finnhub()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["providers_returned_zero_rows"] == ["finnhub"]
+    assert payload["next_action"] == "adjust_finnhub_symbols_or_date_range"
+
+    config["ml"]["stock_alpha_news_collect"]["providers"]["finnhub"]["enabled"] = False
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"alpha_vantage": Alpha()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "write_alpha_vantage_bounded_export"
+
+
+def test_free_source_collection_paid_upgrade_failures_have_specific_action(tmp_path, monkeypatch):
+    monkeypatch.setenv("FMP_API_KEY", "test-fmp-key")
+    monkeypatch.setenv("NEWSAPI_API_KEY", "test-newsapi-key")
+    class Paid:
+        api_key_required = True
+        def __init__(self, status): self.status = status
+        def collect(self, **kwargs): raise RuntimeError(f"HTTP {self.status}")
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {
+        "fmp": {"enabled": True, "api_key_env": "FMP_API_KEY"},
+        "newsapi": {"enabled": True, "api_key_env": "NEWSAPI_API_KEY"},
+    }
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"fmp": Paid(402), "newsapi": Paid(426)})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "disable_paid_or_upgrade_required_sources"
+
+
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
