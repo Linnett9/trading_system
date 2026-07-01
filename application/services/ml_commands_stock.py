@@ -15,6 +15,7 @@ from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
+from core.research.ml.stock_level.stock_alpha_news_collection_plan import write_stock_alpha_news_collection_plan
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
@@ -168,6 +169,24 @@ def run_ml_stock_alpha_news_collect_free_sources(config):
     print("features_generated=false")
     print("readiness_invoked=false")
     print("diagnostics_invoked=false")
+    print("model_training_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_collection_plan(config):
+    print("\nSTOCK-ALPHA NEWS COLLECTION PLAN")
+    print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
+    result = write_stock_alpha_news_collection_plan(config)
+    import json
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"next_action={payload['next_action']}")
+    print(f"current_raw_export_row_count={payload['current_raw_export_row_count']}")
+    print(f"current_raw_export_symbol_count={payload['current_raw_export_symbol_count']}")
+    print(f"article_threshold_gap={payload['article_threshold_gap']}")
+    print(f"symbol_threshold_gap={payload['symbol_threshold_gap']}")
+    print("collection_invoked=false")
+    print("raw_export_written=false")
     print("model_training_invoked=false")
     print("news_transformer_enabled=false")
     print(f"JSON: {result.json_path}")

@@ -43,6 +43,9 @@ from core.research.ml.stock_level.news_sources import GdeltNewsSource
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
 )
+from core.research.ml.stock_level.stock_alpha_news_collection_plan import (
+    write_stock_alpha_news_collection_plan,
+)
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
 )
@@ -1678,6 +1681,67 @@ def test_free_source_collection_paid_upgrade_failures_have_specific_action(tmp_p
     assert payload["next_action"] == "disable_paid_or_upgrade_required_sources"
 
 
+def test_news_source_adapter_distributes_hard_cap_across_symbols():
+    requested_limits = []
+    def fake_get(url, timeout):
+        requested_limits.append(url)
+        return {"articles": [{"url": url, "seendate": "20240101T120000Z", "domain": "test", "title": "headline"}]}
+    rows = GdeltNewsSource(fake_get).collect(
+        symbols=["AAPL", "MSFT", "NVDA"], start_date="2024-01-01", end_date="2024-01-02", limit=5, timeout=2
+    )
+    assert len(requested_limits) == 3
+    assert len(rows) == 3
+    assert {row["symbol"] for row in rows} == {"AAPL", "MSFT", "NVDA"}
+
+
+def test_news_collection_planner_reads_raw_gaps_and_is_read_only(tmp_path):
+    raw = tmp_path / "raw.csv"
+    rows = [_collected_news_row("a1", "alpha_vantage"), _collected_news_row("m1", "alpha_vantage")]
+    rows[1]["symbol"] = "MSFT"
+    with raw.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader(); writer.writerows(rows)
+    audit_config = tmp_path / "audit.yaml"
+    audit_config.write_text(
+        "ml:\n"
+        f"  stock_alpha_news_raw_path: {raw}\n"
+        "  stock_alpha_news_provider_audit_min_article_count: 10\n"
+        "  stock_alpha_news_provider_audit_min_symbol_count: 5\n",
+        encoding="utf-8",
+    )
+    stock = tmp_path / "stock.csv"
+    stock.write_text("rebalance_date,symbol\n2024-01-02,AAPL\n2024-01-02,MSFT\n2024-01-02,NVDA\n2024-01-02,AMZN\n2024-01-02,META\n", encoding="utf-8")
+    report = tmp_path / "report"
+    config = _collection_plan_config(stock, audit_config, report)
+    before = raw.read_text(encoding="utf-8")
+    paths = write_stock_alpha_news_collection_plan(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["current_raw_export_row_count"] == 2
+    assert payload["current_raw_export_symbol_count"] == 2
+    assert payload["article_threshold_gap"] == 8
+    assert payload["symbol_threshold_gap"] == 3
+    assert payload["collection_invoked"] is False
+    assert payload["raw_export_written"] is False
+    assert raw.read_text(encoding="utf-8") == before
+
+
+def test_news_collection_planner_handles_missing_stock_rows(tmp_path):
+    audit_config = tmp_path / "audit.yaml"
+    audit_config.write_text(
+        "ml:\n  stock_alpha_news_raw_path: missing.csv\n"
+        "  stock_alpha_news_provider_audit_min_article_count: 100\n"
+        "  stock_alpha_news_provider_audit_min_symbol_count: 25\n",
+        encoding="utf-8",
+    )
+    paths = write_stock_alpha_news_collection_plan(
+        _collection_plan_config(tmp_path / "missing-stock.csv", audit_config, tmp_path / "report")
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["input_status"]["stock_rows_exists"] is False
+    assert payload["stock_row_symbols_available"] == []
+    assert payload["recommended_symbol_list"]
+
+
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
@@ -1935,6 +1999,19 @@ def _collected_news_row(article_id: str, provider: str) -> dict:
         "language": "en", "ingested_at": "2024-01-01T10:05:00Z", "provider": provider,
         "provider_article_id": article_id, "provider_url": f"https://example.test/{article_id}",
     }
+
+
+def _collection_plan_config(stock_rows: Path, audit_config: Path, report_dir: Path) -> dict:
+    return {"ml": {
+        "stock_alpha_stock_rows_path": str(stock_rows),
+        "stock_alpha_news_collection_plan_report_dir": str(report_dir),
+        "stock_alpha_news_provider_audit_config_path": str(audit_config),
+        "stock_alpha_news_collect": {
+            "symbols": ["AAPL", "MSFT", "NVDA", "AMZN", "META"],
+            "max_articles_per_provider": 10,
+            "providers": {"alpha_vantage": {"enabled": True}, "finnhub": {"enabled": False}},
+        },
+    }}
 
 
 def _write_stock_rows_csv(tmp_path: Path) -> Path:

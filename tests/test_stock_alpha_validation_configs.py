@@ -481,6 +481,29 @@ def test_practical_free_news_collection_configs_are_provider_scoped_and_safe():
         assert ml["stock_alpha_news_enable_transformer"] is False
 
 
+def test_broader_news_collection_plan_and_configs_are_safe():
+    plan = load_config("config/config.stock_alpha_news_collection_plan_real_template.yaml", overlay_project_config=True)
+    alpha_dry = load_config("config/config.stock_alpha_news_collect_alpha_vantage_broader_dry_run.yaml", overlay_project_config=True)
+    alpha_write = load_config("config/config.stock_alpha_news_collect_alpha_vantage_broader_write_template.yaml", overlay_project_config=True)
+    combined = load_config("config/config.stock_alpha_news_collect_alpha_vantage_finnhub_broader_dry_run.yaml", overlay_project_config=True)
+    assert plan["ml"]["stock_alpha_news_provider_audit_config_path"].endswith("provider_audit_real_template.yaml")
+    assert alpha_dry["ml"]["stock_alpha_news_collect"]["dry_run"] is True
+    assert len(alpha_dry["ml"]["stock_alpha_news_collect"]["symbols"]) >= 20
+    assert alpha_write["ml"]["stock_alpha_news_collect"]["dry_run"] is False
+    assert alpha_write["ml"]["stock_alpha_news_collect"]["allow_overwrite"] is False
+    assert combined["ml"]["stock_alpha_news_collect"]["providers"]["finnhub"]["enabled"] is True
+    for config in (plan, alpha_dry, alpha_write, combined):
+        ml = config["ml"]
+        providers = ml["stock_alpha_news_collect"]["providers"]
+        assert providers["alpha_vantage"]["enabled"] is True
+        assert providers["alpha_vantage"]["api_key_env"] == "ALPHA_VANTAGE_API_KEY"
+        assert "api_key" not in providers["alpha_vantage"]
+        assert providers["gdelt"]["enabled"] is False
+        assert providers["fmp"]["enabled"] is False
+        assert providers["newsapi"]["enabled"] is False
+        assert ml["stock_alpha_news_enable_transformer"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

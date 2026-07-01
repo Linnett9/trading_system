@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 from urllib.parse import urlencode
@@ -26,9 +27,10 @@ class NewsSource:
 
     def collect(self, *, symbols: list[str], start_date: str, end_date: str, limit: int, timeout: int, api_key: str = "") -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        per_symbol_limit = max(1, math.ceil(limit / len(symbols))) if symbols else limit
         for symbol in symbols:
-            payload = self._http_get(self._url(symbol, start_date, end_date, limit, api_key), timeout)
-            rows.extend(self._rows(payload, symbol))
+            payload = self._http_get(self._url(symbol, start_date, end_date, per_symbol_limit, api_key), timeout)
+            rows.extend(self._rows(payload, symbol)[:per_symbol_limit])
             if len(rows) >= limit:
                 break
         return rows[:limit]
