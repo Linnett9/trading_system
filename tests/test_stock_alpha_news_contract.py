@@ -63,6 +63,9 @@ from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import (
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import (
     write_stock_alpha_news_source_diagnostics,
 )
+from core.research.ml.stock_level.stock_alpha_news_source_setup_check import (
+    write_stock_alpha_news_source_setup_check,
+)
 
 
 def test_valid_contract_passes_when_features_and_transformer_enabled(tmp_path):
@@ -1582,6 +1585,57 @@ def test_free_source_collection_report_redacts_api_key(tmp_path, monkeypatch):
     paths = write_stock_alpha_news_free_source_collect(config, sources={"keyed": FailingKeyed()})
     assert secret not in paths.json_path.read_text(encoding="utf-8")
     assert secret not in paths.markdown_path.read_text(encoding="utf-8")
+
+
+def test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only(tmp_path):
+    config = load_config("config/config.stock_alpha_news_source_setup_check_free_sources.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_source_setup_check_report_dir"] = str(tmp_path / "report")
+    config["ml"]["stock_alpha_news_collect_output_path"] = str(tmp_path / "raw.csv")
+    paths = write_stock_alpha_news_source_setup_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["providers_enabled"] == ["gdelt"]
+    assert payload["enabled_providers_missing_key"] == []
+    assert payload["next_action"] == "run_free_source_dry_collection"
+    assert payload["collection_invoked"] is False
+    assert payload["raw_export_written"] is False
+    assert not Path(config["ml"]["stock_alpha_news_collect_output_path"]).exists()
+    for key in ("files_ingested", "features_generated", "readiness_invoked", "diagnostics_invoked", "model_training_invoked", "news_transformer_enabled"):
+        assert payload[key] is False
+
+
+def test_news_source_setup_check_key_presence_without_value_disclosure(tmp_path, monkeypatch):
+    config = load_config("config/config.stock_alpha_news_collect_free_sources_keyed_dry_run.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_source_setup_check_report_dir"] = str(tmp_path)
+    for name in ("ALPHA_VANTAGE_API_KEY", "FINNHUB_API_KEY", "FMP_API_KEY", "NEWSAPI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    paths = write_stock_alpha_news_source_setup_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "set_alpha_vantage_api_key"
+    assert set(payload["enabled_providers_missing_key"]) == {"alpha_vantage", "finnhub", "fmp", "newsapi"}
+
+    secret = "do-not-print-this-value"
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", secret)
+    paths = write_stock_alpha_news_source_setup_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["provider_setup"]["alpha_vantage"]["environment_variable_present"] is True
+    assert secret not in paths.json_path.read_text(encoding="utf-8")
+    assert secret not in paths.markdown_path.read_text(encoding="utf-8")
+
+
+def test_news_source_setup_check_disabled_keyed_provider_does_not_block_and_literal_is_flagged(tmp_path, monkeypatch):
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    config = load_config("config/config.stock_alpha_news_source_setup_check_free_sources.yaml", overlay_project_config=True)
+    config["ml"]["stock_alpha_news_source_setup_check_report_dir"] = str(tmp_path)
+    paths = write_stock_alpha_news_source_setup_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert "finnhub" not in payload["enabled_providers_missing_key"]
+
+    config["ml"]["stock_alpha_news_collect"]["providers"]["finnhub"]["api_key"] = "literal-secret"
+    paths = write_stock_alpha_news_source_setup_check(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["next_action"] == "remove_key_values_from_config"
+    assert "key_like_literal_present_in_config" in payload["blocking_issues"]
+    assert "literal-secret" not in paths.json_path.read_text(encoding="utf-8")
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):

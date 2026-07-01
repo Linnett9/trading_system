@@ -113,6 +113,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-source-diagnostics":
         _commands("ml_commands").run_ml_stock_alpha_news_source_diagnostics(config)
         return
+    if args.mode == "ml-stock-alpha-news-source-setup-check":
+        _commands("ml_commands").run_ml_stock_alpha_news_source_setup_check(config)
+        return
     if args.mode == "ml-stock-alpha-dev-smoke":
         _commands("ml_commands").run_ml_stock_alpha_dev_smoke(config)
         return

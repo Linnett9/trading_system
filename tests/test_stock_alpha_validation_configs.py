@@ -436,6 +436,28 @@ def test_news_free_source_collection_configs_load_with_safe_defaults():
         assert ml["promotion_thresholds_changed"] is False
 
 
+def test_news_source_setup_and_bounded_collection_configs_are_safe():
+    setup = load_config("config/config.stock_alpha_news_source_setup_check_free_sources.yaml", overlay_project_config=True)
+    gdelt = load_config("config/config.stock_alpha_news_collect_free_sources_gdelt_dry_run.yaml", overlay_project_config=True)
+    keyed = load_config("config/config.stock_alpha_news_collect_free_sources_keyed_dry_run.yaml", overlay_project_config=True)
+    bounded = load_config("config/config.stock_alpha_news_collect_free_sources_bounded_write_template.yaml", overlay_project_config=True)
+    assert setup["ml"]["stock_alpha_news_collect"]["providers"]["gdelt"]["enabled"] is True
+    assert gdelt["ml"]["stock_alpha_news_collect"]["dry_run"] is True
+    assert gdelt["ml"]["stock_alpha_news_collect"]["max_articles_per_provider"] == 25
+    assert keyed["ml"]["stock_alpha_news_collect"]["dry_run"] is True
+    assert bounded["ml"]["stock_alpha_news_collect"]["dry_run"] is False
+    assert bounded["ml"]["stock_alpha_news_collect"]["allow_overwrite"] is False
+    assert bounded["ml"]["stock_alpha_news_collect"]["max_articles_per_provider"] == 50
+    assert bounded["ml"]["stock_alpha_news_collect_output_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+    for config in (setup, gdelt, keyed, bounded):
+        ml = config["ml"]
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
