@@ -710,3 +710,38 @@ def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_er
     assert ml["trading_impact"] == "none"
     assert ml["production_validated"] is False
     assert ml["promotion_thresholds_changed"] is False
+
+
+def test_sec_company_filings_batch_01_dry_run_config_is_safe_and_separate():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_sec_company_filings_batch_01_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert collect["enabled"] is True
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is False
+    assert collect["backup_existing"] is False
+    assert ml["stock_alpha_news_collect_output_path"].endswith("sec_company_filings_dry_run_rows.csv")
+    assert ml["stock_alpha_news_collect_output_path"] != "data/news/raw/stock_alpha_news_provider_export.csv"
+    assert collect["symbols"] == ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+    assert collect["only_symbols"] == ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+    assert collect["max_symbols_per_run"] == 5
+    assert providers["sec_company_filings"]["enabled"] is True
+    assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+    for name, provider in providers.items():
+        if name != "sec_company_filings":
+            assert provider["enabled"] is False
+    assert "stock_alpha_news_features_path" not in ml
+    assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+    assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False

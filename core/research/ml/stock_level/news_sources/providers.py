@@ -18,6 +18,7 @@ PROVIDER_METADATA = {
     "finnhub": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
     "gdelt": {"statuses": ["experimental_no_key", "rate_limited_or_retry_later"], "api_key_required": False},
     "sec_edgar": {"statuses": ["official_filings_source", "experimental_no_key"], "api_key_required": False},
+    "sec_company_filings": {"statuses": ["official_filings_source", "dry_run_candidate"], "api_key_required": False},
     "massive_stock_news": {"statuses": ["dry_run_candidate", "needs_key"], "api_key_required": True},
     "company_press_release_rss": {"statuses": ["official_company_source_candidate", "dry_run_candidate"], "api_key_required": False},
     "fmp": {"statuses": ["disabled_payment_required", "needs_key"], "api_key_required": True},
@@ -447,9 +448,153 @@ class SecEdgarNewsSource(NewsSource):
         return rows
 
 
+class SecCompanyFilingsSource(NewsSource):
+    name, api_key_required = "sec_company_filings", False
+
+    def __init__(
+        self,
+        http_get: HttpGet = standard_library_json_get,
+        *,
+        cik_by_symbol: Mapping[str, str] | None = None,
+        forms: list[str] | None = None,
+    ) -> None:
+        super().__init__(http_get)
+        self._cik_by_symbol = {
+            str(symbol).strip().upper().replace(".", "-"): str(cik).strip().zfill(10)
+            for symbol, cik in (cik_by_symbol or SEC_CIK_BY_SYMBOL).items()
+            if str(symbol).strip() and str(cik).strip()
+        }
+        self._forms = set(forms or ["8-K", "10-Q", "10-K"])
+        self.last_batch_diagnostic: dict[str, Any] = {}
+
+    def with_provider_config(self, provider_config: Mapping[str, Any]) -> "SecCompanyFilingsSource":
+        forms = [
+            str(form).strip().upper()
+            for form in provider_config.get("forms", ["8-K", "10-Q", "10-K"]) or []
+            if str(form).strip()
+        ]
+        return SecCompanyFilingsSource(
+            self._http_get,
+            cik_by_symbol=provider_config.get("cik_by_symbol", self._cik_by_symbol),
+            forms=forms,
+        )
+
+    def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
+        del start, end, limit, api_key
+        cik = self._cik_by_symbol.get(symbol.upper().replace(".", "-"))
+        if not cik:
+            return ""
+        return sec_submissions_url(cik)
+
+    def collect(
+        self,
+        *,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        limit: int,
+        timeout: int,
+        api_key: str = "",
+    ) -> list[dict[str, Any]]:
+        del api_key
+        rows: list[dict[str, Any]] = []
+        attempted: list[str] = []
+        missing_cik: list[str] = []
+        per_symbol_limit = max(1, math.ceil(limit / len(symbols))) if symbols else limit
+        for raw_symbol in symbols:
+            if len(rows) >= limit:
+                break
+            symbol = raw_symbol.upper()
+            if symbol.replace(".", "-") not in self._cik_by_symbol:
+                missing_cik.append(symbol)
+                continue
+            attempted.append(symbol)
+            payload = self._http_get(self._url(symbol, start_date, end_date, per_symbol_limit, ""), timeout)
+            symbol_rows = [
+                row for row in self._rows(payload, symbol)
+                if (not start_date or row["published_at_utc"][:10] >= start_date)
+                and (not end_date or row["published_at_utc"][:10] <= end_date)
+            ][:per_symbol_limit]
+            rows.extend(symbol_rows)
+        self.last_batch_diagnostic = {
+            "sec_company_filings_attempted_symbols": attempted,
+            "sec_company_filings_missing_cik_symbols": missing_cik,
+            "sec_company_filings_forms": sorted(self._forms),
+        }
+        return rows[:limit]
+
+    def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
+        recent = ((payload.get("filings") or {}).get("recent") or {})
+        rows: list[dict[str, Any]] = []
+        accessions = list(recent.get("accessionNumber", []))
+        for index, accession in enumerate(accessions):
+            form = str(_column_value(recent, "form", index) or "").upper()
+            if form not in self._forms:
+                continue
+            filing_date = str(_column_value(recent, "filingDate", index) or "")
+            accepted = str(_column_value(recent, "acceptanceDateTime", index) or "")
+            report_date = str(_column_value(recent, "reportDate", index) or "")
+            document = str(_column_value(recent, "primaryDocument", index) or "")
+            cik_padded = self._cik_by_symbol[symbol.upper().replace(".", "-")]
+            cik_archive = str(int(cik_padded))
+            accession_text = str(accession or "")
+            accession_path = accession_text.replace("-", "")
+            filing_url = f"https://www.sec.gov/Archives/edgar/data/{cik_archive}/{accession_path}/"
+            primary_url = f"{filing_url}{document}" if document else ""
+            published = accepted or filing_date
+            row = self._normalized(
+                symbol=symbol,
+                provider_id=accession_text,
+                url=primary_url or filing_url,
+                published=published,
+                source="SEC EDGAR",
+                headline=f"{form} filed by {symbol.upper()}",
+                body=f"Official SEC filing metadata for Form {form}.",
+                sentiment="",
+                relevance="",
+                novelty="",
+                event_type=_sec_event_type(form),
+                language="en",
+            )
+            row.update(
+                {
+                    "cik": cik_padded,
+                    "source_type": "sec_filing",
+                    "form_type": form,
+                    "accession_number": accession_text,
+                    "filing_date": filing_date,
+                    "accepted_datetime": accepted,
+                    "report_date": report_date,
+                    "filing_url": filing_url,
+                    "primary_document_url": primary_url,
+                    "collected_at_utc": row["ingested_at"],
+                    "published_at_source": "accepted_datetime" if accepted else "filing_date",
+                }
+            )
+            rows.append(row)
+        return rows
+
+
 def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mapping[str, NewsSource]:
     rss_http_get = standard_library_text_get if http_get is standard_library_json_get else http_get
-    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), MassiveStockNewsSource(http_get), CompanyPressReleaseRssSource(rss_http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
+    return {
+        source.name: source
+        for source in (
+            GdeltNewsSource(http_get),
+            AlphaVantageNewsSource(http_get),
+            MassiveStockNewsSource(http_get),
+            CompanyPressReleaseRssSource(rss_http_get),
+            FinnhubNewsSource(http_get),
+            FmpNewsSource(http_get),
+            NewsApiNewsSource(http_get),
+            SecEdgarNewsSource(http_get),
+            SecCompanyFilingsSource(http_get),
+        )
+    }
+
+
+def sec_submissions_url(cik: str) -> str:
+    return f"https://data.sec.gov/submissions/CIK{str(cik).strip().zfill(10)}.json"
 
 
 def _sec_event_type(form: str) -> str:
