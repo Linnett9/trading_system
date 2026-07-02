@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,12 +78,22 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     if not bool(settings.get("enabled", False)):
         return _payload(settings, output_path, [], [], [], {}, {}, 0), []
     dry_run = bool(settings.get("dry_run", True))
-    limit = int(settings.get("max_articles_per_provider", 50))
-    if limit < 1 or limit > 250:
+    legacy_limit = int(settings.get("max_articles_per_provider", 50))
+    if legacy_limit < 1 or legacy_limit > 250:
         raise ValueError("ml.stock_alpha_news_collect.max_articles_per_provider must be between 1 and 250")
+    provider_request_limit = int(settings.get("provider_request_limit", legacy_limit))
+    if provider_request_limit < 1 or provider_request_limit > 250:
+        raise ValueError("ml.stock_alpha_news_collect.provider_request_limit must be between 1 and 250")
+    max_rows_per_provider = int(settings.get("max_rows_per_provider", legacy_limit))
+    if max_rows_per_provider < 1 or max_rows_per_provider > 10_000:
+        raise ValueError("ml.stock_alpha_news_collect.max_rows_per_provider must be between 1 and 10000")
+    symbols_per_batch = int(settings.get("symbols_per_batch", 0) or 0)
     timeout = int(settings.get("request_timeout_seconds", 20))
     if timeout < 1 or timeout > 60:
         raise ValueError("ml.stock_alpha_news_collect.request_timeout_seconds must be between 1 and 60")
+    rate_limit_sleep_seconds = float(settings.get("rate_limit_sleep_seconds", 0.0))
+    if rate_limit_sleep_seconds < 0.0 or rate_limit_sleep_seconds > 60.0:
+        raise ValueError("ml.stock_alpha_news_collect.rate_limit_sleep_seconds must be between 0 and 60")
     if bool(settings.get("merge_existing", False)) and not bool(
         settings.get("backup_existing", False)
     ):
@@ -89,9 +101,14 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
             "ml.stock_alpha_news_collect.merge_existing requires backup_existing=true"
         )
     symbols = [str(value).strip().upper() for value in settings.get("symbols", []) if str(value).strip()]
+    if symbols_per_batch < 1:
+        symbols_per_batch = max(1, len(symbols) or 1)
+    if symbols_per_batch > 500:
+        raise ValueError("ml.stock_alpha_news_collect.symbols_per_batch must be at most 500")
     provider_settings = dict(settings.get("providers", {}) or {})
     adapters = dict(sources or default_news_sources())
     requested, attempted, skipped, rate_limited, failures, counts, collected = [], [], [], [], {}, {}, []
+    batch_counts: dict[str, int] = {}
     for name, provider_config in provider_settings.items():
         provider_config = dict(provider_config or {})
         if not bool(provider_config.get("enabled", False)):
@@ -108,11 +125,33 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
             continue
         attempted.append(name)
         counts[name] = 0
+        provider_rows: list[dict[str, Any]] = []
         try:
-            rows = adapter.collect(symbols=symbols, start_date=str(settings.get("start_date", "")), end_date=str(settings.get("end_date", "")), limit=limit, timeout=timeout, api_key=api_key)
-            normalized = [_canonical_row(row, name) for row in rows[:limit]]
-            counts[name] = len(normalized)
-            collected.extend(normalized)
+            batches = _symbol_batches(symbols, symbols_per_batch)
+            batch_counts[name] = len(batches)
+            for batch_index, batch_symbols in enumerate(batches):
+                remaining = max_rows_per_provider - len(provider_rows)
+                if remaining <= 0:
+                    break
+                rows = adapter.collect(
+                    symbols=batch_symbols,
+                    start_date=str(settings.get("start_date", "")),
+                    end_date=str(settings.get("end_date", "")),
+                    limit=min(provider_request_limit, remaining),
+                    timeout=timeout,
+                    api_key=api_key,
+                )
+                provider_rows.extend(
+                    _canonical_row(row, name) for row in rows[:remaining]
+                )
+                if (
+                    rate_limit_sleep_seconds > 0.0
+                    and batch_index < len(batches) - 1
+                    and len(provider_rows) < max_rows_per_provider
+                ):
+                    time.sleep(rate_limit_sleep_seconds)
+            counts[name] = len(provider_rows)
+            collected.extend(provider_rows)
         except Exception as exc:  # provider isolation is intentional
             if name == "gdelt" and getattr(exc, "code", None) == 429:
                 counts[name] = 0
@@ -124,10 +163,17 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
     payload["total_rows_collected"] = len(collected)
+    payload["requested_symbol_count"] = len(set(symbols))
+    payload["symbols_per_batch"] = symbols_per_batch
+    payload["provider_request_limit"] = provider_request_limit
+    payload["max_rows_per_provider"] = max_rows_per_provider
+    payload["rate_limit_sleep_seconds"] = rate_limit_sleep_seconds
+    payload["provider_batch_counts"] = batch_counts
     payload["symbol_count"] = len(
         {str(row.get("symbol", "")).strip().upper() for row in deduplicated}
         - {""}
     )
+    payload.update(_row_diagnostics(deduplicated, requested_symbol_count=len(set(symbols))))
     headlines = [
         str(row.get("headline", "")).strip().lower()
         for row in deduplicated
@@ -185,6 +231,54 @@ def _deduplicate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _symbol_batches(symbols: list[str], batch_size: int) -> list[list[str]]:
+    if not symbols:
+        return [[]]
+    return [
+        symbols[index : index + batch_size]
+        for index in range(0, len(symbols), batch_size)
+    ]
+
+
+def _row_diagnostics(rows: list[dict[str, Any]], *, requested_symbol_count: int) -> dict[str, Any]:
+    rows_by_provider = Counter(str(row.get("provider", "")) for row in rows)
+    rows_by_symbol = Counter(str(row.get("symbol", "")).strip().upper() for row in rows)
+    provider_symbols: dict[str, set[str]] = defaultdict(set)
+    provider_published: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        provider = str(row.get("provider", ""))
+        symbol = str(row.get("symbol", "")).strip().upper()
+        published = str(row.get("published_at_utc", "")).strip()
+        if symbol:
+            provider_symbols[provider].add(symbol)
+        if published:
+            provider_published[provider].append(published)
+    provider_symbol_counts = {
+        provider: len(symbols)
+        for provider, symbols in sorted(provider_symbols.items())
+    }
+    denominator = requested_symbol_count or 1
+    provider_symbol_coverage = {
+        provider: count / denominator
+        for provider, count in provider_symbol_counts.items()
+    }
+    provider_published_ranges = {
+        provider: {
+            "min_published_at_utc": min(values),
+            "max_published_at_utc": max(values),
+        }
+        for provider, values in sorted(provider_published.items())
+        if values
+    }
+    return {
+        "rows_by_provider": dict(sorted(rows_by_provider.items())),
+        "rows_by_symbol": dict(sorted(rows_by_symbol.items())),
+        "provider_symbol_counts": provider_symbol_counts,
+        "provider_symbol_coverage": provider_symbol_coverage,
+        "published_at_utc_range_by_provider": provider_published_ranges,
+    }
+
+
 def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str], attempted: list[str], skipped: list[str], failures: dict[str, str], counts: dict[str, int], total: int) -> dict[str, Any]:
     dry_run = bool(settings.get("dry_run", True))
     return {
@@ -192,11 +286,17 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_requested": requested, "providers_attempted": attempted,
         "providers_skipped_missing_key": skipped, "providers_failed": failures,
         "provider_row_counts": counts, "total_rows_collected": total,
+        "requested_symbol_count": 0, "symbols_per_batch": 0,
+        "provider_request_limit": 0, "max_rows_per_provider": 0,
+        "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
         "providers_returned_zero_rows": [],
         "providers_rate_limited": [], "provider_policy": {},
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
         "symbol_count": 0, "duplicate_headline_count": 0,
         "duplicate_headline_rate": 0.0,
+        "rows_by_provider": {}, "rows_by_symbol": {},
+        "provider_symbol_counts": {}, "provider_symbol_coverage": {},
+        "published_at_utc_range_by_provider": {},
         "existing_input_row_count": 0, "new_row_count": 0,
         "merge_deduplicated_row_count": 0, "output_row_count": 0,
         "backup_path": "",
@@ -234,4 +334,4 @@ def _backup_path(output_path: Path) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])

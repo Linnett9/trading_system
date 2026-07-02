@@ -45,3 +45,45 @@ def test_real_historical_news_templates_label_provider_availability_policy():
         assert ml["stock_alpha_news_pit_policy"] == "provider_available_at"
         assert ml["stock_alpha_news_availability_lag_hours"] == 24
         assert ml["stock_alpha_news_historical_provider_availability_enabled"] is True
+
+
+def test_200_symbol_alpha_vantage_sec_edgar_collection_configs_are_bounded():
+    dry = load_config(
+        "config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_200symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    write = load_config(
+        "config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_200symbol_write_template.yaml",
+        overlay_project_config=True,
+    )
+
+    for config in (dry, write):
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+        assert len(collect["symbols"]) == 200
+        assert len(set(collect["symbols"])) == 200
+        assert collect["symbols_per_batch"] == 25
+        assert collect["provider_request_limit"] == 100
+        assert collect["max_rows_per_provider"] == 1000
+        assert providers["alpha_vantage"] == {
+            "enabled": True,
+            "api_key_env": "ALPHA_VANTAGE_API_KEY",
+        }
+        assert providers["sec_edgar"] == {"enabled": True}
+        assert providers["gdelt"]["enabled"] is False
+        assert providers["fmp"]["enabled"] is False
+        assert providers["newsapi"]["enabled"] is False
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+    assert dry["ml"]["stock_alpha_news_collect"]["dry_run"] is True
+    assert dry["ml"]["stock_alpha_news_collect"]["rate_limit_sleep_seconds"] == 0
+    assert write["ml"]["stock_alpha_news_collect"]["dry_run"] is False
+    assert write["ml"]["stock_alpha_news_collect"]["allow_overwrite"] is False
+    assert write["ml"]["stock_alpha_news_collect"]["merge_existing"] is True
+    assert write["ml"]["stock_alpha_news_collect"]["backup_existing"] is True
+    assert write["ml"]["stock_alpha_news_collect"]["rate_limit_sleep_seconds"] == 1
