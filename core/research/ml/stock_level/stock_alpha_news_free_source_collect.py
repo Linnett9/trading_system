@@ -11,7 +11,11 @@ from typing import Any, Mapping
 
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
-from core.research.ml.stock_level.news_sources import PROVIDER_METADATA, default_news_sources
+from core.research.ml.stock_level.news_sources import (
+    PROVIDER_METADATA,
+    default_news_sources,
+    load_validated_rss_registry,
+)
 from core.research.ml.stock_level.stock_alpha_news_contract import REQUIRED_NEWS_CONTRACT_COLUMNS
 
 
@@ -75,6 +79,22 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     ml = dict(config.get("ml", {}) or {})
     output_path = _required_path(ml, "stock_alpha_news_collect_output_path")
     settings = dict(ml.get("stock_alpha_news_collect", {}) or {})
+    registry_validation: dict[str, Any] = {}
+    universe_path = str(settings.get("universe_path", "")).strip()
+    registry_path = str(settings.get("source_registry_path", "")).strip()
+    if universe_path or bool(settings.get("load_feeds_from_registry", False)):
+        if not universe_path or not registry_path:
+            raise ValueError("universe_path and source_registry_path are both required for registry expansion")
+        universe_symbols, registry_feeds, registry_validation = load_validated_rss_registry(
+            universe_path, registry_path
+        )
+        settings["symbols"] = universe_symbols
+        providers = dict(settings.get("providers", {}) or {})
+        rss = dict(providers.get("company_press_release_rss", {}) or {})
+        if bool(settings.get("load_feeds_from_registry", False)):
+            rss["feeds"] = registry_feeds
+        providers["company_press_release_rss"] = rss
+        settings["providers"] = providers
     if not bool(settings.get("enabled", False)):
         return _payload(settings, output_path, [], [], [], {}, {}, 0), []
     dry_run = bool(settings.get("dry_run", True))
@@ -219,6 +239,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload["provider_batch_counts"] = batch_counts
     payload["provider_batch_diagnostics"] = batch_diagnostics
     payload.update(_rss_registry_diagnostics(settings, symbols, batch_diagnostics))
+    payload["registry_validation"] = registry_validation
     payload["provider_zero_row_reasons"] = {
         name: reason for name, reason in sorted(zero_row_reasons.items())
         if counts.get(name, 0) == 0 or reason in {"rate_limited", "provider_error"}
@@ -228,6 +249,18 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         - {""}
     )
     payload.update(_row_diagnostics(deduplicated, requested_symbol_count=len(set(symbols))))
+    universe_symbol_count = int(registry_validation.get("universe_symbol_count", len(set(symbols))))
+    payload["total_universe_symbol_count"] = universe_symbol_count
+    payload["total_universe_coverage"] = (
+        payload["symbol_count"] / universe_symbol_count if universe_symbol_count else 0.0
+    )
+    payload.update(
+        _coverage_aliases(
+            payload,
+            selected_symbol_count=len(set(symbols)),
+            registry_validation=registry_validation,
+        )
+    )
     headlines = [
         str(row.get("headline", "")).strip().lower()
         for row in deduplicated
@@ -372,6 +405,7 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "symbols_with_known_error_feeds": [], "symbols_with_feed_errors": [],
         "symbols_skipped_known_error_feeds": [],
         "symbols_skipped_max_enabled_feeds_per_run": [],
+        "enabled_feeds_returned_rows": [], "enabled_feeds_returned_zero_rows": [],
         "max_enabled_feeds_per_run": 0, "skip_known_error_feeds": False,
         "provider_request_limit": 0, "max_rows_per_provider": 0,
         "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
@@ -383,6 +417,24 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "duplicate_headline_rate": 0.0,
         "rows_by_provider": {}, "rows_by_symbol": {},
         "provider_symbol_counts": {}, "provider_symbol_coverage": {},
+        "registry_validation": {}, "total_universe_symbol_count": 0,
+        "total_universe_coverage": 0.0,
+        "canonical_universe_symbol_count": 0, "registry_symbol_count": 0,
+        "registry_missing_symbols": [], "registry_extra_symbols": [],
+        "registry_classification_counts": {}, "registry_complete": False,
+        "full_universe_verified_rss_feed_symbol_count": 0,
+        "full_universe_known_error_feed_symbol_count": 0,
+        "full_universe_no_verified_official_rss_symbol_count": 0,
+        "full_universe_sec_only_candidate_symbol_count": 0,
+        "full_universe_disabled_pending_review_symbol_count": 0,
+        "full_universe_known_error_feed_symbols": [],
+        "selected_symbol_count": 0, "selected_disabled_symbol_count": 0,
+        "selected_enabled_feed_symbol_count": 0,
+        "selected_known_error_feed_symbol_count": 0,
+        "selected_row_returning_symbol_count": 0,
+        "selected_symbol_row_coverage": 0.0,
+        "total_universe_row_coverage": 0.0,
+        "total_universe_enabled_feed_coverage": 0.0,
         "published_at_utc_range_by_provider": {},
         "existing_input_row_count": 0, "new_row_count": 0,
         "merge_deduplicated_row_count": 0, "output_row_count": 0,
@@ -438,6 +490,8 @@ def _rss_registry_diagnostics(
     symbols_with_feed_errors = set()
     symbols_skipped_known_error_feeds = set()
     symbols_skipped_max_enabled_feeds_per_run = set()
+    enabled_feeds_returned_rows = set()
+    enabled_feeds_returned_zero_rows = set()
     for diagnostic in batch_diagnostics:
         for feed in diagnostic.get("feed_diagnostics", []) or []:
             if not isinstance(feed, Mapping):
@@ -452,6 +506,10 @@ def _rss_registry_diagnostics(
                 symbols_skipped_known_error_feeds.add(symbol)
             if zero_row_reason == "max_enabled_feeds_per_run_reached":
                 symbols_skipped_max_enabled_feeds_per_run.add(symbol)
+            if int(feed.get("normalized_row_count", 0) or 0) > 0:
+                enabled_feeds_returned_rows.add(symbol)
+            elif zero_row_reason not in {"feed_disabled", "feed_not_configured"}:
+                enabled_feeds_returned_zero_rows.add(symbol)
     return {
         "verified_feed_symbol_count": len(verified_symbols),
         "enabled_feed_symbol_count": len(enabled_symbols),
@@ -462,8 +520,59 @@ def _rss_registry_diagnostics(
         "symbols_with_feed_errors": sorted(symbols_with_feed_errors),
         "symbols_skipped_known_error_feeds": sorted(symbols_skipped_known_error_feeds),
         "symbols_skipped_max_enabled_feeds_per_run": sorted(symbols_skipped_max_enabled_feeds_per_run),
+        "enabled_feeds_returned_rows": sorted(enabled_feeds_returned_rows),
+        "enabled_feeds_returned_zero_rows": sorted(enabled_feeds_returned_zero_rows),
         "max_enabled_feeds_per_run": max(0, int(provider_config.get("max_enabled_feeds_per_run", 0) or 0)),
         "skip_known_error_feeds": bool(provider_config.get("skip_known_error_feeds", False)),
+    }
+
+
+def _coverage_aliases(
+    payload: Mapping[str, Any],
+    *,
+    selected_symbol_count: int,
+    registry_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    classification_counts = dict(registry_validation.get("classification_counts", {}) or {})
+    universe_symbol_count = int(
+        registry_validation.get("universe_symbol_count", selected_symbol_count) or 0
+    )
+    registry_enabled_feed_count = int(
+        registry_validation.get(
+            "enabled_feed_symbol_count",
+            classification_counts.get("verified_rss_feed", 0)
+            + classification_counts.get("known_error_feed", 0),
+        )
+        or 0
+    )
+    row_returning_symbol_count = int(payload.get("symbol_count", 0) or 0)
+    return {
+        "canonical_universe_symbol_count": universe_symbol_count,
+        "registry_symbol_count": int(registry_validation.get("registry_symbol_count", 0) or 0),
+        "registry_missing_symbols": list(registry_validation.get("registry_missing_symbols", []) or []),
+        "registry_extra_symbols": list(registry_validation.get("registry_extra_symbols", []) or []),
+        "registry_classification_counts": classification_counts,
+        "registry_complete": bool(registry_validation.get("registry_complete", False)),
+        "full_universe_verified_rss_feed_symbol_count": int(classification_counts.get("verified_rss_feed", 0)),
+        "full_universe_known_error_feed_symbol_count": int(classification_counts.get("known_error_feed", 0)),
+        "full_universe_no_verified_official_rss_symbol_count": int(classification_counts.get("no_verified_official_rss", 0)),
+        "full_universe_sec_only_candidate_symbol_count": int(classification_counts.get("sec_only_candidate", 0)),
+        "full_universe_disabled_pending_review_symbol_count": int(classification_counts.get("disabled_pending_review", 0)),
+        "full_universe_known_error_feed_symbols": list(registry_validation.get("known_error_feed_symbols", []) or []),
+        "selected_symbol_count": selected_symbol_count,
+        "selected_disabled_symbol_count": int(payload.get("disabled_symbol_count", 0) or 0),
+        "selected_enabled_feed_symbol_count": int(payload.get("enabled_feed_symbol_count", 0) or 0),
+        "selected_known_error_feed_symbol_count": int(payload.get("known_error_feed_symbol_count", 0) or 0),
+        "selected_row_returning_symbol_count": row_returning_symbol_count,
+        "selected_symbol_row_coverage": (
+            row_returning_symbol_count / selected_symbol_count if selected_symbol_count else 0.0
+        ),
+        "total_universe_row_coverage": (
+            row_returning_symbol_count / universe_symbol_count if universe_symbol_count else 0.0
+        ),
+        "total_universe_enabled_feed_coverage": (
+            registry_enabled_feed_count / universe_symbol_count if universe_symbol_count else 0.0
+        ),
     }
 
 
@@ -567,6 +676,8 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Symbols with feed errors: {payload['symbols_with_feed_errors']}",
         f"- Symbols skipped known-error feeds: {payload['symbols_skipped_known_error_feeds']}",
         f"- Symbols skipped max enabled feeds per run: {payload['symbols_skipped_max_enabled_feeds_per_run']}",
+        f"- Enabled feeds returned rows: {payload['enabled_feeds_returned_rows']}",
+        f"- Enabled feeds returned zero rows: {payload['enabled_feeds_returned_zero_rows']}",
         f"- Symbols per batch: {payload['symbols_per_batch']}",
         f"- Provider request limit: {payload['provider_request_limit']}",
         f"- Max rows per provider: {payload['max_rows_per_provider']}",
@@ -587,6 +698,26 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Rows by provider: {payload['rows_by_provider']}",
         f"- Rows by symbol: {payload['rows_by_symbol']}",
         f"- Provider symbol coverage: {payload['provider_symbol_coverage']}",
+        f"- Selected symbols: {payload['selected_symbol_count']}",
+        f"- Selected disabled symbols: {payload['selected_disabled_symbol_count']}",
+        f"- Selected enabled-feed symbols: {payload['selected_enabled_feed_symbol_count']}",
+        f"- Selected known-error feed symbols: {payload['selected_known_error_feed_symbol_count']}",
+        f"- Selected row-returning symbols: {payload['selected_row_returning_symbol_count']}",
+        f"- Selected symbol row coverage: {payload['selected_symbol_row_coverage']}",
+        f"- Total universe row coverage: {payload['total_universe_row_coverage']}",
+        f"- Total universe enabled-feed coverage: {payload['total_universe_enabled_feed_coverage']}",
+        f"- Registry complete: {payload['registry_complete']}",
+        f"- Canonical universe symbols: {payload['canonical_universe_symbol_count']}",
+        f"- Registry symbols: {payload['registry_symbol_count']}",
+        f"- Registry missing symbols: {payload['registry_missing_symbols']}",
+        f"- Registry extra symbols: {payload['registry_extra_symbols']}",
+        f"- Registry classifications: {payload['registry_classification_counts']}",
+        f"- Full-universe verified RSS symbols: {payload['full_universe_verified_rss_feed_symbol_count']}",
+        f"- Full-universe known-error feed symbols: {payload['full_universe_known_error_feed_symbol_count']}",
+        f"- Full-universe known-error symbols: {payload['full_universe_known_error_feed_symbols']}",
+        f"- Full-universe no-verified-official-RSS symbols: {payload['full_universe_no_verified_official_rss_symbol_count']}",
+        f"- Full-universe SEC-only candidates: {payload['full_universe_sec_only_candidate_symbol_count']}",
+        f"- Full-universe disabled pending review: {payload['full_universe_disabled_pending_review_symbol_count']}",
         f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}",
         f"- Deduplicated rows: {payload['deduplicated_row_count']}",
         f"- Symbols: {payload['symbol_count']}",

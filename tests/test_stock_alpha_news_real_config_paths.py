@@ -379,6 +379,61 @@ def test_company_press_release_rss_registry_and_25_symbol_config_are_dry_run_onl
     assert ml["promotion_thresholds_changed"] is False
 
 
+def test_company_press_release_rss_registry_covers_canonical_379_universe():
+    from core.research.ml.stock_level.news_sources import load_validated_rss_registry
+
+    symbols, feeds, report = load_validated_rss_registry(
+        "data/reference/universes/us_liquid_500.yaml",
+        "config/news_source_registry.stock_alpha_rss.yaml",
+    )
+
+    assert len(symbols) == len(set(symbols)) == 379
+    assert report["registry_complete"] is True
+    assert sum(report["classification_counts"].values()) == 379
+    assert report["classification_counts"]["verified_rss_feed"] == 15
+    assert report["classification_counts"]["known_error_feed"] == 6
+    assert report["classification_counts"]["no_verified_official_rss"] == 2
+    assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
+    assert report["sec_only_candidate_symbols"] == []
+    assert set(feeds) == set(report["verified_rss_feed_symbols"] + report["known_error_feed_symbols"])
+    for symbol, symbol_feeds in feeds.items():
+        for feed in symbol_feeds:
+            assert feed["official"] is True
+            assert feed["enabled"] is True
+            assert str(feed["url"]).startswith("https://")
+            assert str(feed["verified_source_url"]).startswith("https://")
+            assert feed.get("known_error", False) is (symbol in report["known_error_feed_symbols"])
+
+
+def test_company_press_release_rss_379_config_is_bounded_static_registry_dry_run():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    rss = collect["providers"]["company_press_release_rss"]
+
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["universe_path"] == "data/reference/universes/us_liquid_500.yaml"
+    assert collect["load_feeds_from_registry"] is True
+    assert collect["max_symbols_per_run"] == 25
+    assert collect["only_symbols"] == []
+    assert collect["request_timeout_seconds"] == 20
+    assert rss["max_enabled_feeds_per_run"] == 10
+    assert rss["skip_known_error_feeds"] is True
+    for name, provider in collect["providers"].items():
+        assert provider["enabled"] is (name == "company_press_release_rss")
+    assert "stock_alpha_news_features_path" not in ml
+    assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+    assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+
+
 def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_error_feeds():
     config = load_config(
         "config/config.stock_alpha_news_collect_company_press_release_rss_25symbol_errors_only_dry_run.yaml",
