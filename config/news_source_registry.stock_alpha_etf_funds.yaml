@@ -1,0 +1,77 @@
+version: 1
+provider_policy:
+  classification: etf_or_fund_official_provider_candidate
+  recommended_first_provider: sec_fund_filings
+  allowed_providers:
+    - sec_fund_filings
+    - official_etf_fund_documents
+    - official_etf_provider_news
+  forbidden_providers:
+    - company_press_release_rss
+    - sec_company_filings
+  collection_enabled: false
+  feature_generation_approved: false
+
+funds:
+  GLD:
+    classification: etf_or_fund_sec_fund_filings_candidate
+    likely_issuer_or_provider: World Gold Trust Services / State Street Global Advisors
+    category: physical gold trust
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC trust/series mapping and row contract are not implemented or tested
+  QQQ:
+    classification: etf_or_fund_sec_fund_filings_candidate
+    likely_issuer_or_provider: Invesco
+    category: index ETF
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
+  SPY:
+    classification: etf_or_fund_sec_fund_filings_candidate
+    likely_issuer_or_provider: State Street Global Advisors
+    category: index ETF
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
+  TLT:
+    classification: etf_or_fund_sec_fund_filings_candidate
+    likely_issuer_or_provider: BlackRock iShares
+    category: fixed-income ETF
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
+  VNQ:
+    classification: etf_or_fund_sec_fund_filings_candidate
+    likely_issuer_or_provider: Vanguard
+    category: real-estate ETF
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
+  XLB: &sector_spdr
+    classification: official_etf_provider_documents_candidate
+    likely_issuer_or_provider: State Street Global Advisors
+    category: sector ETF
+    sec_fund_filings_applicable: true
+    official_provider_source_needed: true
+    recommended_provider: sec_fund_filings
+    safe_to_collect_now: false
+    blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
+  XLE: *sector_spdr
+  XLF: *sector_spdr
+  XLI: *sector_spdr
+  XLK: *sector_spdr
+  XLP: *sector_spdr
+  XLU: *sector_spdr
+  XLV: *sector_spdr
+  XLY: *sector_spdr

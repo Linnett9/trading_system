@@ -12,9 +12,9 @@ ml:
     max_rows_per_provider: 100
     provider_request_limit: 100
     symbols_per_batch: 25
-    max_symbols_per_run: 25
-    symbols: [MS, XLU, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
-    only_symbols: [MS, XLU, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
+    max_symbols_per_run: 24
+    symbols: [MS, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
+    only_symbols: [MS, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
     rate_limit_sleep_seconds: 0
     request_timeout_seconds: 20
     start_date: '2026-04-01'

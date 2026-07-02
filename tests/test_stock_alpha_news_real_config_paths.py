@@ -14,6 +14,11 @@ REAL_DIAGNOSTIC_STOCK_ROWS_PATH = (
     "stock_alpha_ensemble_average_rank_predictions.csv"
 )
 
+ETF_FUND_SYMBOLS = {
+    "GLD", "QQQ", "SPY", "TLT", "VNQ", "XLB", "XLE", "XLF", "XLI",
+    "XLK", "XLP", "XLU", "XLV", "XLY",
+}
+
 
 def test_real_news_templates_use_existing_diagnostic_stock_rows_path():
     config_keys = [
@@ -715,7 +720,10 @@ def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_er
 def test_sec_company_filings_batch_01_to_16_dry_run_configs_are_safe_and_separate():
     batches = build_universe_batches("data/reference/universes/us_liquid_500.yaml", 25)
     expected_by_batch = {1: ["AAPL", "MSFT", "NVDA", "AMZN", "META"]}
-    expected_by_batch.update({index: batches[index - 1] for index in range(2, 17)})
+    expected_by_batch.update({
+        index: [symbol for symbol in batches[index - 1] if symbol not in ETF_FUND_SYMBOLS]
+        for index in range(2, 17)
+    })
 
     for batch_index, expected_symbols in expected_by_batch.items():
         config = load_config(
@@ -756,7 +764,10 @@ def test_sec_company_filings_batch_01_to_16_dry_run_configs_are_safe_and_separat
 def test_sec_company_filings_batch_01_to_16_12mo_dry_run_configs_are_safe_and_separate():
     batches = build_universe_batches("data/reference/universes/us_liquid_500.yaml", 25)
     expected_by_batch = {1: ["AAPL", "MSFT", "NVDA", "AMZN", "META"]}
-    expected_by_batch.update({index: batches[index - 1] for index in range(2, 17)})
+    expected_by_batch.update({
+        index: [symbol for symbol in batches[index - 1] if symbol not in ETF_FUND_SYMBOLS]
+        for index in range(2, 17)
+    })
 
     for batch_index, expected_symbols in expected_by_batch.items():
         config = load_config(
@@ -817,6 +828,8 @@ def test_sec_company_filings_future_write_template_is_disabled_and_separate_from
     assert providers["sec_company_filings"]["enabled"] is True
     assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
     assert providers["company_press_release_rss"]["enabled"] is False
+    assert ETF_FUND_SYMBOLS.isdisjoint(collect["symbols"])
+    assert ETF_FUND_SYMBOLS.isdisjoint(collect["only_symbols"])
     for name, provider in providers.items():
         if name != "sec_company_filings":
             assert provider["enabled"] is False
@@ -828,6 +841,56 @@ def test_sec_company_filings_future_write_template_is_disabled_and_separate_from
     assert ml["trading_impact"] == "none"
     assert ml["production_validated"] is False
     assert ml["promotion_thresholds_changed"] is False
+
+
+def test_etf_fund_registry_is_separate_and_collection_blocked():
+    registry = yaml.safe_load(
+        Path("config/news_source_registry.stock_alpha_etf_funds.yaml").read_text(encoding="utf-8")
+    )
+    policy = registry["provider_policy"]
+    funds = registry["funds"]
+
+    assert set(funds) == ETF_FUND_SYMBOLS
+    assert policy["classification"] == "etf_or_fund_official_provider_candidate"
+    assert policy["recommended_first_provider"] == "sec_fund_filings"
+    assert set(policy["forbidden_providers"]) == {
+        "company_press_release_rss", "sec_company_filings",
+    }
+    assert policy["collection_enabled"] is False
+    assert policy["feature_generation_approved"] is False
+    for symbol, fund in funds.items():
+        assert fund["classification"] in {
+            "etf_or_fund_sec_fund_filings_candidate",
+            "official_etf_provider_documents_candidate",
+            "official_etf_provider_news_candidate",
+        }, symbol
+        assert fund["recommended_provider"] not in policy["forbidden_providers"]
+        assert fund["safe_to_collect_now"] is False
+        assert fund["blocked_reason"]
+
+
+def test_all_sec_company_filings_configs_exclude_etf_fund_symbols():
+    for path in Path("config").glob("config.stock_alpha_news_collect_sec_company_filings*.yaml"):
+        collect = load_config(path, overlay_project_config=True)["ml"]["stock_alpha_news_collect"]
+        assert ETF_FUND_SYMBOLS.isdisjoint(collect.get("symbols", [])), path
+        assert ETF_FUND_SYMBOLS.isdisjoint(collect.get("only_symbols", [])), path
+
+
+def test_bn_foreign_company_recovery_config_uses_official_foreign_forms_only():
+    ml = load_config(
+        "config/config.stock_alpha_news_collect_sec_company_filings_bn_foreign_12mo_dry_run.yaml",
+        overlay_project_config=True,
+    )["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert collect["dry_run"] is True
+    assert collect["symbols"] == ["BN"]
+    assert providers["sec_company_filings"]["forms"] == ["6-K", "40-F"]
+    assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
+    assert providers["company_press_release_rss"]["enabled"] is False
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
 
 
 def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
