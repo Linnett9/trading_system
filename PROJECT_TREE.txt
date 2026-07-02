@@ -1,0 +1,557 @@
+.
+├── .github
+│   └── workflows
+│       └── alpaca-paper-trial.yml
+├── .gitignore
+├── application
+│   ├── cli.py
+│   ├── reporting
+│   │   ├── __init__.py
+│   │   ├── dual_momentum_reporter.py
+│   │   ├── multi_strategy_reporter.py
+│   │   ├── paper_reporter.py
+│   │   ├── relative_strength_reporter.py
+│   │   └── walk_forward_reporter.py
+│   └── services
+│       ├── __init__.py
+│       ├── adjusted_price_commands.py
+│       ├── broker_factory.py
+│       ├── champion_robustness_commands.py
+│       ├── dual_momentum_commands.py
+│       ├── dual_momentum_config.py
+│       ├── market_data_loader.py
+│       ├── ml_commands.py
+│       ├── multi_strategy_commands.py
+│       ├── paper_commands.py
+│       ├── paper_dry_run.py
+│       ├── paper_monitoring_service.py
+│       ├── paper_service.py
+│       ├── paper_trading_approval.py
+│       ├── paper_trading_broker.py
+│       ├── paper_trading_reporting.py
+│       ├── paper_trading_runtime.py
+│       ├── paper_trading_service.py
+│       ├── paper_trading_types.py
+│       ├── relative_strength_commands.py
+│       ├── research_commands.py
+│       ├── research_profiles.py
+│       ├── runtime_overrides.py
+│       └── stooq_bulk_commands.py
+├── cache
+│   ├── data
+│   └── ml
+│       ├── benchmark
+│       ├── development
+│       └── multitask_transformer_32_symbol_smoke
+├── config
+│   ├── config_defaults_ml.py
+│   ├── config_defaults_research.py
+│   ├── config_defaults_runtime.py
+│   ├── config_defaults.py
+│   ├── config_environment.py
+│   ├── config_loader.py
+│   ├── config_validation.py
+│   └── config.yaml
+├── configs
+│   ├── baselines
+│   │   ├── dual_momentum_inverse_vol.yaml
+│   │   ├── dual_momentum_scaled_fast_reentry.yaml
+│   │   ├── ranked_top5_enhanced_chop.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min10.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min7_maxw25.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min7_maxw28.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min7.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min8_maxw28.yaml
+│   │   ├── ranked_top5_hyst2_rank10_replace2_min8_maxw29.yaml
+│   │   └── ranked_top5_hyst2_rank10_replace2_min8_maxw30.yaml
+│   ├── champions
+│   │   ├── ranked_top5_bimonthly_v1.yaml
+│   │   └── ranked_top5_monthly_exposure90_v1.yaml
+│   ├── experiments
+│   │   └── hardened_bimonthly_top5.yaml
+│   ├── paper
+│   │   └── alpaca_7day_trial.yaml
+│   └── research
+│       ├── dlinear_32_symbol_universe.yaml
+│       ├── dlinear_champion_success.yaml
+│       ├── dlinear_expanded_context.yaml
+│       ├── dlinear_large_universe_100.yaml
+│       ├── dlinear_should_reduce_exposure.yaml
+│       ├── gradient_boosting_should_reduce_exposure.yaml
+│       ├── high_turnover_chop.yaml
+│       ├── itransformer_should_reduce_exposure.yaml
+│       ├── logistic_regression_should_reduce_exposure.yaml
+│       ├── market_context_encoder_should_reduce_exposure.yaml
+│       ├── ml_research_batch.yaml
+│       ├── momentum_transformer_should_reduce_exposure.yaml
+│       ├── multitask_transformer_32_symbol_smoke.yaml
+│       ├── multitask_transformer_should_reduce_exposure.yaml
+│       ├── news_analysis_transformer_should_reduce_exposure.yaml
+│       ├── patchtst_32_symbol_universe.yaml
+│       ├── patchtst_champion_success.yaml
+│       ├── patchtst_drawdown_risk.yaml
+│       ├── patchtst_expanded_context.yaml
+│       ├── patchtst_large_universe_100.yaml
+│       ├── patchtst_should_reduce_exposure.yaml
+│       ├── profiles
+│       │   ├── benchmark.yaml
+│       │   └── development.yaml
+│       ├── random_forest_should_reduce_exposure.yaml
+│       ├── regime_transformer_meta_ensemble_v1.yaml
+│       ├── stock_level_alpha_benchmark.yaml
+│       ├── tft_should_reduce_exposure.yaml
+│       ├── transformer_drawdown_risk.yaml
+│       ├── transformer_overlay_comparison.yaml
+│       ├── transformer_shadow_regularized.yaml
+│       ├── transformer_shadow.yaml
+│       └── transformer_should_reduce_exposure.yaml
+├── core
+│   ├── engine
+│   │   ├── backtest_engine.py
+│   │   ├── execution_engine.py
+│   │   └── trading_engine.py
+│   ├── entities
+│   │   ├── backtest_result.py
+│   │   ├── benchmark_result.py
+│   │   ├── broker_capabilities.py
+│   │   ├── broker.py
+│   │   ├── candle.py
+│   │   ├── capital_utilization.py
+│   │   ├── experiment_result.py
+│   │   ├── fill.py
+│   │   ├── optimization_result.py
+│   │   ├── order.py
+│   │   ├── portfolio.py
+│   │   ├── position.py
+│   │   ├── risk_context.py
+│   │   ├── signal_diagnostics.py
+│   │   ├── signal.py
+│   │   ├── strategy_comparison_result.py
+│   │   ├── strategy_context.py
+│   │   ├── trade_analysis.py
+│   │   ├── trade.py
+│   │   ├── trading_mode.py
+│   │   └── walk_forward_result.py
+│   ├── execution
+│   │   └── simple_execution_model.py
+│   ├── indicators
+│   │   ├── atr.py
+│   │   ├── ema.py
+│   │   ├── rsi.py
+│   │   └── sma.py
+│   ├── interfaces
+│   │   ├── alert_service.py
+│   │   ├── broker.py
+│   │   ├── clock.py
+│   │   ├── data_feed.py
+│   │   ├── execution_model.py
+│   │   ├── risk_manager.py
+│   │   └── strategy.py
+│   ├── paper
+│   │   ├── __init__.py
+│   │   └── paper_trading_engine.py
+│   ├── research
+│   │   ├── __init__.py
+│   │   ├── backtest_runner.py
+│   │   ├── capital_utilization_analyzer.py
+│   │   ├── champion_robustness.py
+│   │   ├── dual_momentum
+│   │   │   ├── __init__.py
+│   │   │   ├── analytics.py
+│   │   │   ├── config_snapshot.py
+│   │   │   ├── data.py
+│   │   │   ├── diagnostics.py
+│   │   │   ├── execution.py
+│   │   │   ├── experiments.py
+│   │   │   ├── factory.py
+│   │   │   ├── models.py
+│   │   │   ├── portfolio.py
+│   │   │   ├── ranking.py
+│   │   │   ├── regimes.py
+│   │   │   ├── reporting.py
+│   │   │   ├── scoring.py
+│   │   │   └── weighting.py
+│   │   ├── experiment_reporter.py
+│   │   ├── framework
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py
+│   │   │   ├── contracts.py
+│   │   │   ├── data.py
+│   │   │   ├── logging.py
+│   │   │   ├── parallel.py
+│   │   │   ├── ranking.py
+│   │   │   ├── registry.py
+│   │   │   ├── reporting.py
+│   │   │   └── walk_forward.py
+│   │   ├── market_regime_analyzer.py
+│   │   ├── ml
+│   │   │   ├── __init__.py
+│   │   │   ├── adjusted_data_comparison.py
+│   │   │   ├── adjusted_replay_alignment_audit.py
+│   │   │   ├── allocation
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── allocation_optimizer.py
+│   │   │   │   ├── allocation_v2_variants.py
+│   │   │   │   ├── allocation_v2.py
+│   │   │   │   ├── exposures.py
+│   │   │   │   ├── reporting.py
+│   │   │   │   ├── search.py
+│   │   │   │   ├── simulation.py
+│   │   │   │   ├── types.py
+│   │   │   │   └── utils.py
+│   │   │   ├── artifact_validator.py
+│   │   │   ├── artifacts
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── artifact_schema.py
+│   │   │   │   ├── artifact_validator.py
+│   │   │   │   ├── artifact_writers.py
+│   │   │   │   ├── experiment_paths.py
+│   │   │   │   ├── feature_cache.py
+│   │   │   │   └── report_annotation.py
+│   │   │   ├── audits
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── adjusted_data_analysis.py
+│   │   │   │   ├── adjusted_data_comparison.py
+│   │   │   │   ├── adjusted_data_config.py
+│   │   │   │   ├── adjusted_data_loading.py
+│   │   │   │   ├── adjusted_data_reporting.py
+│   │   │   │   ├── adjusted_data_types.py
+│   │   │   │   ├── adjusted_price_replay.py
+│   │   │   │   ├── adjusted_replay_alignment_audit.py
+│   │   │   │   ├── benchmark_relative_validation.py
+│   │   │   │   ├── champion_baseline_audit.py
+│   │   │   │   ├── data_adjustment_validation_adjustments.py
+│   │   │   │   ├── data_adjustment_validation_clean_replay.py
+│   │   │   │   ├── data_adjustment_validation_config.py
+│   │   │   │   ├── data_adjustment_validation_loading.py
+│   │   │   │   ├── data_adjustment_validation_reporting.py
+│   │   │   │   ├── data_adjustment_validation_types.py
+│   │   │   │   ├── data_adjustment_validation_utils.py
+│   │   │   │   ├── data_adjustment_validation.py
+│   │   │   │   ├── historical_coverage_audit.py
+│   │   │   │   ├── independent_period_expansion_audit.py
+│   │   │   │   ├── model_contract_audit.py
+│   │   │   │   ├── profit_concentration_audit.py
+│   │   │   │   ├── return_mechanics_audit.py
+│   │   │   │   ├── return_mechanics_candidate.py
+│   │   │   │   ├── return_mechanics_checks.py
+│   │   │   │   ├── return_mechanics_loading.py
+│   │   │   │   ├── return_mechanics_math.py
+│   │   │   │   ├── return_mechanics_optimizer.py
+│   │   │   │   ├── return_mechanics_reporting.py
+│   │   │   │   └── return_mechanics_types.py
+│   │   │   ├── benchmark_relative_validation.py
+│   │   │   ├── champion_baseline_audit.py
+│   │   │   ├── config.py
+│   │   │   ├── data
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── data_anomaly_quarantine.py
+│   │   │   │   ├── data_inventory.py
+│   │   │   │   ├── datasets.py
+│   │   │   │   ├── history_coverage.py
+│   │   │   │   ├── rebalance_dataset.py
+│   │   │   │   ├── sector_reference.py
+│   │   │   │   ├── sequence_dataset.py
+│   │   │   │   └── universe_builder.py
+│   │   │   ├── data_adjustment_validation.py
+│   │   │   ├── data_anomaly_quarantine.py
+│   │   │   ├── data_inventory.py
+│   │   │   ├── experiment_runner.py
+│   │   │   ├── features
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── features.py
+│   │   │   │   ├── labels.py
+│   │   │   │   └── news_sentiment.py
+│   │   │   ├── historical_coverage_audit.py
+│   │   │   ├── html_report.py
+│   │   │   ├── independent_period_expansion_audit.py
+│   │   │   ├── meta
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── meta_auxiliary.py
+│   │   │   │   ├── meta_comparison.py
+│   │   │   │   ├── meta_dataset.py
+│   │   │   │   ├── meta_ensemble.py
+│   │   │   │   ├── meta_evaluation.py
+│   │   │   │   ├── meta_horizon.py
+│   │   │   │   ├── meta_io.py
+│   │   │   │   ├── meta_models.py
+│   │   │   │   ├── meta_overlay.py
+│   │   │   │   └── meta_types.py
+│   │   │   ├── metrics
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── calibration.py
+│   │   │   │   ├── cross_sectional_ranking_diagnostics.py
+│   │   │   │   ├── diagnostics.py
+│   │   │   │   ├── evaluation.py
+│   │   │   │   └── leaderboard.py
+│   │   │   ├── model_contract_audit.py
+│   │   │   ├── models
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── dlinear_model.py
+│   │   │   │   ├── itransformer_model.py
+│   │   │   │   ├── market_context_encoder_model.py
+│   │   │   │   ├── momentum_transformer_model.py
+│   │   │   │   ├── multitask_transformer_model.py
+│   │   │   │   ├── news_analysis_transformer_model.py
+│   │   │   │   ├── patchtst_model.py
+│   │   │   │   ├── registry.py
+│   │   │   │   ├── temporal_fusion_transformer_model.py
+│   │   │   │   └── transformer_model.py
+│   │   │   ├── overlays
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── drawdown_review.py
+│   │   │   │   ├── overlay.py
+│   │   │   │   └── rule_overlay.py
+│   │   │   ├── pipelines
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── dataset_pipeline.py
+│   │   │   │   ├── feature_pipeline.py
+│   │   │   │   ├── label_pipeline.py
+│   │   │   │   ├── model_pipeline.py
+│   │   │   │   └── rebalance_pipeline.py
+│   │   │   ├── profit_concentration_audit.py
+│   │   │   ├── replay
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── canonical_continuous_equity_replay.py
+│   │   │   ├── return_mechanics_audit.py
+│   │   │   ├── runtime_parallelism.py
+│   │   │   ├── sector_reference.py
+│   │   │   ├── stock_alpha_dev_smoke.py
+│   │   │   ├── stock_alpha_experiment_report.py
+│   │   │   ├── stock_alpha_parallelism_audit.py
+│   │   │   ├── stock_level
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── overnight_stock_alpha_runner.py
+│   │   │   │   ├── stock_alpha_dev_smoke.py
+│   │   │   │   ├── stock_alpha_experiment_report.py
+│   │   │   │   ├── stock_alpha_parallelism_audit.py
+│   │   │   │   ├── stock_alpha_paths.py
+│   │   │   │   ├── stock_alpha_run_profile.py
+│   │   │   │   ├── stock_level_alpha_features.py
+│   │   │   │   ├── stock_level_feature_attribution.py
+│   │   │   │   ├── stock_level_model_ranking_benchmark.py
+│   │   │   │   ├── stock_level_portfolio_policy_sweep.py
+│   │   │   │   ├── stock_level_portfolio_replay.py
+│   │   │   │   ├── stock_level_prediction_artifacts.py
+│   │   │   │   ├── stock_level_sequence_regressors.py
+│   │   │   │   ├── stock_level_target_comparison.py
+│   │   │   │   └── trading_research_leaderboard.py
+│   │   │   ├── stock_level_alpha_features.py
+│   │   │   ├── stock_level_benchmark_data.py
+│   │   │   ├── stock_level_benchmark_evaluation.py
+│   │   │   ├── stock_level_benchmark_execution.py
+│   │   │   ├── stock_level_benchmark_models.py
+│   │   │   ├── stock_level_benchmark_reporting.py
+│   │   │   ├── stock_level_benchmark_types.py
+│   │   │   ├── stock_level_feature_attribution.py
+│   │   │   ├── stock_level_model_ranking_benchmark.py
+│   │   │   ├── stock_level_portfolio_policy_sweep.py
+│   │   │   ├── stock_level_portfolio_replay.py
+│   │   │   ├── stock_level_prediction_artifacts.py
+│   │   │   ├── stock_level_target_comparison.py
+│   │   │   ├── trading_research_leaderboard.py
+│   │   │   ├── universe_builder.py
+│   │   │   └── validation.py
+│   │   ├── multi_strategy
+│   │   │   ├── __init__.py
+│   │   │   ├── aggregation.py
+│   │   │   ├── data.py
+│   │   │   ├── diagnostics.py
+│   │   │   ├── experiments.py
+│   │   │   ├── models.py
+│   │   │   ├── portfolio.py
+│   │   │   └── sleeves.py
+│   │   ├── parameter_optimizer.py
+│   │   ├── performance_metrics.py
+│   │   ├── portfolio_utils.py
+│   │   ├── relative_strength
+│   │   │   ├── __init__.py
+│   │   │   ├── analytics.py
+│   │   │   ├── data.py
+│   │   │   ├── execution.py
+│   │   │   ├── experiments.py
+│   │   │   ├── models.py
+│   │   │   ├── portfolio.py
+│   │   │   └── ranking.py
+│   │   ├── result_cache.py
+│   │   ├── strategy_comparison.py
+│   │   ├── strategy_factory.py
+│   │   ├── trade_analyzer.py
+│   │   └── walk_forward.py
+│   ├── risk
+│   │   ├── atr_risk_manager.py
+│   │   ├── paper_risk.py
+│   │   ├── position_sizer.py
+│   │   ├── simple_risk_manager.py
+│   │   └── volatility_risk_manager.py
+│   └── services
+│       ├── indicator_service.py
+│       ├── market_data_service.py
+│       ├── portfolio_engine.py
+│       └── trade_manager.py
+├── data
+│   ├── processed
+│   │   └── stooq_parquet
+│   ├── raw
+│   │   └── stooq_bulk
+│   │       └── data
+│   │           └── daily
+│   └── reference
+│       ├── adjusted_prices
+│       └── universes
+│           ├── current_32.yaml
+│           ├── us_liquid_100.yaml
+│           ├── us_liquid_250.yaml
+│           └── us_liquid_500.yaml
+├── docs
+│   ├── ARCHITECTURE.md
+│   ├── DEBUGGING_NOTES.md
+│   ├── EXPERIMENT_LOG.md
+│   ├── IMPORTANT_FILES.md
+│   ├── NEXT_TASKS.md
+│   └── PROJECT_STATE.md
+├── infrastructure
+│   ├── alerts
+│   │   ├── __init__.py
+│   │   └── console_alert_service.py
+│   ├── alpaca
+│   │   ├── alpaca_data_feed.py
+│   │   └── alpaca_stream_feed.py
+│   ├── broker
+│   │   └── paper_broker.py
+│   ├── brokers
+│   │   ├── __init__.py
+│   │   ├── alpaca_broker.py
+│   │   └── fake_broker.py
+│   └── data
+│       ├── __init__.py
+│       ├── adjusted_price_csv_data_feed.py
+│       ├── csv_data_feed.py
+│       ├── stooq_bulk_importer.py
+│       ├── stooq_csv_data_feed.py
+│       ├── stooq_data_feed.py
+│       ├── stooq_parquet_data_feed.py
+│       └── yahoo_adjusted_price_importer.py
+├── main.py
+├── PROJECT_TREE.txt
+├── README.md
+├── requirements.txt
+├── strategies
+│   ├── bollinger_mean_reversion_strategy.py
+│   ├── buy_and_hold_strategy.py
+│   ├── donchian_breakout_strategy.py
+│   ├── ema_crossover_strategy.py
+│   ├── ema_rsi_filter_strategy.py
+│   ├── ema_rsi_pullback_strategy.py
+│   ├── ensemble_vote_strategy.py
+│   ├── filters
+│   │   ├── __init__.py
+│   │   └── regime_filters.py
+│   ├── opening_range_breakout_strategy.py
+│   ├── rsi_mean_reversion_strategy.py
+│   ├── rsi_strategy.py
+│   └── trend_pullback_strategy.py
+└── tests
+    ├── conftest.py
+    ├── test_adjusted_data_comparison.py
+    ├── test_adjusted_price_commands.py
+    ├── test_adjusted_replay_alignment_audit.py
+    ├── test_allocation_v2.py
+    ├── test_alpaca_broker.py
+    ├── test_alpaca_data_feed.py
+    ├── test_backtest_accounting.py
+    ├── test_backtest_engine.py
+    ├── test_backtest_lifecycle.py
+    ├── test_benchmark_relative_validation.py
+    ├── test_canonical_replay_robustness.py
+    ├── test_capital_utilization_analyzer.py
+    ├── test_champion_robustness.py
+    ├── test_cli_startup_imports.py
+    ├── test_config_loader.py
+    ├── test_cross_sectional_ranking_diagnostics.py
+    ├── test_data_adjustment_validation.py
+    ├── test_data_feed.py
+    ├── test_dual_momentum_portfolio.py
+    ├── test_dual_momentum_walk_forward_score.py
+    ├── test_engine.py
+    ├── test_execution_model.py
+    ├── test_experiment_reporter.py
+    ├── test_fake_broker.py
+    ├── test_historical_coverage_audit.py
+    ├── test_independent_period_expansion_audit.py
+    ├── test_indicator_service_metrics.py
+    ├── test_indicators.py
+    ├── test_market_context_encoder.py
+    ├── test_market_data_quality.py
+    ├── test_market_data.py
+    ├── test_meta_ensemble.py
+    ├── test_ml_artifact_writers.py
+    ├── test_ml_artifacts_package.py
+    ├── test_ml_calibration_reports.py
+    ├── test_ml_data_inventory.py
+    ├── test_ml_dataset_pipeline.py
+    ├── test_ml_diagnostic_reports.py
+    ├── test_ml_feature_cache.py
+    ├── test_ml_feature_pipeline.py
+    ├── test_ml_label_pipeline.py
+    ├── test_ml_leaderboard.py
+    ├── test_ml_model_pipeline.py
+    ├── test_ml_models_package.py
+    ├── test_ml_overlay_reports.py
+    ├── test_ml_ranking_outcomes.py
+    ├── test_ml_rebalance_pipeline.py
+    ├── test_ml_report_annotation.py
+    ├── test_ml_research_batch.py
+    ├── test_ml_research.py
+    ├── test_ml_universe_builder.py
+    ├── test_model_contract_audit.py
+    ├── test_multi_strategy_portfolio.py
+    ├── test_multitask_transformer.py
+    ├── test_news_analysis_transformer.py
+    ├── test_opening_range_breakout_strategy.py
+    ├── test_overlay_decision_rules.py
+    ├── test_overnight_stock_alpha_runner.py
+    ├── test_paper_data_freshness.py
+    ├── test_paper_monitoring_service.py
+    ├── test_paper_reporting.py
+    ├── test_paper_risk.py
+    ├── test_paper_trading_engine.py
+    ├── test_paper_trading_service.py
+    ├── test_performance_metrics.py
+    ├── test_position_sizer.py
+    ├── test_prediction_artifacts.py
+    ├── test_relative_strength_portfolio.py
+    ├── test_research_framework.py
+    ├── test_research_pipeline.py
+    ├── test_research_profiles.py
+    ├── test_result_cache.py
+    ├── test_return_mechanics_audit.py
+    ├── test_risk_manager.py
+    ├── test_risk_managers.py
+    ├── test_risk_position_awareness.py
+    ├── test_runtime_overrides.py
+    ├── test_sequence_model_registry.py
+    ├── test_stock_alpha_dev_smoke.py
+    ├── test_stock_alpha_experiment_report.py
+    ├── test_stock_alpha_parallelism_audit.py
+    ├── test_stock_alpha_paths.py
+    ├── test_stock_alpha_run_profile.py
+    ├── test_stock_level_alpha_features.py
+    ├── test_stock_level_feature_attribution.py
+    ├── test_stock_level_model_ranking_benchmark.py
+    ├── test_stock_level_portfolio_policy_sweep.py
+    ├── test_stock_level_portfolio_replay.py
+    ├── test_stock_level_prediction_artifacts.py
+    ├── test_stock_level_target_comparison.py
+    ├── test_stooq_bulk_importer.py
+    ├── test_stooq_csv_data_feed.py
+    ├── test_stooq_data_feed.py
+    ├── test_strategy.py
+    ├── test_temporal_fusion_transformer.py
+    ├── test_trade_analyzer.py
+    ├── test_trade_manager.py
+    ├── test_trading_research_leaderboard.py
+    ├── test_transformer_research.py
+    └── test_yahoo_adjusted_price_importer.py
+
+67 directories, 488 files
