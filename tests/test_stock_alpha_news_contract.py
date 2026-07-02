@@ -1762,6 +1762,57 @@ def test_free_source_collection_writes_deduplicated_canonical_csv(tmp_path):
     assert rows[0]["source"] == "gdelt-source"
 
 
+def test_free_source_collection_batches_symbols_and_reports_provider_coverage(tmp_path):
+    calls = []
+
+    class Batched:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            calls.append(kwargs)
+            return [
+                _collected_news_row(f"{symbol}-{len(calls)}", "gdelt")
+                | {"symbol": symbol}
+                for symbol in kwargs["symbols"]
+            ]
+
+    config = _collection_config(tmp_path, dry_run=True)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["symbols"] = ["AAPL", "MSFT", "NVDA", "AMZN", "META"]
+    settings["symbols_per_batch"] = 2
+    settings["provider_request_limit"] = 5
+    settings["max_rows_per_provider"] = 10
+    settings["rate_limit_sleep_seconds"] = 0
+
+    paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": Batched()})
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert [call["symbols"] for call in calls] == [
+        ["AAPL", "MSFT"],
+        ["NVDA", "AMZN"],
+        ["META"],
+    ]
+    assert payload["requested_symbol_count"] == 5
+    assert payload["symbols_per_batch"] == 2
+    assert payload["provider_request_limit"] == 5
+    assert payload["max_rows_per_provider"] == 10
+    assert payload["provider_batch_counts"] == {"gdelt": 3}
+    assert payload["rows_by_provider"] == {"gdelt": 5}
+    assert payload["provider_symbol_counts"] == {"gdelt": 5}
+    assert payload["provider_symbol_coverage"] == {"gdelt": 1.0}
+    assert payload["rows_by_symbol"] == {
+        "AAPL": 1,
+        "AMZN": 1,
+        "META": 1,
+        "MSFT": 1,
+        "NVDA": 1,
+    }
+    assert payload["published_at_utc_range_by_provider"]["gdelt"] == {
+        "min_published_at_utc": "2024-01-01T10:00:00Z",
+        "max_published_at_utc": "2024-01-01T10:00:00Z",
+    }
+
+
 def test_free_source_collection_merges_with_backup_and_stable_deduplication(tmp_path):
     existing = _collected_news_row("existing", "gdelt")
     new = _collected_news_row("new", "gdelt") | {
