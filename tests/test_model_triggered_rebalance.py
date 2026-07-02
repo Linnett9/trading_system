@@ -66,3 +66,67 @@ def test_recommended_dry_run_does_not_claim_submission_permission():
     assert result.decision == "PAPER_REBALANCE_RECOMMENDED"
     assert result.paper_submit_requested is False
     assert result.paper_submit_allowed is False
+
+
+def test_full_current_portfolio_weights_are_used_when_no_order_is_generated():
+    decision = _decision()
+    decision.model_context["current_weights"] = {"AAA": 0.5, "CCC": 0.5}
+    decision.orders = []
+
+    result = evaluate_model_triggered_rebalance(
+        _config(maximum_turnover=0.5),
+        decision,
+        submit_requested=False,
+    )
+
+    assert result.current_holdings == {"AAA": 0.5, "CCC": 0.5}
+    assert result.turnover == pytest.approx(0.5)
+    assert result.estimated_transaction_cost == pytest.approx(0.001)
+    assert result.estimated_slippage == pytest.approx(0.0005)
+    assert result.decision == "PAPER_REBALANCE_RECOMMENDED"
+
+
+def test_typical_single_position_replacement_passes_trial_turnover_gate():
+    incumbent = {
+        "AAA": 0.18,
+        "BBB": 0.18,
+        "CCC": 0.18,
+        "DDD": 0.18,
+        "EEE": 0.18,
+    }
+    candidate = {
+        "AAA": 0.18,
+        "BBB": 0.18,
+        "DDD": 0.18,
+        "EEE": 0.18,
+        "FFF": 0.18,
+    }
+    decision = SimpleNamespace(
+        timestamp=datetime(2026, 7, 1),
+        exposure_target=1.0,
+        target_weights=candidate,
+        current_positions={},
+        orders=[],
+        model_context={
+            "current_weights": incumbent,
+            "scores": {
+                "AAA": 0.5,
+                "BBB": 0.5,
+                "CCC": 0.0,
+                "DDD": 0.5,
+                "EEE": 0.5,
+                "FFF": 1.0,
+            },
+        },
+    )
+
+    result = evaluate_model_triggered_rebalance(
+        _config(maximum_turnover=0.25),
+        decision,
+        submit_requested=False,
+    )
+
+    assert result.replacement_count == 1
+    assert result.turnover == pytest.approx(0.18)
+    assert result.risk_gate_passed is True
+    assert result.decision == "PAPER_REBALANCE_RECOMMENDED"

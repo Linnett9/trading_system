@@ -102,9 +102,21 @@ def evaluate_model_triggered_rebalance(
     candidate_score = sum(weight * scores.get(symbol, 0.0) for symbol, weight in candidate.items())
     gross = candidate_score - current_score
     symbols = set(current) | set(candidate)
-    turnover = sum(abs(candidate.get(s, 0.0) - current.get(s, 0.0)) for s in symbols)
-    transaction_cost = turnover * float(costs.get("transaction_cost_bps", 0)) / 10_000
-    slippage = turnover * float(costs.get("slippage_bps", 0)) / 10_000
+    gross_traded_weight = sum(
+        abs(candidate.get(symbol, 0.0) - current.get(symbol, 0.0))
+        for symbol in symbols
+    )
+    turnover = gross_traded_weight / 2
+    transaction_cost = (
+        gross_traded_weight
+        * float(costs.get("transaction_cost_bps", 0))
+        / 10_000
+    )
+    slippage = (
+        gross_traded_weight
+        * float(costs.get("slippage_bps", 0))
+        / 10_000
+    )
     net = gross - transaction_cost - slippage
     replacements = len(set(candidate) - set(current))
     confidence = _confidence(scores, candidate)
@@ -155,6 +167,16 @@ def _finite_scores(values: Mapping[str, Any]) -> dict[str, float]:
 
 
 def _current_weights(decision: Any) -> dict[str, float]:
+    context_weights = getattr(decision, "model_context", {}).get(
+        "current_weights",
+    )
+    if context_weights is not None:
+        return {
+            str(symbol): float(weight)
+            for symbol, weight in context_weights.items()
+            if float(weight) > 0
+        }
+
     weights: dict[str, float] = {}
     for order in getattr(decision, "orders", []):
         weight = float(getattr(order, "current_weight", 0.0) or 0.0)

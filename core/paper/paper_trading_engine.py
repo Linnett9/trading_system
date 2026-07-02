@@ -166,6 +166,11 @@ class PaperTradingEngine(
         }
         cash = float(state.get("cash", self.starting_cash))
         equity = self._equity(cash, positions, prices_by_symbol)
+        model_context["current_weights"] = self._current_weights(
+            positions,
+            prices_by_symbol,
+            equity,
+        )
         orders = self._orders(
             target_weights=target_weights,
             exposure_target=selection.exposure_target,
@@ -211,3 +216,18 @@ class PaperTradingEngine(
             })
 
         return decision
+
+    @staticmethod
+    def _current_weights(
+        positions: dict[str, float],
+        prices_by_symbol: dict[str, float],
+        equity: float,
+    ) -> dict[str, float]:
+        if equity <= 0:
+            return {}
+
+        return {
+            symbol: quantity * prices_by_symbol[symbol] / equity
+            for symbol, quantity in positions.items()
+            if quantity > 0 and prices_by_symbol.get(symbol, 0) > 0
+        }
