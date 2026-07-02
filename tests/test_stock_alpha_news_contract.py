@@ -3335,6 +3335,81 @@ _classifications:
     assert audit["safe_for_feature_generation"] is False
 
 
+def test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_04_12mo_dry_run" / "dev"
+    thirty_six_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run" / "dev"
+    raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run" / "dev"
+    for directory in (twelve_dir, thirty_six_dir, raw_data_dir):
+        directory.mkdir(parents=True)
+    twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+    thirty_six_events = thirty_six_dir / "sec_company_filings_event_rows.jsonl"
+    raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+    universe.write_text("available_count: 2\nsymbols: [AAA, BBB]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: []
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [AAA, BBB]
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        csv.DictWriter(handle, fieldnames=fieldnames).writeheader()
+    base_row = {
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "form_type": "8-K",
+        "cik": "0000000001",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+    baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+    pilot_aaa_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000002", "published_at_utc": "2025-01-03T09:00:00Z"}
+    raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000003"}
+    twelve_events.write_text(
+        json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n",
+        encoding="utf-8",
+    )
+    thirty_six_events.write_text(
+        json.dumps(baseline_aaa) + "\n" + json.dumps(pilot_aaa_extra) + "\n",
+        encoding="utf-8",
+    )
+    raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        sec_event_row_paths=[twelve_events, thirty_six_events, raw_data_events],
+        sec_artifact_selection="merge_36mo_pilots",
+        reports_root=tmp_path / "reports",
+    )
+
+    assert audit["sec_dry_run_row_count"] == 3
+    assert audit["rows_by_symbol_by_provider"]["sec_company_filings"] == {"AAA": 2, "BBB": 1}
+    assert audit["baseline_12mo_sec_row_count"] == 2
+    assert audit["selected_sec_row_count"] == 3
+    assert audit["additional_sec_event_key_count"] == 1
+    assert audit["removed_sec_event_key_count"] == 0
+    assert audit["symbols_with_row_count_increase"] == ["AAA"]
+    assert audit["symbols_with_row_count_decrease"] == []
+    assert audit["baseline_sec_artifacts"] == [str(twelve_events)]
+    assert audit["added_sec_artifacts"] == [str(thirty_six_events)]
+    assert audit["selected_sec_artifacts"] == [str(twelve_events), str(thirty_six_events)]
+    assert all("data/news" not in path for path in audit["selected_sec_artifacts"])
+    assert audit["sec_artifact_selection"] == "merge_36mo_pilots"
+
+
 def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_features(tmp_path):
     raw = tmp_path / "raw.csv"
     sec_report = tmp_path / "sec.json"
@@ -3499,6 +3574,63 @@ def test_contract_ingest_preflight_can_prefer_36mo_sec_artifacts_without_raw_pat
     assert report["unsafe_reasons"] == [
         "contract ingest preflight is report-only and has not approved feature generation"
     ]
+
+
+def test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo(tmp_path):
+    twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+    thirty_six_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run" / "dev"
+    raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run" / "dev"
+    for directory in (twelve_dir, thirty_six_dir, raw_data_dir):
+        directory.mkdir(parents=True)
+    twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+    thirty_six_events = thirty_six_dir / "sec_company_filings_event_rows.jsonl"
+    raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+    base_row = {
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "headline_or_title": "8-K filed",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "cik": "0000000001",
+        "form_type": "8-K",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+    baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+    pilot_aaa_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000002", "published_at_utc": "2025-01-03T09:00:00Z"}
+    raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000003"}
+    twelve_events.write_text(
+        json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n",
+        encoding="utf-8",
+    )
+    thirty_six_events.write_text(
+        json.dumps(baseline_aaa) + "\n" + json.dumps(pilot_aaa_extra) + "\n",
+        encoding="utf-8",
+    )
+    raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+
+    report = build_stock_alpha_news_contract_ingest_preflight(
+        sec_event_row_paths=[twelve_events, thirty_six_events, raw_data_events],
+        sec_artifact_selection="merge_36mo_pilots",
+        min_symbol_coverage=2,
+    )
+
+    assert report["rows_checked_by_provider"] == {"sec_company_filings": 3}
+    assert report["valid_rows_by_provider"] == {"sec_company_filings": 3}
+    assert report["duplicate_event_key_count"] == 0
+    assert report["baseline_12mo_sec_row_count"] == 2
+    assert report["selected_sec_row_count"] == 3
+    assert report["additional_sec_event_key_count"] == 1
+    assert report["removed_sec_event_key_count"] == 0
+    assert report["symbols_with_row_count_increase"] == ["AAA"]
+    assert report["symbols_with_row_count_decrease"] == []
+    assert report["baseline_sec_artifacts"] == [str(twelve_events)]
+    assert report["added_sec_artifacts"] == [str(thirty_six_events)]
+    assert report["selected_sec_artifacts"] == [str(twelve_events), str(thirty_six_events)]
+    assert all("data/news" not in path for path in report["selected_sec_artifacts"])
+    assert report["sec_artifact_selection"] == "merge_36mo_pilots"
 
 
 def test_sec_company_filings_dry_run_writes_row_level_event_artifact(tmp_path):

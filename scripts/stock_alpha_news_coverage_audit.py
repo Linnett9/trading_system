@@ -40,7 +40,13 @@ def build_stock_alpha_news_coverage_audit(
     rows_by_symbol = _sorted_counter(Counter(row_symbols))
     rows_by_provider = _sorted_counter(Counter(str(row.get("provider", "")).strip() or "unknown" for row in rows))
     rows_by_source = _sorted_counter(Counter(str(row.get("source", "")).strip() or "unknown" for row in rows))
-    selected_sec_event_row_paths = _select_sec_event_row_paths(sec_event_row_paths or [], sec_artifact_selection)
+    all_sec_event_row_paths = list(sec_event_row_paths or [])
+    selected_sec_event_row_paths = _select_sec_event_row_paths(all_sec_event_row_paths, sec_artifact_selection)
+    sec_artifact_diagnostics = _sec_artifact_selection_diagnostics(
+        all_paths=all_sec_event_row_paths,
+        selected_paths=selected_sec_event_row_paths,
+        selection=sec_artifact_selection,
+    )
     sec_summary = _sec_report_summary(sec_report_paths or [], selected_sec_event_row_paths)
     sec_symbols = set(sec_summary["rows_by_symbol"])
     rss_symbols = row_symbol_set & universe_symbol_set
@@ -185,6 +191,7 @@ def build_stock_alpha_news_coverage_audit(
         "sec_reports_included": [str(path) for path in sec_report_paths or []],
         "sec_artifact_selection": sec_artifact_selection,
         "sec_event_rows_included": [str(path) for path in selected_sec_event_row_paths],
+        **sec_artifact_diagnostics,
         "known_error_feed_symbols": list(registry.get("known_error_feed_symbols", []) or []),
         "disabled_pending_review_count": int(registry.get("classification_counts", {}).get("disabled_pending_review", 0)),
         "safe_for_feature_generation": not unsafe_reasons,
@@ -456,8 +463,17 @@ def _sec_report_summary(paths: Sequence[str | Path], event_row_paths: Sequence[s
 def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
     if selection == "all":
         return list(paths)
-    if selection not in {"prefer_12mo", "prefer_36mo"}:
-        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', or 'prefer_36mo'")
+    if selection not in {"prefer_12mo", "prefer_36mo", "merge_36mo_pilots"}:
+        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', 'prefer_36mo', or 'merge_36mo_pilots'")
+    by_batch, other_paths = _group_sec_event_row_paths(paths)
+    if selection == "prefer_36mo":
+        return _prefer_36mo_sec_event_row_paths(by_batch, other_paths)
+    if selection == "merge_36mo_pilots":
+        return _merge_36mo_pilot_sec_event_row_paths(by_batch, other_paths)
+    return _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
+
+
+def _group_sec_event_row_paths(paths: Sequence[str | Path]) -> tuple[dict[str, list[str | Path]], list[str | Path]]:
     by_batch: dict[str, list[str | Path]] = defaultdict(list)
     other_paths: list[str | Path] = []
     for path in paths:
@@ -468,14 +484,19 @@ def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> 
             continue
         batch = path_text.split(marker, 1)[1][:2]
         by_batch[batch].append(path)
+    return by_batch, other_paths
+
+
+def _prefer_12mo_sec_event_row_paths(
+    by_batch: Mapping[str, list[str | Path]],
+    other_paths: Sequence[str | Path],
+) -> list[str | Path]:
     selected: list[str | Path] = []
     for batch in sorted(by_batch):
         batch_paths = by_batch[batch]
         preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
         selected.extend(preferred or batch_paths)
     selected.extend(other_paths)
-    if selection == "prefer_36mo":
-        selected = _prefer_36mo_sec_event_row_paths(by_batch, other_paths)
     return selected
 
 
@@ -493,9 +514,80 @@ def _prefer_36mo_sec_event_row_paths(
     return selected
 
 
+def _merge_36mo_pilot_sec_event_row_paths(
+    by_batch: Mapping[str, list[str | Path]],
+    other_paths: Sequence[str | Path],
+) -> list[str | Path]:
+    baseline = [
+        path for path in _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
+        if not _is_data_news_path(path)
+    ]
+    baseline_text = {str(path) for path in baseline}
+    overlay: list[str | Path] = []
+    for batch in sorted(by_batch):
+        overlay.extend(
+            path for path in by_batch[batch]
+            if "_36mo" in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+        )
+    return [*baseline, *overlay]
+
+
 def _is_data_news_path(path: str | Path) -> bool:
     path_text = str(path).replace("\\", "/")
     return path_text.startswith("data/news/") or "/data/news/" in path_text
+
+
+def _sec_artifact_selection_diagnostics(
+    *,
+    all_paths: Sequence[str | Path],
+    selected_paths: Sequence[str | Path],
+    selection: str,
+) -> dict[str, Any]:
+    if selection != "merge_36mo_pilots":
+        return {
+            "sec_artifact_selection_mode": selection,
+            "selected_sec_artifacts": [str(path) for path in selected_paths],
+        }
+    by_batch, other_paths = _group_sec_event_row_paths(all_paths)
+    baseline_paths = [
+        path for path in _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
+        if not _is_data_news_path(path)
+    ]
+    baseline_rows = _read_sec_event_rows(baseline_paths)
+    selected_rows = _read_sec_event_rows(selected_paths)
+    baseline_keys = {_sec_event_key(row) for row in baseline_rows}
+    selected_keys = {_sec_event_key(row) for row in selected_rows}
+    baseline_counts = _row_counts_by_symbol(baseline_rows)
+    selected_counts = _row_counts_by_symbol(selected_rows)
+    all_symbols = set(baseline_counts) | set(selected_counts)
+    added_artifacts = [str(path) for path in selected_paths if str(path) not in {str(item) for item in baseline_paths}]
+    return {
+        "sec_artifact_selection_mode": selection,
+        "baseline_12mo_sec_row_count": len(baseline_rows),
+        "selected_sec_row_count": len(selected_rows),
+        "additional_sec_event_key_count": len(selected_keys - baseline_keys),
+        "removed_sec_event_key_count": len(baseline_keys - selected_keys),
+        "symbols_with_row_count_increase": sorted(
+            symbol for symbol in all_symbols
+            if selected_counts.get(symbol, 0) > baseline_counts.get(symbol, 0)
+        ),
+        "symbols_with_row_count_decrease": sorted(
+            symbol for symbol in all_symbols
+            if selected_counts.get(symbol, 0) < baseline_counts.get(symbol, 0)
+        ),
+        "selected_sec_artifacts": [str(path) for path in selected_paths],
+        "baseline_sec_artifacts": [str(path) for path in baseline_paths],
+        "added_sec_artifacts": added_artifacts,
+    }
+
+
+def _row_counts_by_symbol(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counter: Counter[str] = Counter()
+    for row in rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if symbol:
+            counter[symbol] += 1
+    return _sorted_counter(counter)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -591,7 +683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
-    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo"], default="all")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo", "merge_36mo_pilots"], default="all")
     parser.add_argument("--output", required=True)
     parser.add_argument("--reports-root", default="reports")
     args = parser.parse_args(argv)
