@@ -339,7 +339,9 @@ def test_company_press_release_rss_registry_and_25_symbol_config_are_dry_run_onl
     assert rss["max_rows_per_feed"] == 10
     assert rss["max_enabled_feeds_per_run"] == 15
     assert rss["skip_known_error_feeds"] is True
-    assert sorted(symbol for symbol in registry if not symbol.startswith("_")) == sorted(expected_symbols)
+    assert set(expected_symbols) <= {
+        symbol for symbol in registry if not symbol.startswith("_")
+    }
     assert len(verified_symbols) == 21
     assert disabled_symbols == ["TSLA", "BRK.B", "UNH", "BAC"]
     for symbol in verified_symbols:
@@ -390,11 +392,14 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert len(symbols) == len(set(symbols)) == 379
     assert report["registry_complete"] is True
     assert sum(report["classification_counts"].values()) == 379
-    assert report["classification_counts"]["verified_rss_feed"] == 15
+    assert report["classification_counts"]["verified_rss_feed"] == 24
+    assert report["classification_counts"]["disabled_pending_review"] == 347
     assert report["classification_counts"]["known_error_feed"] == 6
     assert report["classification_counts"]["no_verified_official_rss"] == 2
     assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
     assert report["sec_only_candidate_symbols"] == []
+    assert {"CSCO", "IBM", "LRCX", "QCOM"} <= set(report["verified_rss_feed_symbols"])
+    assert {"INTU", "KLAC", "NKE", "TMO", "VZ"} <= set(report["verified_rss_feed_symbols"])
     assert set(feeds) == set(report["verified_rss_feed_symbols"] + report["known_error_feed_symbols"])
     for symbol, symbol_feeds in feeds.items():
         for feed in symbol_feeds:
@@ -432,6 +437,50 @@ def test_company_press_release_rss_379_config_is_bounded_static_registry_dry_run
     assert ml["research_only"] is True
     assert ml["trading_impact"] == "none"
     assert ml["production_validated"] is False
+
+
+def test_company_press_release_rss_batch_02_config_is_bounded_and_dry_run_only():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_02_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    expected = [
+        "BRK-B", "V", "AMAT", "XLF", "COST", "QCOM", "LRCX", "ASML", "XLE",
+        "NOW", "BAC", "XLV", "GS", "CSCO", "MA", "XLI", "JNJ", "CVX", "CAT",
+        "BA", "IBM", "TXN", "GE", "PANW", "C",
+    ]
+
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["only_symbols"] == expected
+    assert collect["max_symbols_per_run"] == 25
+    assert collect["providers"]["company_press_release_rss"]["skip_known_error_feeds"] is True
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
+
+
+def test_company_press_release_rss_batch_03_config_is_bounded_and_dry_run_only():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_03_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    expected = [
+        "HD", "ADBE", "INTU", "KLAC", "PG", "BKNG", "WFC", "ABBV", "XLP",
+        "PFE", "MRK", "XLY", "KO", "ACN", "APH", "PEP", "GLW", "ADI", "TMO",
+        "VZ", "T", "NKE", "DIS", "SNPS", "MCD",
+    ]
+
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["only_symbols"] == expected
+    assert collect["max_symbols_per_run"] == 25
+    assert collect["providers"]["company_press_release_rss"]["skip_known_error_feeds"] is True
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
 
 
 def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_error_feeds():

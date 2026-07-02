@@ -22,6 +22,51 @@ _classifications:
   no_verified_official_rss: [BRK-B, TSLA]
   sec_only_candidate: []
   disabled_pending_review: [A, AA, AAON, AAP, ABT, ACGL, ACLS, ACN, ADBE, ADC, ADI, ADM, ADP, ADSK, AEE, AEIS, AEM, AEO, AEP, AES, AFG, AFL, AGCO, AIG, AIT, AIZ, AJG, AKAM, ALB, ALGN, ALK, ALL, ALV, AMAT, AME, AMG, AMGN, AMKR, AMSC, AMT, AN, ANF, AON, AOS, APA, APD, APH, ARCC, ARW, ASML, ATI, ATO, ATR, AU, AVT, AVY, AXON, AXP, AXS, AXTI, AYI, AZN, AZO, B, BA, BAC, BALL, BAX, BB, BBD, BBWI, BBY, BC, BCE, BCS, BDX, BFH, BG, BHP, BIIB, BIO, BKH, BKNG, BLK, BMI, BMO, BMY, BN, BNS, BNY, BP, BPOP, BRK-A, BRKR, BRO, BSX, BTI, BWA, BXP, BYD, C, CACI, CAG, CAH, CAKE, CALM, CAR, CASY, CAT, CB, CBRE, CBRL, CBSH, CCEP, CCI, CCK, CCL, CDE, CDNS, CE, CHKP, CHRW, CI, CIEN, CINF, CL, CLX, CMCSA, CMI, CMS, CNP, COF, COP, COR, CPB, CSCO, CSX, CTAS, CVS, CVX, D, DAL, DD, DGX, DHR, DIS, DLTR, DOV, DRI, DTE, DUK, DVN, EBAY, ECL, ED, EFX, EIX, ELV, EMN, EMR, EOG, EQR, ETN, ETR, EXC, EXPD, F, FAST, FCX, FDX, FE, FHN, FISV, FLEX, FLR, GAP, GD, GE, GEN, GFI, GILD, GIS, GL, GLD, GLW, GNTX, GPC, GRMN, GS, GT, GWW, HAL, HAS, HBAN, HIG, HMY, HON, HPQ, HRB, HSIC, HSY, IBM, IFF, INTC, INTU, IP, ITT, ITW, JBL, JCI, JHG, KBH, KEY, KGC, KLAC, KMB, KR, KSS, LAMR, LEU, LLY, LMT, LNC, LOW, LPX, LRCX, LUMN, LUV, MAR, MAS, MAT, MCD, MCHP, MCK, MCO, MDT, MET, MKC, MMM, MNST, MO, MRK, MRSH, MRVL, MS, MSI, MTB, MTG, MU, NEE, NEM, NI, NKE, NOC, NOVT, NOW, NSC, NTAP, NTRS, NYT, ODFL, OMC, OXY, PANW, PAYX, PCAR, PEG, PEP, PFE, PFG, PGR, PH, PHM, PLD, PNC, PNW, PPG, PPL, PRU, PTEN, QCOM, QQQ, R, RF, RHI, RIG, RIO, ROK, ROST, RTX, RVTY, RYAAY, SANM, SBRA, SBUX, SCHW, SHW, SLB, SLM, SNA, SNPS, SO, SPG, SPGI, SPY, SRE, STT, SWK, SYK, SYY, T, TER, TEVA, TFC, TGT, THC, TJX, TKO, TLT, TMO, TROW, TT, TXN, TXT, UNH, UNM, UNP, UPS, VFC, VIAV, VMC, VNQ, VRSN, VZ, WAT, WEC, WEN, WFC, WHR, WMB, WMT, WWD, WY, XEL, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, YUM, ZBH, ZION]
+_classification_overrides:
+  CSCO: verified_rss_feed
+  IBM: verified_rss_feed
+  INTU: verified_rss_feed
+  KLAC: verified_rss_feed
+  LRCX: verified_rss_feed
+  NKE: verified_rss_feed
+  QCOM: verified_rss_feed
+  TMO: verified_rss_feed
+  VZ: verified_rss_feed
+_batch_02_review_notes:
+  AMAT: Official investor news page advertises RSS, but its exact XML target was not verified in this review.
+  XLF: ETF; no company newsroom feed applies to this company-news registry.
+  ASML: Official press-release page was reviewed, but no official RSS endpoint was verified.
+  XLE: ETF; no company newsroom feed applies to this company-news registry.
+  NOW: Official newsroom and investor news pages were reviewed, but no official RSS endpoint was verified.
+  BAC: Existing feed-error review retained; no parseable official RSS endpoint was verified.
+  XLV: ETF; no company newsroom feed applies to this company-news registry.
+  GS: Official press-release page was reviewed, but no official RSS endpoint was verified.
+  XLI: ETF; no company newsroom feed applies to this company-news registry.
+  CVX: Official newsroom was reviewed, but no official RSS endpoint was verified.
+  CAT: Official corporate press-release page was reviewed, but no official RSS endpoint was verified.
+  BA: Official company news pages were reviewed, but no official RSS endpoint was verified.
+  TXN: Official company news pages were reviewed, but no official RSS endpoint was verified.
+  GE: Official company news pages were reviewed, but no official RSS endpoint was verified.
+  PANW: Official investor press-release page was reviewed, but no official RSS endpoint was verified.
+  C: Official Citi newsroom was reviewed, but no official RSS endpoint was verified.
+_batch_03_review_notes:
+  ADBE: Official newsroom and investor materials were reviewed, but no official RSS endpoint was verified.
+  BKNG: Official investor news page was reviewed, but no official RSS endpoint was verified.
+  WFC: Official corporate newsroom was reviewed, but no official RSS endpoint was verified.
+  ABBV: Existing known-error feed retained unchanged and remains skipped by bounded dry-runs.
+  XLP: ETF; no company newsroom feed applies to this company-news registry.
+  PFE: Official newsroom press-release page was reviewed, but no official RSS endpoint was verified.
+  MRK: Official company news-release page was reviewed, but no official RSS endpoint was verified.
+  XLY: ETF; no company newsroom feed applies to this company-news registry.
+  ACN: Official newsroom was reviewed, but no official RSS endpoint was verified.
+  APH: Official company and investor pages were reviewed, but no official RSS endpoint was verified.
+  PEP: Official newsroom press-release page was reviewed, but no official RSS endpoint was verified.
+  GLW: Official company and investor pages were reviewed, but no official RSS endpoint was verified.
+  ADI: Official investor news page was reviewed, but no official RSS endpoint was verified.
+  T: Official newsroom and investor news pages were reviewed, but no official RSS endpoint was verified.
+  DIS: Official company press-release archive was reviewed, but no official RSS endpoint was verified.
+  SNPS: Official investor news page was reviewed, but no official RSS endpoint was verified.
+  MCD: Official corporate media-release page was reviewed, but no official RSS endpoint was verified.
 AAPL:
   company_name: Apple Inc.
   status: verified
@@ -312,3 +357,111 @@ KO:
       last_verified: "2026-07-02"
       verified_source_url: https://investors.coca-colacompany.com/news-events/press-releases
   notes: ""
+QCOM:
+  company_name: Qualcomm Incorporated
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Qualcomm Press Releases
+      url: https://investor.qualcomm.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.qualcomm.com/news-events/press-releases/default.aspx
+  notes: "Official investor-relations page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+LRCX:
+  company_name: Lam Research Corporation
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Lam Research Press Releases
+      url: https://newsroom.lamresearch.com/press-releases?pagetemplate=rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://newsroom.lamresearch.com/
+  notes: "Official newsroom publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+CSCO:
+  company_name: Cisco Systems, Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Cisco Newsroom Press Releases
+      url: https://newsroom.cisco.com/c/services/i/servlets/newsroom/rssfeed.json?feed=press-releases
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://newsroom.cisco.com/c/r/newsroom/en/us/rss-feeds.html
+  notes: "Official Cisco RSS page publishes the press-release feed target; endpoint returned HTTP 200 with XML content metadata during review."
+IBM:
+  company_name: International Business Machines Corporation
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: IBM Newsroom Announcements
+      url: https://newsroom.ibm.com/announcements?pagetemplate=rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://newsroom.ibm.com/index.php?rsspage=20295&s=20324
+  notes: "Official IBM RSS instructions publish the announcements feed target; endpoint returned HTTP 200 with XML content metadata during review."
+INTU:
+  company_name: Intuit Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Intuit Press Releases
+      url: https://investors.intuit.com/news-events/press-releases/rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.intuit.com/news-events/press-releases
+  notes: "Official investor page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+KLAC:
+  company_name: KLA Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: KLA Press Releases
+      url: https://ir.kla.com/news-events/press-releases/rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.kla.com/news-events/press-releases
+  notes: "Official investor page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+TMO:
+  company_name: Thermo Fisher Scientific Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Thermo Fisher Press Releases
+      url: https://ir.thermofisher.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.thermofisher.com/investors/contact-us/rss-feeds/default.aspx
+  notes: "Official investor RSS page publishes the press-release target; endpoint returned HTTP 200 with XML content metadata during review."
+VZ:
+  company_name: Verizon Communications Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Verizon News Releases
+      url: https://www.verizon.com/about/news/verizon-news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.verizon.com/about/news/rss-feeds
+  notes: "Official Verizon RSS page publishes the news-release target; endpoint returned HTTP 200 with XML content metadata during review."
+NKE:
+  company_name: NIKE, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: NIKE Investor News
+      url: https://investors.nike.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.nike.com/investors/news-events-and-reports/default.aspx?toggle=news
+  notes: "Official investor news page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."

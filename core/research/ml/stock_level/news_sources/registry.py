@@ -122,4 +122,14 @@ def _classifications(registry: Mapping[str, Any]) -> dict[str, str]:
             if symbol in result:
                 raise ValueError(f"news source registry classifies {symbol} more than once")
             result[symbol] = str(classification)
+    overrides = registry.get("_classification_overrides", {})
+    if not isinstance(overrides, Mapping):
+        raise ValueError("news source registry _classification_overrides must be a mapping")
+    for value, classification in overrides.items():
+        symbol = str(value).strip().upper()
+        if classification not in NEWS_SOURCE_CLASSIFICATIONS:
+            raise ValueError(f"unsupported news source classification override: {classification}")
+        if symbol not in result:
+            raise ValueError(f"news source classification override is outside the registry: {symbol}")
+        result[symbol] = str(classification)
     return result
