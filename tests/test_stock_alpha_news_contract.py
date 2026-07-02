@@ -74,6 +74,7 @@ from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import (
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import (
     write_stock_alpha_news_source_setup_check,
 )
+from scripts.stock_alpha_news_collect_summary import build_summary
 
 
 def test_valid_contract_passes_when_features_and_transformer_enabled(tmp_path):
@@ -2024,16 +2025,147 @@ def test_free_source_collection_reports_rss_registry_metrics(tmp_path):
     markdown = paths.markdown_path.read_text(encoding="utf-8")
 
     assert payload["requested_symbol_count"] == 3
+    assert payload["configured_symbol_count"] == 3
+    assert payload["only_symbols"] == []
+    assert payload["max_symbols_per_run"] == 0
     assert payload["verified_feed_symbol_count"] == 2
     assert payload["enabled_feed_symbol_count"] == 2
+    assert payload["known_error_feed_symbol_count"] == 0
     assert payload["disabled_symbol_count"] == 1
     assert payload["symbols_without_verified_feed"] == ["TSLA"]
+    assert payload["symbols_with_known_error_feeds"] == []
     assert payload["symbols_with_feed_errors"] == ["BAD"]
+    assert payload["symbols_skipped_known_error_feeds"] == []
+    assert payload["symbols_skipped_max_enabled_feeds_per_run"] == []
+    assert payload["max_enabled_feeds_per_run"] == 0
+    assert payload["skip_known_error_feeds"] is False
     assert payload["rows_by_symbol"] == {"AAPL": 1}
     assert payload["provider_symbol_coverage"] == {"company_press_release_rss": 1 / 3}
+    assert "- Max symbols per run: 0" in markdown
     assert "- Verified feed symbols: 2" in markdown
+    assert "- Known-error feed symbols: 0" in markdown
     assert "- Symbols without verified feed: ['TSLA']" in markdown
     assert "- Symbols with feed errors: ['BAD']" in markdown
+
+
+def test_free_source_collection_rss_runtime_controls_bound_live_requests(tmp_path):
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Microsoft announces test expansion</title>
+          <link>https://example.test/msft-press-release</link>
+          <pubDate>Mon, 20 Apr 2026 14:30:00 GMT</pubDate>
+          <description>Official RSS summary only.</description>
+        </item>
+      </channel>
+    </rss>
+    """
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append((url, timeout))
+        return rss
+
+    config = _collection_config(tmp_path, dry_run=True)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["symbols"] = ["AAPL", "MSFT", "AVGO", "JPM"]
+    settings["only_symbols"] = ["msft", "avgo", "jpm"]
+    settings["max_symbols_per_run"] = 3
+    settings["symbols_per_batch"] = 3
+    settings["start_date"] = "2026-04-19"
+    settings["end_date"] = "2026-04-21"
+    settings["providers"] = {
+        "company_press_release_rss": {
+            "enabled": True,
+            "max_enabled_feeds_per_run": 1,
+            "skip_known_error_feeds": True,
+            "feeds": {
+                "MSFT": [{
+                    "name": "Microsoft Source",
+                    "url": "https://example.test/msft/rss.xml",
+                    "enabled": True,
+                    "official": True,
+                    "verified_source_url": "https://example.test/msft/",
+                }],
+                "AVGO": [{
+                    "name": "Broadcom News Releases",
+                    "url": "https://example.test/avgo/rss.xml",
+                    "enabled": True,
+                    "official": True,
+                    "known_error": True,
+                    "verified_source_url": "https://example.test/avgo/",
+                }],
+                "JPM": [{
+                    "name": "JPMorgan Chase News Releases",
+                    "url": "https://example.test/jpm/rss.xml",
+                    "enabled": True,
+                    "official": True,
+                    "verified_source_url": "https://example.test/jpm/",
+                }],
+            },
+        }
+    }
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config,
+        sources={"company_press_release_rss": CompanyPressReleaseRssSource(fake_get)},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    feed_diagnostics = payload["provider_batch_diagnostics"][0]["feed_diagnostics"]
+
+    assert requested_urls == [("https://example.test/msft/rss.xml", 2)]
+    assert payload["configured_symbol_count"] == 4
+    assert payload["requested_symbol_count"] == 3
+    assert payload["only_symbols"] == ["MSFT", "AVGO", "JPM"]
+    assert payload["max_symbols_per_run"] == 3
+    assert payload["rows_by_symbol"] == {"MSFT": 1}
+    assert payload["known_error_feed_symbol_count"] == 1
+    assert payload["symbols_with_known_error_feeds"] == ["AVGO"]
+    assert payload["symbols_skipped_known_error_feeds"] == ["AVGO"]
+    assert payload["symbols_skipped_max_enabled_feeds_per_run"] == ["JPM"]
+    assert payload["max_enabled_feeds_per_run"] == 1
+    assert payload["skip_known_error_feeds"] is True
+    assert feed_diagnostics[0]["symbol"] == "MSFT"
+    assert feed_diagnostics[1]["zero_row_reason"] == "known_error_feed_skipped"
+    assert feed_diagnostics[2]["zero_row_reason"] == "max_enabled_feeds_per_run_reached"
+
+
+def test_stock_alpha_news_collect_summary_selects_guardrail_fields():
+    summary = build_summary({
+        "total_rows_collected": 3,
+        "deduplicated_row_count": 2,
+        "provider_row_counts": {"company_press_release_rss": 3},
+        "rows_by_symbol": {"AAPL": 2, "MSFT": 1},
+        "provider_symbol_counts": {"company_press_release_rss": 2},
+        "provider_symbol_coverage": {"company_press_release_rss": 0.5},
+        "symbols_with_feed_errors": ["AVGO"],
+        "symbols_skipped_known_error_feeds": ["JPM"],
+        "symbols_skipped_max_enabled_feeds_per_run": ["V"],
+        "duplicate_headline_count": 1,
+        "duplicate_headline_rate": 0.5,
+        "output_written": False,
+        "model_training_invoked": False,
+        "news_transformer_enabled": False,
+        "unrelated": "ignored",
+    })
+
+    assert summary == {
+        "total_rows_collected": 3,
+        "deduplicated_row_count": 2,
+        "provider_row_counts": {"company_press_release_rss": 3},
+        "rows_by_symbol": {"AAPL": 2, "MSFT": 1},
+        "provider_symbol_counts": {"company_press_release_rss": 2},
+        "provider_symbol_coverage": {"company_press_release_rss": 0.5},
+        "symbols_with_feed_errors": ["AVGO"],
+        "symbols_skipped_known_error_feeds": ["JPM"],
+        "symbols_skipped_max_enabled_feeds_per_run": ["V"],
+        "duplicate_headline_count": 1,
+        "duplicate_headline_rate": 0.5,
+        "output_written": False,
+        "model_training_invoked": False,
+        "news_transformer_enabled": False,
+    }
 
 
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):

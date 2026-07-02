@@ -100,7 +100,16 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         raise ValueError(
             "ml.stock_alpha_news_collect.merge_existing requires backup_existing=true"
         )
-    symbols = [str(value).strip().upper() for value in settings.get("symbols", []) if str(value).strip()]
+    configured_symbols = _configured_symbol_list(settings.get("symbols", []))
+    only_symbols = _configured_symbol_list(settings.get("only_symbols", []))
+    max_symbols_per_run = int(settings.get("max_symbols_per_run", 0) or 0)
+    if max_symbols_per_run < 0 or max_symbols_per_run > 500:
+        raise ValueError("ml.stock_alpha_news_collect.max_symbols_per_run must be between 0 and 500")
+    symbols = _selected_symbols(
+        configured_symbols,
+        only_symbols=only_symbols,
+        max_symbols_per_run=max_symbols_per_run,
+    )
     if symbols_per_batch < 1:
         symbols_per_batch = max(1, len(symbols) or 1)
     if symbols_per_batch > 500:
@@ -199,7 +208,10 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
     payload["total_rows_collected"] = len(collected)
+    payload["configured_symbol_count"] = len(set(configured_symbols))
     payload["requested_symbol_count"] = len(set(symbols))
+    payload["only_symbols"] = only_symbols
+    payload["max_symbols_per_run"] = max_symbols_per_run
     payload["symbols_per_batch"] = symbols_per_batch
     payload["provider_request_limit"] = provider_request_limit
     payload["max_rows_per_provider"] = max_rows_per_provider
@@ -273,6 +285,29 @@ def _deduplicate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _configured_symbol_list(values: Any) -> list[str]:
+    return [
+        str(value).strip().upper()
+        for value in values or []
+        if str(value).strip()
+    ]
+
+
+def _selected_symbols(
+    configured_symbols: list[str],
+    *,
+    only_symbols: list[str],
+    max_symbols_per_run: int,
+) -> list[str]:
+    symbols = list(configured_symbols)
+    if only_symbols:
+        allowed = set(only_symbols)
+        symbols = [symbol for symbol in symbols if symbol in allowed]
+    if max_symbols_per_run > 0:
+        symbols = symbols[:max_symbols_per_run]
+    return symbols
+
+
 def _symbol_batches(symbols: list[str], batch_size: int) -> list[list[str]]:
     if not symbols:
         return [[]]
@@ -328,10 +363,16 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_requested": requested, "providers_attempted": attempted,
         "providers_skipped_missing_key": skipped, "providers_failed": failures,
         "provider_row_counts": counts, "total_rows_collected": total,
-        "requested_symbol_count": 0, "symbols_per_batch": 0,
+        "configured_symbol_count": 0, "requested_symbol_count": 0,
+        "only_symbols": [], "max_symbols_per_run": 0,
+        "symbols_per_batch": 0,
         "verified_feed_symbol_count": 0, "enabled_feed_symbol_count": 0,
+        "known_error_feed_symbol_count": 0,
         "disabled_symbol_count": 0, "symbols_without_verified_feed": [],
-        "symbols_with_feed_errors": [],
+        "symbols_with_known_error_feeds": [], "symbols_with_feed_errors": [],
+        "symbols_skipped_known_error_feeds": [],
+        "symbols_skipped_max_enabled_feeds_per_run": [],
+        "max_enabled_feeds_per_run": 0, "skip_known_error_feeds": False,
         "provider_request_limit": 0, "max_rows_per_provider": 0,
         "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
         "provider_batch_diagnostics": [], "provider_zero_row_reasons": {},
@@ -377,6 +418,7 @@ def _rss_registry_diagnostics(
     feeds_by_symbol = dict(provider_config.get("feeds", {}) or {})
     verified_symbols = set()
     enabled_symbols = set()
+    known_error_symbols = set()
     for symbol in symbols:
         entries = feeds_by_symbol.get(symbol, [])
         if isinstance(entries, Mapping):
@@ -391,21 +433,37 @@ def _rss_registry_diagnostics(
                 verified_symbols.add(symbol)
             if url and bool(entry.get("enabled", True)):
                 enabled_symbols.add(symbol)
+            if url and bool(entry.get("known_error", False)):
+                known_error_symbols.add(symbol)
     symbols_with_feed_errors = set()
+    symbols_skipped_known_error_feeds = set()
+    symbols_skipped_max_enabled_feeds_per_run = set()
     for diagnostic in batch_diagnostics:
         for feed in diagnostic.get("feed_diagnostics", []) or []:
             if not isinstance(feed, Mapping):
                 continue
-            if str(feed.get("error_type", "")).strip() or str(feed.get("zero_row_reason", "")) in {"provider_error", "rate_limited", "feed_url_missing"}:
-                symbol = str(feed.get("symbol", "")).strip().upper()
-                if symbol:
-                    symbols_with_feed_errors.add(symbol)
+            symbol = str(feed.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            zero_row_reason = str(feed.get("zero_row_reason", "")).strip()
+            if str(feed.get("error_type", "")).strip() or zero_row_reason in {"provider_error", "rate_limited", "feed_url_missing"}:
+                symbols_with_feed_errors.add(symbol)
+            if zero_row_reason == "known_error_feed_skipped":
+                symbols_skipped_known_error_feeds.add(symbol)
+            if zero_row_reason == "max_enabled_feeds_per_run_reached":
+                symbols_skipped_max_enabled_feeds_per_run.add(symbol)
     return {
         "verified_feed_symbol_count": len(verified_symbols),
         "enabled_feed_symbol_count": len(enabled_symbols),
+        "known_error_feed_symbol_count": len(known_error_symbols),
         "disabled_symbol_count": len(set(symbols) - enabled_symbols),
         "symbols_without_verified_feed": sorted(set(symbols) - verified_symbols),
+        "symbols_with_known_error_feeds": sorted(known_error_symbols),
         "symbols_with_feed_errors": sorted(symbols_with_feed_errors),
+        "symbols_skipped_known_error_feeds": sorted(symbols_skipped_known_error_feeds),
+        "symbols_skipped_max_enabled_feeds_per_run": sorted(symbols_skipped_max_enabled_feeds_per_run),
+        "max_enabled_feeds_per_run": max(0, int(provider_config.get("max_enabled_feeds_per_run", 0) or 0)),
+        "skip_known_error_feeds": bool(provider_config.get("skip_known_error_feeds", False)),
     }
 
 
@@ -492,4 +550,58 @@ def _backup_path(output_path: Path) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Verified feed symbols: {payload['verified_feed_symbol_count']}", f"- Enabled feed symbols: {payload['enabled_feed_symbol_count']}", f"- Disabled symbols: {payload['disabled_symbol_count']}", f"- Symbols without verified feed: {payload['symbols_without_verified_feed']}", f"- Symbols with feed errors: {payload['symbols_with_feed_errors']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Rows by symbol: {payload['rows_by_symbol']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    lines = [
+        "# Stock-Alpha Free News Source Collection",
+        "",
+        f"- Dry run: {payload['dry_run']}",
+        f"- Configured symbols: {payload['configured_symbol_count']}",
+        f"- Requested symbols: {payload['requested_symbol_count']}",
+        f"- Only symbols: {payload['only_symbols']}",
+        f"- Max symbols per run: {payload['max_symbols_per_run']}",
+        f"- Verified feed symbols: {payload['verified_feed_symbol_count']}",
+        f"- Enabled feed symbols: {payload['enabled_feed_symbol_count']}",
+        f"- Known-error feed symbols: {payload['known_error_feed_symbol_count']}",
+        f"- Disabled symbols: {payload['disabled_symbol_count']}",
+        f"- Symbols without verified feed: {payload['symbols_without_verified_feed']}",
+        f"- Symbols with known-error feeds: {payload['symbols_with_known_error_feeds']}",
+        f"- Symbols with feed errors: {payload['symbols_with_feed_errors']}",
+        f"- Symbols skipped known-error feeds: {payload['symbols_skipped_known_error_feeds']}",
+        f"- Symbols skipped max enabled feeds per run: {payload['symbols_skipped_max_enabled_feeds_per_run']}",
+        f"- Symbols per batch: {payload['symbols_per_batch']}",
+        f"- Provider request limit: {payload['provider_request_limit']}",
+        f"- Max rows per provider: {payload['max_rows_per_provider']}",
+        f"- Max enabled feeds per run: {payload['max_enabled_feeds_per_run']}",
+        f"- Skip known-error feeds: {payload['skip_known_error_feeds']}",
+        f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}",
+        f"- Providers requested: {payload['providers_requested']}",
+        f"- Providers attempted: {payload['providers_attempted']}",
+        f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}",
+        f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}",
+        f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}",
+        f"- Providers rate limited: {payload['providers_rate_limited']}",
+        f"- Provider policy: {payload['provider_policy']}",
+        f"- Providers failed: {payload['providers_failed']}",
+        f"- Provider batches: {payload['provider_batch_counts']}",
+        f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}",
+        f"- Rows collected: {payload['total_rows_collected']}",
+        f"- Rows by provider: {payload['rows_by_provider']}",
+        f"- Rows by symbol: {payload['rows_by_symbol']}",
+        f"- Provider symbol coverage: {payload['provider_symbol_coverage']}",
+        f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}",
+        f"- Deduplicated rows: {payload['deduplicated_row_count']}",
+        f"- Symbols: {payload['symbol_count']}",
+        f"- Duplicate headlines: {payload['duplicate_headline_count']}",
+        f"- Duplicate headline rate: {payload['duplicate_headline_rate']}",
+        f"- Existing input rows: {payload['existing_input_row_count']}",
+        f"- New rows: {payload['new_row_count']}",
+        f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}",
+        f"- Output rows: {payload['output_row_count']}",
+        f"- Backup path: {payload['backup_path'] or 'none'}",
+        f"- Output written: {payload['output_written']}",
+        f"- Next action: {payload['next_action']}",
+        "- Features generated: false",
+        "- Model training invoked: false",
+        "",
+        "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked.",
+    ]
+    return "\n".join(lines)
