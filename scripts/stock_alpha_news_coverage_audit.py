@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -22,6 +22,7 @@ def build_stock_alpha_news_coverage_audit(
     registry_path: str | Path,
     raw_news_path: str | Path,
     sec_report_paths: Sequence[str | Path] | None = None,
+    sec_event_row_paths: Sequence[str | Path] | None = None,
     reports_root: str | Path | None = None,
 ) -> dict[str, Any]:
     universe_symbols, feeds, registry = load_validated_rss_registry(universe_path, registry_path)
@@ -36,7 +37,7 @@ def build_stock_alpha_news_coverage_audit(
     rows_by_symbol = _sorted_counter(Counter(row_symbols))
     rows_by_provider = _sorted_counter(Counter(str(row.get("provider", "")).strip() or "unknown" for row in rows))
     rows_by_source = _sorted_counter(Counter(str(row.get("source", "")).strip() or "unknown" for row in rows))
-    sec_summary = _sec_report_summary(sec_report_paths or [])
+    sec_summary = _sec_report_summary(sec_report_paths or [], sec_event_row_paths or [])
     sec_symbols = set(sec_summary["rows_by_symbol"])
     rss_symbols = row_symbol_set & universe_symbol_set
     combined_symbols = (rss_symbols | sec_symbols) & universe_symbol_set
@@ -133,6 +134,7 @@ def build_stock_alpha_news_coverage_audit(
         "invalid_timestamp_count": invalid_timestamp_count,
         "provider_error_summary_from_reports_if_available": _provider_error_summary(reports_root),
         "sec_reports_included": [str(path) for path in sec_report_paths or []],
+        "sec_event_rows_included": [str(path) for path in sec_event_row_paths or []],
         "known_error_feed_symbols": list(registry.get("known_error_feed_symbols", []) or []),
         "disabled_pending_review_count": int(registry.get("classification_counts", {}).get("disabled_pending_review", 0)),
         "safe_for_feature_generation": not unsafe_reasons,
@@ -148,6 +150,7 @@ def write_stock_alpha_news_coverage_audit(
     raw_news_path: str | Path,
     output_path: str | Path,
     sec_report_paths: Sequence[str | Path] | None = None,
+    sec_event_row_paths: Sequence[str | Path] | None = None,
     reports_root: str | Path | None = None,
 ) -> Path:
     payload = build_stock_alpha_news_coverage_audit(
@@ -155,6 +158,7 @@ def write_stock_alpha_news_coverage_audit(
         registry_path=registry_path,
         raw_news_path=raw_news_path,
         sec_report_paths=sec_report_paths,
+        sec_event_row_paths=sec_event_row_paths,
         reports_root=reports_root,
     )
     output = Path(output_path)
@@ -245,12 +249,43 @@ def _provider_error_summary(reports_root: str | Path | None) -> dict[str, Any]:
     }
 
 
-def _sec_report_summary(paths: Sequence[str | Path]) -> dict[str, Any]:
+def _sec_report_summary(paths: Sequence[str | Path], event_row_paths: Sequence[str | Path]) -> dict[str, Any]:
     rows_by_symbol: Counter[str] = Counter()
     forms_by_type: Counter[str] = Counter()
-    forms_by_symbol: dict[str, dict[str, int]] = {}
+    forms_by_symbol_counts: dict[str, Counter[str]] = defaultdict(Counter)
     rows_by_month: Counter[str] = Counter()
     row_count = 0
+    event_rows = _read_sec_event_rows(event_row_paths)
+    if not event_rows:
+        for report_path in paths:
+            report_payload = _read_json(Path(report_path))
+            artifact = str(report_payload.get("sec_company_filings_event_rows_path", "")).strip()
+            if artifact:
+                event_rows.extend(_read_sec_event_rows([artifact]))
+    for row in event_rows:
+        symbol = str(row.get("symbol", "")).strip().upper()
+        form_type = str(row.get("form_type", "")).strip()
+        timestamp = _parse_timestamp(str(row.get("published_at_utc", "")).strip())
+        if symbol:
+            rows_by_symbol[symbol] += 1
+            row_count += 1
+        if form_type:
+            forms_by_type[form_type] += 1
+            if symbol:
+                forms_by_symbol_counts[symbol][form_type] += 1
+        if timestamp is not None:
+            rows_by_month[timestamp.date().isoformat()[:7]] += 1
+    if event_rows:
+        return {
+            "row_count": row_count,
+            "rows_by_symbol": _sorted_counter(rows_by_symbol),
+            "rows_by_month": _sorted_counter(rows_by_month),
+            "forms_by_symbol": {
+                symbol: _sorted_counter(counter)
+                for symbol, counter in sorted(forms_by_symbol_counts.items())
+            },
+            "forms_by_type": _sorted_counter(forms_by_type),
+        }
     for raw_path in paths:
         path = Path(raw_path)
         if not path.exists():
@@ -271,17 +306,42 @@ def _sec_report_summary(paths: Sequence[str | Path]) -> dict[str, Any]:
             row_count += count
         for form_type, count in (payload.get("rows_by_form_type", {}) or {}).items():
             forms_by_type[str(form_type)] += int(count)
-        # The dry-run report does not persist row-level SEC data; retain an
-        # explicit empty per-symbol form map rather than guessing allocation.
         for symbol in symbol_counts:
-            forms_by_symbol.setdefault(symbol, {})
+            forms_by_symbol_counts.setdefault(symbol, Counter())
     return {
         "row_count": row_count,
         "rows_by_symbol": _sorted_counter(rows_by_symbol),
         "rows_by_month": _sorted_counter(rows_by_month),
-        "forms_by_symbol": {symbol: forms_by_symbol[symbol] for symbol in sorted(forms_by_symbol)},
+        "forms_by_symbol": {
+            symbol: _sorted_counter(counter)
+            for symbol, counter in sorted(forms_by_symbol_counts.items())
+        },
         "forms_by_type": _sorted_counter(forms_by_type),
     }
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    value = json.loads(line)
+                    if isinstance(value, Mapping):
+                        rows.append(dict(value))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return rows
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -290,6 +350,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--registry", required=True)
     parser.add_argument("--raw-news", required=True)
     parser.add_argument("--sec-report", action="append", default=[])
+    parser.add_argument("--sec-event-rows", action="append", default=[])
+    parser.add_argument("--include-sec-event-rows", action="store_true")
     parser.add_argument("--output", required=True)
     parser.add_argument("--reports-root", default="reports")
     args = parser.parse_args(argv)
@@ -298,6 +360,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         registry_path=args.registry,
         raw_news_path=args.raw_news,
         sec_report_paths=args.sec_report,
+        sec_event_row_paths=[
+            *args.sec_event_rows,
+            *(
+                [
+                    str(path)
+                    for path in Path(args.reports_root).rglob("sec_company_filings_event_rows.jsonl")
+                ]
+                if args.include_sec_event_rows and Path(args.reports_root).exists()
+                else []
+            ),
+        ],
         output_path=args.output,
         reports_root=args.reports_root,
     )

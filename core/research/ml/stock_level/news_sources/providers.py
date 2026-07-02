@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 
 HttpGet = Callable[[str, int], Any]
+SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
 PROVIDER_METADATA = {
     "alpha_vantage": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
@@ -457,14 +458,16 @@ class SecCompanyFilingsSource(NewsSource):
         *,
         cik_by_symbol: Mapping[str, str] | None = None,
         forms: list[str] | None = None,
+        load_official_sec_company_tickers: bool = False,
     ) -> None:
         super().__init__(http_get)
         self._cik_by_symbol = {
-            str(symbol).strip().upper().replace(".", "-"): str(cik).strip().zfill(10)
+            normalize_sec_ticker(str(symbol)): str(cik).strip().zfill(10)
             for symbol, cik in (cik_by_symbol or SEC_CIK_BY_SYMBOL).items()
             if str(symbol).strip() and str(cik).strip()
         }
         self._forms = set(forms or ["8-K", "10-Q", "10-K"])
+        self._load_official_sec_company_tickers = load_official_sec_company_tickers
         self.last_batch_diagnostic: dict[str, Any] = {}
 
     def with_provider_config(self, provider_config: Mapping[str, Any]) -> "SecCompanyFilingsSource":
@@ -477,11 +480,12 @@ class SecCompanyFilingsSource(NewsSource):
             self._http_get,
             cik_by_symbol=provider_config.get("cik_by_symbol", self._cik_by_symbol),
             forms=forms,
+            load_official_sec_company_tickers=bool(provider_config.get("load_official_sec_company_tickers", self._load_official_sec_company_tickers)),
         )
 
     def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
         del start, end, limit, api_key
-        cik = self._cik_by_symbol.get(symbol.upper().replace(".", "-"))
+        cik = self._cik_by_symbol.get(normalize_sec_ticker(symbol))
         if not cik:
             return ""
         return sec_submissions_url(cik)
@@ -500,18 +504,24 @@ class SecCompanyFilingsSource(NewsSource):
         rows: list[dict[str, Any]] = []
         attempted: list[str] = []
         missing_cik: list[str] = []
+        cik_by_symbol = dict(self._cik_by_symbol)
+        official_mapping_loaded = False
+        if self._load_official_sec_company_tickers:
+            cik_by_symbol.update(normalize_sec_company_tickers(self._http_get(SEC_COMPANY_TICKERS_URL, timeout)))
+            official_mapping_loaded = True
         per_symbol_limit = max(1, math.ceil(limit / len(symbols))) if symbols else limit
         for raw_symbol in symbols:
             if len(rows) >= limit:
                 break
             symbol = raw_symbol.upper()
-            if symbol.replace(".", "-") not in self._cik_by_symbol:
+            if normalize_sec_ticker(symbol) not in cik_by_symbol:
                 missing_cik.append(symbol)
                 continue
             attempted.append(symbol)
-            payload = self._http_get(self._url(symbol, start_date, end_date, per_symbol_limit, ""), timeout)
+            cik = cik_by_symbol[normalize_sec_ticker(symbol)]
+            payload = self._http_get(sec_submissions_url(cik), timeout)
             symbol_rows = [
-                row for row in self._rows(payload, symbol)
+                row for row in self._rows_with_mapping(payload, symbol, cik_by_symbol)
                 if (not start_date or row["published_at_utc"][:10] >= start_date)
                 and (not end_date or row["published_at_utc"][:10] <= end_date)
             ][:per_symbol_limit]
@@ -519,11 +529,17 @@ class SecCompanyFilingsSource(NewsSource):
         self.last_batch_diagnostic = {
             "sec_company_filings_attempted_symbols": attempted,
             "sec_company_filings_missing_cik_symbols": missing_cik,
+            "sec_company_filings_resolved_cik_count": len(attempted),
+            "sec_company_filings_missing_cik_count": len(missing_cik),
             "sec_company_filings_forms": sorted(self._forms),
+            "sec_company_filings_mapping_source_url": SEC_COMPANY_TICKERS_URL if official_mapping_loaded else "built_in_verified_mapping",
         }
         return rows[:limit]
 
     def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
+        return self._rows_with_mapping(payload, symbol, self._cik_by_symbol)
+
+    def _rows_with_mapping(self, payload: Any, symbol: str, cik_by_symbol: Mapping[str, str]) -> list[dict[str, Any]]:
         recent = ((payload.get("filings") or {}).get("recent") or {})
         rows: list[dict[str, Any]] = []
         accessions = list(recent.get("accessionNumber", []))
@@ -535,7 +551,7 @@ class SecCompanyFilingsSource(NewsSource):
             accepted = str(_column_value(recent, "acceptanceDateTime", index) or "")
             report_date = str(_column_value(recent, "reportDate", index) or "")
             document = str(_column_value(recent, "primaryDocument", index) or "")
-            cik_padded = self._cik_by_symbol[symbol.upper().replace(".", "-")]
+            cik_padded = cik_by_symbol[normalize_sec_ticker(symbol)]
             cik_archive = str(int(cik_padded))
             accession_text = str(accession or "")
             accession_path = accession_text.replace("-", "")
@@ -569,6 +585,9 @@ class SecCompanyFilingsSource(NewsSource):
                     "primary_document_url": primary_url,
                     "collected_at_utc": row["ingested_at"],
                     "published_at_source": "accepted_datetime" if accepted else "filing_date",
+                    "timestamp_precision": "datetime" if accepted else "date",
+                    "headline_or_title": row["headline"],
+                    "source_url": filing_url,
                 }
             )
             rows.append(row)
@@ -595,6 +614,25 @@ def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mappi
 
 def sec_submissions_url(cik: str) -> str:
     return f"https://data.sec.gov/submissions/CIK{str(cik).strip().zfill(10)}.json"
+
+
+def normalize_sec_ticker(symbol: str) -> str:
+    return str(symbol).strip().upper().replace(".", "-")
+
+
+def normalize_sec_company_tickers(payload: Any) -> dict[str, str]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("unexpected SEC company_tickers response shape")
+    result: dict[str, str] = {}
+    values = payload.values() if all(str(key).isdigit() for key in payload) else payload.get("data", [])
+    for item in values:
+        if not isinstance(item, Mapping):
+            continue
+        ticker = normalize_sec_ticker(str(item.get("ticker", "")))
+        cik = str(item.get("cik_str", "")).strip()
+        if ticker and cik:
+            result[ticker] = cik.zfill(10)
+    return result
 
 
 def _sec_event_type(form: str) -> str:

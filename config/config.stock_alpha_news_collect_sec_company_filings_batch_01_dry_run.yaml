@@ -23,6 +23,7 @@ ml:
       sec_company_filings:
         enabled: true
         forms: [8-K, 10-Q, 10-K]
+        load_official_sec_company_tickers: true
       company_press_release_rss: {enabled: false}
       alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
       sec_edgar: {enabled: false}

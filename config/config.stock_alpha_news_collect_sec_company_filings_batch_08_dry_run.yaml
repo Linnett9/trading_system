@@ -1,6 +1,6 @@
 ml:
-  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_batch_04_dry_run/dev
-  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_batch_04_dry_run/dev/sec_company_filings_dry_run_rows.csv
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_batch_08_dry_run/dev
+  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_batch_08_dry_run/dev/sec_company_filings_dry_run_rows.csv
   stock_alpha_news_collect:
     enabled: true
     dry_run: true
@@ -13,8 +13,8 @@ ml:
     provider_request_limit: 100
     symbols_per_batch: 25
     max_symbols_per_run: 25
-    symbols: [MS, XLU, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
-    only_symbols: [MS, XLU, ABT, BSX, AXP, ETN, NEM, SCHW, RTX, COF, HON, FCX, F, CMCSA, GILD, SPGI, AMGN, NEE, TER, UNP, DHR, SBUX, COP, LMT, CIEN]
+    symbols: [ECL, CDE, BP, XEL, ODFL, KEY, AKAM, PAYX, LUV, APD, D, HSY, AIG, OMC, EXC, HPQ, PCAR, ROK, VNQ, SRE, JBL, GIS, ALL, AXTI, FAST]
+    only_symbols: [ECL, CDE, BP, XEL, ODFL, KEY, AKAM, PAYX, LUV, APD, D, HSY, AIG, OMC, EXC, HPQ, PCAR, ROK, VNQ, SRE, JBL, GIS, ALL, AXTI, FAST]
     rate_limit_sleep_seconds: 0
     request_timeout_seconds: 20
     start_date: '2026-04-01'

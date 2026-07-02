@@ -41,7 +41,19 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, CompanyPressReleaseRssSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecCompanyFilingsSource, SecEdgarNewsSource, sec_submissions_url
+from core.research.ml.stock_level.news_sources import (
+    AlphaVantageNewsSource,
+    CompanyPressReleaseRssSource,
+    GdeltNewsSource,
+    MassiveStockNewsSource,
+    PROVIDER_METADATA,
+    SEC_COMPANY_TICKERS_URL,
+    SecCompanyFilingsSource,
+    SecEdgarNewsSource,
+    normalize_sec_company_tickers,
+    normalize_sec_ticker,
+    sec_submissions_url,
+)
 from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
@@ -2888,6 +2900,44 @@ def test_sec_company_filings_uses_official_submissions_and_distinct_provider():
     assert "official_filings_source" in PROVIDER_METADATA["sec_company_filings"]["statuses"]
 
 
+def test_sec_company_filings_can_load_official_sec_company_tickers_mapping():
+    submissions = {"filings": {"recent": {
+        "accessionNumber": ["0001067983-26-000001"],
+        "filingDate": ["2026-01-02"],
+        "acceptanceDateTime": ["2026-01-02T12:30:00Z"],
+        "reportDate": ["2026-01-01"],
+        "form": ["8-K"],
+        "primaryDocument": ["event.htm"],
+    }}}
+    official_mapping = {
+        "0": {"cik_str": 1067983, "ticker": "BRK.B", "title": "Berkshire Hathaway Inc."},
+        "1": {"cik_str": "320193", "ticker": "AAPL", "title": "Apple Inc."},
+    }
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        if url == SEC_COMPANY_TICKERS_URL:
+            return official_mapping
+        return submissions
+
+    source = SecCompanyFilingsSource(fake_get, cik_by_symbol={}, load_official_sec_company_tickers=True)
+    rows = source.collect(symbols=["BRK-B"], start_date="2026-01-01", end_date="2026-01-31", limit=5, timeout=2)
+
+    assert normalize_sec_ticker("brk.b") == "BRK-B"
+    assert normalize_sec_company_tickers(official_mapping)["BRK-B"] == "0001067983"
+    assert requested_urls == [
+        SEC_COMPANY_TICKERS_URL,
+        "https://data.sec.gov/submissions/CIK0001067983.json",
+    ]
+    assert rows[0]["symbol"] == "BRK-B"
+    assert rows[0]["cik"] == "0001067983"
+    assert rows[0]["timestamp_precision"] == "datetime"
+    assert rows[0]["source_url"] == rows[0]["filing_url"]
+    assert source.last_batch_diagnostic["sec_company_filings_mapping_source_url"] == SEC_COMPANY_TICKERS_URL
+    assert source.last_batch_diagnostic["sec_company_filings_resolved_cik_count"] == 1
+
+
 def test_sec_company_filings_reports_missing_cik_without_fabricating_mapping():
     source = SecCompanyFilingsSource(lambda url, timeout: {}, cik_by_symbol={"AAPL": "320193"})
     rows = source.collect(symbols=["MISSING"], start_date="2026-01-01", end_date="2026-01-31", limit=5, timeout=2)
@@ -3029,6 +3079,72 @@ AAA:
     assert audit["safe_for_feature_generation"] is False
 
 
+def test_stock_alpha_news_coverage_audit_prefers_row_level_sec_event_artifacts(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    sec_events = tmp_path / "sec_events.jsonl"
+    universe.write_text("available_count: 2\nsymbols: [AAA, BBB]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: [AAA]
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [BBB]
+AAA:
+  sources:
+    - type: investor_relations_rss
+      name: AAA News
+      url: https://ir.aaa.example/rss.xml
+      official: true
+      enabled: true
+      verified_source_url: https://ir.aaa.example/news
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow({
+            "article_id": "a1", "symbol": "AAA", "published_at_utc": "2026-01-02T10:00:00Z",
+            "source": "AAA News", "headline": "RSS headline", "body_or_summary": "body",
+            "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+            "language": "en", "ingested_at": "2026-01-02T10:01:00Z", "provider": "company_press_release_rss",
+            "provider_article_id": "rss:a1", "provider_url": "https://aaa.example/a",
+        })
+    sec_events.write_text(
+        json.dumps({
+            "symbol": "BBB",
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "form_type": "10-Q",
+            "cik": "0000000001",
+            "accession_number": "0000000001-26-000001",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        sec_event_row_paths=[sec_events],
+        reports_root=tmp_path / "missing_reports",
+    )
+
+    assert audit["sec_symbol_coverage_count"] == 1
+    assert audit["combined_official_symbol_coverage_count"] == 2
+    assert audit["forms_by_type"] == {"10-Q": 1}
+    assert audit["forms_by_symbol"] == {"BBB": {"10-Q": 1}}
+
+
 def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_features(tmp_path):
     raw = tmp_path / "raw.csv"
     sec_report = tmp_path / "sec.json"
@@ -3052,6 +3168,9 @@ def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_featur
                 "symbol": "BBB",
                 "source_type": "sec_filing",
                 "headline_or_title": "8-K filed by BBB",
+                "cik": "0000000001",
+                "form_type": "8-K",
+                "accession_number": "0000000001-26-000001",
                 "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
                 "published_at_utc": "2026-01-03T09:00:00Z",
                 "collected_at_utc": "2026-01-03T10:00:00Z",
@@ -3073,6 +3192,103 @@ def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_featur
     assert report["duplicate_event_key_count"] == 0
     assert report["safe_for_feature_generation"] is False
     assert "symbol coverage below contract ingest threshold" in report["unsafe_reasons"]
+
+
+def test_contract_ingest_preflight_accepts_row_level_sec_event_artifact(tmp_path):
+    sec_events = tmp_path / "sec_company_filings_event_rows.jsonl"
+    sec_events.write_text(
+        json.dumps({
+            "symbol": "BBB",
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "headline_or_title": "8-K filed by BBB",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "cik": "0000000001",
+            "form_type": "8-K",
+            "accession_number": "0000000001-26-000001",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_stock_alpha_news_contract_ingest_preflight(
+        sec_event_row_paths=[sec_events],
+        min_symbol_coverage=1,
+    )
+
+    assert report["providers_checked"] == ["sec_company_filings"]
+    assert report["valid_rows_by_provider"] == {"sec_company_filings": 1}
+    assert report["missing_required_fields_by_provider"] == {}
+    assert report["safe_for_feature_generation"] is False
+    assert report["unsafe_reasons"] == [
+        "contract ingest preflight is report-only and has not approved feature generation"
+    ]
+
+
+def test_sec_company_filings_dry_run_writes_row_level_event_artifact(tmp_path):
+    class FakeSecCompanyFilingsSource:
+        api_key_required = False
+
+        def with_provider_config(self, provider_config):
+            return self
+
+        def collect(self, **kwargs):
+            return [{
+                "article_id": "sec-company-filings:AAPL:0000320193-26-000001",
+                "symbol": "AAPL",
+                "published_at_utc": "2026-01-02T12:30:00Z",
+                "source": "SEC EDGAR company filings",
+                "headline": "8-K filed by AAPL",
+                "body_or_summary": "AAPL 8-K filing accepted 2026-01-02T12:30:00Z.",
+                "sentiment_score": "",
+                "relevance_score": "",
+                "novelty_score": "",
+                "event_type": "company_event",
+                "language": "en",
+                "ingested_at": "2026-01-02T12:31:00Z",
+                "provider": "sec_company_filings",
+                "source_type": "sec_filing",
+                "provider_article_id": "0000320193-26-000001",
+                "provider_url": "https://www.sec.gov/Archives/edgar/data/320193/1/",
+                "cik": "0000320193",
+                "form_type": "8-K",
+                "accession_number": "0000320193-26-000001",
+                "filing_date": "2026-01-02",
+                "accepted_datetime": "2026-01-02T12:30:00Z",
+                "report_date": "2026-01-01",
+                "filing_url": "https://www.sec.gov/Archives/edgar/data/320193/1/",
+                "primary_document_url": "https://www.sec.gov/Archives/edgar/data/320193/1/event.htm",
+                "collected_at_utc": "2026-01-02T12:31:00Z",
+                "published_at_source": "accepted_datetime",
+                "timestamp_precision": "datetime",
+                "headline_or_title": "8-K filed by AAPL",
+                "source_url": "https://www.sec.gov/Archives/edgar/data/320193/1/",
+            }]
+
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {
+        "sec_company_filings": {"enabled": True, "forms": ["8-K", "10-Q", "10-K"]}
+    }
+    paths = write_stock_alpha_news_free_source_collect(
+        config,
+        sources={"sec_company_filings": FakeSecCompanyFilingsSource()},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    event_rows_path = Path(payload["sec_company_filings_event_rows_path"])
+    event_rows = [json.loads(line) for line in event_rows_path.read_text(encoding="utf-8").splitlines()]
+
+    assert payload["output_written"] is False
+    assert not Path(config["ml"]["stock_alpha_news_collect_output_path"]).exists()
+    assert payload["sec_company_filings_event_row_count"] == 1
+    assert event_rows_path.name == "sec_company_filings_event_rows.jsonl"
+    assert event_rows[0]["provider"] == "sec_company_filings"
+    assert event_rows[0]["cik"] == "0000320193"
+    assert event_rows[0]["sentiment_score"] == ""
+    assert event_rows[0]["relevance_score"] == ""
+    assert event_rows[0]["novelty_score"] == ""
 
 
 def test_contract_ingest_preflight_counts_missing_future_and_duplicate_rows(tmp_path):
