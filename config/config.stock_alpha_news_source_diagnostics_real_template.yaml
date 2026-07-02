@@ -1,6 +1,6 @@
 ml:
   stock_alpha_news_contract_path: data/news/stock_alpha_news_contract.csv
-  stock_alpha_stock_rows_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_dev_diagnostic/dev/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+  stock_alpha_stock_rows_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_diagnostic/dev/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
   stock_alpha_news_source_diagnostics_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_source_diagnostics_real/dev
   stock_alpha_news_source_column: source
   stock_alpha_news_provider_column: provider
