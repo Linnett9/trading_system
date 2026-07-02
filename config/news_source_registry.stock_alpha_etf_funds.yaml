@@ -11,9 +11,41 @@ provider_policy:
     - sec_company_filings
   collection_enabled: false
   feature_generation_approved: false
+  row_provider_name: sec_fund_filings
+  forbidden_row_provider_names:
+    - company_press_release_rss
+    - sec_company_filings
+
+mapping_requirements:
+  required_fields:
+    - symbol
+    - fund_name
+    - issuer_or_provider
+    - fund_category
+    - cik
+    - series_id
+    - class_or_contract_id
+    - forms_supported
+    - official_source_verified
+    - safe_to_collect_now
+    - blocked_reason
+    - recommended_provider
+  require_cik: true
+  require_series_id: true
+  require_class_or_contract_id: true
+  require_official_source_verified: true
 
 funds:
   GLD:
+    symbol: GLD
+    fund_name: SPDR Gold Shares
+    issuer_or_provider: World Gold Trust Services / State Street Global Advisors
+    fund_category: physical gold trust
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: etf_or_fund_sec_fund_filings_candidate
     likely_issuer_or_provider: World Gold Trust Services / State Street Global Advisors
     category: physical gold trust
@@ -23,6 +55,15 @@ funds:
     safe_to_collect_now: false
     blocked_reason: SEC trust/series mapping and row contract are not implemented or tested
   QQQ:
+    symbol: QQQ
+    fund_name: Invesco QQQ Trust
+    issuer_or_provider: Invesco
+    fund_category: index ETF
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: etf_or_fund_sec_fund_filings_candidate
     likely_issuer_or_provider: Invesco
     category: index ETF
@@ -32,6 +73,15 @@ funds:
     safe_to_collect_now: false
     blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
   SPY:
+    symbol: SPY
+    fund_name: SPDR S&P 500 ETF Trust
+    issuer_or_provider: State Street Global Advisors
+    fund_category: index ETF
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: etf_or_fund_sec_fund_filings_candidate
     likely_issuer_or_provider: State Street Global Advisors
     category: index ETF
@@ -41,6 +91,15 @@ funds:
     safe_to_collect_now: false
     blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
   TLT:
+    symbol: TLT
+    fund_name: iShares 20+ Year Treasury Bond ETF
+    issuer_or_provider: BlackRock iShares
+    fund_category: fixed-income ETF
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: etf_or_fund_sec_fund_filings_candidate
     likely_issuer_or_provider: BlackRock iShares
     category: fixed-income ETF
@@ -50,6 +109,15 @@ funds:
     safe_to_collect_now: false
     blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
   VNQ:
+    symbol: VNQ
+    fund_name: Vanguard Real Estate ETF
+    issuer_or_provider: Vanguard
+    fund_category: real-estate ETF
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: etf_or_fund_sec_fund_filings_candidate
     likely_issuer_or_provider: Vanguard
     category: real-estate ETF
@@ -59,6 +127,15 @@ funds:
     safe_to_collect_now: false
     blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
   XLB: &sector_spdr
+    symbol: XLB
+    fund_name: Materials Select Sector SPDR Fund
+    issuer_or_provider: State Street Global Advisors
+    fund_category: sector ETF
+    cik: null
+    series_id: null
+    class_or_contract_id: null
+    forms_supported: []
+    official_source_verified: false
     classification: official_etf_provider_documents_candidate
     likely_issuer_or_provider: State Street Global Advisors
     category: sector ETF
@@ -67,11 +144,35 @@ funds:
     recommended_provider: sec_fund_filings
     safe_to_collect_now: false
     blocked_reason: SEC fund/series/class mapping and row contract are not implemented or tested
-  XLE: *sector_spdr
-  XLF: *sector_spdr
-  XLI: *sector_spdr
-  XLK: *sector_spdr
-  XLP: *sector_spdr
-  XLU: *sector_spdr
-  XLV: *sector_spdr
-  XLY: *sector_spdr
+  XLE:
+    <<: *sector_spdr
+    symbol: XLE
+    fund_name: Energy Select Sector SPDR Fund
+  XLF:
+    <<: *sector_spdr
+    symbol: XLF
+    fund_name: Financial Select Sector SPDR Fund
+  XLI:
+    <<: *sector_spdr
+    symbol: XLI
+    fund_name: Industrial Select Sector SPDR Fund
+  XLK:
+    <<: *sector_spdr
+    symbol: XLK
+    fund_name: Technology Select Sector SPDR Fund
+  XLP:
+    <<: *sector_spdr
+    symbol: XLP
+    fund_name: Consumer Staples Select Sector SPDR Fund
+  XLU:
+    <<: *sector_spdr
+    symbol: XLU
+    fund_name: Utilities Select Sector SPDR Fund
+  XLV:
+    <<: *sector_spdr
+    symbol: XLV
+    fund_name: Health Care Select Sector SPDR Fund
+  XLY:
+    <<: *sector_spdr
+    symbol: XLY
+    fund_name: Consumer Discretionary Select Sector SPDR Fund
