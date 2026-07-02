@@ -81,43 +81,43 @@ def dispatch(args, config, feed):
         _commands("ml_commands").run_ml_stock_alpha_experiment_preflight(config)
         return
     if args.mode == "ml-stock-alpha-news-features":
-        _commands("ml_commands").run_ml_stock_alpha_news_features(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_features(config)
         return
     if args.mode == "ml-stock-alpha-news-feature-diagnostics":
-        _commands("ml_commands").run_ml_stock_alpha_news_feature_diagnostics(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_feature_diagnostics(config)
         return
     if args.mode == "ml-stock-alpha-news-contract-ingest":
-        _commands("ml_commands").run_ml_stock_alpha_news_contract_ingest(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_contract_ingest(config)
         return
     if args.mode == "ml-stock-alpha-news-collect-free-sources":
-        _commands("ml_commands").run_ml_stock_alpha_news_collect_free_sources(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_collect_free_sources(config)
         return
     if args.mode == "ml-stock-alpha-news-collection-plan":
-        _commands("ml_commands").run_ml_stock_alpha_news_collection_plan(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_collection_plan(config)
         return
     if args.mode == "ml-stock-alpha-news-coverage-audit":
-        _commands("ml_commands").run_ml_stock_alpha_news_coverage_audit(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_coverage_audit(config)
         return
     if args.mode == "ml-stock-alpha-news-provider-audit":
-        _commands("ml_commands").run_ml_stock_alpha_news_provider_audit(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_provider_audit(config)
         return
     if args.mode == "ml-stock-alpha-news-provider-sample-check":
-        _commands("ml_commands").run_ml_stock_alpha_news_provider_sample_check(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_provider_sample_check(config)
         return
     if args.mode == "ml-stock-alpha-news-pipeline-preflight":
-        _commands("ml_commands").run_ml_stock_alpha_news_pipeline_preflight(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_pipeline_preflight(config)
         return
     if args.mode == "ml-stock-alpha-news-pipeline-inspect":
-        _commands("ml_commands").run_ml_stock_alpha_news_pipeline_inspect(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_pipeline_inspect(config)
         return
     if args.mode == "ml-stock-alpha-news-readiness-preflight":
-        _commands("ml_commands").run_ml_stock_alpha_news_readiness_preflight(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_readiness_preflight(config)
         return
     if args.mode == "ml-stock-alpha-news-source-diagnostics":
-        _commands("ml_commands").run_ml_stock_alpha_news_source_diagnostics(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_source_diagnostics(config)
         return
     if args.mode == "ml-stock-alpha-news-source-setup-check":
-        _commands("ml_commands").run_ml_stock_alpha_news_source_setup_check(config)
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_source_setup_check(config)
         return
     if args.mode == "ml-stock-alpha-dev-smoke":
         _commands("ml_commands").run_ml_stock_alpha_dev_smoke(config)

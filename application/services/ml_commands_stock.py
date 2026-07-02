@@ -1,17 +1,3 @@
-from core.research.ml.stock_level_model_ranking_benchmark import write_stock_level_model_ranking_benchmark
-from core.research.ml.stock_level_feature_attribution import write_stock_level_feature_attribution
-from core.research.ml.stock_level_alpha_features import write_stock_level_alpha_features
-from core.research.ml.stock_level.overnight_stock_alpha_runner import write_overnight_stock_alpha_experiment
-from core.research.ml.stock_level.stock_level_target_comparison import write_stock_level_target_comparison
-from core.research.ml.stock_level.stock_level_portfolio_replay import write_stock_level_portfolio_replay
-from core.research.ml.stock_level.stock_level_portfolio_policy_sweep import write_stock_level_portfolio_policy_sweep
-from core.research.ml.stock_level.stock_alpha_experiment_report import write_stock_alpha_experiment_report
-from core.research.ml.stock_level.stock_alpha_candidate_report import write_stock_alpha_candidate_report
-from core.research.ml.stock_level.stock_alpha_deep_model_diagnostics import write_stock_alpha_deep_model_diagnostics
-from core.research.ml.stock_level.stock_alpha_dev_smoke import write_stock_alpha_dev_smoke
-from core.research.ml.stock_level.stock_alpha_ensemble import write_stock_alpha_ensemble
-from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import write_stock_alpha_ensemble_portfolio_sweep
-from core.research.ml.stock_level.stock_alpha_experiment_preflight import write_stock_alpha_experiment_preflight
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
@@ -25,11 +11,13 @@ from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import 
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
-from core.research.ml.stock_level.stock_alpha_parallelism_audit import write_stock_alpha_parallelism_audit
-from core.research.ml.stock_level.run_manifest.service import write_stock_alpha_run_status
 
 
 def run_ml_stock_level_alpha_benchmark(config):
+    from core.research.ml.stock_level_model_ranking_benchmark import (
+        write_stock_level_model_ranking_benchmark,
+    )
+
     result = write_stock_level_model_ranking_benchmark(config)
     print("\nSTOCK-LEVEL ALPHA BENCHMARK SUITE")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -39,6 +27,10 @@ def run_ml_stock_level_alpha_benchmark(config):
     print(f"OOS predictions: {result.predictions_path}")
 
 def run_ml_stock_level_target_comparison(config):
+    from core.research.ml.stock_level.stock_level_target_comparison import (
+        write_stock_level_target_comparison,
+    )
+
     result = write_stock_level_target_comparison(config)
     print("\nSTOCK-LEVEL TARGET COMPARISON")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -47,6 +39,10 @@ def run_ml_stock_level_target_comparison(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_level_portfolio_replay(config):
+    from core.research.ml.stock_level.stock_level_portfolio_replay import (
+        write_stock_level_portfolio_replay,
+    )
+
     result = write_stock_level_portfolio_replay(config)
     print("\nSTOCK-LEVEL PORTFOLIO REPLAY")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -57,6 +53,10 @@ def run_ml_stock_level_portfolio_replay(config):
     print(f"Holdings: {result.holdings_path}")
 
 def run_ml_stock_level_portfolio_policy_sweep(config):
+    from core.research.ml.stock_level.stock_level_portfolio_policy_sweep import (
+        write_stock_level_portfolio_policy_sweep,
+    )
+
     result = write_stock_level_portfolio_policy_sweep(config)
     print("\nSTOCK-LEVEL PORTFOLIO POLICY SWEEP")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -67,6 +67,10 @@ def run_ml_stock_level_portfolio_policy_sweep(config):
     print(f"Top holdings: {result.top_holdings_path}")
 
 def run_ml_stock_alpha_experiment_report(config):
+    from core.research.ml.stock_level.stock_alpha_experiment_report import (
+        write_stock_alpha_experiment_report,
+    )
+
     result = write_stock_alpha_experiment_report(config)
     print("\nSTOCK-ALPHA EXPERIMENT REPORT")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -75,6 +79,10 @@ def run_ml_stock_alpha_experiment_report(config):
     print(f"Registry: {result.registry_path}")
 
 def run_ml_stock_alpha_candidate_report(config):
+    from core.research.ml.stock_level.stock_alpha_candidate_report import (
+        write_stock_alpha_candidate_report,
+    )
+
     result = write_stock_alpha_candidate_report(config)
     ml = config.get("ml", {})
     print("\nSTOCK-ALPHA CANDIDATE REPORT")
@@ -86,6 +94,10 @@ def run_ml_stock_alpha_candidate_report(config):
     print(f"CSV: {result.csv_path}")
 
 def run_ml_stock_alpha_deep_diagnostics(config):
+    from core.research.ml.stock_level.stock_alpha_deep_model_diagnostics import (
+        write_stock_alpha_deep_model_diagnostics,
+    )
+
     result = write_stock_alpha_deep_model_diagnostics(config)
     print("\nSTOCK-ALPHA DEEP-MODEL DIAGNOSTICS")
     print("mode=research | run_size=dev | trading_impact=none | production_validated=false")
@@ -94,6 +106,10 @@ def run_ml_stock_alpha_deep_diagnostics(config):
     print(f"CSV: {result.csv_path}")
 
 def run_ml_stock_alpha_ensemble(config):
+    from core.research.ml.stock_level.stock_alpha_ensemble import (
+        write_stock_alpha_ensemble,
+    )
+
     result = write_stock_alpha_ensemble(config)
     print("\nSTOCK-ALPHA AVERAGE-RANK ENSEMBLE")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -103,6 +119,10 @@ def run_ml_stock_alpha_ensemble(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_alpha_ensemble_portfolio_sweep(config):
+    from core.research.ml.stock_level.stock_alpha_ensemble_portfolio_sweep import (
+        write_stock_alpha_ensemble_portfolio_sweep,
+    )
+
     result = write_stock_alpha_ensemble_portfolio_sweep(config)
     print("\nSTOCK-ALPHA ENSEMBLE PORTFOLIO POLICY SWEEP")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -114,6 +134,10 @@ def run_ml_stock_alpha_ensemble_portfolio_sweep(config):
     print(f"Trades: {result.trades_path}")
 
 def run_ml_stock_alpha_experiment_preflight(config):
+    from core.research.ml.stock_level.stock_alpha_experiment_preflight import (
+        write_stock_alpha_experiment_preflight,
+    )
+
     result = write_stock_alpha_experiment_preflight(config)
     print("\nSTOCK-ALPHA EXPERIMENT PREFLIGHT")
     print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
@@ -336,12 +360,20 @@ def run_ml_stock_alpha_news_pipeline_inspect(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_alpha_dev_smoke(config):
+    from core.research.ml.stock_level.stock_alpha_dev_smoke import (
+        write_stock_alpha_dev_smoke,
+    )
+
     result = write_stock_alpha_dev_smoke(config)
     print("\nSTOCK-ALPHA DEV SMOKE")
     print("mode=research | run_size=dev | production_validated=false")
     print(f"Report: {result}")
 
 def run_ml_stock_alpha_parallelism_audit(config):
+    from core.research.ml.stock_level.stock_alpha_parallelism_audit import (
+        write_stock_alpha_parallelism_audit,
+    )
+
     result = write_stock_alpha_parallelism_audit(config)
     print("\nSTOCK-ALPHA PARALLELISM AUDIT")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -349,6 +381,10 @@ def run_ml_stock_alpha_parallelism_audit(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_alpha_run_status(config):
+    from core.research.ml.stock_level.run_manifest.service import (
+        write_stock_alpha_run_status,
+    )
+
     result = write_stock_alpha_run_status(config)
     print("\nSTOCK-ALPHA RUN STATUS")
     print("mode=research | inspection_only=true | trading_impact=none | production_validated=false")
@@ -356,6 +392,10 @@ def run_ml_stock_alpha_run_status(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_level_feature_attribution(config):
+    from core.research.ml.stock_level_feature_attribution import (
+        write_stock_level_feature_attribution,
+    )
+
     result = write_stock_level_feature_attribution(config)
     print("\nSTOCK-LEVEL FEATURE ATTRIBUTION")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -364,6 +404,10 @@ def run_ml_stock_level_feature_attribution(config):
     print(f"Markdown: {result.markdown_path}")
 
 def run_ml_stock_level_alpha_features(config):
+    from core.research.ml.stock_level_alpha_features import (
+        write_stock_level_alpha_features,
+    )
+
     result = write_stock_level_alpha_features(config)
     print("\nSTOCK-LEVEL ALPHA FEATURES")
     print("mode=research | trading_impact=none | production_validated=false")
@@ -373,6 +417,10 @@ def run_ml_stock_level_alpha_features(config):
     print(f"Audit Markdown: {result.audit_markdown_path}")
 
 def run_ml_overnight_stock_alpha(config):
+    from core.research.ml.stock_level.overnight_stock_alpha_runner import (
+        write_overnight_stock_alpha_experiment,
+    )
+
     result = write_overnight_stock_alpha_experiment(config)
     print("\nOVERNIGHT STOCK-ALPHA EXPERIMENT")
     print("mode=research | trading_impact=none | production_validated=false")
