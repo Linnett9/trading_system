@@ -889,6 +889,10 @@ def test_news_coverage_audit_reports_ingestion_time_alignment_blocker(tmp_path):
 
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["safe_for_feature_generation"] is False
+    assert payload["pit_policy"] == "strict_collected_at"
+    assert payload["eligibility_timestamp_field"] == "collected_at_utc"
+    assert payload["historical_provider_availability_assumed"] is False
+    assert payload["production_pit_validated"] is True
     assert payload["pre_pit_symbol_overlap_count"] == 1
     assert payload["same_symbol_stock_article_pair_count"] == 1
     assert payload["future_article_candidate_count"] == 1
@@ -897,6 +901,89 @@ def test_news_coverage_audit_reports_ingestion_time_alignment_blocker(tmp_path):
     assert payload["covered_stock_row_count"] == 0
     assert "all same-symbol articles fail PIT ingested_at alignment" in payload["blocking_issues"]
     assert any("ingested_at is after rebalance_date" in issue for issue in payload["warning_issues"])
+
+
+def test_news_coverage_audit_provider_available_policy_uses_explicit_availability_lag(tmp_path):
+    contract = tmp_path / "contract.csv"
+    stock_rows = tmp_path / "stock_rows.csv"
+    contract.write_text(
+        "\n".join(
+            [
+                "article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at",
+                "a1,AAPL,2026-01-01T10:00:00Z,vendor,AAPL update,body,0.1,0.9,0.5,analyst,en,2026-07-02T08:00:00Z",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stock_rows.write_text(
+        "rebalance_date,symbol\n2026-01-03,AAPL\n",
+        encoding="utf-8",
+    )
+
+    paths = write_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": str(stock_rows),
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+                "stock_alpha_news_pit_policy": "provider_available_at",
+                "stock_alpha_news_availability_lag_hours": 24,
+                "stock_alpha_news_historical_provider_availability_enabled": True,
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_for_feature_generation"] is True
+    assert payload["pit_policy"] == "provider_available_at"
+    assert payload["eligibility_timestamp_field"] == "available_at_utc"
+    assert payload["historical_provider_availability_assumed"] is True
+    assert payload["production_pit_validated"] is False
+    assert payload["news_available_at_utc_min"] == "2026-01-02T10:00:00Z"
+    assert payload["covered_stock_row_count"] == 1
+    assert payload["available_after_rebalance_count"] == 0
+    assert payload["ingested_after_rebalance_count"] == 0
+    assert payload["warning_issues"] == []
+
+
+def test_news_coverage_audit_provider_available_policy_requires_explicit_research_flag(tmp_path):
+    contract = tmp_path / "contract.csv"
+    stock_rows = tmp_path / "stock_rows.csv"
+    contract.write_text(
+        "\n".join(
+            [
+                "article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at",
+                "a1,AAPL,2026-01-01T10:00:00Z,vendor,AAPL update,body,0.1,0.9,0.5,analyst,en,2026-07-02T08:00:00Z",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stock_rows.write_text(
+        "rebalance_date,symbol\n2026-01-03,AAPL\n",
+        encoding="utf-8",
+    )
+
+    paths = write_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": str(stock_rows),
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+                "stock_alpha_news_pit_policy": "provider_available_at",
+                "stock_alpha_news_availability_lag_hours": 24,
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_for_feature_generation"] is False
+    assert payload["historical_provider_availability_assumed"] is False
+    assert (
+        "provider_available_at PIT policy requires "
+        "stock_alpha_news_historical_provider_availability_enabled=true"
+    ) in payload["blocking_issues"]
 
 
 def test_news_coverage_audit_missing_contract_path_blocks_cleanly(tmp_path, capsys):

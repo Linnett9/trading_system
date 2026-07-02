@@ -8,6 +8,13 @@ from typing import Any, Mapping
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
+from core.research.ml.stock_level.stock_alpha_news_pit_policy import (
+    StockAlphaNewsPitPolicy,
+    article_is_pit_eligible,
+    enrich_news_row_with_pit_timestamps,
+    pit_policy_payload,
+    resolve_stock_alpha_news_pit_policy,
+)
 
 
 REQUIRED_NEWS_CONTRACT_COLUMNS = (
@@ -234,6 +241,7 @@ def write_stock_alpha_news_features(
     validation = validate_news_contract(config, stock_rows)
     if not validation.contract_valid:
         raise ValueError(f"cannot aggregate stock-alpha news features: {validation.reason}")
+    pit_policy = resolve_stock_alpha_news_pit_policy(config)
     contract_path = Path(str(_ml_value(ml, "stock_alpha_news_contract_path", "stock_news_contract_path")))
     news_rows = [_normalize_news_row(row) for row in CsvRowRepository().read(contract_path)]
     negative_threshold = float(ml.get("stock_alpha_news_negative_sentiment_threshold", 0.0))
@@ -241,6 +249,7 @@ def write_stock_alpha_news_features(
         news_rows,
         stock_rows,
         negative_sentiment_threshold=negative_threshold,
+        pit_policy=pit_policy,
     )
     output = stock_alpha_output_dir(config) / "news_features"
     configured_features_path = ml.get("stock_alpha_news_features_path")
@@ -258,6 +267,7 @@ def write_stock_alpha_news_features(
             "news_contract_path": str(contract_path),
             "news_features_path": str(paths.features_csv_path),
             "coverage_summary": validation.payload(),
+            **pit_policy_payload(pit_policy),
             "transformer_available": bool(
                 ml.get("stock_alpha_news_enable_transformer", False)
                 and validation.available
@@ -313,8 +323,13 @@ def build_stock_alpha_news_features(
     stock_rows: list[Mapping[str, Any]],
     *,
     negative_sentiment_threshold: float = 0.0,
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    normalized_news = [_normalize_news_row(row) for row in news_rows]
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
+    normalized_news = [
+        enrich_news_row_with_pit_timestamps(_normalize_news_row(row), policy)
+        for row in news_rows
+    ]
     invalid_timestamps = sum(
         1
         for row in normalized_news
@@ -331,17 +346,17 @@ def build_stock_alpha_news_features(
         if not symbol or rebalance is None:
             continue
         windows = {
-            "1d": _window_articles(normalized_news, symbol, rebalance, 1),
-            "3d": _window_articles(normalized_news, symbol, rebalance, 3),
-            "7d": _window_articles(normalized_news, symbol, rebalance, 7),
-            "14d": _window_articles(normalized_news, symbol, rebalance, 14),
-            "30d": _window_articles(normalized_news, symbol, rebalance, 30),
+            "1d": _window_articles(normalized_news, symbol, rebalance, 1, policy),
+            "3d": _window_articles(normalized_news, symbol, rebalance, 3, policy),
+            "7d": _window_articles(normalized_news, symbol, rebalance, 7, policy),
+            "14d": _window_articles(normalized_news, symbol, rebalance, 14, policy),
+            "30d": _window_articles(normalized_news, symbol, rebalance, 30, policy),
         }
         future_article_candidate_count += sum(
             1
             for row in normalized_news
             if row.get("symbol") == symbol
-            and (row["published_at_utc"] > rebalance or row["ingested_at"] > rebalance)
+            and not article_is_pit_eligible(row, rebalance, policy)
         )
         count_7d = float(len(windows["7d"]))
         previous_counts = prior_counts_by_symbol.setdefault(symbol, [])
@@ -402,9 +417,11 @@ def build_stock_alpha_news_features(
         "synthetic_news_features_created": False,
         "point_in_time_filters": {
             "published_at_utc_lte_rebalance_date": True,
-            "ingested_at_lte_rebalance_date": True,
+            "ingested_at_lte_rebalance_date": policy.eligibility_timestamp_field == "collected_at_utc",
+            "available_at_utc_lte_rebalance_date": policy.eligibility_timestamp_field == "available_at_utc",
             "future_statistics_used": False,
         },
+        **pit_policy_payload(policy),
     }
     return rows, audit
 
@@ -563,6 +580,7 @@ def validate_news_contract(
     transformer_enabled = bool(ml.get("stock_alpha_news_enable_transformer", False))
     min_symbol = float(_ml_value(ml, "stock_alpha_news_min_symbol_coverage", "stock_news_min_symbol_coverage", default=0.80))
     min_date = float(_ml_value(ml, "stock_alpha_news_min_date_coverage", "stock_news_min_date_coverage", default=0.80))
+    pit_policy = resolve_stock_alpha_news_pit_policy(config)
     if not raw_path:
         return _unavailable("missing ml.stock_alpha_news_contract_path", transformer_enabled=transformer_enabled)
     path = Path(str(raw_path))
@@ -575,24 +593,27 @@ def validate_news_contract(
     if missing:
         return NewsContractValidation(False, "missing required news contract fields", REQUIRED_NEWS_FIELDS, missing, len(rows), 0.0, 0.0, 0, transformer_enabled=transformer_enabled)
 
-    normalized_rows = [_normalize_news_row(row) for row in rows]
+    normalized_rows = [
+        enrich_news_row_with_pit_timestamps(_normalize_news_row(row), pit_policy)
+        for row in rows
+    ]
     invalid_article_ids = sum(1 for row in normalized_rows if not row["article_id"])
     invalid_symbols = sum(1 for row in normalized_rows if not row["symbol"])
     invalid_published = sum(1 for row in normalized_rows if row["published_at_utc"] is None)
     invalid_ingested = sum(1 for row in normalized_rows if row["ingested_at"] is None)
     synthetic = sum(1 for row in normalized_rows if _looks_like_synthetic_zero_news(row))
-    future = _future_article_candidate_count(normalized_rows, stock_rows)
+    future = _future_article_candidate_count(normalized_rows, stock_rows, pit_policy)
     if invalid_article_ids:
-        return _invalid("news contract contains empty article_id", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_article_ids=invalid_article_ids)
+        return _invalid("news contract contains empty article_id", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, pit_policy=pit_policy, invalid_article_ids=invalid_article_ids)
     if invalid_symbols:
-        return _invalid("news contract contains empty symbol", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_symbols=invalid_symbols)
+        return _invalid("news contract contains empty symbol", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, pit_policy=pit_policy, invalid_symbols=invalid_symbols)
     if invalid_published:
-        return _invalid("news contract contains invalid published_at_utc", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_published=invalid_published)
+        return _invalid("news contract contains invalid published_at_utc", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, pit_policy=pit_policy, invalid_published=invalid_published)
     if invalid_ingested:
-        return _invalid("news contract contains invalid ingested_at", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, invalid_ingested=invalid_ingested)
+        return _invalid("news contract contains invalid ingested_at", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, pit_policy=pit_policy, invalid_ingested=invalid_ingested)
     if synthetic:
-        return _invalid("news contract contains synthetic zero-news fake coverage", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, synthetic=synthetic)
-    coverage = _coverage_summary(normalized_rows, stock_rows, min_symbol, min_date)
+        return _invalid("news contract contains synthetic zero-news fake coverage", normalized_rows, stock_rows, min_symbol, min_date, transformer_enabled, pit_policy=pit_policy, synthetic=synthetic)
+    coverage = _coverage_summary(normalized_rows, stock_rows, min_symbol, min_date, pit_policy)
     if coverage["symbol_coverage"] < min_symbol:
         return _from_coverage("news contract symbol coverage below minimum", normalized_rows, coverage, transformer_enabled, future_article_count=future)
     if coverage["date_coverage"] < min_date:
@@ -670,8 +691,10 @@ def _invalid(
     invalid_ingested: int = 0,
     synthetic: int = 0,
     future: int = 0,
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
 ) -> NewsContractValidation:
-    coverage = _coverage_summary(rows, stock_rows, min_symbol, min_date)
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
+    coverage = _coverage_summary(rows, stock_rows, min_symbol, min_date, policy)
     return _from_coverage(
         reason,
         rows,
@@ -735,8 +758,10 @@ def _coverage_summary(
     stock_rows: list[Mapping[str, Any]],
     min_symbol: float,
     min_date: float,
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
 ) -> dict[str, Any]:
     del min_symbol, min_date
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
     stock_symbols = sorted({str(row.get("symbol", "")).upper() for row in stock_rows if str(row.get("symbol", ""))})
     stock_dates = sorted({str(row.get("rebalance_date", ""))[:10] for row in stock_rows if str(row.get("rebalance_date", ""))})
     news_symbols = sorted({row["symbol"] for row in news_rows if row.get("symbol")})
@@ -749,7 +774,7 @@ def _coverage_summary(
         rebalance = _parse_date(stock_row.get("rebalance_date"))
         if not symbol or rebalance is None:
             continue
-        counts = {window: _article_count(news_rows, symbol, rebalance, days) for window, days in {"1d": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30}.items()}
+        counts = {window: _article_count(news_rows, symbol, rebalance, days, policy) for window, days in {"1d": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30}.items()}
         for window, count in counts.items():
             counts_by_window[window] += count
         if counts["30d"] > 0:
@@ -779,16 +804,22 @@ def _coverage_summary(
     }
 
 
-def _article_count(news_rows: list[dict[str, Any]], symbol: str, rebalance: datetime, days: int) -> int:
+def _article_count(
+    news_rows: list[dict[str, Any]],
+    symbol: str,
+    rebalance: datetime,
+    days: int,
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
+) -> int:
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
     start = rebalance - timedelta(days=days)
     return sum(
         1
         for row in news_rows
         if row.get("symbol") == symbol
         and row.get("published_at_utc") is not None
-        and row.get("ingested_at") is not None
         and start <= row["published_at_utc"] <= rebalance
-        and row["ingested_at"] <= rebalance
+        and article_is_pit_eligible(row, rebalance, policy)
     )
 
 
@@ -797,16 +828,17 @@ def _window_articles(
     symbol: str,
     rebalance: datetime,
     days: int,
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
 ) -> list[dict[str, Any]]:
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
     start = rebalance - timedelta(days=days)
     return [
         row
         for row in news_rows
         if row.get("symbol") == symbol
         and row.get("published_at_utc") is not None
-        and row.get("ingested_at") is not None
         and start <= row["published_at_utc"] <= rebalance
-        and row["ingested_at"] <= rebalance
+        and article_is_pit_eligible(row, rebalance, policy)
     ]
 
 
@@ -865,18 +897,16 @@ def _float_or_none(value: Any) -> float | None:
         return None
 
 
-def _future_article_candidate_count(news_rows: list[dict[str, Any]], stock_rows: list[Mapping[str, Any]]) -> int:
+def _future_article_candidate_count(
+    news_rows: list[dict[str, Any]],
+    stock_rows: list[Mapping[str, Any]],
+    pit_policy: StockAlphaNewsPitPolicy | None = None,
+) -> int:
+    policy = pit_policy or resolve_stock_alpha_news_pit_policy({"ml": {}})
     max_rebalance = max((_parse_date(row.get("rebalance_date")) for row in stock_rows), default=None)
     if max_rebalance is None:
         return 0
-    return sum(
-        1
-        for row in news_rows
-        if row.get("published_at_utc") is None
-        or row.get("ingested_at") is None
-        or row["published_at_utc"] > max_rebalance
-        or row["ingested_at"] > max_rebalance
-    )
+    return sum(1 for row in news_rows if not article_is_pit_eligible(row, max_rebalance, policy))
 
 
 def _normalize_news_row(row: Mapping[str, Any]) -> dict[str, Any]:

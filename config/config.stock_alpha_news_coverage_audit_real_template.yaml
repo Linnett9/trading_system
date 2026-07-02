@@ -7,6 +7,9 @@ ml:
   stock_alpha_news_coverage_min_article_count: 100
   stock_alpha_news_coverage_min_covered_stock_rows: 100
   stock_alpha_news_coverage_max_pit_violation_count: 0
+  stock_alpha_news_pit_policy: provider_available_at
+  stock_alpha_news_availability_lag_hours: 24
+  stock_alpha_news_historical_provider_availability_enabled: true
   research_only: true
   trading_impact: none
   production_validated: false
