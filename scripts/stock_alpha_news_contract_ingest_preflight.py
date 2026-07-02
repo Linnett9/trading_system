@@ -30,6 +30,7 @@ def build_stock_alpha_news_contract_ingest_preflight(
     rss_raw_news_path: str | Path | None = None,
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
+    sec_artifact_selection: str = "all",
     min_symbol_coverage: int = 300,
 ) -> dict[str, Any]:
     rows = []
@@ -41,9 +42,10 @@ def build_stock_alpha_news_contract_ingest_preflight(
         artifact = str(report.get("sec_company_filings_event_rows_path", "")).strip()
         if artifact:
             event_row_paths.append(artifact)
+    selected_event_row_paths = _select_sec_event_row_paths(event_row_paths, sec_artifact_selection)
     sec_common_rows, sec_aggregate_report_count = _sec_report_common_rows(
         sec_report_summaries,
-        sec_event_rows=_read_sec_event_rows(event_row_paths),
+        sec_event_rows=_read_sec_event_rows(selected_event_row_paths),
     )
     rows.extend(sec_common_rows)
 
@@ -99,6 +101,8 @@ def build_stock_alpha_news_contract_ingest_preflight(
     return {
         "preflight_type": "stock_alpha_news_contract_ingest_preflight",
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "sec_artifact_selection": sec_artifact_selection,
+        "sec_event_rows_included": [str(path) for path in selected_event_row_paths],
         "sec_aggregate_reports_checked": sec_aggregate_report_count,
         "providers_checked": providers_checked,
         "rows_checked_by_provider": dict(sorted(rows_checked.items())),
@@ -124,11 +128,13 @@ def write_stock_alpha_news_contract_ingest_preflight(
     rss_raw_news_path: str | Path | None = None,
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
+    sec_artifact_selection: str = "all",
 ) -> Path:
     payload = build_stock_alpha_news_contract_ingest_preflight(
         rss_raw_news_path=rss_raw_news_path,
         sec_report_paths=sec_report_paths,
         sec_event_row_paths=sec_event_row_paths,
+        sec_artifact_selection=sec_artifact_selection,
     )
     output = Path(output_path)
     ResearchArtifactWriter().write_json(output, payload)
@@ -206,6 +212,30 @@ def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
     return rows
 
 
+def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
+    if selection == "all":
+        return list(paths)
+    if selection != "prefer_12mo":
+        raise ValueError("sec_artifact_selection must be 'all' or 'prefer_12mo'")
+    by_batch: dict[str, list[str | Path]] = defaultdict(list)
+    other_paths: list[str | Path] = []
+    for path in paths:
+        path_text = str(path)
+        marker = "stock_alpha_news_collect_sec_company_filings_batch_"
+        if marker not in path_text:
+            other_paths.append(path)
+            continue
+        batch = path_text.split(marker, 1)[1][:2]
+        by_batch[batch].append(path)
+    selected: list[str | Path] = []
+    for batch in sorted(by_batch):
+        batch_paths = by_batch[batch]
+        preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        selected.extend(preferred or batch_paths)
+    selected.extend(other_paths)
+    return selected
+
+
 def _parse_timestamp(value: str) -> datetime | None:
     if not value:
         return None
@@ -230,6 +260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo"], default="all")
     parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
@@ -248,6 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else []
             ),
         ],
+        sec_artifact_selection=args.sec_artifact_selection,
     )
     print(f"Wrote stock-alpha news contract ingest preflight: {path}")
     return 0
