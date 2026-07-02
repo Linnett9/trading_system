@@ -206,6 +206,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload["rate_limit_sleep_seconds"] = rate_limit_sleep_seconds
     payload["provider_batch_counts"] = batch_counts
     payload["provider_batch_diagnostics"] = batch_diagnostics
+    payload.update(_rss_registry_diagnostics(settings, symbols, batch_diagnostics))
     payload["provider_zero_row_reasons"] = {
         name: reason for name, reason in sorted(zero_row_reasons.items())
         if counts.get(name, 0) == 0 or reason in {"rate_limited", "provider_error"}
@@ -328,6 +329,9 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_skipped_missing_key": skipped, "providers_failed": failures,
         "provider_row_counts": counts, "total_rows_collected": total,
         "requested_symbol_count": 0, "symbols_per_batch": 0,
+        "verified_feed_symbol_count": 0, "enabled_feed_symbol_count": 0,
+        "disabled_symbol_count": 0, "symbols_without_verified_feed": [],
+        "symbols_with_feed_errors": [],
         "provider_request_limit": 0, "max_rows_per_provider": 0,
         "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
         "provider_batch_diagnostics": [], "provider_zero_row_reasons": {},
@@ -360,6 +364,49 @@ def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skip
     if dry_run and rows: return "write_raw_provider_export"
     if dry_run: return "review_collection_report"
     return "run_provider_sample_check" if rows else "review_collection_report"
+
+
+def _rss_registry_diagnostics(
+    settings: Mapping[str, Any],
+    symbols: list[str],
+    batch_diagnostics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    provider_config = dict(
+        (dict(settings.get("providers", {}) or {}).get("company_press_release_rss") or {})
+    )
+    feeds_by_symbol = dict(provider_config.get("feeds", {}) or {})
+    verified_symbols = set()
+    enabled_symbols = set()
+    for symbol in symbols:
+        entries = feeds_by_symbol.get(symbol, [])
+        if isinstance(entries, Mapping):
+            entries = [entries]
+        for entry in entries or []:
+            if not isinstance(entry, Mapping):
+                continue
+            url = str(entry.get("url", "")).strip()
+            official = bool(entry.get("official", False))
+            verified_source = str(entry.get("verified_source_url", "")).strip()
+            if url and (official or verified_source):
+                verified_symbols.add(symbol)
+            if url and bool(entry.get("enabled", True)):
+                enabled_symbols.add(symbol)
+    symbols_with_feed_errors = set()
+    for diagnostic in batch_diagnostics:
+        for feed in diagnostic.get("feed_diagnostics", []) or []:
+            if not isinstance(feed, Mapping):
+                continue
+            if str(feed.get("error_type", "")).strip() or str(feed.get("zero_row_reason", "")) in {"provider_error", "rate_limited", "feed_url_missing"}:
+                symbol = str(feed.get("symbol", "")).strip().upper()
+                if symbol:
+                    symbols_with_feed_errors.add(symbol)
+    return {
+        "verified_feed_symbol_count": len(verified_symbols),
+        "enabled_feed_symbol_count": len(enabled_symbols),
+        "disabled_symbol_count": len(set(symbols) - enabled_symbols),
+        "symbols_without_verified_feed": sorted(set(symbols) - verified_symbols),
+        "symbols_with_feed_errors": sorted(symbols_with_feed_errors),
+    }
 
 
 def _provider_batch_diagnostic(
@@ -445,4 +492,4 @@ def _backup_path(output_path: Path) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Verified feed symbols: {payload['verified_feed_symbol_count']}", f"- Enabled feed symbols: {payload['enabled_feed_symbol_count']}", f"- Disabled symbols: {payload['disabled_symbol_count']}", f"- Symbols without verified feed: {payload['symbols_without_verified_feed']}", f"- Symbols with feed errors: {payload['symbols_with_feed_errors']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Rows by symbol: {payload['rows_by_symbol']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])

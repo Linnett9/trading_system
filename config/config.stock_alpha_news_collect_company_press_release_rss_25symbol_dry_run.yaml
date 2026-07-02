@@ -1,0 +1,211 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_company_press_release_rss_25symbol_dry_run/dev
+  stock_alpha_news_collect_output_path: data/news/raw/stock_alpha_news_provider_export.csv
+  stock_alpha_news_collect:
+    enabled: true
+    dry_run: true
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    source_registry_path: config/news_source_registry.stock_alpha_rss.yaml
+    max_articles_per_provider: 250
+    max_rows_per_provider: 250
+    max_rows_per_feed: 10
+    provider_request_limit: 250
+    symbols_per_batch: 25
+    rate_limit_sleep_seconds: 0.5
+    request_timeout_seconds: 20
+    start_date: '2026-04-01'
+    end_date: '2026-07-02'
+    symbols: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AVGO, BRK.B, JPM, V, MA, XOM, UNH, COST, HD, PG, JNJ, ABBV, NFLX, CRM, AMD, ORCL, BAC, KO]
+    providers:
+      company_press_release_rss:
+        enabled: true
+        max_rows_per_feed: 10
+        feeds:
+          AAPL:
+            - name: Apple Newsroom
+              url: "https://www.apple.com/newsroom/rss-feed.rss"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://www.apple.com/newsroom/"
+          MSFT:
+            - name: Microsoft Source
+              url: "https://news.microsoft.com/source/feed/"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://news.microsoft.com/source/"
+          NVDA:
+            - name: NVIDIA Press Room
+              url: "https://nvidianews.nvidia.com/releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://www.nvidia.com/en-us/about-nvidia/rss/"
+          AMZN:
+            - name: Amazon News
+              url: "https://www.aboutamazon.com/rss/feed.rss"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://www.aboutamazon.com/news"
+          GOOGL:
+            - name: Google Blog Alphabet
+              url: "https://blog.google/alphabet/rss/"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://blog.google/alphabet/"
+          META:
+            - name: Meta Newsroom
+              url: "https://about.fb.com/news/feed/"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://about.fb.com/news/"
+          TSLA:
+            - name: Tesla Investor Relations RSS unavailable
+              enabled: false
+              event_type: press_release
+              verified_source_url: "https://ir.tesla.com/press"
+              note: "Official Tesla blog and IR press pages were checked, but no working official RSS endpoint was verified."
+          AVGO:
+            - name: Broadcom News Releases
+              url: "https://investors.broadcom.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investors.broadcom.com/financial-information/financial-news-releases"
+          BRK.B:
+            - name: Berkshire Hathaway RSS unavailable
+              enabled: false
+              event_type: press_release
+              verified_source_url: "https://www.berkshirehathaway.com/"
+              note: "Official home page found, but no working official RSS endpoint was verified."
+          JPM:
+            - name: JPMorgan Chase News Releases
+              url: "https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://jpmorganchaseco.gcs-web.com/ir/shareholder-information/rss-news-feeds"
+          V:
+            - name: Visa News Releases
+              url: "https://visa.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investor.visa.com/news/default.aspx"
+          MA:
+            - name: Mastercard Press Releases
+              url: "https://investor.mastercard.com/rss/pressrelease.aspx"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investor.mastercard.com/investor-news/default.aspx"
+          XOM:
+            - name: ExxonMobil News Releases
+              url: "https://exxonmobil.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investor.exxonmobil.com/company-information/press-releases"
+          UNH:
+            - name: UnitedHealth Group RSS needs manual review
+              enabled: false
+              event_type: press_release
+              verified_source_url: "https://www.unitedhealthgroup.com/newsroom/press-releases.html"
+              note: "Official press-release page found, but no parseable official RSS endpoint was verified."
+          COST:
+            - name: Costco Press Releases
+              url: "https://investor.costco.com/rss/pressrelease.aspx"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investor.costco.com/news/default.aspx"
+          HD:
+            - name: Home Depot News Releases
+              url: "https://ir.homedepot.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://ir.homedepot.com/"
+          PG:
+            - name: Procter & Gamble Investor Relations Press Releases
+              url: "https://www.pginvestor.com/rss/pressrelease.aspx"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://www.pginvestor.com/overview/default.aspx"
+          JNJ:
+            - name: Johnson & Johnson Press Releases
+              url: "https://www.investor.jnj.com/rss/pressrelease.aspx"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://www.jnj.com/rss"
+          ABBV:
+            - name: AbbVie News Releases
+              url: "https://investors.abbvie.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investors.abbvie.com/financial-releases"
+          NFLX:
+            - name: Netflix Press Releases
+              url: "https://ir.netflix.net/rss/pressrelease.aspx"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://ir.netflix.net/resources/rss-feeds/default.aspx"
+          CRM:
+            - name: Salesforce News
+              url: "https://www.salesforce.com/news/feed/"
+              enabled: true
+              official: true
+              event_type: rss_news
+              verified_source_url: "https://www.salesforce.com/news/press-releases/"
+          AMD:
+            - name: AMD Press Releases
+              url: "https://ir.amd.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://ir.amd.com/news-events/press-releases"
+          ORCL:
+            - name: Oracle Press Releases
+              url: "https://www.oracle.com/corporate/press/rss/rss-pr.xml"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://www.oracle.com/corporate/rss/"
+          BAC:
+            - name: Bank of America RSS feed error
+              enabled: false
+              event_type: press_release
+              verified_source_url: "https://investor.bankofamerica.com/"
+              note: "Official investor/newsroom pages mention RSS, but candidate RSS URLs returned HTML or timed out instead of parseable RSS XML."
+          KO:
+            - name: Coca-Cola Press Releases
+              url: "https://investors.coca-colacompany.com/news-events/press-releases/rss"
+              enabled: true
+              official: true
+              event_type: press_release
+              verified_source_url: "https://investors.coca-colacompany.com/news-events/press-releases"
+      alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
+      sec_edgar: {enabled: false}
+      massive_stock_news:
+        enabled: false
+        api_key_env: MASSIVE_API_KEY
+        api_key_env_fallbacks: [POLYGON_API_KEY]
+      finnhub: {enabled: false, api_key_env: FINNHUB_API_KEY}
+      gdelt: {enabled: false}
+      fmp: {enabled: false, api_key_env: FMP_API_KEY}
+      newsapi: {enabled: false, api_key_env: NEWSAPI_API_KEY}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

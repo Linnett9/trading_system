@@ -1,0 +1,284 @@
+_metadata:
+  purpose: official RSS / press-release source tracking for stock-alpha news collection
+  registry_scope: first_25_expansion_batch
+  universe_source_config: config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_200symbol_dry_run.yaml
+  expansion_batch_config: config/config.stock_alpha_news_collect_company_press_release_rss_25symbol_dry_run.yaml
+  statuses:
+    - verified
+    - no_verified_rss
+    - needs_manual_review
+    - feed_error
+    - disabled
+  notes: "Only official/company-owned RSS feeds are enabled. Third-party press-release wires are excluded unless the company-owned site exposes that feed directly."
+AAPL:
+  company_name: Apple Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Apple Newsroom
+      url: https://www.apple.com/newsroom/rss-feed.rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.apple.com/newsroom/
+  notes: ""
+MSFT:
+  company_name: Microsoft Corporation
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Microsoft Source
+      url: https://news.microsoft.com/source/feed/
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://news.microsoft.com/source/
+  notes: ""
+NVDA:
+  company_name: NVIDIA Corporation
+  status: verified
+  sources:
+    - type: press_release_rss
+      name: NVIDIA Press Room
+      url: https://nvidianews.nvidia.com/releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.nvidia.com/en-us/about-nvidia/rss/
+  notes: ""
+AMZN:
+  company_name: Amazon.com, Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Amazon News
+      url: https://www.aboutamazon.com/rss/feed.rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.aboutamazon.com/news
+  notes: ""
+GOOGL:
+  company_name: Alphabet Inc.
+  status: verified
+  sources:
+    - type: company_blog_rss
+      name: Google Blog Alphabet
+      url: https://blog.google/alphabet/rss/
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://blog.google/alphabet/
+  notes: ""
+META:
+  company_name: Meta Platforms, Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Meta Newsroom
+      url: https://about.fb.com/news/feed/
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://about.fb.com/news/
+  notes: ""
+TSLA:
+  company_name: Tesla, Inc.
+  status: no_verified_rss
+  sources: []
+  notes: "Official Tesla blog and IR press pages were checked, but no working official RSS endpoint was verified; candidate feed endpoints returned 403, 404, or 503 during curation."
+AVGO:
+  company_name: Broadcom Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Broadcom News Releases
+      url: https://investors.broadcom.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.broadcom.com/financial-information/financial-news-releases
+  notes: ""
+BRK.B:
+  company_name: Berkshire Hathaway Inc.
+  status: no_verified_rss
+  sources: []
+  notes: "Official Berkshire Hathaway home page has news releases, but no working official RSS endpoint was verified."
+JPM:
+  company_name: JPMorgan Chase & Co.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: JPMorgan Chase News Releases
+      url: https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://jpmorganchaseco.gcs-web.com/ir/shareholder-information/rss-news-feeds
+  notes: ""
+V:
+  company_name: Visa Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Visa News Releases
+      url: https://visa.gcs-web.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.visa.com/news/default.aspx
+  notes: ""
+MA:
+  company_name: Mastercard Incorporated
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Mastercard Press Releases
+      url: https://investor.mastercard.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.mastercard.com/investor-news/default.aspx
+  notes: ""
+XOM:
+  company_name: Exxon Mobil Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: ExxonMobil News Releases
+      url: https://exxonmobil.gcs-web.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.exxonmobil.com/company-information/press-releases
+  notes: ""
+UNH:
+  company_name: UnitedHealth Group Incorporated
+  status: needs_manual_review
+  sources: []
+  notes: "Official newsroom and press-release pages were found, but no parseable official RSS feed was verified from candidate endpoints."
+COST:
+  company_name: Costco Wholesale Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Costco Press Releases
+      url: https://investor.costco.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.costco.com/news/default.aspx
+  notes: ""
+HD:
+  company_name: The Home Depot, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Home Depot News Releases
+      url: https://ir.homedepot.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.homedepot.com/
+  notes: ""
+PG:
+  company_name: The Procter & Gamble Company
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Procter & Gamble Investor Relations Press Releases
+      url: https://www.pginvestor.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.pginvestor.com/overview/default.aspx
+  notes: ""
+JNJ:
+  company_name: Johnson & Johnson
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Johnson & Johnson Press Releases
+      url: https://www.investor.jnj.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.jnj.com/rss
+  notes: "The company RSS explainer page was found, but the parseable feed came from the official investor relations RSS endpoint."
+ABBV:
+  company_name: AbbVie Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AbbVie News Releases
+      url: https://investors.abbvie.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.abbvie.com/financial-releases
+  notes: ""
+NFLX:
+  company_name: Netflix, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Netflix Press Releases
+      url: https://ir.netflix.net/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.netflix.net/resources/rss-feeds/default.aspx
+  notes: ""
+CRM:
+  company_name: Salesforce, Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Salesforce News
+      url: https://www.salesforce.com/news/feed/
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.salesforce.com/news/press-releases/
+  notes: ""
+AMD:
+  company_name: Advanced Micro Devices, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AMD Press Releases
+      url: https://ir.amd.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.amd.com/news-events/press-releases
+  notes: ""
+ORCL:
+  company_name: Oracle Corporation
+  status: verified
+  sources:
+    - type: press_release_rss
+      name: Oracle Press Releases
+      url: https://www.oracle.com/corporate/press/rss/rss-pr.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.oracle.com/corporate/rss/
+  notes: ""
+BAC:
+  company_name: Bank of America Corporation
+  status: feed_error
+  sources: []
+  notes: "Official investor/newsroom pages mention RSS, but candidate RSS URLs returned HTML or timed out instead of parseable RSS XML."
+KO:
+  company_name: The Coca-Cola Company
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Coca-Cola Press Releases
+      url: https://investors.coca-colacompany.com/news-events/press-releases/rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.coca-colacompany.com/news-events/press-releases
+  notes: ""

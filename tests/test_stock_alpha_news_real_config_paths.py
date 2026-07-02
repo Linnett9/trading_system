@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from config.config_loader import load_config
 
 
@@ -271,6 +275,79 @@ def test_company_press_release_rss_config_is_dry_run_only_with_verified_official
     assert rss["feeds"]["TSLA"][0]["verified_source_url"] == "https://ir.tesla.com/press"
     assert "no official RSS feed URL was verified" in rss["feeds"]["TSLA"][0]["note"]
     for name, provider in providers.items():
+        if name != "company_press_release_rss":
+            assert provider["enabled"] is False
+    assert "stock_alpha_news_features_path" not in ml
+    assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+    assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+    assert ml.get("model_type") != "news_analysis_transformer"
+    assert ml.get("shadow_model_type") != "news_analysis_transformer"
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
+
+
+def test_company_press_release_rss_registry_and_25_symbol_config_are_dry_run_only():
+    registry = yaml.safe_load(
+        Path("config/news_source_registry.stock_alpha_rss.yaml").read_text(encoding="utf-8")
+    )
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_25symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    rss = collect["providers"]["company_press_release_rss"]
+
+    expected_symbols = [
+        "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+        "AVGO", "BRK.B", "JPM", "V", "MA", "XOM", "UNH", "COST",
+        "HD", "PG", "JNJ", "ABBV", "NFLX", "CRM", "AMD", "ORCL",
+        "BAC", "KO",
+    ]
+    verified_symbols = [
+        symbol for symbol in expected_symbols
+        if registry[symbol]["status"] == "verified"
+    ]
+    disabled_symbols = [
+        symbol for symbol in expected_symbols
+        if registry[symbol]["status"] != "verified"
+    ]
+
+    assert collect["enabled"] is True
+    assert collect["dry_run"] is True
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is False
+    assert collect["backup_existing"] is False
+    assert collect["source_registry_path"] == "config/news_source_registry.stock_alpha_rss.yaml"
+    assert collect["symbols"] == expected_symbols
+    assert len(collect["symbols"]) == 25
+    assert collect["symbols_per_batch"] == 25
+    assert collect["provider_request_limit"] == 250
+    assert collect["max_rows_per_provider"] == 250
+    assert collect["max_rows_per_feed"] == 10
+    assert rss["enabled"] is True
+    assert rss["max_rows_per_feed"] == 10
+    assert sorted(symbol for symbol in registry if not symbol.startswith("_")) == sorted(expected_symbols)
+    assert len(verified_symbols) == 21
+    assert disabled_symbols == ["TSLA", "BRK.B", "UNH", "BAC"]
+    for symbol in verified_symbols:
+        assert registry[symbol]["sources"]
+        source = registry[symbol]["sources"][0]
+        assert source["official"] is True
+        assert source["enabled"] is True
+        assert str(source["url"]).startswith("https://")
+        feed = rss["feeds"][symbol][0]
+        assert feed["enabled"] is True
+        assert feed["official"] is True
+        assert feed["url"] == source["url"]
+    for symbol in disabled_symbols:
+        assert registry[symbol]["sources"] == []
+        assert rss["feeds"][symbol][0]["enabled"] is False
+        assert not str(rss["feeds"][symbol][0].get("url", "")).strip()
+    for name, provider in collect["providers"].items():
         if name != "company_press_release_rss":
             assert provider["enabled"] is False
     assert "stock_alpha_news_features_path" not in ml

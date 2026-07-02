@@ -1969,6 +1969,73 @@ def test_company_press_release_rss_invalid_feed_url_is_diagnostic_not_collection
     assert feed_diagnostic["rate_limited"] is False
 
 
+def test_free_source_collection_reports_rss_registry_metrics(tmp_path):
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Apple announces test expansion</title>
+          <link>https://example.test/apple-press-release</link>
+          <pubDate>Mon, 20 Apr 2026 14:30:00 GMT</pubDate>
+          <description>Official RSS summary only.</description>
+        </item>
+      </channel>
+    </rss>
+    """
+
+    def fake_get(url, timeout):
+        return rss
+
+    config = _collection_config(tmp_path, dry_run=True)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["symbols"] = ["AAPL", "TSLA", "BAD"]
+    settings["start_date"] = "2026-04-19"
+    settings["end_date"] = "2026-04-21"
+    settings["providers"] = {
+        "company_press_release_rss": {
+            "enabled": True,
+            "feeds": {
+                "AAPL": [{
+                    "name": "Apple Newsroom",
+                    "url": "https://example.test/apple/rss.xml",
+                    "enabled": True,
+                    "official": True,
+                    "verified_source_url": "https://example.test/apple/",
+                }],
+                "TSLA": [{
+                    "name": "Tesla RSS unavailable",
+                    "enabled": False,
+                }],
+                "BAD": [{
+                    "name": "Broken official RSS",
+                    "url": "not-a-url",
+                    "enabled": True,
+                    "official": True,
+                    "verified_source_url": "https://example.test/bad/",
+                }],
+            },
+        }
+    }
+    paths = write_stock_alpha_news_free_source_collect(
+        config,
+        sources={"company_press_release_rss": CompanyPressReleaseRssSource(fake_get)},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    markdown = paths.markdown_path.read_text(encoding="utf-8")
+
+    assert payload["requested_symbol_count"] == 3
+    assert payload["verified_feed_symbol_count"] == 2
+    assert payload["enabled_feed_symbol_count"] == 2
+    assert payload["disabled_symbol_count"] == 1
+    assert payload["symbols_without_verified_feed"] == ["TSLA"]
+    assert payload["symbols_with_feed_errors"] == ["BAD"]
+    assert payload["rows_by_symbol"] == {"AAPL": 1}
+    assert payload["provider_symbol_coverage"] == {"company_press_release_rss": 1 / 3}
+    assert "- Verified feed symbols: 2" in markdown
+    assert "- Symbols without verified feed: ['TSLA']" in markdown
+    assert "- Symbols with feed errors: ['BAD']" in markdown
+
+
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):
     for name in ("ALPHA_VANTAGE_API_KEY", "FINNHUB_API_KEY", "FMP_API_KEY", "NEWSAPI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
