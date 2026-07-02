@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.research.framework.data import CsvRowRepository
@@ -43,8 +45,21 @@ def build_stock_alpha_news_coverage_audit(
     sec_symbols = set(sec_summary["rows_by_symbol"])
     rss_symbols = row_symbol_set & universe_symbol_set
     combined_symbols = (rss_symbols | sec_symbols) & universe_symbol_set
+    provider_errors = _provider_error_summary(reports_root)
     sec_cap_starvation = _sec_cap_starvation_diagnostics(reports_root)
     cap_starved_symbols = set(sec_cap_starvation["symbols"])
+    official_rows_by_symbol = _official_rows_by_symbol(
+        universe_symbols=universe_symbols,
+        rss_rows_by_symbol=rows_by_symbol,
+        sec_rows_by_symbol=sec_summary["rows_by_symbol"],
+    )
+    row_depth = _official_row_depth_diagnostics(
+        universe_symbols=universe_symbols,
+        official_rows_by_symbol=official_rows_by_symbol,
+    )
+    classifications = _official_source_classifications(
+        registry=registry,
+    )
 
     timestamps = [_parse_timestamp(str(row.get("published_at_utc", "")).strip()) for row in rows]
     valid_timestamps = [value for value in timestamps if value is not None]
@@ -78,11 +93,11 @@ def build_stock_alpha_news_coverage_audit(
     verified_feed_symbols_without_rows = sorted(verified_feed_symbols - row_symbol_set)
     symbols_with_rows_without_verified_feed = sorted((row_symbol_set - verified_feed_symbols) & universe_symbol_set)
     weak_less_than_5 = sorted(symbol for symbol, count in rows_by_symbol.items() if count < 5)
-    weak_less_than_10 = sorted(symbol for symbol, count in rows_by_symbol.items() if count < 10)
+    weak_less_than_10 = row_depth["symbols_with_1_to_9_valid_official_rows"]
     unsafe_reasons = _unsafe_reasons(
         universe_symbol_count=len(universe_symbols),
         official_symbol_coverage_count=len(combined_symbols),
-        rows=rows,
+        official_row_count=sum(official_rows_by_symbol.values()),
         valid_timestamps=official_timestamp_bounds,
         weak_less_than_10=weak_less_than_10,
         rows_by_provider={
@@ -107,14 +122,29 @@ def build_stock_alpha_news_coverage_audit(
         "symbols_covered_by_rss_only": sorted(rss_symbols - sec_symbols),
         "symbols_covered_by_sec_only": sorted((sec_symbols - rss_symbols) & universe_symbol_set),
         "symbols_covered_by_both": sorted(rss_symbols & sec_symbols),
-        "symbols_with_no_official_rows": sorted(universe_symbol_set - combined_symbols),
+        "symbols_with_no_official_rows": row_depth["symbols_with_zero_official_rows"],
+        "symbols_with_zero_official_rows": row_depth["symbols_with_zero_official_rows"],
+        "symbols_with_1_to_9_valid_official_rows": row_depth["symbols_with_1_to_9_valid_official_rows"],
+        "symbols_with_10_plus_valid_official_rows": row_depth["symbols_with_10_plus_valid_official_rows"],
+        "zero_row_symbol_count": row_depth["zero_row_symbol_count"],
+        "thin_symbol_count_under_10": row_depth["thin_symbol_count_under_10"],
+        "covered_symbol_count_10_plus": row_depth["covered_symbol_count_10_plus"],
+        "audited_exception_symbols": classifications["audited_exception_symbols"],
+        "blocked_etf_or_fund_symbols": classifications["blocked_etf_or_fund_symbols"],
+        "known_rss_failure_symbols": classifications["known_rss_failure_symbols"],
+        "audited_exception_count": len(classifications["audited_exception_symbols"]),
+        "blocked_fund_count": len(classifications["blocked_etf_or_fund_symbols"]),
+        "known_rss_failure_count": len(classifications["known_rss_failure_symbols"]),
         "sec_cap_starvation_diagnostics": sec_cap_starvation["diagnostics"],
         "sec_cap_starved_symbols": sorted(cap_starved_symbols),
         "unresolved_sec_cap_starved_symbols": sorted(cap_starved_symbols - combined_symbols),
+        "sec_cap_starved_count": len(cap_starved_symbols),
+        "unresolved_sec_cap_starved_count": len(cap_starved_symbols - combined_symbols),
         "rows_by_symbol_by_provider": {
             "company_press_release_rss": rows_by_symbol,
             "sec_company_filings": sec_summary["rows_by_symbol"],
         },
+        "valid_official_rows_by_symbol": official_rows_by_symbol,
         "rows_by_month_by_provider": {
             "company_press_release_rss": rows_by_month,
             "sec_company_filings": sec_summary["rows_by_month"],
@@ -151,7 +181,7 @@ def build_stock_alpha_news_coverage_audit(
         "duplicate_headline_rate": ((len(headlines) - len(set(headlines))) / len(rows)) if rows else 0.0,
         "future_timestamp_count": future_timestamp_count,
         "invalid_timestamp_count": invalid_timestamp_count,
-        "provider_error_summary_from_reports_if_available": _provider_error_summary(reports_root),
+        "provider_error_summary_from_reports_if_available": provider_errors,
         "sec_reports_included": [str(path) for path in sec_report_paths or []],
         "sec_artifact_selection": sec_artifact_selection,
         "sec_event_rows_included": [str(path) for path in selected_sec_event_row_paths],
@@ -208,11 +238,82 @@ def _top_items(values: Mapping[str, int], *, reverse: bool) -> list[dict[str, An
     ]
 
 
+def _official_rows_by_symbol(
+    *,
+    universe_symbols: Sequence[str],
+    rss_rows_by_symbol: Mapping[str, int],
+    sec_rows_by_symbol: Mapping[str, int],
+) -> dict[str, int]:
+    universe = {str(symbol).strip().upper() for symbol in universe_symbols if str(symbol).strip()}
+    counter: Counter[str] = Counter()
+    for source in (rss_rows_by_symbol, sec_rows_by_symbol):
+        for symbol, count in source.items():
+            normalized = str(symbol).strip().upper()
+            if normalized in universe:
+                counter[normalized] += int(count)
+    return _sorted_counter(counter)
+
+
+def _official_row_depth_diagnostics(
+    *,
+    universe_symbols: Sequence[str],
+    official_rows_by_symbol: Mapping[str, int],
+) -> dict[str, Any]:
+    universe = sorted({str(symbol).strip().upper() for symbol in universe_symbols if str(symbol).strip()})
+    zero = [symbol for symbol in universe if int(official_rows_by_symbol.get(symbol, 0)) == 0]
+    thin = [
+        symbol
+        for symbol in universe
+        if 1 <= int(official_rows_by_symbol.get(symbol, 0)) < 10
+    ]
+    covered_10_plus = [
+        symbol
+        for symbol in universe
+        if int(official_rows_by_symbol.get(symbol, 0)) >= 10
+    ]
+    return {
+        "symbols_with_zero_official_rows": zero,
+        "symbols_with_1_to_9_valid_official_rows": thin,
+        "symbols_with_10_plus_valid_official_rows": covered_10_plus,
+        "zero_row_symbol_count": len(zero),
+        "thin_symbol_count_under_10": len(thin),
+        "covered_symbol_count_10_plus": len(covered_10_plus),
+    }
+
+
+def _official_source_classifications(
+    *,
+    registry: Mapping[str, Any],
+) -> dict[str, list[str]]:
+    audited_exceptions = _registry_symbols("config/news_source_registry.stock_alpha_official_exceptions.yaml", "exceptions")
+    blocked_funds = _registry_symbols("config/news_source_registry.stock_alpha_etf_funds.yaml", "funds")
+    known_rss_failures = [
+        str(symbol).strip().upper()
+        for symbol in (registry.get("known_error_feed_symbols", []) or [])
+        if str(symbol).strip()
+    ]
+    return {
+        "audited_exception_symbols": audited_exceptions,
+        "blocked_etf_or_fund_symbols": blocked_funds,
+        "known_rss_failure_symbols": sorted(set(known_rss_failures)),
+    }
+
+
+def _registry_symbols(path: str | Path, key: str) -> list[str]:
+    payload = _read_yaml(Path(path))
+    values = payload.get(key, {}) if isinstance(payload, Mapping) else {}
+    if isinstance(values, Mapping):
+        return sorted(str(symbol).strip().upper() for symbol in values if str(symbol).strip())
+    if isinstance(values, list):
+        return sorted(str(symbol).strip().upper() for symbol in values if str(symbol).strip())
+    return []
+
+
 def _unsafe_reasons(
     *,
     universe_symbol_count: int,
     official_symbol_coverage_count: int,
-    rows: list[dict[str, str]],
+    official_row_count: int,
     valid_timestamps: list[datetime],
     weak_less_than_10: list[str],
     rows_by_provider: Mapping[str, int],
@@ -221,8 +322,8 @@ def _unsafe_reasons(
     coverage_rate = official_symbol_coverage_count / universe_symbol_count if universe_symbol_count else 0.0
     if coverage_rate < 0.80:
         reasons.append("coverage below 80% of canonical universe")
-    if len(rows) < 10_000:
-        reasons.append("raw row count below 10000-row feature-generation floor")
+    if official_row_count < 10_000:
+        reasons.append("official row count below 10000-row feature-generation floor")
     if valid_timestamps:
         history_days = (max(valid_timestamps) - min(valid_timestamps)).days
         if history_days < 365:
@@ -381,6 +482,14 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _sec_cap_starvation_diagnostics(reports_root: str | Path | None) -> dict[str, Any]:
