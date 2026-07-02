@@ -95,6 +95,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-collection-plan":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_collection_plan(config)
         return
+    if args.mode == "ml-stock-alpha-news-daily-confirmation":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_daily_confirmation(config)
+        return
     if args.mode == "ml-stock-alpha-news-coverage-audit":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_coverage_audit(config)
         return

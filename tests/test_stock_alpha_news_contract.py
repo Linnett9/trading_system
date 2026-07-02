@@ -48,6 +48,9 @@ from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
 from core.research.ml.stock_level.stock_alpha_news_collection_plan import (
     write_stock_alpha_news_collection_plan,
 )
+from core.research.ml.stock_level.stock_alpha_news_daily_confirmation import (
+    write_stock_alpha_news_daily_confirmation,
+)
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import (
     write_stock_alpha_news_provider_audit,
 )
@@ -2118,6 +2121,122 @@ def test_news_source_setup_check_disabled_keyed_provider_does_not_block_and_lite
     assert "literal-secret" not in paths.json_path.read_text(encoding="utf-8")
 
 
+def test_daily_confirmation_reports_negative_news_and_recent_sec_filing(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "test-alpha-key")
+
+    class Alpha:
+        api_key_required = True
+
+        def collect(self, **kwargs):
+            return [
+                _collected_news_row("alpha-negative", "alpha_vantage")
+                | {
+                    "symbol": kwargs["symbols"][0],
+                    "headline": "AAPL supplier warning",
+                    "sentiment_score": "-0.42",
+                    "published_at_utc": "2026-04-20T10:00:00Z",
+                    "provider_url": "https://example.test/alpha-negative",
+                }
+            ]
+
+    class Sec:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            return [
+                _collected_news_row("sec-8k", "sec_edgar")
+                | {
+                    "symbol": kwargs["symbols"][0],
+                    "headline": f"{kwargs['symbols'][0]} SEC 8-K filing accepted 2026-04-20 accession 0001",
+                    "published_at_utc": "2026-04-20T12:00:00Z",
+                    "provider_url": "https://sec.test/8k",
+                }
+            ]
+
+    paths = write_stock_alpha_news_daily_confirmation(
+        _daily_confirmation_config(tmp_path),
+        sources={"alpha_vantage": Alpha(), "sec_edgar": Sec()},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    report = payload["symbol_reports"][0]
+
+    assert payload["confirmation_only"] is True
+    assert payload["trading_impact"] == "none"
+    assert payload["orders_generated"] is False
+    assert payload["broker_invoked"] is False
+    assert payload["model_training_invoked"] is False
+    assert payload["news_transformer_enabled"] is False
+    assert report["confirmation_status"] == "negative_news_review"
+    assert report["negative_news_flag"] is True
+    assert report["sec_recent_filing"] is True
+    assert report["recent_filing_count"] == 1
+    assert report["latest_filing_form"] == "8-K"
+    assert report["article_count"] == 1
+    assert report["provider_sentiment_summary"]["min"] == -0.42
+    assert "BUY" not in paths.markdown_path.read_text(encoding="utf-8")
+    assert "SELL" not in paths.markdown_path.read_text(encoding="utf-8")
+
+
+def test_daily_confirmation_alpha_rate_limit_is_provider_limited_and_redacted(tmp_path, monkeypatch):
+    secret = "secret-alpha-confirmation-key"
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", secret)
+
+    class AlphaLimited:
+        api_key_required = True
+
+        def collect(self, **kwargs):
+            raise RuntimeError(f"standard API rate limit for {kwargs['api_key']}")
+
+    class EmptySec:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            return []
+
+    paths = write_stock_alpha_news_daily_confirmation(
+        _daily_confirmation_config(tmp_path),
+        sources={"alpha_vantage": AlphaLimited(), "sec_edgar": EmptySec()},
+    )
+    report_text = paths.json_path.read_text(encoding="utf-8")
+    payload = json.loads(report_text)
+    symbol_report = payload["symbol_reports"][0]
+
+    assert secret not in report_text
+    assert payload["providers_rate_limited"] == ["alpha_vantage"]
+    assert payload["providers_failed"] == {}
+    assert symbol_report["confirmation_status"] == "provider_limited"
+    assert symbol_report["rate_limit_flag"] is True
+    assert symbol_report["zero_row_reason"] == "provider_limited"
+    assert symbol_report["provider_notes"]["alpha_vantage"]["error_message"].endswith("[REDACTED]")
+
+
+def test_daily_confirmation_zero_recent_news_is_not_provider_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "test-alpha-key")
+
+    class Empty:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            return []
+
+    class EmptyAlpha(Empty):
+        api_key_required = True
+
+    paths = write_stock_alpha_news_daily_confirmation(
+        _daily_confirmation_config(tmp_path),
+        sources={"alpha_vantage": EmptyAlpha(), "sec_edgar": Empty()},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    symbol_report = payload["symbol_reports"][0]
+
+    assert payload["providers_failed"] == {}
+    assert payload["providers_rate_limited"] == []
+    assert symbol_report["confirmation_status"] == "no_recent_news"
+    assert symbol_report["zero_row_reason"] == "no_recent_news"
+    assert symbol_report["article_count"] == 0
+    assert symbol_report["sec_recent_filing"] is False
+
+
 def test_free_source_collection_reports_zero_rows_and_practical_next_actions(tmp_path, monkeypatch):
     monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "test-alpha-key")
     monkeypatch.setenv("FINNHUB_API_KEY", "test-finnhub-key")
@@ -2654,6 +2773,31 @@ def _collection_config(tmp_path: Path, *, dry_run: bool) -> dict:
             "max_articles_per_provider": 5, "request_timeout_seconds": 2,
             "start_date": "2024-01-01", "end_date": "2024-01-02", "symbols": ["AAPL"],
             "providers": {"gdelt": {"enabled": True}},
+        },
+    }}
+
+
+def _daily_confirmation_config(tmp_path: Path) -> dict:
+    return {"ml": {
+        "stock_alpha_news_daily_confirmation_report_dir": str(tmp_path / "daily"),
+        "stock_alpha_news_confirmation": {
+            "enabled": True,
+            "dry_run": True,
+            "inspection_only": True,
+            "as_of_utc": "2026-04-21T00:00:00Z",
+            "lookback_hours": 72,
+            "max_symbols": 5,
+            "max_articles_per_symbol": 3,
+            "max_provider_requests": 10,
+            "request_timeout_seconds": 2,
+            "symbols": ["AAPL"],
+            "providers": {
+                "alpha_vantage": {
+                    "enabled": True,
+                    "api_key_env": "ALPHA_VANTAGE_API_KEY",
+                },
+                "sec_edgar": {"enabled": True},
+            },
         },
     }}
 
