@@ -75,6 +75,7 @@ from core.research.ml.stock_level.stock_alpha_news_source_setup_check import (
     write_stock_alpha_news_source_setup_check,
 )
 from scripts.stock_alpha_news_collect_summary import build_summary
+from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
 
 def test_valid_contract_passes_when_features_and_transformer_enabled(tmp_path):
@@ -1929,6 +1930,58 @@ def test_company_press_release_rss_empty_feed_reports_zero_reason_not_failure():
     assert diagnostic["rate_limited"] is False
 
 
+def test_379_registry_collection_report_is_bounded_and_offline(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_collect_report_dir"] = str(tmp_path / "report")
+    config["ml"]["stock_alpha_news_collect_output_path"] = str(tmp_path / "news.csv")
+    source = CompanyPressReleaseRssSource(lambda _url, _timeout: b"<rss><channel /></rss>")
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config,
+        sources={"company_press_release_rss": source},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["registry_validation"]["registry_complete"] is True
+    assert payload["registry_validation"]["universe_symbol_count"] == 379
+    assert sum(payload["registry_validation"]["classification_counts"].values()) == 379
+    assert payload["requested_symbol_count"] == 25
+    assert payload["total_universe_symbol_count"] == 379
+    assert payload["total_universe_coverage"] == 0.0
+    assert payload["canonical_universe_symbol_count"] == 379
+    assert payload["registry_symbol_count"] == 379
+    assert payload["registry_missing_symbols"] == []
+    assert payload["registry_extra_symbols"] == []
+    assert payload["registry_classification_counts"] == {
+        "disabled_pending_review": 356,
+        "known_error_feed": 6,
+        "no_verified_official_rss": 2,
+        "sec_only_candidate": 0,
+        "verified_rss_feed": 15,
+    }
+    assert payload["full_universe_known_error_feed_symbols"] == [
+        "ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"
+    ]
+    assert payload["selected_symbol_count"] == 25
+    assert payload["selected_row_returning_symbol_count"] == 0
+    assert payload["selected_symbol_row_coverage"] == 0.0
+    assert payload["total_universe_row_coverage"] == 0.0
+    assert payload["total_universe_enabled_feed_coverage"] == 21 / 379
+    assert payload["enabled_feeds_returned_rows"] == []
+    assert payload["symbols_with_feed_errors"] == []
+    assert payload["output_written"] is False
+    assert not paths.output_path.exists()
+    assert payload["features_generated"] is False
+    assert payload["readiness_invoked"] is False
+    assert payload["diagnostics_invoked"] is False
+    assert payload["model_training_invoked"] is False
+    assert payload["news_transformer_enabled"] is False
+    assert payload["trading_impact"] == "none"
+
+
 def test_company_press_release_rss_invalid_feed_url_is_diagnostic_not_collection_failure(tmp_path):
     def fake_get(url, timeout):
         raise AssertionError("invalid URL should fail before network fetch")
@@ -2133,6 +2186,26 @@ def test_free_source_collection_rss_runtime_controls_bound_live_requests(tmp_pat
 
 def test_stock_alpha_news_collect_summary_selects_guardrail_fields():
     summary = build_summary({
+        "registry_validation": {
+            "registry_complete": True,
+            "universe_symbol_count": 379,
+            "classification_counts": {
+                "disabled_pending_review": 356,
+                "known_error_feed": 6,
+                "no_verified_official_rss": 2,
+                "sec_only_candidate": 0,
+                "verified_rss_feed": 15,
+            },
+        },
+        "full_universe_known_error_feed_symbols": ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"],
+        "selected_symbol_count": 25,
+        "selected_enabled_feed_symbol_count": 12,
+        "selected_row_returning_symbol_count": 9,
+        "selected_symbol_row_coverage": 0.36,
+        "total_universe_symbol_count": 379,
+        "total_universe_coverage": 9 / 379,
+        "total_universe_row_coverage": 9 / 379,
+        "total_universe_enabled_feed_coverage": 21 / 379,
         "total_rows_collected": 3,
         "deduplicated_row_count": 2,
         "provider_row_counts": {"company_press_release_rss": 3},
@@ -2150,7 +2223,18 @@ def test_stock_alpha_news_collect_summary_selects_guardrail_fields():
         "unrelated": "ignored",
     })
 
-    assert summary == {
+    assert summary["registry_complete"] is True
+    assert summary["universe_symbol_count"] == 379
+    assert summary["classification_counts"]["disabled_pending_review"] == 356
+    assert summary["verified_rss_feed_symbol_count"] == 15
+    assert summary["known_error_feed_symbol_count"] == 6
+    assert summary["no_verified_official_rss_symbol_count"] == 2
+    assert summary["sec_only_candidate_symbol_count"] == 0
+    assert summary["disabled_pending_review_symbol_count"] == 356
+    assert summary["selected_symbol_row_coverage"] == 0.36
+    assert summary["total_universe_row_coverage"] == 9 / 379
+    assert summary["total_universe_enabled_feed_coverage"] == 21 / 379
+    legacy_fields = {
         "total_rows_collected": 3,
         "deduplicated_row_count": 2,
         "provider_row_counts": {"company_press_release_rss": 3},
@@ -2166,6 +2250,21 @@ def test_stock_alpha_news_collect_summary_selects_guardrail_fields():
         "model_training_invoked": False,
         "news_transformer_enabled": False,
     }
+    for key, value in legacy_fields.items():
+        assert summary[key] == value
+
+
+def test_stock_alpha_news_universe_batches_cover_379_symbols_once():
+    batches = build_universe_batches(
+        "data/reference/universes/us_liquid_500.yaml",
+        batch_size=25,
+    )
+
+    flattened = [symbol for batch in batches for symbol in batch]
+    assert len(batches) == 16
+    assert all(len(batch) == 25 for batch in batches[:-1])
+    assert len(batches[-1]) == 4
+    assert len(flattened) == len(set(flattened)) == 379
 
 
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):

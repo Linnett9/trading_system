@@ -1,15 +1,27 @@
 _metadata:
   purpose: official RSS / press-release source tracking for stock-alpha news collection
-  registry_scope: first_25_expansion_batch
-  universe_source_config: config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_200symbol_dry_run.yaml
-  expansion_batch_config: config/config.stock_alpha_news_collect_company_press_release_rss_25symbol_dry_run.yaml
+  registry_scope: canonical_379_symbol_universe
+  universe_path: data/reference/universes/us_liquid_500.yaml
+  expansion_batch_config: config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_dry_run.yaml
   statuses:
     - verified
     - no_verified_rss
     - needs_manual_review
     - feed_error
     - disabled
+  classification_reasons:
+    verified_rss_feed: previously verified official/company-owned RSS feed
+    known_error_feed: verified official feed retained but skipped after the bounded dry-run reported an error
+    no_verified_official_rss: official pages were reviewed but no official RSS endpoint was verified
+    sec_only_candidate: no RSS collection; reserved for later SEC-only metadata review
+    disabled_pending_review: no verified official RSS feed is recorded; collection remains disabled pending manual review
   notes: "Only official/company-owned RSS feeds are enabled. Third-party press-release wires are excluded unless the company-owned site exposes that feed directly."
+_classifications:
+  verified_rss_feed: [AAPL, AMD, AMZN, COST, CRM, GOOGL, HD, JNJ, KO, MA, META, MSFT, NFLX, NVDA, PG]
+  known_error_feed: [ABBV, AVGO, JPM, ORCL, V, XOM]
+  no_verified_official_rss: [BRK-B, TSLA]
+  sec_only_candidate: []
+  disabled_pending_review: [A, AA, AAON, AAP, ABT, ACGL, ACLS, ACN, ADBE, ADC, ADI, ADM, ADP, ADSK, AEE, AEIS, AEM, AEO, AEP, AES, AFG, AFL, AGCO, AIG, AIT, AIZ, AJG, AKAM, ALB, ALGN, ALK, ALL, ALV, AMAT, AME, AMG, AMGN, AMKR, AMSC, AMT, AN, ANF, AON, AOS, APA, APD, APH, ARCC, ARW, ASML, ATI, ATO, ATR, AU, AVT, AVY, AXON, AXP, AXS, AXTI, AYI, AZN, AZO, B, BA, BAC, BALL, BAX, BB, BBD, BBWI, BBY, BC, BCE, BCS, BDX, BFH, BG, BHP, BIIB, BIO, BKH, BKNG, BLK, BMI, BMO, BMY, BN, BNS, BNY, BP, BPOP, BRK-A, BRKR, BRO, BSX, BTI, BWA, BXP, BYD, C, CACI, CAG, CAH, CAKE, CALM, CAR, CASY, CAT, CB, CBRE, CBRL, CBSH, CCEP, CCI, CCK, CCL, CDE, CDNS, CE, CHKP, CHRW, CI, CIEN, CINF, CL, CLX, CMCSA, CMI, CMS, CNP, COF, COP, COR, CPB, CSCO, CSX, CTAS, CVS, CVX, D, DAL, DD, DGX, DHR, DIS, DLTR, DOV, DRI, DTE, DUK, DVN, EBAY, ECL, ED, EFX, EIX, ELV, EMN, EMR, EOG, EQR, ETN, ETR, EXC, EXPD, F, FAST, FCX, FDX, FE, FHN, FISV, FLEX, FLR, GAP, GD, GE, GEN, GFI, GILD, GIS, GL, GLD, GLW, GNTX, GPC, GRMN, GS, GT, GWW, HAL, HAS, HBAN, HIG, HMY, HON, HPQ, HRB, HSIC, HSY, IBM, IFF, INTC, INTU, IP, ITT, ITW, JBL, JCI, JHG, KBH, KEY, KGC, KLAC, KMB, KR, KSS, LAMR, LEU, LLY, LMT, LNC, LOW, LPX, LRCX, LUMN, LUV, MAR, MAS, MAT, MCD, MCHP, MCK, MCO, MDT, MET, MKC, MMM, MNST, MO, MRK, MRSH, MRVL, MS, MSI, MTB, MTG, MU, NEE, NEM, NI, NKE, NOC, NOVT, NOW, NSC, NTAP, NTRS, NYT, ODFL, OMC, OXY, PANW, PAYX, PCAR, PEG, PEP, PFE, PFG, PGR, PH, PHM, PLD, PNC, PNW, PPG, PPL, PRU, PTEN, QCOM, QQQ, R, RF, RHI, RIG, RIO, ROK, ROST, RTX, RVTY, RYAAY, SANM, SBRA, SBUX, SCHW, SHW, SLB, SLM, SNA, SNPS, SO, SPG, SPGI, SPY, SRE, STT, SWK, SYK, SYY, T, TER, TEVA, TFC, TGT, THC, TJX, TKO, TLT, TMO, TROW, TT, TXN, TXT, UNH, UNM, UNP, UPS, VFC, VIAV, VMC, VNQ, VRSN, VZ, WAT, WEC, WEN, WFC, WHR, WMB, WMT, WWD, WY, XEL, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, YUM, ZBH, ZION]
 AAPL:
   company_name: Apple Inc.
   status: verified
