@@ -1,0 +1,19 @@
+version: 1
+exceptions:
+  B:
+    company_name: Barnes Group Inc.
+    classification: company_sec_no_current_rows_after_acquisition_or_delisting
+    cik: "0000009984"
+    forms_attempted: [8-K, 10-Q, 10-K]
+    window_start: "2025-07-01"
+    window_end: "2026-07-02"
+    rows_found: 0
+    official_evidence:
+      source: SEC
+      filing_type: 8-K
+      filing_date: "2025-01-27"
+      url: https://www.sec.gov/Archives/edgar/data/9984/000114036125001965/ef20042046_8k.htm
+      finding: Acquisition completed and Barnes became a wholly owned subsidiary before the collection window.
+    universe_action: retain_as_audited_exception
+    safe_for_feature_generation: false
+    blocked_reason: No current public-company SEC rows exist in the configured window after acquisition.

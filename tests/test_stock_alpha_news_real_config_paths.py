@@ -848,6 +848,7 @@ def test_etf_fund_registry_is_separate_and_collection_blocked():
         Path("config/news_source_registry.stock_alpha_etf_funds.yaml").read_text(encoding="utf-8")
     )
     policy = registry["provider_policy"]
+    requirements = registry["mapping_requirements"]
     funds = registry["funds"]
 
     assert set(funds) == ETF_FUND_SYMBOLS
@@ -858,7 +859,25 @@ def test_etf_fund_registry_is_separate_and_collection_blocked():
     }
     assert policy["collection_enabled"] is False
     assert policy["feature_generation_approved"] is False
+    assert policy["row_provider_name"] == "sec_fund_filings"
+    assert set(policy["forbidden_row_provider_names"]) == {
+        "company_press_release_rss", "sec_company_filings",
+    }
+    assert requirements == {
+        "required_fields": [
+            "symbol", "fund_name", "issuer_or_provider", "fund_category", "cik",
+            "series_id", "class_or_contract_id", "forms_supported",
+            "official_source_verified", "safe_to_collect_now", "blocked_reason",
+            "recommended_provider",
+        ],
+        "require_cik": True,
+        "require_series_id": True,
+        "require_class_or_contract_id": True,
+        "require_official_source_verified": True,
+    }
     for symbol, fund in funds.items():
+        assert fund["symbol"] == symbol
+        assert set(requirements["required_fields"]) <= set(fund)
         assert fund["classification"] in {
             "etf_or_fund_sec_fund_filings_candidate",
             "official_etf_provider_documents_candidate",
@@ -866,7 +885,55 @@ def test_etf_fund_registry_is_separate_and_collection_blocked():
         }, symbol
         assert fund["recommended_provider"] not in policy["forbidden_providers"]
         assert fund["safe_to_collect_now"] is False
+        assert fund["official_source_verified"] is False
+        assert fund["cik"] is None
+        assert fund["series_id"] is None
+        assert fund["class_or_contract_id"] is None
+        assert fund["forms_supported"] == []
         assert fund["blocked_reason"]
+
+
+def test_sec_fund_filings_template_is_disabled_until_official_mapping_is_complete():
+    ml = load_config(
+        "config/config.stock_alpha_news_collect_sec_fund_filings_disabled_template.yaml",
+        overlay_project_config=True,
+    )["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert collect["enabled"] is False
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert set(collect["symbols"]) == ETF_FUND_SYMBOLS
+    assert providers["sec_fund_filings"] == {
+        "enabled": False,
+        "mapping_registry": "config/news_source_registry.stock_alpha_etf_funds.yaml",
+        "require_official_source_verified": True,
+        "require_cik": True,
+        "require_series_id": True,
+        "require_class_or_contract_id": True,
+    }
+    assert providers["sec_company_filings"]["enabled"] is False
+    assert providers["company_press_release_rss"]["enabled"] is False
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
+
+
+def test_b_is_an_explicit_audited_post_acquisition_exception():
+    registry = yaml.safe_load(
+        Path("config/news_source_registry.stock_alpha_official_exceptions.yaml").read_text(encoding="utf-8")
+    )
+    exception = registry["exceptions"]["B"]
+
+    assert exception["classification"] == "company_sec_no_current_rows_after_acquisition_or_delisting"
+    assert exception["cik"] == "0000009984"
+    assert exception["rows_found"] == 0
+    assert exception["official_evidence"]["source"] == "SEC"
+    assert exception["official_evidence"]["filing_type"] == "8-K"
+    assert exception["official_evidence"]["filing_date"] == "2025-01-27"
+    assert exception["universe_action"] == "retain_as_audited_exception"
+    assert exception["safe_for_feature_generation"] is False
+    assert exception["blocked_reason"]
 
 
 def test_all_sec_company_filings_configs_exclude_etf_fund_symbols():

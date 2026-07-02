@@ -1,0 +1,28 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_fund_filings_disabled_template/dev
+  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_fund_filings_disabled_template/dev/sec_fund_filings_dry_run_rows.csv
+  stock_alpha_news_collect:
+    enabled: false
+    dry_run: true
+    output_written: false
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    symbols: [GLD, QQQ, SPY, TLT, VNQ, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY]
+    only_symbols: [GLD, QQQ, SPY, TLT, VNQ, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY]
+    max_symbols_per_run: 14
+    providers:
+      sec_fund_filings:
+        enabled: false
+        mapping_registry: config/news_source_registry.stock_alpha_etf_funds.yaml
+        require_official_source_verified: true
+        require_cik: true
+        require_series_id: true
+        require_class_or_contract_id: true
+      sec_company_filings: {enabled: false}
+      company_press_release_rss: {enabled: false}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
