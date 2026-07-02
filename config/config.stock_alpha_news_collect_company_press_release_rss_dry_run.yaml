@@ -7,14 +7,14 @@ ml:
     allow_overwrite: false
     merge_existing: false
     backup_existing: false
-    max_articles_per_provider: 50
+    max_articles_per_provider: 140
     max_rows_per_provider: 200
     max_rows_per_feed: 20
-    provider_request_limit: 50
+    provider_request_limit: 140
     symbols_per_batch: 7
     rate_limit_sleep_seconds: 0.5
     request_timeout_seconds: 20
-    start_date: '2026-06-25'
+    start_date: '2026-04-01'
     end_date: '2026-07-02'
     symbols: [AAPL, MSFT, NVDA, TSLA, AMZN, META, GOOGL]
     providers:
@@ -23,33 +23,47 @@ ml:
         max_rows_per_feed: 20
         feeds:
           AAPL:
-            - name: Official AAPL press-release RSS placeholder
-              enabled: false
-              event_type: press_release
+            - name: Apple Newsroom
+              url: "https://www.apple.com/newsroom/rss-feed.rss"
+              enabled: true
+              event_type: rss_news
+              verified_source_url: "https://www.apple.com/newsroom/"
           MSFT:
-            - name: Official MSFT press-release RSS placeholder
-              enabled: false
-              event_type: press_release
+            - name: Microsoft Source
+              url: "https://news.microsoft.com/source/feed/"
+              enabled: true
+              event_type: rss_news
+              verified_source_url: "https://news.microsoft.com/source/"
           NVDA:
-            - name: Official NVDA press-release RSS placeholder
-              enabled: false
+            - name: NVIDIA Press Room
+              url: "https://nvidianews.nvidia.com/releases.xml"
+              enabled: true
               event_type: press_release
+              verified_source_url: "https://www.nvidia.com/en-us/about-nvidia/rss/"
           TSLA:
-            - name: Official TSLA press-release RSS placeholder
+            - name: Tesla Investor Relations RSS unavailable
               enabled: false
               event_type: press_release
+              verified_source_url: "https://ir.tesla.com/press"
+              note: "Official Tesla blog and IR press pages were checked, but no official RSS feed URL was verified; candidate feed endpoints returned 403, 404, or 503 during curation."
           AMZN:
-            - name: Official AMZN press-release RSS placeholder
-              enabled: false
-              event_type: press_release
+            - name: Amazon News
+              url: "https://www.aboutamazon.com/rss/feed.rss"
+              enabled: true
+              event_type: rss_news
+              verified_source_url: "https://www.aboutamazon.com/news"
           META:
-            - name: Official META press-release RSS placeholder
-              enabled: false
-              event_type: press_release
+            - name: Meta Newsroom
+              url: "https://about.fb.com/news/feed/"
+              enabled: true
+              event_type: rss_news
+              verified_source_url: "https://about.fb.com/news/"
           GOOGL:
-            - name: Official GOOGL press-release RSS placeholder
-              enabled: false
-              event_type: press_release
+            - name: Google Blog Alphabet
+              url: "https://blog.google/alphabet/rss/"
+              enabled: true
+              event_type: rss_news
+              verified_source_url: "https://blog.google/alphabet/"
       alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
       sec_edgar: {enabled: false}
       massive_stock_news:

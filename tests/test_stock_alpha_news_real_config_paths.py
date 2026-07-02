@@ -199,7 +199,7 @@ def test_daily_confirmation_config_is_research_only_and_bounded():
     assert ml["promotion_thresholds_changed"] is False
 
 
-def test_company_press_release_rss_config_is_dry_run_only_with_disabled_placeholders():
+def test_company_press_release_rss_config_is_dry_run_only_with_verified_official_feeds():
     config = load_config(
         "config/config.stock_alpha_news_collect_company_press_release_rss_dry_run.yaml",
         overlay_project_config=True,
@@ -216,19 +216,60 @@ def test_company_press_release_rss_config_is_dry_run_only_with_disabled_placehol
     assert collect["backup_existing"] is False
     assert collect["symbols"] == ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL"]
     assert collect["symbols_per_batch"] == 7
-    assert collect["provider_request_limit"] == 50
+    assert collect["provider_request_limit"] == 140
     assert collect["max_rows_per_provider"] == 200
     assert collect["rate_limit_sleep_seconds"] == 0.5
     assert rss["enabled"] is True
     assert rss["max_rows_per_feed"] == 20
     assert "api_key_env" not in rss
     assert sorted(rss["feeds"]) == ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"]
-    for feeds in rss["feeds"].values():
-        assert feeds
-        for feed in feeds:
-            assert feed["enabled"] is False
-            assert not str(feed.get("url", "")).strip()
-            assert feed["event_type"] == "press_release"
+    assert rss["feeds"]["AAPL"] == [{
+        "name": "Apple Newsroom",
+        "url": "https://www.apple.com/newsroom/rss-feed.rss",
+        "enabled": True,
+        "event_type": "rss_news",
+        "verified_source_url": "https://www.apple.com/newsroom/",
+    }]
+    assert rss["feeds"]["MSFT"] == [{
+        "name": "Microsoft Source",
+        "url": "https://news.microsoft.com/source/feed/",
+        "enabled": True,
+        "event_type": "rss_news",
+        "verified_source_url": "https://news.microsoft.com/source/",
+    }]
+    assert rss["feeds"]["NVDA"] == [{
+        "name": "NVIDIA Press Room",
+        "url": "https://nvidianews.nvidia.com/releases.xml",
+        "enabled": True,
+        "event_type": "press_release",
+        "verified_source_url": "https://www.nvidia.com/en-us/about-nvidia/rss/",
+    }]
+    assert rss["feeds"]["AMZN"] == [{
+        "name": "Amazon News",
+        "url": "https://www.aboutamazon.com/rss/feed.rss",
+        "enabled": True,
+        "event_type": "rss_news",
+        "verified_source_url": "https://www.aboutamazon.com/news",
+    }]
+    assert rss["feeds"]["META"] == [{
+        "name": "Meta Newsroom",
+        "url": "https://about.fb.com/news/feed/",
+        "enabled": True,
+        "event_type": "rss_news",
+        "verified_source_url": "https://about.fb.com/news/",
+    }]
+    assert rss["feeds"]["GOOGL"] == [{
+        "name": "Google Blog Alphabet",
+        "url": "https://blog.google/alphabet/rss/",
+        "enabled": True,
+        "event_type": "rss_news",
+        "verified_source_url": "https://blog.google/alphabet/",
+    }]
+    assert rss["feeds"]["TSLA"][0]["enabled"] is False
+    assert not str(rss["feeds"]["TSLA"][0].get("url", "")).strip()
+    assert rss["feeds"]["TSLA"][0]["event_type"] == "press_release"
+    assert rss["feeds"]["TSLA"][0]["verified_source_url"] == "https://ir.tesla.com/press"
+    assert "no official RSS feed URL was verified" in rss["feeds"]["TSLA"][0]["note"]
     for name, provider in providers.items():
         if name != "company_press_release_rss":
             assert provider["enabled"] is False
