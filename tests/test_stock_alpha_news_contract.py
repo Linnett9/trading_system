@@ -40,7 +40,7 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, GdeltNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
+from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
 from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
@@ -1727,6 +1727,72 @@ def test_alpha_vantage_news_source_honors_configured_date_window():
     assert query["limit"] == ["5"]
 
 
+def test_massive_stock_news_source_maps_response_to_canonical_rows():
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        return {
+            "status": "OK",
+            "results": [
+                {
+                    "id": "news-1",
+                    "publisher": {"name": "Example Wire"},
+                    "title": "Apple expands test program",
+                    "description": "A concise provider summary.",
+                    "article_url": "https://example.test/news-1",
+                    "published_utc": "2026-04-20T14:30:00Z",
+                    "tickers": ["AAPL", "MSFT"],
+                    "insights": [{"ticker": "AAPL", "sentiment": "positive"}],
+                }
+            ],
+        }
+
+    rows = MassiveStockNewsSource(fake_get).collect(
+        symbols=["AAPL"],
+        start_date="2023-12-01",
+        end_date="2026-04-20",
+        limit=5,
+        timeout=2,
+        api_key="test-key",
+    )
+
+    query = parse_qs(urlparse(requested_urls[0]).query)
+    assert urlparse(requested_urls[0]).netloc == "api.massive.com"
+    assert query["ticker"] == ["AAPL"]
+    assert query["published_utc.gte"] == ["2023-12-01"]
+    assert query["published_utc.lte"] == ["2026-04-20"]
+    assert query["sort"] == ["published_utc"]
+    assert query["order"] == ["asc"]
+    assert query["limit"] == ["5"]
+    assert query["apiKey"] == ["test-key"]
+    assert rows[0]["article_id"] == "massive_stock_news:news-1:AAPL"
+    assert rows[0]["symbol"] == "AAPL"
+    assert rows[0]["published_at_utc"] == "2026-04-20T14:30:00Z"
+    assert rows[0]["source"] == "Example Wire"
+    assert rows[0]["headline"] == "Apple expands test program"
+    assert rows[0]["body_or_summary"] == "A concise provider summary."
+    assert rows[0]["sentiment_score"] == ""
+    assert rows[0]["relevance_score"] == ""
+    assert rows[0]["novelty_score"] == ""
+    assert rows[0]["event_type"] == "news"
+    assert rows[0]["provider"] == "massive_stock_news"
+    assert rows[0]["provider_article_id"] == "news-1:AAPL"
+    assert rows[0]["provider_url"] == "https://example.test/news-1"
+
+
+def test_massive_stock_news_zero_results_are_empty_not_failure():
+    rows = MassiveStockNewsSource(lambda url, timeout: {"status": "OK", "results": []}).collect(
+        symbols=["AAPL"],
+        start_date="2023-12-01",
+        end_date="2026-04-20",
+        limit=5,
+        timeout=2,
+        api_key="test-key",
+    )
+    assert rows == []
+
+
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):
     for name in ("ALPHA_VANTAGE_API_KEY", "FINNHUB_API_KEY", "FMP_API_KEY", "NEWSAPI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
@@ -2220,6 +2286,63 @@ def test_alpha_vantage_rate_limit_payload_is_reported_without_key_disclosure(tmp
     assert payload["provider_batch_diagnostics"][0]["error_message"].endswith(
         "for [REDACTED]"
     )
+
+
+def test_massive_collection_uses_polygon_key_fallback_and_redacts_rate_limit(tmp_path, monkeypatch):
+    secret = "test-polygon-secret"
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.setenv("POLYGON_API_KEY", secret)
+
+    class MassiveRateLimited:
+        api_key_required = True
+
+        def collect(self, **kwargs):
+            raise RuntimeError(f"HTTP 429 rate limit for apiKey={kwargs['api_key']}")
+
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {
+        "massive_stock_news": {
+            "enabled": True,
+            "api_key_env": "MASSIVE_API_KEY",
+            "api_key_env_fallbacks": ["POLYGON_API_KEY"],
+        }
+    }
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config, sources={"massive_stock_news": MassiveRateLimited()}
+    )
+    report_text = paths.json_path.read_text(encoding="utf-8")
+    payload = json.loads(report_text)
+
+    assert secret not in report_text
+    assert payload["providers_skipped_missing_key"] == []
+    assert payload["providers_rate_limited"] == ["massive_stock_news"]
+    assert payload["provider_zero_row_reasons"] == {"massive_stock_news": "rate_limited"}
+    diagnostic = payload["provider_batch_diagnostics"][0]
+    assert diagnostic["rate_limited"] is True
+    assert diagnostic["error_message"].endswith("apiKey=[REDACTED]")
+
+
+def test_massive_collection_missing_primary_and_fallback_keys_skips(tmp_path, monkeypatch):
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("POLYGON_API_KEY", raising=False)
+
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {
+        "massive_stock_news": {
+            "enabled": True,
+            "api_key_env": "MASSIVE_API_KEY",
+            "api_key_env_fallbacks": ["POLYGON_API_KEY"],
+        }
+    }
+
+    paths = write_stock_alpha_news_free_source_collect(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["providers_requested"] == ["massive_stock_news"]
+    assert payload["providers_attempted"] == []
+    assert payload["providers_skipped_missing_key"] == ["massive_stock_news"]
+    assert payload["output_written"] is False
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):

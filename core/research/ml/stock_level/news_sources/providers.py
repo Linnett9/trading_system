@@ -16,6 +16,7 @@ PROVIDER_METADATA = {
     "finnhub": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
     "gdelt": {"statuses": ["experimental_no_key", "rate_limited_or_retry_later"], "api_key_required": False},
     "sec_edgar": {"statuses": ["official_filings_source", "experimental_no_key"], "api_key_required": False},
+    "massive_stock_news": {"statuses": ["dry_run_candidate", "needs_key"], "api_key_required": True},
     "fmp": {"statuses": ["disabled_payment_required", "needs_key"], "api_key_required": True},
     "newsapi": {"statuses": ["disabled_upgrade_required", "needs_key"], "api_key_required": True},
 }
@@ -119,6 +120,72 @@ class AlphaVantageNewsSource(NewsSource):
         return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("time_published"), source=item.get("source"), headline=item.get("title"), body=item.get("summary"), sentiment=item.get("overall_sentiment_score", ""), event_type="", language="en") for item in payload.get("feed", [])]
 
 
+class MassiveStockNewsSource(NewsSource):
+    name = "massive_stock_news"
+
+    def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
+        params: dict[str, Any] = {
+            "ticker": symbol,
+            "sort": "published_utc",
+            "order": "asc",
+            "limit": min(limit, 100),
+            "apiKey": api_key,
+        }
+        if start:
+            params["published_utc.gte"] = start
+        if end:
+            params["published_utc.lte"] = end
+        return "https://api.massive.com/v2/reference/news?" + urlencode(params)
+
+    def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
+        if not isinstance(payload, Mapping):
+            raise ValueError("unexpected Massive news response shape")
+        status = str(payload.get("status") or "").strip().upper()
+        if status and status not in {"OK", "DELAYED"}:
+            message = str(payload.get("error") or payload.get("message") or status)
+            if _looks_rate_limited(message):
+                raise ProviderRateLimitError(message)
+            raise ValueError(message)
+        results = payload.get("results", [])
+        if results is None:
+            return []
+        if not isinstance(results, list):
+            raise ValueError("unexpected Massive news results shape")
+        return [
+            self._row(item, requested_symbol=symbol)
+            for item in results
+            if isinstance(item, Mapping)
+        ]
+
+    def _row(self, item: Mapping[str, Any], *, requested_symbol: str) -> dict[str, Any]:
+        tickers = [
+            str(ticker).strip().upper()
+            for ticker in (item.get("tickers") or [])
+            if str(ticker).strip()
+        ]
+        requested = requested_symbol.upper()
+        symbol = requested if requested in tickers or not tickers else tickers[0]
+        publisher = item.get("publisher") if isinstance(item.get("publisher"), Mapping) else {}
+        provider_id = str(item.get("id") or "").strip()
+        stable_id = provider_id or hashlib.sha256(
+            f"{self.name}|{symbol}|{item.get('article_url')}|{item.get('title')}|{item.get('published_utc')}".encode()
+        ).hexdigest()[:24]
+        return self._normalized(
+            symbol=symbol,
+            provider_id=f"{stable_id}:{symbol}",
+            url=item.get("article_url"),
+            published=item.get("published_utc"),
+            source=publisher.get("name") or self.name,
+            headline=item.get("title"),
+            body=item.get("description"),
+            sentiment="",
+            relevance="",
+            novelty="",
+            event_type="news",
+            language=item.get("language", ""),
+        )
+
+
 class FinnhubNewsSource(NewsSource):
     name = "finnhub"
     def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
@@ -193,7 +260,7 @@ class SecEdgarNewsSource(NewsSource):
 
 
 def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mapping[str, NewsSource]:
-    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
+    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), MassiveStockNewsSource(http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
 
 
 def _sec_event_type(form: str) -> str:
@@ -228,6 +295,16 @@ def _column_value(values: Mapping[str, Any], column: str, index: int) -> Any:
 
 def _blank_or_value(value: Any) -> Any:
     return "" if value is None else value
+
+
+def _looks_rate_limited(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "429" in lowered
+        or "too many" in lowered
+        or "frequency" in lowered
+        or ("rate" in lowered and "limit" in lowered)
+    )
 
 
 def _alpha_vantage_news_time(value: str, *, end_of_day: bool) -> str:

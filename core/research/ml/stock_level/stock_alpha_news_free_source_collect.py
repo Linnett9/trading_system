@@ -120,8 +120,8 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         if adapter is None:
             failures[name] = "provider_adapter_unavailable"
             continue
-        env_name = str(provider_config.get("api_key_env", ""))
-        api_key = os.environ.get(env_name, "") if env_name else ""
+        env_names = _api_key_env_names(provider_config)
+        api_key = _first_env_value(env_names)
         if getattr(adapter, "api_key_required", True) and not api_key:
             skipped.append(name)
             continue
@@ -396,6 +396,26 @@ def _is_rate_limited(exc: Exception) -> bool:
 def _redacted_exception_message(exc: Exception, *, api_key: str) -> str:
     message = str(exc)
     return message.replace(api_key, "[REDACTED]") if api_key else message
+
+
+def _api_key_env_names(provider_config: Mapping[str, Any]) -> list[str]:
+    names = []
+    primary = str(provider_config.get("api_key_env", "")).strip()
+    if primary:
+        names.append(primary)
+    for value in provider_config.get("api_key_env_fallbacks", []) or []:
+        name = str(value).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _first_env_value(names: list[str]) -> str:
+    for name in names:
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return ""
 
 
 def _required_path(ml: Mapping[str, Any], key: str) -> Path:

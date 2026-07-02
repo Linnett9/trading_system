@@ -87,3 +87,42 @@ def test_200_symbol_alpha_vantage_sec_edgar_collection_configs_are_bounded():
     assert write["ml"]["stock_alpha_news_collect"]["merge_existing"] is True
     assert write["ml"]["stock_alpha_news_collect"]["backup_existing"] is True
     assert write["ml"]["stock_alpha_news_collect"]["rate_limit_sleep_seconds"] == 1
+
+
+def test_200_symbol_massive_collection_config_is_dry_run_only():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_massive_200symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert len(collect["symbols"]) == 200
+    assert len(set(collect["symbols"])) == 200
+    assert collect["dry_run"] is True
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is False
+    assert collect["backup_existing"] is False
+    assert collect["start_date"] == "2023-12-01"
+    assert collect["end_date"] == "2026-04-20"
+    assert collect["provider_request_limit"] == 100
+    assert collect["max_rows_per_provider"] == 1000
+    assert collect["max_pages_per_symbol"] == 1
+    assert collect["symbols_per_batch"] == 25
+    assert collect["rate_limit_sleep_seconds"] == 1
+    assert providers["massive_stock_news"] == {
+        "enabled": True,
+        "api_key_env": "MASSIVE_API_KEY",
+        "api_key_env_fallbacks": ["POLYGON_API_KEY"],
+    }
+    assert providers["alpha_vantage"]["enabled"] is False
+    assert providers["sec_edgar"]["enabled"] is False
+    assert providers["gdelt"]["enabled"] is False
+    assert providers["fmp"]["enabled"] is False
+    assert providers["newsapi"]["enabled"] is False
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
