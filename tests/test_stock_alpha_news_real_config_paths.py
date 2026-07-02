@@ -960,6 +960,31 @@ def test_bn_foreign_company_recovery_config_uses_official_foreign_forms_only():
     assert ml["trading_impact"] == "none"
 
 
+def test_cien_cap_starvation_recovery_config_is_single_symbol_dry_run_only():
+    ml = load_config(
+        "config/config.stock_alpha_news_collect_sec_company_filings_cien_12mo_dry_run.yaml",
+        overlay_project_config=True,
+    )["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert collect["enabled"] is True
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is False
+    assert collect["backup_existing"] is False
+    assert collect["symbols"] == ["CIEN"]
+    assert collect["only_symbols"] == ["CIEN"]
+    assert collect["max_symbols_per_run"] == 1
+    assert ml["stock_alpha_news_collect_output_path"].startswith("reports/")
+    assert providers["sec_company_filings"]["enabled"] is True
+    assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+    assert providers["company_press_release_rss"]["enabled"] is False
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
+
+
 def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
     configs = [
         (
