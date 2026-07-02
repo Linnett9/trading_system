@@ -35,6 +35,29 @@ assert 'application.services.champion_robustness_commands' not in sys.modules
     subprocess.run([sys.executable, "-c", script], cwd=project_root, check=True)
 
 
+def test_main_import_does_not_load_dual_momentum_experiments():
+    project_root = Path(__file__).resolve().parents[1]
+    script = """
+import sys
+
+class BlockDualMomentumExperiments:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in {
+            'core.research.dual_momentum.experiments',
+            'core.research.dual_momentum_experiments',
+        }:
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockDualMomentumExperiments())
+import main
+assert 'core.research.dual_momentum.experiments' not in sys.modules
+assert 'core.research.dual_momentum_experiments' not in sys.modules
+"""
+
+    subprocess.run([sys.executable, "-c", script], cwd=project_root, check=True)
+
+
 def test_paper_trial_dispatch_does_not_load_champion_commands(monkeypatch):
     loaded_modules = []
 
