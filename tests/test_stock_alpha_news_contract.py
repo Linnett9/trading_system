@@ -3143,6 +3143,62 @@ AAA:
     assert audit["combined_official_symbol_coverage_count"] == 2
     assert audit["forms_by_type"] == {"10-Q": 1}
     assert audit["forms_by_symbol"] == {"BBB": {"10-Q": 1}}
+    assert "coverage below 80% of canonical universe" not in audit["unsafe_reasons"]
+    assert "RSS-only source concentration" not in audit["unsafe_reasons"]
+
+
+def test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    short_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_dry_run" / "dev"
+    long_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+    short_dir.mkdir(parents=True)
+    long_dir.mkdir(parents=True)
+    short_events = short_dir / "sec_company_filings_event_rows.jsonl"
+    long_events = long_dir / "sec_company_filings_event_rows.jsonl"
+    universe.write_text("available_count: 1\nsymbols: [BBB]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: []
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [BBB]
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        csv.DictWriter(handle, fieldnames=fieldnames).writeheader()
+    sec_row = {
+        "symbol": "BBB",
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "form_type": "8-K",
+        "cik": "0000000001",
+        "accession_number": "0000000001-26-000001",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    short_events.write_text(json.dumps(sec_row) + "\n", encoding="utf-8")
+    long_events.write_text(json.dumps({**sec_row, "accession_number": "0000000001-26-000002"}) + "\n", encoding="utf-8")
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        sec_event_row_paths=[short_events, long_events],
+        sec_artifact_selection="prefer_12mo",
+        reports_root=tmp_path / "missing_reports",
+    )
+
+    assert audit["sec_dry_run_row_count"] == 1
+    assert audit["sec_event_rows_included"] == [str(long_events)]
+    assert audit["sec_artifact_selection"] == "prefer_12mo"
 
 
 def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_features(tmp_path):
@@ -3226,6 +3282,42 @@ def test_contract_ingest_preflight_accepts_row_level_sec_event_artifact(tmp_path
     assert report["unsafe_reasons"] == [
         "contract ingest preflight is report-only and has not approved feature generation"
     ]
+
+
+def test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts(tmp_path):
+    short_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_dry_run" / "dev"
+    long_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+    short_dir.mkdir(parents=True)
+    long_dir.mkdir(parents=True)
+    short_events = short_dir / "sec_company_filings_event_rows.jsonl"
+    long_events = long_dir / "sec_company_filings_event_rows.jsonl"
+    row = {
+        "symbol": "BBB",
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "headline_or_title": "8-K filed by BBB",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "cik": "0000000001",
+        "form_type": "8-K",
+        "accession_number": "0000000001-26-000001",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    short_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    long_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    report = build_stock_alpha_news_contract_ingest_preflight(
+        sec_event_row_paths=[short_events, long_events],
+        sec_artifact_selection="prefer_12mo",
+        min_symbol_coverage=1,
+    )
+
+    assert report["rows_checked_by_provider"] == {"sec_company_filings": 1}
+    assert report["duplicate_event_key_count"] == 0
+    assert report["sec_event_rows_included"] == [str(long_events)]
+    assert report["sec_artifact_selection"] == "prefer_12mo"
 
 
 def test_sec_company_filings_dry_run_writes_row_level_event_artifact(tmp_path):

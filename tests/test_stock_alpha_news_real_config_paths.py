@@ -751,3 +751,128 @@ def test_sec_company_filings_batch_01_to_16_dry_run_configs_are_safe_and_separat
         assert ml["trading_impact"] == "none"
         assert ml["production_validated"] is False
         assert ml["promotion_thresholds_changed"] is False
+
+
+def test_sec_company_filings_batch_01_to_16_12mo_dry_run_configs_are_safe_and_separate():
+    batches = build_universe_batches("data/reference/universes/us_liquid_500.yaml", 25)
+    expected_by_batch = {1: ["AAPL", "MSFT", "NVDA", "AMZN", "META"]}
+    expected_by_batch.update({index: batches[index - 1] for index in range(2, 17)})
+
+    for batch_index, expected_symbols in expected_by_batch.items():
+        config = load_config(
+            f"config/config.stock_alpha_news_collect_sec_company_filings_batch_{batch_index:02d}_12mo_dry_run.yaml",
+            overlay_project_config=True,
+        )
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+
+        assert collect["enabled"] is True
+        assert collect["dry_run"] is True
+        assert collect["output_written"] is False
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is False
+        assert collect["backup_existing"] is False
+        assert collect["start_date"] == "2025-07-01"
+        assert collect["end_date"] == "2026-07-02"
+        assert collect["max_rows_per_provider"] == 500
+        assert ml["stock_alpha_news_collect_output_path"].endswith("sec_company_filings_12mo_dry_run_rows.csv")
+        assert ml["stock_alpha_news_collect_output_path"] != "data/news/raw/stock_alpha_news_provider_export.csv"
+        assert collect["symbols"] == expected_symbols
+        assert collect["only_symbols"] == expected_symbols
+        assert collect["max_symbols_per_run"] == len(expected_symbols)
+        assert providers["sec_company_filings"]["enabled"] is True
+        assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+        assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
+        for name, provider in providers.items():
+            if name != "sec_company_filings":
+                assert provider["enabled"] is False
+        assert "stock_alpha_news_features_path" not in ml
+        assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+        assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
+def test_sec_company_filings_future_write_template_is_disabled_and_separate_from_rss_raw():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_sec_company_filings_379symbol_write_raw_template.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+
+    assert collect["enabled"] is False
+    assert collect["dry_run"] is False
+    assert collect["output_written"] is False
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is True
+    assert collect["backup_existing"] is True
+    assert ml["stock_alpha_news_collect_output_path"] == "data/news/raw/sec_company_filings_provider_export.csv"
+    assert ml["stock_alpha_news_collect_output_path"] != "data/news/raw/stock_alpha_news_provider_export.csv"
+    assert providers["sec_company_filings"]["enabled"] is True
+    assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
+    assert providers["company_press_release_rss"]["enabled"] is False
+    for name, provider in providers.items():
+        if name != "sec_company_filings":
+            assert provider["enabled"] is False
+    assert "stock_alpha_news_features_path" not in ml
+    assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+    assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False
+
+
+def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
+    configs = [
+        (
+            "config/config.stock_alpha_news_collect_sec_company_filings_missing_company_12mo_dry_run.yaml",
+            ["B", "BN", "LLY", "MRVL", "MU", "TSLA", "UNH", "WMT"],
+            ["8-K", "10-Q", "10-K"],
+        ),
+        (
+            "config/config.stock_alpha_news_collect_sec_company_filings_missing_foreign_12mo_dry_run.yaml",
+            ["ASML", "AU", "AZN", "BBD", "BCE", "BCS", "BHP", "BMO", "BNS", "BP", "BTI", "CCEP", "CHKP", "GFI", "HMY", "KGC", "RIO", "RYAAY"],
+            ["6-K", "20-F"],
+        ),
+    ]
+
+    for config_path, expected_symbols, expected_forms in configs:
+        config = load_config(config_path, overlay_project_config=True)
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+
+        assert collect["enabled"] is True
+        assert collect["dry_run"] is True
+        assert collect["output_written"] is False
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is False
+        assert collect["backup_existing"] is False
+        assert collect["start_date"] == "2025-07-01"
+        assert collect["end_date"] == "2026-07-02"
+        assert collect["symbols"] == expected_symbols
+        assert collect["only_symbols"] == expected_symbols
+        assert ml["stock_alpha_news_collect_output_path"].startswith("reports/")
+        assert ml["stock_alpha_news_collect_output_path"] != "data/news/raw/stock_alpha_news_provider_export.csv"
+        assert providers["sec_company_filings"]["enabled"] is True
+        assert providers["sec_company_filings"]["forms"] == expected_forms
+        assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
+        for name, provider in providers.items():
+            if name != "sec_company_filings":
+                assert provider["enabled"] is False
+        assert "stock_alpha_news_features_path" not in ml
+        assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+        assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False

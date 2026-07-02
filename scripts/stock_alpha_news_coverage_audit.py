@@ -23,6 +23,7 @@ def build_stock_alpha_news_coverage_audit(
     raw_news_path: str | Path,
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
+    sec_artifact_selection: str = "all",
     reports_root: str | Path | None = None,
 ) -> dict[str, Any]:
     universe_symbols, feeds, registry = load_validated_rss_registry(universe_path, registry_path)
@@ -37,7 +38,8 @@ def build_stock_alpha_news_coverage_audit(
     rows_by_symbol = _sorted_counter(Counter(row_symbols))
     rows_by_provider = _sorted_counter(Counter(str(row.get("provider", "")).strip() or "unknown" for row in rows))
     rows_by_source = _sorted_counter(Counter(str(row.get("source", "")).strip() or "unknown" for row in rows))
-    sec_summary = _sec_report_summary(sec_report_paths or [], sec_event_row_paths or [])
+    selected_sec_event_row_paths = _select_sec_event_row_paths(sec_event_row_paths or [], sec_artifact_selection)
+    sec_summary = _sec_report_summary(sec_report_paths or [], selected_sec_event_row_paths)
     sec_symbols = set(sec_summary["rows_by_symbol"])
     rss_symbols = row_symbol_set & universe_symbol_set
     combined_symbols = (rss_symbols | sec_symbols) & universe_symbol_set
@@ -47,6 +49,13 @@ def build_stock_alpha_news_coverage_audit(
     invalid_timestamp_count = len(timestamps) - len(valid_timestamps)
     rows_by_date = _sorted_counter(Counter(value.date().isoformat() for value in valid_timestamps))
     rows_by_month = _sorted_counter(Counter(value.date().isoformat()[:7] for value in valid_timestamps))
+    official_timestamp_bounds = [
+        value for value in valid_timestamps
+    ]
+    for value in (sec_summary["published_at_min"], sec_summary["published_at_max"]):
+        parsed = _parse_timestamp(str(value))
+        if parsed is not None:
+            official_timestamp_bounds.append(parsed)
     now = datetime.now(timezone.utc)
     future_timestamp_count = sum(1 for value in valid_timestamps if value > now)
 
@@ -70,11 +79,14 @@ def build_stock_alpha_news_coverage_audit(
     weak_less_than_10 = sorted(symbol for symbol, count in rows_by_symbol.items() if count < 10)
     unsafe_reasons = _unsafe_reasons(
         universe_symbol_count=len(universe_symbols),
-        raw_symbol_coverage_count=len(row_symbol_set & universe_symbol_set),
+        official_symbol_coverage_count=len(combined_symbols),
         rows=rows,
-        valid_timestamps=valid_timestamps,
+        valid_timestamps=official_timestamp_bounds,
         weak_less_than_10=weak_less_than_10,
-        rows_by_provider=rows_by_provider,
+        rows_by_provider={
+            **rows_by_provider,
+            **({"sec_company_filings": sec_summary["row_count"]} if sec_summary["row_count"] else {}),
+        },
     )
 
     return {
@@ -104,6 +116,8 @@ def build_stock_alpha_news_coverage_audit(
         },
         "forms_by_symbol": sec_summary["forms_by_symbol"],
         "forms_by_type": sec_summary["forms_by_type"],
+        "sec_published_at_min": sec_summary["published_at_min"],
+        "sec_published_at_max": sec_summary["published_at_max"],
         "official_provider_mix": {
             "company_press_release_rss": len(rss_symbols),
             "sec_company_filings": len(sec_symbols & universe_symbol_set),
@@ -134,7 +148,8 @@ def build_stock_alpha_news_coverage_audit(
         "invalid_timestamp_count": invalid_timestamp_count,
         "provider_error_summary_from_reports_if_available": _provider_error_summary(reports_root),
         "sec_reports_included": [str(path) for path in sec_report_paths or []],
-        "sec_event_rows_included": [str(path) for path in sec_event_row_paths or []],
+        "sec_artifact_selection": sec_artifact_selection,
+        "sec_event_rows_included": [str(path) for path in selected_sec_event_row_paths],
         "known_error_feed_symbols": list(registry.get("known_error_feed_symbols", []) or []),
         "disabled_pending_review_count": int(registry.get("classification_counts", {}).get("disabled_pending_review", 0)),
         "safe_for_feature_generation": not unsafe_reasons,
@@ -151,6 +166,7 @@ def write_stock_alpha_news_coverage_audit(
     output_path: str | Path,
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
+    sec_artifact_selection: str = "all",
     reports_root: str | Path | None = None,
 ) -> Path:
     payload = build_stock_alpha_news_coverage_audit(
@@ -159,6 +175,7 @@ def write_stock_alpha_news_coverage_audit(
         raw_news_path=raw_news_path,
         sec_report_paths=sec_report_paths,
         sec_event_row_paths=sec_event_row_paths,
+        sec_artifact_selection=sec_artifact_selection,
         reports_root=reports_root,
     )
     output = Path(output_path)
@@ -189,14 +206,14 @@ def _top_items(values: Mapping[str, int], *, reverse: bool) -> list[dict[str, An
 def _unsafe_reasons(
     *,
     universe_symbol_count: int,
-    raw_symbol_coverage_count: int,
+    official_symbol_coverage_count: int,
     rows: list[dict[str, str]],
     valid_timestamps: list[datetime],
     weak_less_than_10: list[str],
     rows_by_provider: Mapping[str, int],
 ) -> list[str]:
     reasons: list[str] = []
-    coverage_rate = raw_symbol_coverage_count / universe_symbol_count if universe_symbol_count else 0.0
+    coverage_rate = official_symbol_coverage_count / universe_symbol_count if universe_symbol_count else 0.0
     if coverage_rate < 0.80:
         reasons.append("coverage below 80% of canonical universe")
     if len(rows) < 10_000:
@@ -285,6 +302,14 @@ def _sec_report_summary(paths: Sequence[str | Path], event_row_paths: Sequence[s
                 for symbol, counter in sorted(forms_by_symbol_counts.items())
             },
             "forms_by_type": _sorted_counter(forms_by_type),
+            "published_at_min": min(
+                (str(row.get("published_at_utc", "")).strip() for row in event_rows if _parse_timestamp(str(row.get("published_at_utc", "")).strip()) is not None),
+                default="",
+            ),
+            "published_at_max": max(
+                (str(row.get("published_at_utc", "")).strip() for row in event_rows if _parse_timestamp(str(row.get("published_at_utc", "")).strip()) is not None),
+                default="",
+            ),
         }
     for raw_path in paths:
         path = Path(raw_path)
@@ -317,7 +342,33 @@ def _sec_report_summary(paths: Sequence[str | Path], event_row_paths: Sequence[s
             for symbol, counter in sorted(forms_by_symbol_counts.items())
         },
         "forms_by_type": _sorted_counter(forms_by_type),
+        "published_at_min": "",
+        "published_at_max": "",
     }
+
+
+def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
+    if selection == "all":
+        return list(paths)
+    if selection != "prefer_12mo":
+        raise ValueError("sec_artifact_selection must be 'all' or 'prefer_12mo'")
+    by_batch: dict[str, list[str | Path]] = defaultdict(list)
+    other_paths: list[str | Path] = []
+    for path in paths:
+        path_text = str(path)
+        marker = "stock_alpha_news_collect_sec_company_filings_batch_"
+        if marker not in path_text:
+            other_paths.append(path)
+            continue
+        batch = path_text.split(marker, 1)[1][:2]
+        by_batch[batch].append(path)
+    selected: list[str | Path] = []
+    for batch in sorted(by_batch):
+        batch_paths = by_batch[batch]
+        preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        selected.extend(preferred or batch_paths)
+    selected.extend(other_paths)
+    return selected
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -352,6 +403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo"], default="all")
     parser.add_argument("--output", required=True)
     parser.add_argument("--reports-root", default="reports")
     args = parser.parse_args(argv)
@@ -371,6 +423,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else []
             ),
         ],
+        sec_artifact_selection=args.sec_artifact_selection,
         output_path=args.output,
         reports_root=args.reports_root,
     )
