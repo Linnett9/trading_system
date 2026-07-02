@@ -24,12 +24,17 @@ _classifications:
   disabled_pending_review: [A, AA, AAON, AAP, ABT, ACGL, ACLS, ACN, ADBE, ADC, ADI, ADM, ADP, ADSK, AEE, AEIS, AEM, AEO, AEP, AES, AFG, AFL, AGCO, AIG, AIT, AIZ, AJG, AKAM, ALB, ALGN, ALK, ALL, ALV, AMAT, AME, AMG, AMGN, AMKR, AMSC, AMT, AN, ANF, AON, AOS, APA, APD, APH, ARCC, ARW, ASML, ATI, ATO, ATR, AU, AVT, AVY, AXON, AXP, AXS, AXTI, AYI, AZN, AZO, B, BA, BAC, BALL, BAX, BB, BBD, BBWI, BBY, BC, BCE, BCS, BDX, BFH, BG, BHP, BIIB, BIO, BKH, BKNG, BLK, BMI, BMO, BMY, BN, BNS, BNY, BP, BPOP, BRK-A, BRKR, BRO, BSX, BTI, BWA, BXP, BYD, C, CACI, CAG, CAH, CAKE, CALM, CAR, CASY, CAT, CB, CBRE, CBRL, CBSH, CCEP, CCI, CCK, CCL, CDE, CDNS, CE, CHKP, CHRW, CI, CIEN, CINF, CL, CLX, CMCSA, CMI, CMS, CNP, COF, COP, COR, CPB, CSCO, CSX, CTAS, CVS, CVX, D, DAL, DD, DGX, DHR, DIS, DLTR, DOV, DRI, DTE, DUK, DVN, EBAY, ECL, ED, EFX, EIX, ELV, EMN, EMR, EOG, EQR, ETN, ETR, EXC, EXPD, F, FAST, FCX, FDX, FE, FHN, FISV, FLEX, FLR, GAP, GD, GE, GEN, GFI, GILD, GIS, GL, GLD, GLW, GNTX, GPC, GRMN, GS, GT, GWW, HAL, HAS, HBAN, HIG, HMY, HON, HPQ, HRB, HSIC, HSY, IBM, IFF, INTC, INTU, IP, ITT, ITW, JBL, JCI, JHG, KBH, KEY, KGC, KLAC, KMB, KR, KSS, LAMR, LEU, LLY, LMT, LNC, LOW, LPX, LRCX, LUMN, LUV, MAR, MAS, MAT, MCD, MCHP, MCK, MCO, MDT, MET, MKC, MMM, MNST, MO, MRK, MRSH, MRVL, MS, MSI, MTB, MTG, MU, NEE, NEM, NI, NKE, NOC, NOVT, NOW, NSC, NTAP, NTRS, NYT, ODFL, OMC, OXY, PANW, PAYX, PCAR, PEG, PEP, PFE, PFG, PGR, PH, PHM, PLD, PNC, PNW, PPG, PPL, PRU, PTEN, QCOM, QQQ, R, RF, RHI, RIG, RIO, ROK, ROST, RTX, RVTY, RYAAY, SANM, SBRA, SBUX, SCHW, SHW, SLB, SLM, SNA, SNPS, SO, SPG, SPGI, SPY, SRE, STT, SWK, SYK, SYY, T, TER, TEVA, TFC, TGT, THC, TJX, TKO, TLT, TMO, TROW, TT, TXN, TXT, UNH, UNM, UNP, UPS, VFC, VIAV, VMC, VNQ, VRSN, VZ, WAT, WEC, WEN, WFC, WHR, WMB, WMT, WWD, WY, XEL, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, YUM, ZBH, ZION]
 _classification_overrides:
   CSCO: verified_rss_feed
+  DHR: verified_rss_feed
+  FCX: verified_rss_feed
   IBM: verified_rss_feed
   INTU: verified_rss_feed
   KLAC: verified_rss_feed
   LRCX: verified_rss_feed
+  NEM: verified_rss_feed
   NKE: verified_rss_feed
   QCOM: verified_rss_feed
+  SPGI: verified_rss_feed
+  TER: verified_rss_feed
   TMO: verified_rss_feed
   VZ: verified_rss_feed
 _batch_02_review_notes:
@@ -67,6 +72,27 @@ _batch_03_review_notes:
   DIS: Official company press-release archive was reviewed, but no official RSS endpoint was verified.
   SNPS: Official investor news page was reviewed, but no official RSS endpoint was verified.
   MCD: Official corporate media-release page was reviewed, but no official RSS endpoint was verified.
+_batch_04_review_notes:
+  MS: Official newsroom advertises RSS, but its exact XML target was not verified in this review.
+  XLU: ETF; no company newsroom feed applies to this company-news registry.
+  ABT: Official corporate newsroom was reviewed, but no official RSS endpoint was verified.
+  BSX: Official investor news page was reviewed, but no official RSS endpoint was verified.
+  AXP: Official company and investor news pages were reviewed, but no official RSS endpoint was verified.
+  ETN: Official company news-release page was reviewed, but no official RSS endpoint was verified.
+  SCHW: Official company and investor news pages were reviewed, but no official RSS endpoint was verified.
+  RTX: Official news center was reviewed, but no official RSS endpoint was verified.
+  COF: Official newsroom and investor news pages were reviewed, but no official RSS endpoint was verified.
+  HON: Official company press-release page was reviewed, but no official RSS endpoint was verified.
+  F: Official Ford media center was reviewed, but no official RSS endpoint was verified.
+  CMCSA: Official investor news page references RSS feeds, but no exact XML target was verified.
+  GILD: Official company and investor news pages were reviewed, but no official RSS endpoint was verified.
+  AMGN: Official newsroom was reviewed, but no official RSS endpoint was verified.
+  NEE: Official company and investor news pages were reviewed, but no official RSS endpoint was verified.
+  UNP: Official press-release page was reviewed, but no current exact RSS endpoint was verified.
+  SBUX: Official company and investor press-release pages were reviewed, but no official RSS endpoint was verified.
+  COP: Official news and media page was reviewed, but no official RSS endpoint was verified.
+  LMT: Official site publishes an RSS-labelled URL, but the target returned HTML rather than XML and remains disabled.
+  CIEN: Official investor news page was reviewed, but no official RSS endpoint was verified.
 AAPL:
   company_name: Apple Inc.
   status: verified
@@ -465,3 +491,63 @@ NKE:
       last_verified: "2026-07-02"
       verified_source_url: https://investors.nike.com/investors/news-events-and-reports/default.aspx?toggle=news
   notes: "Official investor news page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+NEM:
+  company_name: Newmont Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Newmont Press Releases
+      url: https://www.newmont.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.newmont.com/rss-feeds/
+  notes: "Official RSS page publishes the press-release target; endpoint returned HTTP 200 with XML content metadata during review."
+FCX:
+  company_name: Freeport-McMoRan Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Freeport-McMoRan News Releases
+      url: https://investors.fcx.com/rss/PressRelease.aspx?LanguageId=1&CategoryWorkflowId=1cb807d2-208f-4bc3-9133-6a9ad45ac3b0&tags=
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.fcx.com/investors/news-releases/
+  notes: "Official investor page publishes the press-release RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+SPGI:
+  company_name: S&P Global Inc.
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: S&P Global Press Releases
+      url: https://press.spglobal.com/index.php?s=2429&pagetemplate=rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://press.spglobal.com/
+  notes: "Official press site publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+TER:
+  company_name: Teradyne, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Teradyne Press Releases
+      url: https://investors.teradyne.com/news-events/press-releases/rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.teradyne.com/news-events/press-releases
+  notes: "Official investor page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
+DHR:
+  company_name: Danaher Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Danaher Press Releases
+      url: https://investors.danaher.com/press-releases?pagetemplate=rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.danaher.com/press-releases
+  notes: "Official investor page publishes the RSS target; endpoint returned HTTP 200 with XML content metadata during review."
