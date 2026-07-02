@@ -85,12 +85,48 @@ class ProviderRateLimitError(RuntimeError):
 class GdeltNewsSource(NewsSource):
     name, api_key_required = "gdelt", False
 
+    def __init__(self, http_get: HttpGet = standard_library_json_get) -> None:
+        super().__init__(http_get)
+        self.last_batch_diagnostic: dict[str, Any] = {}
+
+    def collect(self, *, symbols: list[str], start_date: str, end_date: str, limit: int, timeout: int, api_key: str = "") -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        query_terms: dict[str, list[str]] = {}
+        skipped_symbols: dict[str, str] = {}
+        queryable = []
+        for symbol in symbols:
+            terms = gdelt_query_terms(symbol)
+            if not terms:
+                skipped_symbols[symbol.upper()] = "skipped_ambiguous_symbol"
+                continue
+            query_terms[symbol.upper()] = terms
+            queryable.append(symbol)
+        self.last_batch_diagnostic = {
+            "query_terms": query_terms,
+            "skipped_symbols": skipped_symbols,
+        }
+        per_symbol_limit = max(1, math.ceil(limit / len(queryable))) if queryable else limit
+        for symbol in queryable:
+            payload = self._http_get(self._url(symbol, start_date, end_date, per_symbol_limit, api_key), timeout)
+            rows.extend(self._rows(payload, symbol)[:per_symbol_limit])
+            if len(rows) >= limit:
+                break
+        return rows[:limit]
+
     def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
-        query = urlencode({"query": symbol, "mode": "ArtList", "format": "json", "maxrecords": min(limit, 250), "startdatetime": start.replace("-", "") + "000000", "enddatetime": end.replace("-", "") + "235959"})
+        query_text = _gdelt_query_text(gdelt_query_terms(symbol))
+        query = urlencode({"query": query_text, "mode": "ArtList", "format": "json", "maxrecords": min(limit, 250), "startdatetime": start.replace("-", "") + "000000", "enddatetime": end.replace("-", "") + "235959"})
         return f"https://api.gdeltproject.org/api/v2/doc/doc?{query}"
 
     def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
-        return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("seendate"), source=item.get("domain", "gdelt"), headline=item.get("title"), body="", language=item.get("language", "")) for item in payload.get("articles", [])]
+        if not isinstance(payload, Mapping):
+            raise ValueError("unexpected GDELT response shape")
+        message = str(payload.get("message") or payload.get("error") or "")
+        if message:
+            if _looks_rate_limited(message):
+                raise ProviderRateLimitError(message)
+            raise ValueError(message)
+        return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("seendate"), source=item.get("domain", "gdelt"), headline=item.get("title"), body=item.get("snippet", ""), sentiment="", relevance="", novelty="", event_type="news", language=item.get("language", "")) for item in payload.get("articles", [])]
 
 
 class AlphaVantageNewsSource(NewsSource):
@@ -305,6 +341,86 @@ def _looks_rate_limited(message: str) -> bool:
         or "frequency" in lowered
         or ("rate" in lowered and "limit" in lowered)
     )
+
+
+GDELT_COMPANY_QUERY_TERMS = {
+    "A": ["Agilent Technologies", "Agilent"],
+    "AA": ["Alcoa"],
+    "AAPL": ["Apple", "Apple Inc"],
+    "ABBV": ["AbbVie"],
+    "ABT": ["Abbott Laboratories", "Abbott"],
+    "ACN": ["Accenture"],
+    "ADSK": ["Autodesk"],
+    "AEP": ["American Electric Power"],
+    "AFL": ["Aflac"],
+    "AKAM": ["Akamai Technologies", "Akamai"],
+    "ALB": ["Albemarle"],
+    "ALL": ["Allstate"],
+    "AMAT": ["Applied Materials"],
+    "AMD": ["Advanced Micro Devices", "AMD"],
+    "AMT": ["American Tower"],
+    "AMZN": ["Amazon"],
+    "BA": ["Boeing"],
+    "BAC": ["Bank of America"],
+    "BBY": ["Best Buy"],
+    "BMY": ["Bristol Myers Squibb"],
+    "BP": ["BP"],
+    "BRK-A": ["Berkshire Hathaway"],
+    "BRK-B": ["Berkshire Hathaway"],
+    "CAT": ["Caterpillar"],
+    "CRM": ["Salesforce"],
+    "CSCO": ["Cisco Systems", "Cisco"],
+    "CVX": ["Chevron"],
+    "D": ["Dominion Energy"],
+    "F": ["Ford Motor", "Ford"],
+    "GLD": ["SPDR Gold Shares"],
+    "GOOGL": ["Alphabet", "Google"],
+    "HD": ["Home Depot"],
+    "JNJ": ["Johnson & Johnson"],
+    "JPM": ["JPMorgan Chase"],
+    "KO": ["Coca-Cola"],
+    "MA": ["Mastercard"],
+    "META": ["Meta Platforms", "Facebook"],
+    "MRK": ["Merck"],
+    "MSFT": ["Microsoft"],
+    "NFLX": ["Netflix"],
+    "NVDA": ["Nvidia"],
+    "ORCL": ["Oracle"],
+    "PEP": ["PepsiCo"],
+    "PG": ["Procter & Gamble"],
+    "SPY": ["SPDR S&P 500 ETF"],
+    "TLT": ["iShares 20+ Year Treasury Bond ETF"],
+    "TSLA": ["Tesla"],
+    "UNH": ["UnitedHealth Group"],
+    "V": ["Visa"],
+    "VZ": ["Verizon"],
+    "WMT": ["Walmart"],
+    "XLE": ["Energy Select Sector SPDR Fund"],
+    "XLB": ["Materials Select Sector SPDR Fund"],
+    "XLP": ["Consumer Staples Select Sector SPDR Fund"],
+    "XLU": ["Utilities Select Sector SPDR Fund"],
+    "XLY": ["Consumer Discretionary Select Sector SPDR Fund"],
+    "XOM": ["Exxon Mobil"],
+}
+
+GDELT_AMBIGUOUS_SYMBOLS = {
+    "A", "AA", "ALL", "AN", "ARE", "AT", "BALL", "CAT", "D", "F",
+    "GLD", "GOLD", "GPS", "HE", "IT", "KEY", "L", "LOW", "NOW",
+    "ON", "SEE", "SPY", "T", "TD", "TEAM", "TER", "V", "YOU",
+}
+
+
+def gdelt_query_terms(symbol: str) -> list[str]:
+    normalized = symbol.strip().upper()
+    if normalized in GDELT_COMPANY_QUERY_TERMS:
+        return GDELT_COMPANY_QUERY_TERMS[normalized]
+    if normalized in GDELT_AMBIGUOUS_SYMBOLS or len(normalized) <= 3:
+        return []
+    return [normalized]
+
+
+def _gdelt_query_text(terms: list[str]) -> str:
+    return " OR ".join(f'"{term}"' if " " in term else term for term in terms)
 
 
 def _alpha_vantage_news_time(value: str, *, end_of_day: bool) -> str:

@@ -1690,17 +1690,50 @@ def test_news_source_diagnostics_true_timestamp_leakage_blocks(tmp_path):
 
 
 def test_gdelt_fake_response_normalizes_without_invented_scores():
-    source = GdeltNewsSource(lambda url, timeout: {"articles": [{
-        "url": "https://example.test/a", "seendate": "20240101T120000Z",
-        "domain": "example.test", "title": "AAPL headline", "language": "English",
-    }]})
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        return {"articles": [{
+            "url": "https://example.test/a", "seendate": "20240101T120000Z",
+            "domain": "example.test", "title": "AAPL headline",
+            "snippet": "Provider summary.", "language": "English",
+        }]}
+
+    source = GdeltNewsSource(fake_get)
     rows = source.collect(symbols=["AAPL"], start_date="2024-01-01", end_date="2024-01-02", limit=5, timeout=2)
+    query = parse_qs(urlparse(requested_urls[0]).query)
+    assert query["query"] == ['Apple OR "Apple Inc"']
+    assert source.last_batch_diagnostic["query_terms"] == {"AAPL": ["Apple", "Apple Inc"]}
     assert rows[0]["provider"] == "gdelt"
     assert rows[0]["source"] == "example.test"
     assert rows[0]["published_at_utc"] == "2024-01-01T12:00:00Z"
+    assert rows[0]["body_or_summary"] == "Provider summary."
+    assert rows[0]["event_type"] == "news"
     assert rows[0]["sentiment_score"] == ""
     assert rows[0]["relevance_score"] == ""
     assert rows[0]["novelty_score"] == ""
+
+
+def test_gdelt_ambiguous_short_symbol_is_skipped_without_company_alias():
+    def fake_get(url, timeout):
+        raise AssertionError("ambiguous ticker should not be queried")
+
+    source = GdeltNewsSource(fake_get)
+    rows = source.collect(
+        symbols=["IT"],
+        start_date="2024-01-01",
+        end_date="2024-01-02",
+        limit=5,
+        timeout=2,
+    )
+
+    assert rows == []
+    assert source.api_key_required is False
+    assert source.last_batch_diagnostic["query_terms"] == {}
+    assert source.last_batch_diagnostic["skipped_symbols"] == {
+        "IT": "skipped_ambiguous_symbol"
+    }
 
 
 def test_alpha_vantage_news_source_honors_configured_date_window():
@@ -1919,6 +1952,37 @@ def test_free_source_collection_batches_symbols_and_reports_provider_coverage(tm
         "min_published_at_utc": "2024-01-01T10:00:00Z",
         "max_published_at_utc": "2024-01-01T10:00:00Z",
     }
+
+
+def test_gdelt_collection_reports_query_terms_and_ambiguous_skips(tmp_path):
+    def fake_get(url, timeout):
+        return {"articles": [{
+            "url": "https://example.test/aapl",
+            "seendate": "20240101T120000Z",
+            "domain": "example.test",
+            "title": "Apple headline",
+            "snippet": "Provider summary.",
+            "language": "English",
+        }]}
+
+    config = _collection_config(tmp_path, dry_run=True)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["symbols"] = ["AAPL", "IT"]
+    settings["symbols_per_batch"] = 2
+    settings["provider_request_limit"] = 4
+    settings["rate_limit_sleep_seconds"] = 0
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config, sources={"gdelt": GdeltNewsSource(fake_get)}
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    diagnostic = payload["provider_batch_diagnostics"][0]
+
+    assert payload["provider_row_counts"] == {"gdelt": 1}
+    assert diagnostic["query_terms"] == {"AAPL": ["Apple", "Apple Inc"]}
+    assert diagnostic["skipped_symbols"] == {"IT": "skipped_ambiguous_symbol"}
+    assert diagnostic["response_row_count"] == 1
+    assert diagnostic["normalized_row_count"] == 1
 
 
 def test_free_source_collection_merges_with_backup_and_stable_deduplication(tmp_path):

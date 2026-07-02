@@ -158,11 +158,13 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
                 provider_rows.extend(canonical_rows)
                 diagnostic["response_row_count"] = len(rows)
                 diagnostic["normalized_row_count"] = len(canonical_rows)
+                diagnostic.update(_provider_extra_diagnostic(adapter))
                 if not rows:
                     diagnostic["zero_row_reason"] = "empty_provider_response_or_no_matching_articles"
             except Exception as exc:  # provider isolation is intentional
                 message = _redacted_exception_message(exc, api_key=api_key)
                 is_rate_limited = _is_rate_limited(exc)
+                diagnostic.update(_provider_extra_diagnostic(adapter))
                 diagnostic["response_row_count"] = 0
                 diagnostic["normalized_row_count"] = 0
                 diagnostic["rate_limited"] = is_rate_limited
@@ -380,6 +382,11 @@ def _provider_batch_diagnostic(
         "zero_row_reason": "",
         "rate_limited": False,
     }
+
+
+def _provider_extra_diagnostic(adapter: Any) -> dict[str, Any]:
+    value = getattr(adapter, "last_batch_diagnostic", {})
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _is_rate_limited(exc: Exception) -> bool:

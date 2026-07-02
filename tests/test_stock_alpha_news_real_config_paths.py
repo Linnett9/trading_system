@@ -126,3 +126,45 @@ def test_200_symbol_massive_collection_config_is_dry_run_only():
     assert ml["trading_impact"] == "none"
     assert ml["production_validated"] is False
     assert ml["promotion_thresholds_changed"] is False
+
+
+def test_200_symbol_gdelt_collection_configs_are_dry_run_only():
+    gdelt = load_config(
+        "config/config.stock_alpha_news_collect_gdelt_200symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    combined = load_config(
+        "config/config.stock_alpha_news_collect_sec_edgar_gdelt_200symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+
+    for config in (gdelt, combined):
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+        assert len(collect["symbols"]) == 200
+        assert len(set(collect["symbols"])) == 200
+        assert collect["dry_run"] is True
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is False
+        assert collect["backup_existing"] is False
+        assert collect["start_date"] == "2023-12-01"
+        assert collect["end_date"] == "2026-04-20"
+        assert collect["provider_request_limit"] == 50
+        assert collect["max_rows_per_symbol"] == 5
+        assert collect["symbols_per_batch"] == 25
+        assert collect["rate_limit_sleep_seconds"] == 1
+        assert providers["gdelt"] == {"enabled": True}
+        assert providers["alpha_vantage"]["enabled"] is False
+        assert providers["fmp"]["enabled"] is False
+        assert providers["newsapi"]["enabled"] is False
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+    assert gdelt["ml"]["stock_alpha_news_collect"]["max_rows_per_provider"] == 500
+    assert gdelt["ml"]["stock_alpha_news_collect"]["providers"]["sec_edgar"]["enabled"] is False
+    assert combined["ml"]["stock_alpha_news_collect"]["max_rows_per_provider"] == 1000
+    assert combined["ml"]["stock_alpha_news_collect"]["providers"]["sec_edgar"] == {"enabled": True}
