@@ -392,14 +392,15 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert len(symbols) == len(set(symbols)) == 379
     assert report["registry_complete"] is True
     assert sum(report["classification_counts"].values()) == 379
-    assert report["classification_counts"]["verified_rss_feed"] == 24
-    assert report["classification_counts"]["disabled_pending_review"] == 347
+    assert report["classification_counts"]["verified_rss_feed"] == 29
+    assert report["classification_counts"]["disabled_pending_review"] == 342
     assert report["classification_counts"]["known_error_feed"] == 6
     assert report["classification_counts"]["no_verified_official_rss"] == 2
     assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
     assert report["sec_only_candidate_symbols"] == []
     assert {"CSCO", "IBM", "LRCX", "QCOM"} <= set(report["verified_rss_feed_symbols"])
     assert {"INTU", "KLAC", "NKE", "TMO", "VZ"} <= set(report["verified_rss_feed_symbols"])
+    assert {"DHR", "FCX", "NEM", "SPGI", "TER"} <= set(report["verified_rss_feed_symbols"])
     assert set(feeds) == set(report["verified_rss_feed_symbols"] + report["known_error_feed_symbols"])
     for symbol, symbol_feeds in feeds.items():
         for feed in symbol_feeds:
@@ -472,6 +473,28 @@ def test_company_press_release_rss_batch_03_config_is_bounded_and_dry_run_only()
         "HD", "ADBE", "INTU", "KLAC", "PG", "BKNG", "WFC", "ABBV", "XLP",
         "PFE", "MRK", "XLY", "KO", "ACN", "APH", "PEP", "GLW", "ADI", "TMO",
         "VZ", "T", "NKE", "DIS", "SNPS", "MCD",
+    ]
+
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["only_symbols"] == expected
+    assert collect["max_symbols_per_run"] == 25
+    assert collect["providers"]["company_press_release_rss"]["skip_known_error_feeds"] is True
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
+
+
+def test_company_press_release_rss_batch_04_config_is_bounded_and_dry_run_only():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_04_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    expected = [
+        "MS", "XLU", "ABT", "BSX", "AXP", "ETN", "NEM", "SCHW", "RTX", "COF",
+        "HON", "FCX", "F", "CMCSA", "GILD", "SPGI", "AMGN", "NEE", "TER", "UNP",
+        "DHR", "SBUX", "COP", "LMT", "CIEN",
     ]
 
     assert collect["dry_run"] is True
