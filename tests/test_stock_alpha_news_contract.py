@@ -1797,6 +1797,48 @@ def test_free_source_collection_batches_symbols_and_reports_provider_coverage(tm
     assert payload["provider_request_limit"] == 5
     assert payload["max_rows_per_provider"] == 10
     assert payload["provider_batch_counts"] == {"gdelt": 3}
+    assert payload["provider_batch_diagnostics"] == [
+        {
+            "provider": "gdelt",
+            "batch_index": 1,
+            "symbol_count": 2,
+            "symbols": ["AAPL", "MSFT"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-02",
+            "requested_limit": 5,
+            "response_row_count": 2,
+            "normalized_row_count": 2,
+            "zero_row_reason": "",
+            "rate_limited": False,
+        },
+        {
+            "provider": "gdelt",
+            "batch_index": 2,
+            "symbol_count": 2,
+            "symbols": ["NVDA", "AMZN"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-02",
+            "requested_limit": 5,
+            "response_row_count": 2,
+            "normalized_row_count": 2,
+            "zero_row_reason": "",
+            "rate_limited": False,
+        },
+        {
+            "provider": "gdelt",
+            "batch_index": 3,
+            "symbol_count": 1,
+            "symbols": ["META"],
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-02",
+            "requested_limit": 5,
+            "response_row_count": 1,
+            "normalized_row_count": 1,
+            "zero_row_reason": "",
+            "rate_limited": False,
+        },
+    ]
+    assert payload["provider_zero_row_reasons"] == {}
     assert payload["rows_by_provider"] == {"gdelt": 5}
     assert payload["provider_symbol_counts"] == {"gdelt": 5}
     assert payload["provider_symbol_coverage"] == {"gdelt": 1.0}
@@ -1889,6 +1931,10 @@ def test_free_source_collection_report_redacts_api_key(tmp_path, monkeypatch):
     paths = write_stock_alpha_news_free_source_collect(config, sources={"keyed": FailingKeyed()})
     assert secret not in paths.json_path.read_text(encoding="utf-8")
     assert secret not in paths.markdown_path.read_text(encoding="utf-8")
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    diagnostic = payload["provider_batch_diagnostics"][0]
+    assert diagnostic["error_message"] == "request failed with [REDACTED]"
+    assert diagnostic["zero_row_reason"] == "provider_error"
 
 
 def test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only(tmp_path):
@@ -1957,6 +2003,12 @@ def test_free_source_collection_reports_zero_rows_and_practical_next_actions(tmp
     paths = write_stock_alpha_news_free_source_collect(config, sources={"alpha_vantage": Alpha(), "finnhub": Finnhub()})
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["providers_returned_zero_rows"] == ["finnhub"]
+    assert payload["provider_zero_row_reasons"] == {
+        "finnhub": "all_batches_returned_zero_rows"
+    }
+    assert payload["provider_batch_diagnostics"][1]["zero_row_reason"] == (
+        "empty_provider_response_or_no_matching_articles"
+    )
     assert payload["next_action"] == "adjust_finnhub_symbols_or_date_range"
 
     config["ml"]["stock_alpha_news_collect"]["providers"]["finnhub"]["enabled"] = False
@@ -2109,6 +2161,9 @@ def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):
     assert payload["providers_rate_limited"] == ["gdelt"]
     assert payload["provider_row_counts"]["gdelt"] == 0
     assert payload["providers_returned_zero_rows"] == ["gdelt"]
+    assert payload["provider_zero_row_reasons"] == {"gdelt": "rate_limited"}
+    assert payload["provider_batch_diagnostics"][0]["rate_limited"] is True
+    assert payload["provider_batch_diagnostics"][0]["zero_row_reason"] == "rate_limited"
     assert "gdelt" not in payload["providers_failed"]
     assert payload["next_action"] == "retry_gdelt_later_or_reduce_request"
     assert "rate_limited_or_retry_later" in payload["provider_policy"]["gdelt"]["statuses"]
@@ -2131,6 +2186,40 @@ def test_gdelt_non_rate_limit_failure_reports_zero_rows(tmp_path):
     assert payload["providers_returned_zero_rows"] == ["gdelt"]
     assert payload["providers_rate_limited"] == []
     assert payload["providers_failed"]["gdelt"].startswith("TimeoutError:")
+    assert payload["provider_zero_row_reasons"] == {"gdelt": "provider_error"}
+
+
+def test_alpha_vantage_rate_limit_payload_is_reported_without_key_disclosure(tmp_path, monkeypatch):
+    secret = "test-alpha-secret"
+    monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", secret)
+
+    class AlphaRateLimited:
+        api_key_required = True
+
+        def collect(self, **kwargs):
+            raise RuntimeError(
+                "standard API call frequency exceeded for "
+                f"{kwargs['api_key']}"
+            )
+
+    config = _collection_config(tmp_path, dry_run=True)
+    config["ml"]["stock_alpha_news_collect"]["providers"] = {
+        "alpha_vantage": {"enabled": True, "api_key_env": "ALPHA_VANTAGE_API_KEY"}
+    }
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config, sources={"alpha_vantage": AlphaRateLimited()}
+    )
+    report_text = paths.json_path.read_text(encoding="utf-8")
+    payload = json.loads(report_text)
+
+    assert secret not in report_text
+    assert payload["providers_rate_limited"] == ["alpha_vantage"]
+    assert payload["provider_zero_row_reasons"] == {"alpha_vantage": "rate_limited"}
+    assert payload["provider_batch_diagnostics"][0]["rate_limited"] is True
+    assert payload["provider_batch_diagnostics"][0]["error_message"].endswith(
+        "for [REDACTED]"
+    )
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):

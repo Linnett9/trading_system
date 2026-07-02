@@ -77,6 +77,10 @@ class NewsSource:
         }
 
 
+class ProviderRateLimitError(RuntimeError):
+    code = 429
+
+
 class GdeltNewsSource(NewsSource):
     name, api_key_required = "gdelt", False
 
@@ -105,6 +109,13 @@ class AlphaVantageNewsSource(NewsSource):
         return "https://www.alphavantage.co/query?" + urlencode(params)
 
     def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
+        if isinstance(payload, Mapping):
+            message = str(payload.get("Note") or payload.get("Information") or "")
+            if message and any(token in message.lower() for token in ("rate", "frequency", "limit")):
+                raise ProviderRateLimitError(message)
+            error_message = str(payload.get("Error Message") or "")
+            if error_message:
+                raise ValueError(error_message)
         return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("time_published"), source=item.get("source"), headline=item.get("title"), body=item.get("summary"), sentiment=item.get("overall_sentiment_score", ""), event_type="", language="en") for item in payload.get("feed", [])]
 
 

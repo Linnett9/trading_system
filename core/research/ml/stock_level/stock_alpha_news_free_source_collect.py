@@ -109,6 +109,8 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     adapters = dict(sources or default_news_sources())
     requested, attempted, skipped, rate_limited, failures, counts, collected = [], [], [], [], {}, {}, []
     batch_counts: dict[str, int] = {}
+    batch_diagnostics: list[dict[str, Any]] = []
+    zero_row_reasons: dict[str, str] = {}
     for name, provider_config in provider_settings.items():
         provider_config = dict(provider_config or {})
         if not bool(provider_config.get("enabled", False)):
@@ -126,39 +128,70 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         attempted.append(name)
         counts[name] = 0
         provider_rows: list[dict[str, Any]] = []
-        try:
-            batches = _symbol_batches(symbols, symbols_per_batch)
-            batch_counts[name] = len(batches)
-            for batch_index, batch_symbols in enumerate(batches):
-                remaining = max_rows_per_provider - len(provider_rows)
-                if remaining <= 0:
-                    break
+        batches = _symbol_batches(symbols, symbols_per_batch)
+        batch_counts[name] = len(batches)
+        provider_stopped = False
+        for batch_index, batch_symbols in enumerate(batches):
+            remaining = max_rows_per_provider - len(provider_rows)
+            if remaining <= 0:
+                break
+            requested_limit = min(provider_request_limit, remaining)
+            diagnostic = _provider_batch_diagnostic(
+                provider=name,
+                batch_index=batch_index,
+                batch_symbols=batch_symbols,
+                settings=settings,
+                requested_limit=requested_limit,
+            )
+            try:
                 rows = adapter.collect(
                     symbols=batch_symbols,
                     start_date=str(settings.get("start_date", "")),
                     end_date=str(settings.get("end_date", "")),
-                    limit=min(provider_request_limit, remaining),
+                    limit=requested_limit,
                     timeout=timeout,
                     api_key=api_key,
                 )
-                provider_rows.extend(
+                canonical_rows = [
                     _canonical_row(row, name) for row in rows[:remaining]
-                )
-                if (
-                    rate_limit_sleep_seconds > 0.0
-                    and batch_index < len(batches) - 1
-                    and len(provider_rows) < max_rows_per_provider
-                ):
-                    time.sleep(rate_limit_sleep_seconds)
-            counts[name] = len(provider_rows)
-            collected.extend(provider_rows)
-        except Exception as exc:  # provider isolation is intentional
-            if name == "gdelt" and getattr(exc, "code", None) == 429:
-                counts[name] = 0
-                rate_limited.append(name)
-                continue
-            message = str(exc).replace(api_key, "[REDACTED]") if api_key else str(exc)
-            failures[name] = f"{type(exc).__name__}: {message}"
+                ]
+                provider_rows.extend(canonical_rows)
+                diagnostic["response_row_count"] = len(rows)
+                diagnostic["normalized_row_count"] = len(canonical_rows)
+                if not rows:
+                    diagnostic["zero_row_reason"] = "empty_provider_response_or_no_matching_articles"
+            except Exception as exc:  # provider isolation is intentional
+                message = _redacted_exception_message(exc, api_key=api_key)
+                is_rate_limited = _is_rate_limited(exc)
+                diagnostic["response_row_count"] = 0
+                diagnostic["normalized_row_count"] = 0
+                diagnostic["rate_limited"] = is_rate_limited
+                diagnostic["zero_row_reason"] = "rate_limited" if is_rate_limited else "provider_error"
+                diagnostic["error_type"] = type(exc).__name__
+                diagnostic["error_message"] = message
+                if is_rate_limited:
+                    if name not in rate_limited:
+                        rate_limited.append(name)
+                    zero_row_reasons[name] = "rate_limited"
+                else:
+                    failures[name] = f"{type(exc).__name__}: {message}"
+                    zero_row_reasons[name] = "provider_error"
+                batch_diagnostics.append(diagnostic)
+                provider_stopped = True
+                break
+            batch_diagnostics.append(diagnostic)
+            if (
+                rate_limit_sleep_seconds > 0.0
+                and batch_index < len(batches) - 1
+                and len(provider_rows) < max_rows_per_provider
+            ):
+                time.sleep(rate_limit_sleep_seconds)
+        counts[name] = len(provider_rows)
+        if counts[name] == 0 and name not in zero_row_reasons:
+            zero_row_reasons[name] = "all_batches_returned_zero_rows"
+        collected.extend(provider_rows)
+        if provider_stopped:
+            continue
     deduplicated = _deduplicate(collected)
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
@@ -169,6 +202,11 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload["max_rows_per_provider"] = max_rows_per_provider
     payload["rate_limit_sleep_seconds"] = rate_limit_sleep_seconds
     payload["provider_batch_counts"] = batch_counts
+    payload["provider_batch_diagnostics"] = batch_diagnostics
+    payload["provider_zero_row_reasons"] = {
+        name: reason for name, reason in sorted(zero_row_reasons.items())
+        if counts.get(name, 0) == 0 or reason in {"rate_limited", "provider_error"}
+    }
     payload["symbol_count"] = len(
         {str(row.get("symbol", "")).strip().upper() for row in deduplicated}
         - {""}
@@ -289,6 +327,7 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "requested_symbol_count": 0, "symbols_per_batch": 0,
         "provider_request_limit": 0, "max_rows_per_provider": 0,
         "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
+        "provider_batch_diagnostics": [], "provider_zero_row_reasons": {},
         "providers_returned_zero_rows": [],
         "providers_rate_limited": [], "provider_policy": {},
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
@@ -320,6 +359,45 @@ def _next_action(dry_run: bool, requested: list[str], attempted: list[str], skip
     return "run_provider_sample_check" if rows else "review_collection_report"
 
 
+def _provider_batch_diagnostic(
+    *,
+    provider: str,
+    batch_index: int,
+    batch_symbols: list[str],
+    settings: Mapping[str, Any],
+    requested_limit: int,
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "batch_index": batch_index + 1,
+        "symbol_count": len(batch_symbols),
+        "symbols": list(batch_symbols),
+        "start_date": str(settings.get("start_date", "")),
+        "end_date": str(settings.get("end_date", "")),
+        "requested_limit": requested_limit,
+        "response_row_count": 0,
+        "normalized_row_count": 0,
+        "zero_row_reason": "",
+        "rate_limited": False,
+    }
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    if getattr(exc, "code", None) == 429:
+        return True
+    message = str(exc).lower()
+    return (
+        "too many" in message
+        or "frequency" in message
+        or ("rate" in message and "limit" in message)
+    )
+
+
+def _redacted_exception_message(exc: Exception, *, api_key: str) -> str:
+    message = str(exc)
+    return message.replace(api_key, "[REDACTED]") if api_key else message
+
+
 def _required_path(ml: Mapping[str, Any], key: str) -> Path:
     value = ml.get(key)
     if not value: raise ValueError(f"missing ml.{key}")
@@ -334,4 +412,4 @@ def _backup_path(output_path: Path) -> Path:
 
 
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Requested symbols: {payload['requested_symbol_count']}", f"- Symbols per batch: {payload['symbols_per_batch']}", f"- Provider request limit: {payload['provider_request_limit']}", f"- Max rows per provider: {payload['max_rows_per_provider']}", f"- Rate-limit sleep seconds: {payload['rate_limit_sleep_seconds']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Provider batches: {payload['provider_batch_counts']}", f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}", f"- Rows collected: {payload['total_rows_collected']}", f"- Rows by provider: {payload['rows_by_provider']}", f"- Provider symbol coverage: {payload['provider_symbol_coverage']}", f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
