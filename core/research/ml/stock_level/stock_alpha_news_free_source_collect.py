@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import time
 from collections import Counter, defaultdict
@@ -37,6 +38,16 @@ def write_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     settings = dict(ml.get("stock_alpha_news_collect", {}) or {})
     dry_run = bool(settings.get("dry_run", True))
     payload["new_row_count"] = len(rows)
+    sec_event_rows = _sec_company_filing_event_rows(rows)
+    if dry_run and sec_event_rows:
+        event_rows_path = report_dir / "sec_company_filings_event_rows.jsonl"
+        writer = ResearchArtifactWriter()
+        writer.write_text(
+            event_rows_path,
+            "\n".join(json.dumps(row, sort_keys=True) for row in sec_event_rows) + "\n",
+        )
+        payload["sec_company_filings_event_rows_path"] = str(event_rows_path)
+        payload["sec_company_filings_event_row_count"] = len(sec_event_rows)
     if not dry_run and rows:
         rows_to_write = rows
         if output_path.exists() and bool(settings.get("merge_existing", False)):
@@ -295,6 +306,41 @@ def _canonical_row(row: Mapping[str, Any], provider: str) -> dict[str, Any]:
     normalized["provider"] = str(normalized.get("provider") or provider)
     normalized["source"] = str(normalized.get("source") or provider)
     return normalized
+
+
+def _sec_company_filing_event_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    required = (
+        "symbol",
+        "cik",
+        "provider",
+        "source_type",
+        "form_type",
+        "accession_number",
+        "filing_date",
+        "published_at_utc",
+        "filing_url",
+        "collected_at_utc",
+    )
+    event_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("provider", "")) != "sec_company_filings":
+            continue
+        event = {key: row.get(key, "") for key in required}
+        event.update(
+            {
+                "accepted_datetime": row.get("accepted_datetime", ""),
+                "report_date": row.get("report_date", ""),
+                "primary_document_url": row.get("primary_document_url", ""),
+                "timestamp_precision": row.get("timestamp_precision", ""),
+                "headline_or_title": row.get("headline_or_title") or row.get("headline", ""),
+                "source_url": row.get("source_url") or row.get("filing_url", ""),
+                "sentiment_score": "",
+                "relevance_score": "",
+                "novelty_score": "",
+            }
+        )
+        event_rows.append(event)
+    return event_rows
 
 
 def _deduplicate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

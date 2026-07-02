@@ -29,13 +29,22 @@ def build_stock_alpha_news_contract_ingest_preflight(
     *,
     rss_raw_news_path: str | Path | None = None,
     sec_report_paths: Sequence[str | Path] | None = None,
+    sec_event_row_paths: Sequence[str | Path] | None = None,
     min_symbol_coverage: int = 300,
 ) -> dict[str, Any]:
     rows = []
     if rss_raw_news_path:
         rows.extend(_rss_common_rows(CsvRowRepository().read(Path(rss_raw_news_path))))
     sec_report_summaries = [_read_json(Path(path)) for path in sec_report_paths or []]
-    sec_common_rows, sec_aggregate_report_count = _sec_report_common_rows(sec_report_summaries)
+    event_row_paths = list(sec_event_row_paths or [])
+    for report in sec_report_summaries:
+        artifact = str(report.get("sec_company_filings_event_rows_path", "")).strip()
+        if artifact:
+            event_row_paths.append(artifact)
+    sec_common_rows, sec_aggregate_report_count = _sec_report_common_rows(
+        sec_report_summaries,
+        sec_event_rows=_read_sec_event_rows(event_row_paths),
+    )
     rows.extend(sec_common_rows)
 
     providers_checked = sorted({str(row.get("provider", "")) for row in rows if row.get("provider")})
@@ -53,6 +62,12 @@ def build_stock_alpha_news_contract_ingest_preflight(
         provider = str(row.get("provider", ""))
         symbols.add(str(row.get("symbol", "")).upper())
         missing = [field for field in COMMON_REQUIRED_FIELDS if not str(row.get(field, "")).strip()]
+        if provider == "sec_company_filings":
+            missing.extend(
+                field
+                for field in ("cik", "form_type", "accession_number", "filing_url")
+                if not str(row.get(field, "")).strip()
+            )
         for field in missing:
             missing_by_provider[provider][field] += 1
         timestamp = _parse_timestamp(str(row.get("published_at_utc", "")))
@@ -108,10 +123,12 @@ def write_stock_alpha_news_contract_ingest_preflight(
     output_path: str | Path,
     rss_raw_news_path: str | Path | None = None,
     sec_report_paths: Sequence[str | Path] | None = None,
+    sec_event_row_paths: Sequence[str | Path] | None = None,
 ) -> Path:
     payload = build_stock_alpha_news_contract_ingest_preflight(
         rss_raw_news_path=rss_raw_news_path,
         sec_report_paths=sec_report_paths,
+        sec_event_row_paths=sec_event_row_paths,
     )
     output = Path(output_path)
     ResearchArtifactWriter().write_json(output, payload)
@@ -135,9 +152,15 @@ def _rss_common_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return result
 
 
-def _sec_report_common_rows(reports: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, str]], int]:
+def _sec_report_common_rows(
+    reports: Sequence[Mapping[str, Any]],
+    *,
+    sec_event_rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, str]], int]:
     result = []
     aggregate_report_count = 0
+    for row in sec_event_rows:
+        result.append(_sec_event_common_row(row))
     for report in reports:
         if report.get("provider_row_counts", {}).get("sec_company_filings", 0) <= 0:
             continue
@@ -146,18 +169,41 @@ def _sec_report_common_rows(reports: Sequence[Mapping[str, Any]]) -> tuple[list[
             aggregate_report_count += 1
             continue
         for row in event_rows:
-            result.append(
-                {
-                    "symbol": str(row.get("symbol", "")),
-                    "provider": "sec_company_filings",
-                    "source_type": str(row.get("source_type", "sec_filing")),
-                    "headline_or_title": str(row.get("headline_or_title") or row.get("headline") or row.get("form_type", "")),
-                    "source_url": str(row.get("source_url") or row.get("filing_url") or row.get("primary_document_url") or ""),
-                    "published_at_utc": str(row.get("published_at_utc", "")),
-                    "collected_at_utc": str(row.get("collected_at_utc", "")),
-                }
-            )
+            result.append(_sec_event_common_row(row))
     return result, aggregate_report_count
+
+
+def _sec_event_common_row(row: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "symbol": str(row.get("symbol", "")),
+        "provider": "sec_company_filings",
+        "source_type": str(row.get("source_type", "sec_filing")),
+        "headline_or_title": str(row.get("headline_or_title") or row.get("headline") or row.get("form_type", "")),
+        "source_url": str(row.get("source_url") or row.get("filing_url") or row.get("primary_document_url") or ""),
+        "published_at_utc": str(row.get("published_at_utc", "")),
+        "collected_at_utc": str(row.get("collected_at_utc", "")),
+        "cik": str(row.get("cik", "")),
+        "form_type": str(row.get("form_type", "")),
+        "accession_number": str(row.get("accession_number", "")),
+        "filing_url": str(row.get("filing_url", "")),
+    }
+
+
+def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    value = json.loads(line)
+                    if isinstance(value, Mapping):
+                        rows.append(dict(value))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return rows
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -182,12 +228,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Preflight stock-alpha news provider rows for common event-schema ingest.")
     parser.add_argument("--rss-raw-news")
     parser.add_argument("--sec-report", action="append", default=[])
+    parser.add_argument("--sec-event-rows", action="append", default=[])
+    parser.add_argument("--include-sec-event-rows", action="store_true")
+    parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
     path = write_stock_alpha_news_contract_ingest_preflight(
         output_path=args.output,
         rss_raw_news_path=args.rss_raw_news,
         sec_report_paths=args.sec_report,
+        sec_event_row_paths=[
+            *args.sec_event_rows,
+            *(
+                [
+                    str(path)
+                    for path in Path(args.reports_root).rglob("sec_company_filings_event_rows.jsonl")
+                ]
+                if args.include_sec_event_rows and Path(args.reports_root).exists()
+                else []
+            ),
+        ],
     )
     print(f"Wrote stock-alpha news contract ingest preflight: {path}")
     return 0

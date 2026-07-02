@@ -712,10 +712,10 @@ def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_er
     assert ml["promotion_thresholds_changed"] is False
 
 
-def test_sec_company_filings_batch_01_dry_run_config_is_safe_and_separate():
+def test_sec_company_filings_batch_01_to_16_dry_run_configs_are_safe_and_separate():
     batches = build_universe_batches("data/reference/universes/us_liquid_500.yaml", 25)
     expected_by_batch = {1: ["AAPL", "MSFT", "NVDA", "AMZN", "META"]}
-    expected_by_batch.update({index: batches[index - 1] for index in (2, 3, 4)})
+    expected_by_batch.update({index: batches[index - 1] for index in range(2, 17)})
 
     for batch_index, expected_symbols in expected_by_batch.items():
         config = load_config(
@@ -739,6 +739,7 @@ def test_sec_company_filings_batch_01_dry_run_config_is_safe_and_separate():
         assert collect["max_symbols_per_run"] == len(expected_symbols)
         assert providers["sec_company_filings"]["enabled"] is True
         assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+        assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
         for name, provider in providers.items():
             if name != "sec_company_filings":
                 assert provider["enabled"] is False
