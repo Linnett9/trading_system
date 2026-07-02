@@ -14,8 +14,14 @@ ETF_FUND_SYMBOLS = {
 AUDITED_EXCEPTION_SYMBOLS = {"B"}
 ISOLATED_SYMBOLS = {"AAPL", "CIEN"}
 DEFAULT_SOURCE_GLOB = "config.stock_alpha_news_collect_sec_company_filings_batch_*_12mo_dry_run.yaml"
-DEFAULT_OUTPUT_PREFIX = "config.stock_alpha_news_collect_sec_company_filings_36mo_part"
 DEFAULT_REPORT_ROOT = "reports/ml/benchmark/regime_transformer_meta_ensemble_v1"
+SUPPORTED_WINDOW_MONTHS = {36, 60, 120}
+WINDOW_START_DATES = {
+    36: "2023-07-01",
+    60: "2021-07-01",
+    120: "2016-07-01",
+}
+WINDOW_END_DATE = "2026-07-02"
 
 
 def build_sec_36mo_dry_run_configs(
@@ -23,16 +29,37 @@ def build_sec_36mo_dry_run_configs(
     config_dir: str | Path = "config",
     max_symbols_per_config: int = 4,
 ) -> list[tuple[Path, dict[str, Any]]]:
+    return build_sec_window_dry_run_configs(
+        config_dir=config_dir,
+        max_symbols_per_config=max_symbols_per_config,
+        window_months=36,
+    )
+
+
+def build_sec_window_dry_run_configs(
+    *,
+    config_dir: str | Path = "config",
+    max_symbols_per_config: int = 4,
+    window_months: int = 36,
+) -> list[tuple[Path, dict[str, Any]]]:
     if max_symbols_per_config < 1 or max_symbols_per_config > 5:
         raise ValueError("max_symbols_per_config must be between 1 and 5")
+    if window_months not in SUPPORTED_WINDOW_MONTHS:
+        raise ValueError("window_months must be one of 36, 60, or 120")
 
     root = Path(config_dir)
     symbols = _eligible_symbols(root.glob(DEFAULT_SOURCE_GLOB))
     groups = _cap_safe_symbol_groups(symbols, max_symbols_per_config=max_symbols_per_config)
+    output_prefix = f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part"
     return [
         (
-            root / f"{DEFAULT_OUTPUT_PREFIX}_{index:03d}_dry_run.yaml",
-            _config_payload(index=index, symbols=group, max_symbols_per_config=max_symbols_per_config),
+            root / f"{output_prefix}_{index:03d}_dry_run.yaml",
+            _config_payload(
+                index=index,
+                symbols=group,
+                max_symbols_per_config=max_symbols_per_config,
+                window_months=window_months,
+            ),
         )
         for index, group in enumerate(groups, start=1)
     ]
@@ -43,9 +70,26 @@ def write_sec_36mo_dry_run_configs(
     config_dir: str | Path = "config",
     max_symbols_per_config: int = 4,
 ) -> list[Path]:
+    return write_sec_window_dry_run_configs(
+        config_dir=config_dir,
+        max_symbols_per_config=max_symbols_per_config,
+        window_months=36,
+    )
+
+
+def write_sec_window_dry_run_configs(
+    *,
+    config_dir: str | Path = "config",
+    max_symbols_per_config: int = 4,
+    window_months: int = 36,
+) -> list[Path]:
     generated = build_sec_36mo_dry_run_configs(
         config_dir=config_dir,
         max_symbols_per_config=max_symbols_per_config,
+    ) if window_months == 36 else build_sec_window_dry_run_configs(
+        config_dir=config_dir,
+        max_symbols_per_config=max_symbols_per_config,
+        window_months=window_months,
     )
     written: list[Path] = []
     for path, payload in generated:
@@ -103,13 +147,15 @@ def _config_payload(
     index: int,
     symbols: Sequence[str],
     max_symbols_per_config: int,
+    window_months: int,
 ) -> dict[str, Any]:
-    run_name = f"stock_alpha_news_collect_sec_company_filings_36mo_part_{index:03d}_dry_run"
+    window_label = f"{window_months}mo"
+    run_name = f"stock_alpha_news_collect_sec_company_filings_{window_label}_part_{index:03d}_dry_run"
     report_dir = f"{DEFAULT_REPORT_ROOT}/{run_name}/dev"
     return {
         "ml": {
             "stock_alpha_news_collect_report_dir": report_dir,
-            "stock_alpha_news_collect_output_path": f"{report_dir}/sec_company_filings_36mo_dry_run_rows.csv",
+            "stock_alpha_news_collect_output_path": f"{report_dir}/sec_company_filings_{window_label}_dry_run_rows.csv",
             "stock_alpha_news_collect": {
                 "enabled": True,
                 "dry_run": True,
@@ -122,7 +168,7 @@ def _config_payload(
                 "provider_request_limit": 250,
                 "symbols_per_batch": len(symbols),
                 "max_symbols_per_run": len(symbols),
-                "source_window": "36mo",
+                "source_window": window_label,
                 "source_universe": "sec_company_filings_batch_01_to_16_12mo_dry_run",
                 "source_batch_policy": "cap_safe_sub_batches",
                 "max_symbols_per_generated_config": max_symbols_per_config,
@@ -131,8 +177,8 @@ def _config_payload(
                 "only_symbols": list(symbols),
                 "rate_limit_sleep_seconds": 0,
                 "request_timeout_seconds": 20,
-                "start_date": "2023-07-01",
-                "end_date": "2026-07-02",
+                "start_date": WINDOW_START_DATES[window_months],
+                "end_date": WINDOW_END_DATE,
                 "providers": {
                     "sec_company_filings": {
                         "enabled": True,
@@ -167,15 +213,17 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate cap-safe 36-month SEC company-filings dry-run configs."
+        description="Generate cap-safe SEC company-filings dry-run configs for a fixed history window."
     )
     parser.add_argument("--config-dir", default="config")
     parser.add_argument("--max-symbols-per-config", type=int, default=4)
+    parser.add_argument("--window-months", type=int, choices=sorted(SUPPORTED_WINDOW_MONTHS), default=36)
     args = parser.parse_args(argv)
 
-    written = write_sec_36mo_dry_run_configs(
+    written = write_sec_window_dry_run_configs(
         config_dir=args.config_dir,
         max_symbols_per_config=args.max_symbols_per_config,
+        window_months=args.window_months,
     )
     print(f"wrote_config_count={len(written)}")
     for path in written:
