@@ -524,6 +524,54 @@ def test_sec_edgar_and_no_paid_collection_configs_are_safe():
         assert ml["stock_alpha_news_enable_transformer"] is False
 
 
+def test_25_symbol_sec_edgar_collection_configs_are_bounded_and_safe():
+    dry = load_config(
+        "config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_25symbol_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    write = load_config(
+        "config/config.stock_alpha_news_collect_alpha_vantage_sec_edgar_25symbol_write_template.yaml",
+        overlay_project_config=True,
+    )
+    audit = load_config(
+        "config/config.stock_alpha_news_provider_audit_real_template.yaml",
+        overlay_project_config=True,
+    )
+    preflight = load_config(
+        "config/config.stock_alpha_news_pipeline_preflight_real_template.yaml",
+        overlay_project_config=True,
+    )
+
+    assert dry["ml"]["stock_alpha_news_collect"]["dry_run"] is True
+    assert write["ml"]["stock_alpha_news_collect"]["dry_run"] is False
+    assert write["ml"]["stock_alpha_news_collect"]["allow_overwrite"] is False
+    assert write["ml"]["stock_alpha_news_collect"]["merge_existing"] is True
+    assert write["ml"]["stock_alpha_news_collect"]["backup_existing"] is True
+    assert write["ml"]["stock_alpha_news_collect_output_path"] == (
+        "data/news/raw/stock_alpha_news_provider_export.csv"
+    )
+    for config in (dry, write):
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+        assert len(collect["symbols"]) >= 25
+        assert collect["max_articles_per_provider"] <= 250
+        assert providers["alpha_vantage"] == {
+            "enabled": True,
+            "api_key_env": "ALPHA_VANTAGE_API_KEY",
+        }
+        assert providers["sec_edgar"]["enabled"] is True
+        assert providers["gdelt"]["enabled"] is False
+        assert providers["fmp"]["enabled"] is False
+        assert providers["newsapi"]["enabled"] is False
+        assert ml["stock_alpha_news_enable_transformer"] is False
+    for config in (audit, preflight):
+        ml = config["ml"]
+        assert ml["stock_alpha_news_provider_audit_min_symbol_count"] == 25
+        assert ml["stock_alpha_news_provider_audit_max_duplicate_headline_rate"] == 0.05
+        assert ml["promotion_thresholds_changed"] is False
+
+
 def test_real_news_transformer_diagnostic_templates_are_dev_sized_and_gated():
     disabled = load_config(
         "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",

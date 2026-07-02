@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.news_sources import PROVIDER_METADATA, default_news_sources
 from core.research.ml.stock_level.stock_alpha_news_contract import REQUIRED_NEWS_CONTRACT_COLUMNS
@@ -27,13 +30,34 @@ def write_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload, rows = build_stock_alpha_news_free_source_collect(config, sources=sources)
     settings = dict(ml.get("stock_alpha_news_collect", {}) or {})
     dry_run = bool(settings.get("dry_run", True))
+    payload["new_row_count"] = len(rows)
     if not dry_run and rows:
-        if output_path.exists() and not bool(settings.get("allow_overwrite", False)):
+        rows_to_write = rows
+        if output_path.exists() and bool(settings.get("merge_existing", False)):
+            if not bool(settings.get("backup_existing", False)):
+                raise ValueError(
+                    "ml.stock_alpha_news_collect.merge_existing requires "
+                    "backup_existing=true"
+                )
+            existing_rows = CsvRowRepository().read(output_path)
+            # New rows take precedence so normalization improvements replace an
+            # older representation of the same stable provider record.
+            combined_rows = [*rows, *existing_rows]
+            rows_to_write = _deduplicate(combined_rows)
+            backup_path = _backup_path(output_path)
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(output_path, backup_path)
+            payload["existing_input_row_count"] = len(existing_rows)
+            payload["merge_deduplicated_row_count"] = len(combined_rows) - len(rows_to_write)
+            payload["backup_path"] = str(backup_path)
+        elif output_path.exists() and not bool(settings.get("allow_overwrite", False)):
             payload["providers_failed"]["output"] = "output_exists_and_overwrite_disabled"
             payload["next_action"] = "review_collection_report"
-        else:
-            ResearchArtifactWriter().write_csv(output_path, rows, fieldnames=[*REQUIRED_NEWS_CONTRACT_COLUMNS, *PROVENANCE_COLUMNS])
+            rows_to_write = []
+        if rows_to_write:
+            ResearchArtifactWriter().write_csv(output_path, rows_to_write, fieldnames=[*REQUIRED_NEWS_CONTRACT_COLUMNS, *PROVENANCE_COLUMNS])
             payload["output_written"] = True
+            payload["output_row_count"] = len(rows_to_write)
     paths = StockAlphaNewsFreeSourceCollectPaths(
         report_dir / "stock_alpha_news_free_source_collect.json",
         report_dir / "stock_alpha_news_free_source_collect.md",
@@ -58,6 +82,12 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     timeout = int(settings.get("request_timeout_seconds", 20))
     if timeout < 1 or timeout > 60:
         raise ValueError("ml.stock_alpha_news_collect.request_timeout_seconds must be between 1 and 60")
+    if bool(settings.get("merge_existing", False)) and not bool(
+        settings.get("backup_existing", False)
+    ):
+        raise ValueError(
+            "ml.stock_alpha_news_collect.merge_existing requires backup_existing=true"
+        )
     symbols = [str(value).strip().upper() for value in settings.get("symbols", []) if str(value).strip()]
     provider_settings = dict(settings.get("providers", {}) or {})
     adapters = dict(sources or default_news_sources())
@@ -91,6 +121,21 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
     payload["total_rows_collected"] = len(collected)
+    payload["symbol_count"] = len(
+        {str(row.get("symbol", "")).strip().upper() for row in deduplicated}
+        - {""}
+    )
+    headlines = [
+        str(row.get("headline", "")).strip().lower()
+        for row in deduplicated
+        if str(row.get("headline", "")).strip()
+    ]
+    payload["duplicate_headline_count"] = len(headlines) - len(set(headlines))
+    payload["duplicate_headline_rate"] = (
+        payload["duplicate_headline_count"] / len(deduplicated)
+        if deduplicated
+        else 0.0
+    )
     payload["providers_returned_zero_rows"] = sorted(name for name, count in counts.items() if count == 0)
     payload["providers_rate_limited"] = sorted(rate_limited)
     payload["provider_policy"] = {name: PROVIDER_METADATA.get(name, {"statuses": ["unclassified"]}) for name in provider_settings}
@@ -109,9 +154,28 @@ def _canonical_row(row: Mapping[str, Any], provider: str) -> dict[str, Any]:
 def _deduplicate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result, seen = [], set()
     for row in rows:
-        key = str(row.get("article_id") or row.get("provider_url") or "").strip()
-        if not key:
-            key = "|".join(str(row.get(field, "")) for field in ("provider", "symbol", "published_at_utc", "headline"))
+        provider_id = str(row.get("provider_article_id", "")).strip()
+        if provider_id:
+            key = "|".join(
+                str(row.get(field, "")).strip()
+                for field in (
+                    "provider",
+                    "provider_article_id",
+                    "symbol",
+                    "published_at_utc",
+                )
+            )
+        else:
+            key = "|".join(
+                str(row.get(field, "")).strip()
+                for field in (
+                    "article_id",
+                    "provider_url",
+                    "symbol",
+                    "published_at_utc",
+                    "headline",
+                )
+            )
         if key not in seen:
             seen.add(key)
             result.append(row)
@@ -128,6 +192,11 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "providers_returned_zero_rows": [],
         "providers_rate_limited": [], "provider_policy": {},
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
+        "symbol_count": 0, "duplicate_headline_count": 0,
+        "duplicate_headline_rate": 0.0,
+        "existing_input_row_count": 0, "new_row_count": 0,
+        "merge_deduplicated_row_count": 0, "output_row_count": 0,
+        "backup_path": "",
         "files_ingested": False, "features_generated": False, "readiness_invoked": False,
         "diagnostics_invoked": False, "model_training_invoked": False,
         "news_transformer_enabled": False, "trading_impact": "none", "production_validated": False,
@@ -154,5 +223,12 @@ def _required_path(ml: Mapping[str, Any], key: str) -> Path:
     return Path(str(value))
 
 
+def _backup_path(output_path: Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return output_path.with_name(
+        f"{output_path.stem}.backup-{timestamp}{output_path.suffix}"
+    )
+
+
 def _markdown(payload: Mapping[str, Any]) -> str:
-    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])
+    return "\n".join(["# Stock-Alpha Free News Source Collection", "", f"- Dry run: {payload['dry_run']}", f"- Providers requested: {payload['providers_requested']}", f"- Providers attempted: {payload['providers_attempted']}", f"- Providers skipped missing key: {payload['providers_skipped_missing_key']}", f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}", f"- Providers rate limited: {payload['providers_rate_limited']}", f"- Provider policy: {payload['provider_policy']}", f"- Providers failed: {payload['providers_failed']}", f"- Rows collected: {payload['total_rows_collected']}", f"- Deduplicated rows: {payload['deduplicated_row_count']}", f"- Symbols: {payload['symbol_count']}", f"- Duplicate headlines: {payload['duplicate_headline_count']}", f"- Duplicate headline rate: {payload['duplicate_headline_rate']}", f"- Existing input rows: {payload['existing_input_row_count']}", f"- New rows: {payload['new_row_count']}", f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}", f"- Output rows: {payload['output_row_count']}", f"- Backup path: {payload['backup_path'] or 'none'}", f"- Output written: {payload['output_written']}", f"- Next action: {payload['next_action']}", "- Features generated: false", "- Model training invoked: false", "", "Collection scaffold only. No ingest, readiness, diagnostics, training, or trading was invoked."])

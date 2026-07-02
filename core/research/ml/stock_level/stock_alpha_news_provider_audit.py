@@ -132,6 +132,7 @@ def _payload(
     missing_body_count = sum(1 for row in rows if not str(row.get("body_or_summary", "")).strip())
     duplicate_article_id_count = _duplicate_count(article_ids)
     duplicate_headline_count = _duplicate_count(headlines)
+    provider_quality = _provider_quality(rows)
     invalid_timestamp_count = 0
     ingested_before_published_count = 0
     published_values = []
@@ -180,6 +181,20 @@ def _payload(
         "provider_column_map_used": bool(provider_column_map),
         "provider_column_map": dict(provider_column_map),
         "missing_mapped_provider_columns": list(mapping_audit.get("missing_mapped_provider_columns", [])),
+        "thresholds": dict(thresholds),
+        "threshold_comparisons": {
+            "symbol_count": {
+                "actual": len(set(symbols)),
+                "minimum": thresholds["min_symbol_count"],
+                "passes": len(set(symbols)) >= thresholds["min_symbol_count"],
+            },
+            "duplicate_headline_rate": {
+                "actual": duplicate_headline_rate,
+                "maximum": thresholds["max_duplicate_headline_rate"],
+                "passes": duplicate_headline_rate
+                <= thresholds["max_duplicate_headline_rate"],
+            },
+        },
         "raw_row_count": raw_row_count,
         "article_id_count": len(set(article_ids)),
         "duplicate_article_id_count": duplicate_article_id_count,
@@ -191,6 +206,7 @@ def _payload(
         "event_type_counts": _counts(event_types),
         "article_count_by_symbol": _counts(symbols),
         "article_count_by_source": _counts(sources),
+        **provider_quality,
         "earliest_published_at_utc": min(published_values).isoformat().replace("+00:00", "Z") if published_values else None,
         "latest_published_at_utc": max(published_values).isoformat().replace("+00:00", "Z") if published_values else None,
         "earliest_ingested_at": min(ingested_values).isoformat().replace("+00:00", "Z") if ingested_values else None,
@@ -241,9 +257,94 @@ def _counts(values: list[str]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _provider_quality(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    rows_by_provider: dict[str, list[Mapping[str, Any]]] = {}
+    headline_counts: dict[str, int] = {}
+    headline_display: dict[str, str] = {}
+    headline_providers: dict[str, list[str]] = {}
+    for row in rows:
+        provider = _provider_name(row)
+        rows_by_provider.setdefault(provider, []).append(row)
+        headline = str(row.get("headline", "")).strip()
+        normalized = headline.lower()
+        if normalized:
+            headline_counts[normalized] = headline_counts.get(normalized, 0) + 1
+            headline_display.setdefault(normalized, headline)
+            headline_providers.setdefault(normalized, []).append(provider)
+
+    duplicate_by_provider: dict[str, int] = {}
+    symbols_by_provider: dict[str, dict[str, int]] = {}
+    for provider, provider_rows in sorted(rows_by_provider.items()):
+        provider_headlines = [
+            str(row.get("headline", "")).strip().lower()
+            for row in provider_rows
+            if str(row.get("headline", "")).strip()
+        ]
+        provider_symbols = [
+            _clean_symbol(row.get("symbol"))
+            for row in provider_rows
+            if _clean_symbol(row.get("symbol"))
+        ]
+        duplicate_by_provider[provider] = _duplicate_count(provider_headlines)
+        symbols_by_provider[provider] = _counts(provider_symbols)
+
+    examples = [
+        {
+            "headline": headline_display[headline],
+            "count": count,
+            "provider_counts": _counts(headline_providers[headline]),
+        }
+        for headline, count in sorted(
+            headline_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+        if count > 1
+    ][:10]
+    sec_rows = rows_by_provider.get("sec_edgar", [])
+    sec_generic_count = sum(
+        1 for row in sec_rows if _is_generic_sec_filing_headline(row)
+    )
+    total_duplicate_count = sum(count - 1 for count in headline_counts.values())
+    sec_duplicate_count = duplicate_by_provider.get("sec_edgar", 0)
+    return {
+        "article_count_by_provider": {
+            provider: len(provider_rows)
+            for provider, provider_rows in sorted(rows_by_provider.items())
+        },
+        "duplicate_headline_count_by_provider": duplicate_by_provider,
+        "symbol_distribution_by_provider": symbols_by_provider,
+        "duplicate_headline_examples": examples,
+        "sec_edgar_generic_headline_count": sec_generic_count,
+        "duplicates_mainly_sec_edgar_generic_filings": bool(
+            total_duplicate_count
+            and sec_generic_count
+            and sec_duplicate_count / total_duplicate_count >= 0.5
+        ),
+    }
+
+
+def _provider_name(row: Mapping[str, Any]) -> str:
+    return (
+        str(row.get("provider") or row.get("source") or "unknown")
+        .strip()
+        .lower()
+        .replace(" ", "_")
+    )
+
+
+def _is_generic_sec_filing_headline(row: Mapping[str, Any]) -> bool:
+    if _provider_name(row) != "sec_edgar":
+        return False
+    headline = str(row.get("headline", "")).strip().lower()
+    return " filed form " in headline and " accession " not in headline
+
+
 def _markdown(payload: Mapping[str, Any]) -> str:
     blocking = payload.get("blocking_issues", []) or ["none"]
     warnings = payload.get("warning_issues", []) or ["none"]
+    comparisons = payload.get("threshold_comparisons", {})
+    symbol_comparison = comparisons.get("symbol_count", {})
+    duplicate_comparison = comparisons.get("duplicate_headline_rate", {})
+    examples = payload.get("duplicate_headline_examples", [])
     return "\n".join(
         [
             "# Stock-Alpha News Provider Audit",
@@ -253,9 +354,18 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             f"- Raw rows: {payload.get('raw_row_count', 0)}",
             f"- Article IDs: {payload.get('article_id_count', 0)}",
             f"- Symbols: {payload.get('symbol_count', 0)}",
+            f"- Symbol minimum: {symbol_comparison.get('minimum', '')}",
+            f"- Symbol threshold passes: {symbol_comparison.get('passes', False)}",
             f"- Sources: {payload.get('source_count', 0)}",
             f"- Duplicate article IDs: {payload.get('duplicate_article_id_count', 0)}",
             f"- Duplicate headline rate: {payload.get('duplicate_headline_rate', 0.0)}",
+            f"- Duplicate headline maximum: {duplicate_comparison.get('maximum', '')}",
+            f"- Duplicate threshold passes: {duplicate_comparison.get('passes', False)}",
+            f"- Duplicate headlines by provider: {payload.get('duplicate_headline_count_by_provider', {})}",
+            f"- Symbol distribution by provider: {payload.get('symbol_distribution_by_provider', {})}",
+            f"- SEC generic filing headlines: {payload.get('sec_edgar_generic_headline_count', 0)}",
+            "- Duplicates mainly SEC generic filings: "
+            f"{payload.get('duplicates_mainly_sec_edgar_generic_filings', False)}",
             f"- Invalid timestamp rate: {payload.get('invalid_timestamp_rate', 0.0)}",
             f"- Ingested-before-published rate: {payload.get('ingested_before_published_rate', 0.0)}",
             f"- Provider column map used: {payload.get('provider_column_map_used', False)}",
@@ -265,6 +375,16 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             "",
             "## Warnings",
             *[f"- {issue}" for issue in warnings],
+            "",
+            "## Duplicate Headline Examples",
+            *(
+                [
+                    f"- {example['count']}x: {example['headline']} "
+                    f"({example['provider_counts']})"
+                    for example in examples
+                ]
+                or ["- none"]
+            ),
             "",
             "Inspection-only audit. No contracts, features, or models were generated.",
         ]
