@@ -197,6 +197,7 @@ def _sec_event_common_row(row: Mapping[str, Any]) -> dict[str, str]:
 
 def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
     for raw_path in paths:
         path = Path(raw_path)
         if not path.exists():
@@ -206,17 +207,31 @@ def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
                 if line.strip():
                     value = json.loads(line)
                     if isinstance(value, Mapping):
-                        rows.append(dict(value))
+                        row = dict(value)
+                        event_key = _sec_event_key(row)
+                        if event_key not in seen:
+                            seen.add(event_key)
+                            rows.append(row)
         except (OSError, json.JSONDecodeError):
             continue
     return rows
 
 
+def _sec_event_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        "sec_company_filings",
+        str(row.get("symbol", "")).strip().upper(),
+        str(row.get("source_url") or row.get("filing_url") or row.get("primary_document_url") or "").strip(),
+        str(row.get("published_at_utc", "")).strip(),
+        str(row.get("accession_number", "")).strip(),
+    )
+
+
 def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
     if selection == "all":
         return list(paths)
-    if selection != "prefer_12mo":
-        raise ValueError("sec_artifact_selection must be 'all' or 'prefer_12mo'")
+    if selection not in {"prefer_12mo", "prefer_36mo"}:
+        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', or 'prefer_36mo'")
     by_batch: dict[str, list[str | Path]] = defaultdict(list)
     other_paths: list[str | Path] = []
     for path in paths:
@@ -233,7 +248,28 @@ def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> 
         preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
         selected.extend(preferred or batch_paths)
     selected.extend(other_paths)
+    if selection == "prefer_36mo":
+        selected = _prefer_36mo_sec_event_row_paths(by_batch, other_paths)
     return selected
+
+
+def _prefer_36mo_sec_event_row_paths(
+    by_batch: Mapping[str, list[str | Path]],
+    other_paths: Sequence[str | Path],
+) -> list[str | Path]:
+    selected: list[str | Path] = []
+    for batch in sorted(by_batch):
+        batch_paths = [path for path in by_batch[batch] if not _is_data_news_path(path)]
+        preferred_36mo = [path for path in batch_paths if "_36mo" in str(path)]
+        preferred_12mo = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        selected.extend(preferred_36mo or preferred_12mo or batch_paths)
+    selected.extend(path for path in other_paths if not _is_data_news_path(path))
+    return selected
+
+
+def _is_data_news_path(path: str | Path) -> bool:
+    path_text = str(path).replace("\\", "/")
+    return path_text.startswith("data/news/") or "/data/news/" in path_text
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -260,7 +296,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
-    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo"], default="all")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo"], default="all")
     parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
