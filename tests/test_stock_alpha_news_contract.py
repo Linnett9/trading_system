@@ -1956,11 +1956,11 @@ def test_379_registry_collection_report_is_bounded_and_offline(tmp_path):
     assert payload["registry_missing_symbols"] == []
     assert payload["registry_extra_symbols"] == []
     assert payload["registry_classification_counts"] == {
-        "disabled_pending_review": 356,
+        "disabled_pending_review": 347,
         "known_error_feed": 6,
         "no_verified_official_rss": 2,
         "sec_only_candidate": 0,
-        "verified_rss_feed": 15,
+        "verified_rss_feed": 24,
     }
     assert payload["full_universe_known_error_feed_symbols"] == [
         "ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"
@@ -1969,7 +1969,7 @@ def test_379_registry_collection_report_is_bounded_and_offline(tmp_path):
     assert payload["selected_row_returning_symbol_count"] == 0
     assert payload["selected_symbol_row_coverage"] == 0.0
     assert payload["total_universe_row_coverage"] == 0.0
-    assert payload["total_universe_enabled_feed_coverage"] == 21 / 379
+    assert payload["total_universe_enabled_feed_coverage"] == 30 / 379
     assert payload["enabled_feeds_returned_rows"] == []
     assert payload["symbols_with_feed_errors"] == []
     assert payload["output_written"] is False
