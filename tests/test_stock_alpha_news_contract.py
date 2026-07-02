@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -76,6 +77,7 @@ from core.research.ml.stock_level.stock_alpha_news_source_setup_check import (
 )
 from scripts.stock_alpha_news_collect_summary import build_summary
 from scripts.stock_alpha_news_coverage_audit import build_stock_alpha_news_coverage_audit
+from scripts.stock_alpha_news_contract_ingest_preflight import build_stock_alpha_news_contract_ingest_preflight
 from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
 
@@ -2963,6 +2965,140 @@ BBB:
     assert "coverage below 80% of canonical universe" in audit["unsafe_reasons"]
     assert "RSS-only source concentration" in audit["unsafe_reasons"]
     assert "Keep news_analysis_transformer disabled." in audit["recommended_next_steps"]
+
+
+def test_stock_alpha_news_coverage_audit_combines_rss_and_sec_reports(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    sec_report = tmp_path / "sec.json"
+    universe.write_text("available_count: 3\nsymbols: [AAA, BBB, CCC]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: [AAA]
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [BBB, CCC]
+AAA:
+  sources:
+    - type: investor_relations_rss
+      name: AAA News
+      url: https://ir.aaa.example/rss.xml
+      official: true
+      enabled: true
+      verified_source_url: https://ir.aaa.example/news
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow({
+            "article_id": "a1", "symbol": "AAA", "published_at_utc": "2026-01-02T10:00:00Z",
+            "source": "AAA News", "headline": "RSS headline", "body_or_summary": "body",
+            "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+            "language": "en", "ingested_at": "2026-01-02T10:01:00Z", "provider": "company_press_release_rss",
+            "provider_article_id": "rss:a1", "provider_url": "https://aaa.example/a",
+        })
+    sec_report.write_text(json.dumps({
+        "provider_row_counts": {"sec_company_filings": 3},
+        "rows_by_symbol": {"BBB": 2, "AAA": 1},
+        "rows_by_form_type": {"8-K": 2, "10-Q": 1},
+    }), encoding="utf-8")
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        sec_report_paths=[sec_report],
+        reports_root=tmp_path / "missing_reports",
+    )
+
+    assert audit["rss_symbol_coverage_count"] == 1
+    assert audit["sec_symbol_coverage_count"] == 2
+    assert audit["combined_official_symbol_coverage_count"] == 2
+    assert audit["symbols_covered_by_rss_only"] == []
+    assert audit["symbols_covered_by_sec_only"] == ["BBB"]
+    assert audit["symbols_covered_by_both"] == ["AAA"]
+    assert audit["symbols_with_no_official_rows"] == ["CCC"]
+    assert audit["duplicate_provider_url_count"] == 0
+    assert audit["forms_by_type"] == {"10-Q": 1, "8-K": 2}
+    assert audit["safe_for_feature_generation"] is False
+
+
+def test_contract_ingest_preflight_accepts_rss_and_sec_summary_and_blocks_features(tmp_path):
+    raw = tmp_path / "raw.csv"
+    sec_report = tmp_path / "sec.json"
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow({
+            "article_id": "a1", "symbol": "AAA", "published_at_utc": "2026-01-02T10:00:00Z",
+            "source": "AAA News", "headline": "RSS headline", "body_or_summary": "body",
+            "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+            "language": "en", "ingested_at": "2026-01-02T10:01:00Z", "provider": "company_press_release_rss",
+            "provider_article_id": "rss:a1", "provider_url": "https://aaa.example/a",
+        })
+    sec_report.write_text(json.dumps({
+        "json_path": str(sec_report),
+        "provider_row_counts": {"sec_company_filings": 2},
+        "rows_by_symbol": {"BBB": 2},
+        "event_rows": [
+            {
+                "symbol": "BBB",
+                "source_type": "sec_filing",
+                "headline_or_title": "8-K filed by BBB",
+                "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+                "published_at_utc": "2026-01-03T09:00:00Z",
+                "collected_at_utc": "2026-01-03T10:00:00Z",
+            }
+        ],
+    }), encoding="utf-8")
+
+    report = build_stock_alpha_news_contract_ingest_preflight(
+        rss_raw_news_path=raw,
+        sec_report_paths=[sec_report],
+        min_symbol_coverage=3,
+    )
+
+    assert report["providers_checked"] == ["company_press_release_rss", "sec_company_filings"]
+    assert report["valid_rows_by_provider"] == {"company_press_release_rss": 1, "sec_company_filings": 1}
+    assert report["invalid_rows_by_provider"] == {}
+    assert report["invalid_timestamp_count"] == 0
+    assert report["future_timestamp_count"] == 0
+    assert report["duplicate_event_key_count"] == 0
+    assert report["safe_for_feature_generation"] is False
+    assert "symbol coverage below contract ingest threshold" in report["unsafe_reasons"]
+
+
+def test_contract_ingest_preflight_counts_missing_future_and_duplicate_rows(tmp_path):
+    raw = tmp_path / "raw.csv"
+    future_year = datetime.now(timezone.utc).year + 1
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for article_id in ("a1", "a2"):
+            writer.writerow({
+                "article_id": article_id, "symbol": "AAA", "published_at_utc": f"{future_year}-01-02T10:00:00Z",
+                "source": "AAA News", "headline": "", "body_or_summary": "body",
+                "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+                "language": "en", "ingested_at": "", "provider": "company_press_release_rss",
+                "provider_article_id": f"rss:{article_id}", "provider_url": "https://aaa.example/a",
+            })
+
+    report = build_stock_alpha_news_contract_ingest_preflight(rss_raw_news_path=raw, min_symbol_coverage=2)
+
+    assert report["invalid_rows_by_provider"] == {"company_press_release_rss": 2}
+    assert report["missing_required_fields_by_provider"]["company_press_release_rss"]["headline_or_title"] == 2
+    assert report["missing_required_fields_by_provider"]["company_press_release_rss"]["collected_at_utc"] == 2
+    assert report["future_timestamp_count"] == 2
+    assert report["duplicate_event_key_count"] == 1
+    assert report["safe_for_feature_generation"] is False
 
 
 def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):

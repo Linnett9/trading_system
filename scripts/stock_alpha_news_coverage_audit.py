@@ -21,6 +21,7 @@ def build_stock_alpha_news_coverage_audit(
     universe_path: str | Path,
     registry_path: str | Path,
     raw_news_path: str | Path,
+    sec_report_paths: Sequence[str | Path] | None = None,
     reports_root: str | Path | None = None,
 ) -> dict[str, Any]:
     universe_symbols, feeds, registry = load_validated_rss_registry(universe_path, registry_path)
@@ -35,6 +36,10 @@ def build_stock_alpha_news_coverage_audit(
     rows_by_symbol = _sorted_counter(Counter(row_symbols))
     rows_by_provider = _sorted_counter(Counter(str(row.get("provider", "")).strip() or "unknown" for row in rows))
     rows_by_source = _sorted_counter(Counter(str(row.get("source", "")).strip() or "unknown" for row in rows))
+    sec_summary = _sec_report_summary(sec_report_paths or [])
+    sec_symbols = set(sec_summary["rows_by_symbol"])
+    rss_symbols = row_symbol_set & universe_symbol_set
+    combined_symbols = (rss_symbols | sec_symbols) & universe_symbol_set
 
     timestamps = [_parse_timestamp(str(row.get("published_at_utc", "")).strip()) for row in rows]
     valid_timestamps = [value for value in timestamps if value is not None]
@@ -76,8 +81,32 @@ def build_stock_alpha_news_coverage_audit(
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "universe_symbol_count": len(universe_symbols),
         "raw_row_count": len(rows),
+        "rss_raw_row_count": len(rows),
         "raw_symbol_coverage_count": len(row_symbol_set & universe_symbol_set),
+        "rss_symbol_coverage_count": len(rss_symbols),
         "raw_symbol_coverage_rate": (len(row_symbol_set & universe_symbol_set) / len(universe_symbols)) if universe_symbols else 0.0,
+        "sec_dry_run_row_count": sec_summary["row_count"],
+        "sec_symbol_coverage_count": len(sec_symbols & universe_symbol_set),
+        "combined_official_symbol_coverage_count": len(combined_symbols),
+        "combined_official_symbol_coverage_rate": (len(combined_symbols) / len(universe_symbols)) if universe_symbols else 0.0,
+        "symbols_covered_by_rss_only": sorted(rss_symbols - sec_symbols),
+        "symbols_covered_by_sec_only": sorted((sec_symbols - rss_symbols) & universe_symbol_set),
+        "symbols_covered_by_both": sorted(rss_symbols & sec_symbols),
+        "symbols_with_no_official_rows": sorted(universe_symbol_set - combined_symbols),
+        "rows_by_symbol_by_provider": {
+            "company_press_release_rss": rows_by_symbol,
+            "sec_company_filings": sec_summary["rows_by_symbol"],
+        },
+        "rows_by_month_by_provider": {
+            "company_press_release_rss": rows_by_month,
+            "sec_company_filings": sec_summary["rows_by_month"],
+        },
+        "forms_by_symbol": sec_summary["forms_by_symbol"],
+        "forms_by_type": sec_summary["forms_by_type"],
+        "official_provider_mix": {
+            "company_press_release_rss": len(rss_symbols),
+            "sec_company_filings": len(sec_symbols & universe_symbol_set),
+        },
         "verified_rss_feed_count": int(registry.get("classification_counts", {}).get("verified_rss_feed", 0)),
         "enabled_feed_symbol_count": len(enabled_feed_symbols),
         "verified_feed_symbols_without_rows": verified_feed_symbols_without_rows,
@@ -103,6 +132,7 @@ def build_stock_alpha_news_coverage_audit(
         "future_timestamp_count": future_timestamp_count,
         "invalid_timestamp_count": invalid_timestamp_count,
         "provider_error_summary_from_reports_if_available": _provider_error_summary(reports_root),
+        "sec_reports_included": [str(path) for path in sec_report_paths or []],
         "known_error_feed_symbols": list(registry.get("known_error_feed_symbols", []) or []),
         "disabled_pending_review_count": int(registry.get("classification_counts", {}).get("disabled_pending_review", 0)),
         "safe_for_feature_generation": not unsafe_reasons,
@@ -117,12 +147,14 @@ def write_stock_alpha_news_coverage_audit(
     registry_path: str | Path,
     raw_news_path: str | Path,
     output_path: str | Path,
+    sec_report_paths: Sequence[str | Path] | None = None,
     reports_root: str | Path | None = None,
 ) -> Path:
     payload = build_stock_alpha_news_coverage_audit(
         universe_path=universe_path,
         registry_path=registry_path,
         raw_news_path=raw_news_path,
+        sec_report_paths=sec_report_paths,
         reports_root=reports_root,
     )
     output = Path(output_path)
@@ -213,11 +245,51 @@ def _provider_error_summary(reports_root: str | Path | None) -> dict[str, Any]:
     }
 
 
+def _sec_report_summary(paths: Sequence[str | Path]) -> dict[str, Any]:
+    rows_by_symbol: Counter[str] = Counter()
+    forms_by_type: Counter[str] = Counter()
+    forms_by_symbol: dict[str, dict[str, int]] = {}
+    rows_by_month: Counter[str] = Counter()
+    row_count = 0
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("provider_row_counts", {}).get("sec_company_filings", 0) == 0:
+            continue
+        symbol_counts = {
+            str(symbol).strip().upper(): int(count)
+            for symbol, count in (payload.get("rows_by_symbol", {}) or {}).items()
+            if str(symbol).strip()
+        }
+        for symbol, count in symbol_counts.items():
+            rows_by_symbol[symbol] += count
+            row_count += count
+        for form_type, count in (payload.get("rows_by_form_type", {}) or {}).items():
+            forms_by_type[str(form_type)] += int(count)
+        # The dry-run report does not persist row-level SEC data; retain an
+        # explicit empty per-symbol form map rather than guessing allocation.
+        for symbol in symbol_counts:
+            forms_by_symbol.setdefault(symbol, {})
+    return {
+        "row_count": row_count,
+        "rows_by_symbol": _sorted_counter(rows_by_symbol),
+        "rows_by_month": _sorted_counter(rows_by_month),
+        "forms_by_symbol": {symbol: forms_by_symbol[symbol] for symbol in sorted(forms_by_symbol)},
+        "forms_by_type": _sorted_counter(forms_by_type),
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audit stock-alpha raw news coverage without generating features.")
     parser.add_argument("--universe", required=True)
     parser.add_argument("--registry", required=True)
     parser.add_argument("--raw-news", required=True)
+    parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--output", required=True)
     parser.add_argument("--reports-root", default="reports")
     args = parser.parse_args(argv)
@@ -225,6 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         universe_path=args.universe,
         registry_path=args.registry,
         raw_news_path=args.raw_news,
+        sec_report_paths=args.sec_report,
         output_path=args.output,
         reports_root=args.reports_root,
     )
