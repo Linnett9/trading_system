@@ -170,8 +170,25 @@ def _coverage_metrics(
     news_rows: list[Mapping[str, Any]],
     stock_rows: list[Mapping[str, Any]],
 ) -> dict[str, Any]:
+    published_values = [
+        row.get("published_at_utc")
+        for row in news_rows
+        if row.get("published_at_utc") is not None
+    ]
+    ingested_values = [
+        row.get("ingested_at")
+        for row in news_rows
+        if row.get("ingested_at") is not None
+    ]
+    rebalance_values = [
+        row.get("rebalance_date")
+        for row in stock_rows
+        if row.get("rebalance_date") is not None
+    ]
     news_symbol_count = len({row.get("symbol") for row in news_rows if row.get("symbol")})
     stock_symbols = {row.get("symbol") for row in stock_rows if row.get("symbol")}
+    news_symbols = {row.get("symbol") for row in news_rows if row.get("symbol")}
+    pre_pit_symbol_overlap = stock_symbols & news_symbols
     rebalance_dates = {
         row["rebalance_date"].date().isoformat()
         for row in stock_rows
@@ -186,6 +203,10 @@ def _coverage_metrics(
     event_type_covered_stock_rows: dict[str, int] = {}
     freshness_bucket_counts = {bucket: 0 for bucket in FRESHNESS_BUCKETS}
     future_article_candidate_count = 0
+    same_symbol_stock_article_pair_count = 0
+    published_after_rebalance_count = 0
+    ingested_after_rebalance_count = 0
+    published_and_ingested_after_rebalance_count = 0
 
     for stock_row in stock_rows:
         symbol = str(stock_row.get("symbol", ""))
@@ -199,6 +220,7 @@ def _coverage_metrics(
         for article in same_symbol_articles:
             published = article.get("published_at_utc")
             ingested = article.get("ingested_at")
+            same_symbol_stock_article_pair_count += 1
             if published is None or ingested is None:
                 continue
             if published <= rebalance and ingested <= rebalance:
@@ -208,6 +230,14 @@ def _coverage_metrics(
                         freshness_bucket_counts[bucket] += 1
             else:
                 future_article_candidate_count += 1
+                published_after = published > rebalance
+                ingested_after = ingested > rebalance
+                if published_after:
+                    published_after_rebalance_count += 1
+                if ingested_after:
+                    ingested_after_rebalance_count += 1
+                if published_after and ingested_after:
+                    published_and_ingested_after_rebalance_count += 1
         if eligible:
             covered_stock_row_count += 1
             covered_symbols.add(symbol)
@@ -224,7 +254,15 @@ def _coverage_metrics(
         "stock_row_count": stock_row_count,
         "news_symbol_count": news_symbol_count,
         "stock_symbol_count": len(stock_symbols),
+        "pre_pit_symbol_overlap_count": len(pre_pit_symbol_overlap),
+        "pre_pit_symbol_overlap": sorted(pre_pit_symbol_overlap),
         "rebalance_date_count": len(rebalance_dates),
+        "news_published_at_utc_min": _iso_min(published_values),
+        "news_published_at_utc_max": _iso_max(published_values),
+        "news_ingested_at_min": _iso_min(ingested_values),
+        "news_ingested_at_max": _iso_max(ingested_values),
+        "stock_rebalance_date_min": _date_min(rebalance_values),
+        "stock_rebalance_date_max": _date_max(rebalance_values),
         "covered_symbol_count": len(covered_symbols),
         "symbol_coverage": len(covered_symbols) / len(stock_symbols) if stock_symbols else 0.0,
         "covered_rebalance_date_count": len(covered_dates),
@@ -236,8 +274,12 @@ def _coverage_metrics(
         "event_type_counts": dict(sorted(event_type_counts.items())),
         "event_type_covered_stock_rows": dict(sorted(event_type_covered_stock_rows.items())),
         "freshness_bucket_counts": freshness_bucket_counts,
+        "same_symbol_stock_article_pair_count": same_symbol_stock_article_pair_count,
         "future_article_candidate_count": future_article_candidate_count,
         "future_article_excluded_count": future_article_candidate_count,
+        "published_after_rebalance_count": published_after_rebalance_count,
+        "ingested_after_rebalance_count": ingested_after_rebalance_count,
+        "published_and_ingested_after_rebalance_count": published_and_ingested_after_rebalance_count,
         "pit_violation_count": 0,
     }
 
@@ -255,6 +297,20 @@ def _threshold_blockers(
         blockers.append("article count below minimum")
     if metrics["covered_stock_row_count"] < thresholds["min_covered_stock_rows"]:
         blockers.append("covered stock rows below minimum")
+    if (
+        metrics["same_symbol_stock_article_pair_count"]
+        and metrics["covered_stock_row_count"] == 0
+    ):
+        if (
+            metrics["ingested_after_rebalance_count"]
+            == metrics["same_symbol_stock_article_pair_count"]
+        ):
+            blockers.append("all same-symbol articles fail PIT ingested_at alignment")
+        elif (
+            metrics["published_after_rebalance_count"]
+            == metrics["same_symbol_stock_article_pair_count"]
+        ):
+            blockers.append("all same-symbol articles fail PIT published_at alignment")
     if metrics["pit_violation_count"] > thresholds["max_pit_violation_count"]:
         blockers.append("pit violation count above maximum")
     return blockers
@@ -268,6 +324,16 @@ def _warnings(metrics: Mapping[str, Any]) -> list[str]:
         warnings.append(
             "future article candidates correctly excluded by PIT filter: "
             f"{metrics['future_article_excluded_count']}"
+        )
+    if metrics.get("published_after_rebalance_count", 0):
+        warnings.append(
+            "same-symbol article pairs excluded because published_at_utc is after "
+            f"rebalance_date: {metrics['published_after_rebalance_count']}"
+        )
+    if metrics.get("ingested_after_rebalance_count", 0):
+        warnings.append(
+            "same-symbol article pairs excluded because ingested_at is after "
+            f"rebalance_date: {metrics['ingested_after_rebalance_count']}"
         )
     return warnings
 
@@ -290,6 +356,22 @@ def _counts(values: Any) -> dict[str, int]:
     return counts
 
 
+def _iso_min(values: list[datetime]) -> str | None:
+    return min(values).isoformat().replace("+00:00", "Z") if values else None
+
+
+def _iso_max(values: list[datetime]) -> str | None:
+    return max(values).isoformat().replace("+00:00", "Z") if values else None
+
+
+def _date_min(values: list[datetime]) -> str | None:
+    return min(values).date().isoformat() if values else None
+
+
+def _date_max(values: list[datetime]) -> str | None:
+    return max(values).date().isoformat() if values else None
+
+
 def _markdown(payload: Mapping[str, Any]) -> str:
     blocking = payload.get("blocking_issues", []) or ["none"]
     warnings = payload.get("warning_issues", []) or ["none"]
@@ -302,12 +384,19 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             f"- Stock rows: {payload.get('stock_rows_path', '')}",
             f"- News rows: {payload.get('news_row_count', 0)}",
             f"- Stock rows: {payload.get('stock_row_count', 0)}",
+            f"- News published range: {payload.get('news_published_at_utc_min') or 'n/a'} to {payload.get('news_published_at_utc_max') or 'n/a'}",
+            f"- News ingested range: {payload.get('news_ingested_at_min') or 'n/a'} to {payload.get('news_ingested_at_max') or 'n/a'}",
+            f"- Stock rebalance range: {payload.get('stock_rebalance_date_min') or 'n/a'} to {payload.get('stock_rebalance_date_max') or 'n/a'}",
+            f"- Pre-PIT symbol overlap: {payload.get('pre_pit_symbol_overlap_count', 0)}",
             f"- Symbol coverage: {payload.get('symbol_coverage', 0.0)}",
             f"- Date coverage: {payload.get('date_coverage', 0.0)}",
             f"- Stock-row coverage: {payload.get('stock_row_coverage', 0.0)}",
             f"- No-news stock rows: {payload.get('no_news_stock_row_count', 0)}",
+            f"- Same-symbol stock/article pairs: {payload.get('same_symbol_stock_article_pair_count', 0)}",
             f"- Future article candidates: {payload.get('future_article_candidate_count', 0)}",
             f"- Future article exclusions: {payload.get('future_article_excluded_count', 0)}",
+            f"- Published-after-rebalance exclusions: {payload.get('published_after_rebalance_count', 0)}",
+            f"- Ingested-after-rebalance exclusions: {payload.get('ingested_after_rebalance_count', 0)}",
             f"- PIT violations: {payload.get('pit_violation_count', 0)}",
             "",
             "## Blocking Issues",
