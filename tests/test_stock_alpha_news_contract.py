@@ -3017,6 +3017,49 @@ BBB:
     assert "Keep news_analysis_transformer disabled." in audit["recommended_next_steps"]
 
 
+def test_stock_alpha_news_coverage_audit_reports_cap_starved_sec_symbols(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    report_dir = tmp_path / "reports" / "batch" / "dev"
+    report_dir.mkdir(parents=True)
+    universe.write_text("available_count: 2\nsymbols: [AAA, CIEN]\n", encoding="utf-8")
+    registry.write_text(
+        "_classifications:\n"
+        "  verified_rss_feed: []\n"
+        "  known_error_feed: []\n"
+        "  no_verified_official_rss: []\n"
+        "  sec_only_candidate: []\n"
+        "  disabled_pending_review: [AAA, CIEN]\n",
+        encoding="utf-8",
+    )
+    raw.write_text("article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at\n", encoding="utf-8")
+    (report_dir / "stock_alpha_news_free_source_collect.json").write_text(
+        json.dumps({
+            "only_symbols": ["AAA", "CIEN"],
+            "provider_batch_diagnostics": [{
+                "provider": "sec_company_filings",
+                "requested_limit": 250,
+                "response_row_count": 250,
+                "sec_company_filings_attempted_symbols": ["AAA"],
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        reports_root=tmp_path / "reports",
+    )
+
+    assert audit["sec_cap_starved_symbols"] == ["CIEN"]
+    assert audit["unresolved_sec_cap_starved_symbols"] == ["CIEN"]
+    assert audit["sec_cap_starvation_diagnostics"][0]["requested_limit"] == 250
+    assert audit["sec_cap_starvation_diagnostics"][0]["attempted_symbol_count"] == 1
+
+
 def test_stock_alpha_news_coverage_audit_combines_rss_and_sec_reports(tmp_path):
     universe = tmp_path / "universe.yaml"
     registry = tmp_path / "registry.yaml"

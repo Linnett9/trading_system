@@ -43,6 +43,8 @@ def build_stock_alpha_news_coverage_audit(
     sec_symbols = set(sec_summary["rows_by_symbol"])
     rss_symbols = row_symbol_set & universe_symbol_set
     combined_symbols = (rss_symbols | sec_symbols) & universe_symbol_set
+    sec_cap_starvation = _sec_cap_starvation_diagnostics(reports_root)
+    cap_starved_symbols = set(sec_cap_starvation["symbols"])
 
     timestamps = [_parse_timestamp(str(row.get("published_at_utc", "")).strip()) for row in rows]
     valid_timestamps = [value for value in timestamps if value is not None]
@@ -106,6 +108,9 @@ def build_stock_alpha_news_coverage_audit(
         "symbols_covered_by_sec_only": sorted((sec_symbols - rss_symbols) & universe_symbol_set),
         "symbols_covered_by_both": sorted(rss_symbols & sec_symbols),
         "symbols_with_no_official_rows": sorted(universe_symbol_set - combined_symbols),
+        "sec_cap_starvation_diagnostics": sec_cap_starvation["diagnostics"],
+        "sec_cap_starved_symbols": sorted(cap_starved_symbols),
+        "unresolved_sec_cap_starved_symbols": sorted(cap_starved_symbols - combined_symbols),
         "rows_by_symbol_by_provider": {
             "company_press_release_rss": rows_by_symbol,
             "sec_company_filings": sec_summary["rows_by_symbol"],
@@ -376,6 +381,44 @@ def _read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _sec_cap_starvation_diagnostics(reports_root: str | Path | None) -> dict[str, Any]:
+    if reports_root is None or not Path(reports_root).exists():
+        return {"symbols": [], "diagnostics": []}
+    diagnostics: list[dict[str, Any]] = []
+    starved_symbols: set[str] = set()
+    for path in sorted(Path(reports_root).rglob("stock_alpha_news_free_source_collect.json")):
+        payload = _read_json(path)
+        configured = {
+            str(symbol).strip().upper()
+            for symbol in (payload.get("only_symbols", []) or [])
+            if str(symbol).strip()
+        }
+        for batch in payload.get("provider_batch_diagnostics", []) or []:
+            if batch.get("provider") != "sec_company_filings":
+                continue
+            attempted = {
+                str(symbol).strip().upper()
+                for symbol in (batch.get("sec_company_filings_attempted_symbols", []) or [])
+                if str(symbol).strip()
+            }
+            requested_limit = int(batch.get("requested_limit", 0) or 0)
+            response_row_count = int(batch.get("response_row_count", 0) or 0)
+            starved = sorted(configured - attempted)
+            if not starved or requested_limit <= 0 or response_row_count < requested_limit:
+                continue
+            starved_symbols.update(starved)
+            diagnostics.append({
+                "report_path": str(path),
+                "provider": "sec_company_filings",
+                "requested_limit": requested_limit,
+                "response_row_count": response_row_count,
+                "configured_symbol_count": len(configured),
+                "attempted_symbol_count": len(attempted),
+                "cap_starved_symbols": starved,
+            })
+    return {"symbols": sorted(starved_symbols), "diagnostics": diagnostics}
 
 
 def _read_sec_event_rows(paths: Sequence[str | Path]) -> list[dict[str, Any]]:
