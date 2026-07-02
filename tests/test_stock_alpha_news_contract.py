@@ -1895,8 +1895,30 @@ def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):
     paths = write_stock_alpha_news_free_source_collect(config, sources={"gdelt": RateLimited()})
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["providers_rate_limited"] == ["gdelt"]
+    assert payload["provider_row_counts"]["gdelt"] == 0
+    assert payload["providers_returned_zero_rows"] == ["gdelt"]
+    assert "gdelt" not in payload["providers_failed"]
     assert payload["next_action"] == "retry_gdelt_later_or_reduce_request"
     assert "rate_limited_or_retry_later" in payload["provider_policy"]["gdelt"]["statuses"]
+
+
+def test_gdelt_non_rate_limit_failure_reports_zero_rows(tmp_path):
+    class Unavailable:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            raise TimeoutError("bounded request timed out")
+
+    config = _collection_config(tmp_path, dry_run=True)
+    paths = write_stock_alpha_news_free_source_collect(
+        config, sources={"gdelt": Unavailable()}
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["provider_row_counts"]["gdelt"] == 0
+    assert payload["providers_returned_zero_rows"] == ["gdelt"]
+    assert payload["providers_rate_limited"] == []
+    assert payload["providers_failed"]["gdelt"].startswith("TimeoutError:")
 
 
 def test_news_pipeline_inspect_tiny_fixture_is_read_only(tmp_path):

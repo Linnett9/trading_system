@@ -11,7 +11,7 @@ ml:
     end_date: '2024-01-07'
     symbols: [AAPL, MSFT]
     providers:
-      gdelt: {enabled: true}
+      gdelt: {enabled: false}
       alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
       finnhub: {enabled: false, api_key_env: FINNHUB_API_KEY}
       fmp: {enabled: false, api_key_env: FMP_API_KEY}

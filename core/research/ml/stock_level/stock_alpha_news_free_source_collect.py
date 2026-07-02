@@ -107,16 +107,19 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
             skipped.append(name)
             continue
         attempted.append(name)
+        counts[name] = 0
         try:
             rows = adapter.collect(symbols=symbols, start_date=str(settings.get("start_date", "")), end_date=str(settings.get("end_date", "")), limit=limit, timeout=timeout, api_key=api_key)
             normalized = [_canonical_row(row, name) for row in rows[:limit]]
             counts[name] = len(normalized)
             collected.extend(normalized)
         except Exception as exc:  # provider isolation is intentional
+            if name == "gdelt" and getattr(exc, "code", None) == 429:
+                counts[name] = 0
+                rate_limited.append(name)
+                continue
             message = str(exc).replace(api_key, "[REDACTED]") if api_key else str(exc)
             failures[name] = f"{type(exc).__name__}: {message}"
-            if name == "gdelt" and getattr(exc, "code", None) == 429:
-                rate_limited.append(name)
     deduplicated = _deduplicate(collected)
     payload = _payload(settings, output_path, requested, attempted, skipped, failures, counts, len(collected))
     payload["deduplicated_row_count"] = len(deduplicated)
