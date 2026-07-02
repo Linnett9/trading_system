@@ -25,7 +25,7 @@ ml:
       company_press_release_rss:
         enabled: true
         max_rows_per_feed: 10
-        max_enabled_feeds_per_run: 10
+        max_enabled_feeds_per_run: 11
         skip_known_error_feeds: true
       alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
       sec_edgar: {enabled: false}

@@ -23,6 +23,24 @@ _classifications:
   sec_only_candidate: []
   disabled_pending_review: [A, AA, AAON, AAP, ABT, ACGL, ACLS, ACN, ADBE, ADC, ADI, ADM, ADP, ADSK, AEE, AEIS, AEM, AEO, AEP, AES, AFG, AFL, AGCO, AIG, AIT, AIZ, AJG, AKAM, ALB, ALGN, ALK, ALL, ALV, AMAT, AME, AMG, AMGN, AMKR, AMSC, AMT, AN, ANF, AON, AOS, APA, APD, APH, ARCC, ARW, ASML, ATI, ATO, ATR, AU, AVT, AVY, AXON, AXP, AXS, AXTI, AYI, AZN, AZO, B, BA, BAC, BALL, BAX, BB, BBD, BBWI, BBY, BC, BCE, BCS, BDX, BFH, BG, BHP, BIIB, BIO, BKH, BKNG, BLK, BMI, BMO, BMY, BN, BNS, BNY, BP, BPOP, BRK-A, BRKR, BRO, BSX, BTI, BWA, BXP, BYD, C, CACI, CAG, CAH, CAKE, CALM, CAR, CASY, CAT, CB, CBRE, CBRL, CBSH, CCEP, CCI, CCK, CCL, CDE, CDNS, CE, CHKP, CHRW, CI, CIEN, CINF, CL, CLX, CMCSA, CMI, CMS, CNP, COF, COP, COR, CPB, CSCO, CSX, CTAS, CVS, CVX, D, DAL, DD, DGX, DHR, DIS, DLTR, DOV, DRI, DTE, DUK, DVN, EBAY, ECL, ED, EFX, EIX, ELV, EMN, EMR, EOG, EQR, ETN, ETR, EXC, EXPD, F, FAST, FCX, FDX, FE, FHN, FISV, FLEX, FLR, GAP, GD, GE, GEN, GFI, GILD, GIS, GL, GLD, GLW, GNTX, GPC, GRMN, GS, GT, GWW, HAL, HAS, HBAN, HIG, HMY, HON, HPQ, HRB, HSIC, HSY, IBM, IFF, INTC, INTU, IP, ITT, ITW, JBL, JCI, JHG, KBH, KEY, KGC, KLAC, KMB, KR, KSS, LAMR, LEU, LLY, LMT, LNC, LOW, LPX, LRCX, LUMN, LUV, MAR, MAS, MAT, MCD, MCHP, MCK, MCO, MDT, MET, MKC, MMM, MNST, MO, MRK, MRSH, MRVL, MS, MSI, MTB, MTG, MU, NEE, NEM, NI, NKE, NOC, NOVT, NOW, NSC, NTAP, NTRS, NYT, ODFL, OMC, OXY, PANW, PAYX, PCAR, PEG, PEP, PFE, PFG, PGR, PH, PHM, PLD, PNC, PNW, PPG, PPL, PRU, PTEN, QCOM, QQQ, R, RF, RHI, RIG, RIO, ROK, ROST, RTX, RVTY, RYAAY, SANM, SBRA, SBUX, SCHW, SHW, SLB, SLM, SNA, SNPS, SO, SPG, SPGI, SPY, SRE, STT, SWK, SYK, SYY, T, TER, TEVA, TFC, TGT, THC, TJX, TKO, TLT, TMO, TROW, TT, TXN, TXT, UNH, UNM, UNP, UPS, VFC, VIAV, VMC, VNQ, VRSN, VZ, WAT, WEC, WEN, WFC, WHR, WMB, WMT, WWD, WY, XEL, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, YUM, ZBH, ZION]
 _classification_overrides:
+  AFL: verified_rss_feed
+  AJG: verified_rss_feed
+  BA: verified_rss_feed
+  BRO: verified_rss_feed
+  CAT: verified_rss_feed
+  GAP: verified_rss_feed
+  GE: verified_rss_feed
+  GILD: verified_rss_feed
+  GLW: verified_rss_feed
+  HON: verified_rss_feed
+  INTC: verified_rss_feed
+  LMT: verified_rss_feed
+  PFE: verified_rss_feed
+  SBUX: verified_rss_feed
+  SCHW: verified_rss_feed
+  SNPS: verified_rss_feed
+  SRE: verified_rss_feed
+  THC: verified_rss_feed
   AAP: verified_rss_feed
   ACLS: verified_rss_feed
   ADC: verified_rss_feed
@@ -465,6 +483,247 @@ TT:
       last_verified: "2026-07-02"
       verified_source_url: https://investors.tranetechnologies.com/news-releases
   notes: "Official Trane Technologies investor relations RSS endpoint returned XML during batch 05 review."
+_batch_01_11_second_pass_notes:
+  review_date: "2026-07-02"
+  accepted_rule: "Only official company, investor relations, newsroom, press-release, or issuer RSS/XML/Atom endpoints that returned feed-like XML were enabled."
+  rejected_rule: "HTML pages, 403/404/timeouts, DNS/TLS failures, third-party/provider feeds, and ETF/fund symbols without official issuer feeds remained disabled or in their prior classification."
+  recovered_verified_rss: [INTC, CAT, BA, GE, PFE, GLW, SNPS, SCHW, HON, GILD, LMT, SBUX, AJG, SRE, AFL, BRO, THC, GAP]
+  etf_or_fund_no_company_feed: [SPY, QQQ, GLD, TLT, XLK, XLF, XLE, XLV, XLI, XLP, XLY, XLU, XLB, VNQ]
+  no_verified_official_rss_after_second_pass: [TSLA, BRK-B, MU, MRVL, UNH, LLY, WMT, AVGO, ORCL, JPM, XOM, V, AMAT, ASML, NOW, BAC, GS, CVX, TXN, PANW, C, ADBE, BKNG, WFC, ABBV, MRK, ACN, APH, PEP, ADI, T, DIS, MCD, ABT, BSX, AXP, ETN, RTX, COF, F, CMCSA, AMGN, NEE, UNP, COP, CIEN, TJX, CDNS, MCHP, OXY, B, MRSH, CL, NOC, AXON, HBAN, EOG, KMB, MSI, PNC, AON, PLD, AEP, NSC, BDX, AZN, BNY, EMR, TFC, HAL, CTAS, CDE, BP, ODFL, AKAM, PAYX, LUV, HSY, OMC, EXC, PCAR, ROK, ALL, AXTI, KGC, EFX, CAR, CCI, VMC, BRK-A, SPG, LEU, SYY, CASY, AME, PPL, RIO, A, BTI, BIIB, AU, PHM, TEVA, TKO, ED, IP, MTB, VRSN, DOV, CAG, BHP, ATI, DD, CNP, ALGN, MKC, ACGL, BN, WWD, APA, EIX, CPB, CMS, DTE, TROW, ATO, CHKP, ZBH, AMKR, EXPD, RIG]
+AFL:
+  company_name: Aflac Incorporated
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Aflac Press Releases
+      url: https://investors.aflac.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.aflac.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+AJG:
+  company_name: Arthur J. Gallagher & Co.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Arthur J. Gallagher Press Releases
+      url: https://investor.ajg.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.ajg.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+BA:
+  company_name: The Boeing Company
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Boeing Press Releases
+      url: https://investors.boeing.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.boeing.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+BRO:
+  company_name: Brown & Brown, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Brown & Brown News Releases
+      url: https://investor.bbinsurance.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.bbinsurance.com/
+      verification_result: "HTTP 200; application/rss+xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+CAT:
+  company_name: Caterpillar Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Caterpillar Press Releases
+      url: https://investors.caterpillar.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.caterpillar.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+GAP:
+  company_name: The Gap, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Gap Inc. Press Releases
+      url: https://investors.gapinc.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.gapinc.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+GE:
+  company_name: GE Aerospace
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: GE Aerospace News
+      url: https://www.geaerospace.com/news/rss.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.geaerospace.com/news
+      verification_result: "HTTP 200; application/rss+xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+GILD:
+  company_name: Gilead Sciences, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Gilead Press Releases
+      url: https://investors.gilead.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.gilead.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+GLW:
+  company_name: Corning Incorporated
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Corning Press Releases
+      url: https://investor.corning.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.corning.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+HON:
+  company_name: Honeywell International Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Honeywell News Releases
+      url: https://investor.honeywell.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.honeywell.com/
+      verification_result: "HTTP 200; application/rss+xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+INTC:
+  company_name: Intel Corporation
+  status: verified
+  sources:
+    - type: press_release_rss
+      name: Intel Press Releases
+      url: https://www.intc.com/news-events/press-releases/rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.intc.com/news-events/press-releases
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+LMT:
+  company_name: Lockheed Martin Corporation
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Lockheed Martin News Releases
+      url: https://news.lockheedmartin.com/news-releases?pagetemplate=rss
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://news.lockheedmartin.com/news-releases
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+PFE:
+  company_name: Pfizer Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Pfizer Press Releases
+      url: https://investors.pfizer.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.pfizer.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+SBUX:
+  company_name: Starbucks Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Starbucks Press Releases
+      url: https://investor.starbucks.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.starbucks.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+SCHW:
+  company_name: The Charles Schwab Corporation
+  status: verified
+  sources:
+    - type: newsroom_rss
+      name: Charles Schwab Press Releases
+      url: https://pressroom.aboutschwab.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://pressroom.aboutschwab.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+SNPS:
+  company_name: Synopsys, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Synopsys Press Releases
+      url: https://investor.synopsys.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.synopsys.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+SRE:
+  company_name: Sempra
+  status: verified
+  sources:
+    - type: company_newsroom_rss
+      name: Sempra RSS
+      url: https://www.sempra.com/rss.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.sempra.com/
+      verification_result: "HTTP 200; application/rss+xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
+THC:
+  company_name: Tenet Healthcare Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Tenet Healthcare Press Releases
+      url: https://investor.tenethealth.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.tenethealth.com/
+      verification_result: "HTTP 200; text/xml; RSS XML root"
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 01-11 second-pass review."
 _batch_12_16_recovery_notes:
   official_html_press_release_candidate: [BCS, BG, AEE, GPC, NTRS, ALK, ANF, AEIS, AES, BNS, CACI, BWA, WY, CCK, BXP, ARCC, CE, BMO, HMY, ALV, BB, BCE, GL, RYAAY, SLM, GT]
   sec_only_candidate: []
