@@ -236,13 +236,15 @@ def _sec_event_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
 def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
     if selection == "all":
         return list(paths)
-    if selection not in {"prefer_12mo", "prefer_36mo", "merge_36mo_pilots"}:
-        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', 'prefer_36mo', or 'merge_36mo_pilots'")
+    if selection not in {"prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts"}:
+        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', 'prefer_36mo', 'merge_36mo_pilots', or 'merge_36mo_parts'")
     by_batch, other_paths = _group_sec_event_row_paths(paths)
     if selection == "prefer_36mo":
         return _prefer_36mo_sec_event_row_paths(by_batch, other_paths)
     if selection == "merge_36mo_pilots":
-        return _merge_36mo_pilot_sec_event_row_paths(by_batch, other_paths)
+        return _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_pilot")
+    if selection == "merge_36mo_parts":
+        return _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_part_")
     return _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
 
 
@@ -269,7 +271,10 @@ def _prefer_12mo_sec_event_row_paths(
         batch_paths = by_batch[batch]
         preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
         selected.extend(preferred or batch_paths)
-    selected.extend(other_paths)
+    selected.extend(
+        path for path in other_paths
+        if not _is_data_news_path(path) and not _is_36mo_path(path)
+    )
     return selected
 
 
@@ -287,9 +292,11 @@ def _prefer_36mo_sec_event_row_paths(
     return selected
 
 
-def _merge_36mo_pilot_sec_event_row_paths(
+def _merge_36mo_sec_event_row_paths(
     by_batch: Mapping[str, list[str | Path]],
     other_paths: Sequence[str | Path],
+    *,
+    marker: str,
 ) -> list[str | Path]:
     baseline = [
         path for path in _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
@@ -300,8 +307,12 @@ def _merge_36mo_pilot_sec_event_row_paths(
     for batch in sorted(by_batch):
         overlay.extend(
             path for path in by_batch[batch]
-            if "_36mo" in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+            if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
         )
+    overlay.extend(
+        path for path in sorted(other_paths, key=str)
+        if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+    )
     return [*baseline, *overlay]
 
 
@@ -310,13 +321,17 @@ def _is_data_news_path(path: str | Path) -> bool:
     return path_text.startswith("data/news/") or "/data/news/" in path_text
 
 
+def _is_36mo_path(path: str | Path) -> bool:
+    return "_36mo" in str(path)
+
+
 def _sec_artifact_selection_diagnostics(
     *,
     all_paths: Sequence[str | Path],
     selected_paths: Sequence[str | Path],
     selection: str,
 ) -> dict[str, Any]:
-    if selection != "merge_36mo_pilots":
+    if selection not in {"merge_36mo_pilots", "merge_36mo_parts"}:
         return {
             "sec_artifact_selection_mode": selection,
             "selected_sec_artifacts": [str(path) for path in selected_paths],
@@ -387,7 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
-    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo", "merge_36mo_pilots"], default="all")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts"], default="all")
     parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
