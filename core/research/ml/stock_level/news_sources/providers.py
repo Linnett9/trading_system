@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
-from urllib.parse import urlencode
+from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 
 HttpGet = Callable[[str, int], Any]
@@ -17,6 +19,7 @@ PROVIDER_METADATA = {
     "gdelt": {"statuses": ["experimental_no_key", "rate_limited_or_retry_later"], "api_key_required": False},
     "sec_edgar": {"statuses": ["official_filings_source", "experimental_no_key"], "api_key_required": False},
     "massive_stock_news": {"statuses": ["dry_run_candidate", "needs_key"], "api_key_required": True},
+    "company_press_release_rss": {"statuses": ["official_company_source_candidate", "dry_run_candidate"], "api_key_required": False},
     "fmp": {"statuses": ["disabled_payment_required", "needs_key"], "api_key_required": True},
     "newsapi": {"statuses": ["disabled_upgrade_required", "needs_key"], "api_key_required": True},
 }
@@ -39,6 +42,12 @@ def standard_library_json_get(url: str, timeout: int) -> Any:
     request = Request(url, headers={"User-Agent": "stock-alpha-research/1.0 research-contact@example.invalid"})
     with urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded configured research endpoints
         return json.loads(response.read().decode("utf-8"))
+
+
+def standard_library_text_get(url: str, timeout: int) -> str:
+    request = Request(url, headers={"User-Agent": "stock-alpha-research/1.0 research-contact@example.invalid"})
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded configured research endpoints
+        return response.read().decode("utf-8", errors="replace")
 
 
 class NewsSource:
@@ -222,6 +231,130 @@ class MassiveStockNewsSource(NewsSource):
         )
 
 
+class CompanyPressReleaseRssSource(NewsSource):
+    name, api_key_required = "company_press_release_rss", False
+
+    def __init__(
+        self,
+        http_get: HttpGet = standard_library_text_get,
+        *,
+        feeds: Mapping[str, Any] | None = None,
+        max_rows_per_feed: int = 20,
+    ) -> None:
+        super().__init__(http_get)
+        self._feeds = _normalise_rss_feed_registry(feeds or {})
+        self._max_rows_per_feed = max(1, int(max_rows_per_feed or 20))
+        self.last_batch_diagnostic: dict[str, Any] = {}
+
+    def with_provider_config(self, provider_config: Mapping[str, Any]) -> "CompanyPressReleaseRssSource":
+        return CompanyPressReleaseRssSource(
+            self._http_get,
+            feeds=provider_config.get("feeds", {}),
+            max_rows_per_feed=int(provider_config.get("max_rows_per_feed", self._max_rows_per_feed)),
+        )
+
+    def collect(
+        self,
+        *,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        limit: int,
+        timeout: int,
+        api_key: str = "",
+    ) -> list[dict[str, Any]]:
+        del api_key
+        rows: list[dict[str, Any]] = []
+        feed_diagnostics: list[dict[str, Any]] = []
+        for symbol_value in symbols:
+            symbol = symbol_value.upper()
+            symbol_feeds = self._feeds.get(symbol, [])
+            if not symbol_feeds:
+                feed_diagnostics.append(
+                    _rss_feed_diagnostic(
+                        provider=self.name,
+                        symbol=symbol,
+                        zero_row_reason="feed_not_configured",
+                    )
+                )
+                continue
+            for feed in symbol_feeds:
+                if len(rows) >= limit:
+                    break
+                diagnostic = _rss_feed_diagnostic(
+                    provider=self.name,
+                    symbol=symbol,
+                    feed_name=str(feed.get("name", "")),
+                    feed_url=str(feed.get("url", "")),
+                )
+                enabled = bool(feed.get("enabled", True))
+                feed_url = str(feed.get("url", "")).strip()
+                if not enabled:
+                    diagnostic["zero_row_reason"] = "feed_disabled"
+                    feed_diagnostics.append(diagnostic)
+                    continue
+                if not feed_url:
+                    diagnostic["zero_row_reason"] = "feed_url_missing"
+                    feed_diagnostics.append(diagnostic)
+                    continue
+                try:
+                    _validate_rss_feed_url(feed_url)
+                    items = _rss_items(self._http_get(feed_url, timeout))
+                    diagnostic["response_row_count"] = len(items)
+                    selected = [
+                        item for item in items
+                        if _rss_item_in_date_window(item, start_date=start_date, end_date=end_date)
+                    ]
+                    per_feed_limit = min(
+                        self._max_rows_per_feed,
+                        max(0, limit - len(rows)),
+                    )
+                    normalized = [
+                        self._rss_row(symbol=symbol, feed=feed, item=item)
+                        for item in selected[:per_feed_limit]
+                    ]
+                    rows.extend(normalized)
+                    diagnostic["normalized_row_count"] = len(normalized)
+                    if not items:
+                        diagnostic["zero_row_reason"] = "empty_feed"
+                    elif not normalized:
+                        diagnostic["zero_row_reason"] = "no_items_in_date_range"
+                except Exception as exc:  # feed-level isolation is intentional
+                    message = str(exc)
+                    rate_limited = _looks_rate_limited(message)
+                    diagnostic["zero_row_reason"] = "rate_limited" if rate_limited else "provider_error"
+                    diagnostic["error_type"] = type(exc).__name__
+                    diagnostic["error_message"] = message.replace(feed_url, _redact_url(feed_url))
+                    diagnostic["rate_limited"] = rate_limited
+                feed_diagnostics.append(diagnostic)
+            if len(rows) >= limit:
+                break
+        self.last_batch_diagnostic = {"feed_diagnostics": feed_diagnostics}
+        return rows[:limit]
+
+    def _rss_row(self, *, symbol: str, feed: Mapping[str, Any], item: Mapping[str, Any]) -> dict[str, Any]:
+        title = str(item.get("title", "")).strip()
+        url = str(item.get("link", "")).strip()
+        published = str(item.get("published", "")).strip()
+        summary = str(item.get("summary", "")).strip()
+        digest = hashlib.sha256(f"{url}|{title}|{published}".encode()).hexdigest()[:24]
+        source = str(feed.get("name", "")).strip() or _domain(url) or _domain(str(feed.get("url", ""))) or self.name
+        return self._normalized(
+            symbol=symbol,
+            provider_id=f"rss:{symbol}:{digest}",
+            url=url,
+            published=published,
+            source=source,
+            headline=title,
+            body=summary,
+            sentiment="",
+            relevance="",
+            novelty="",
+            event_type=str(feed.get("event_type", "") or "press_release"),
+            language=str(item.get("language", "") or feed.get("language", "")),
+        )
+
+
 class FinnhubNewsSource(NewsSource):
     name = "finnhub"
     def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
@@ -296,7 +429,8 @@ class SecEdgarNewsSource(NewsSource):
 
 
 def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mapping[str, NewsSource]:
-    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), MassiveStockNewsSource(http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
+    rss_http_get = standard_library_text_get if http_get is standard_library_json_get else http_get
+    return {source.name: source for source in (GdeltNewsSource(http_get), AlphaVantageNewsSource(http_get), MassiveStockNewsSource(http_get), CompanyPressReleaseRssSource(rss_http_get), FinnhubNewsSource(http_get), FmpNewsSource(http_get), NewsApiNewsSource(http_get), SecEdgarNewsSource(http_get))}
 
 
 def _sec_event_type(form: str) -> str:
@@ -331,6 +465,147 @@ def _column_value(values: Mapping[str, Any], column: str, index: int) -> Any:
 
 def _blank_or_value(value: Any) -> Any:
     return "" if value is None else value
+
+
+def _normalise_rss_feed_registry(feeds: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for symbol, entries in feeds.items():
+        symbol_key = str(symbol).strip().upper()
+        if not symbol_key:
+            continue
+        if isinstance(entries, Mapping):
+            entries = [entries]
+        normalized[symbol_key] = [
+            dict(entry)
+            for entry in entries or []
+            if isinstance(entry, Mapping)
+        ]
+    return normalized
+
+
+def _rss_feed_diagnostic(
+    *,
+    provider: str,
+    symbol: str,
+    feed_name: str = "",
+    feed_url: str = "",
+    zero_row_reason: str = "",
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "symbol": symbol,
+        "feed_name": feed_name,
+        "feed_url": _redact_url(feed_url),
+        "response_row_count": 0,
+        "normalized_row_count": 0,
+        "zero_row_reason": zero_row_reason,
+        "error_type": "",
+        "error_message": "",
+        "rate_limited": False,
+    }
+
+
+def _validate_rss_feed_url(feed_url: str) -> None:
+    parsed = urlparse(feed_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("invalid RSS feed URL")
+
+
+def _rss_items(payload: Any) -> list[dict[str, str]]:
+    text = _rss_payload_text(payload).strip()
+    if not text:
+        return []
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError as exc:
+        raise ValueError("invalid RSS/XML feed") from exc
+    feed_language = _first_descendant_text(root, "language")
+    entries = _descendants(root, "item")
+    if not entries:
+        entries = _descendants(root, "entry")
+    return [
+        {
+            "title": _direct_child_text(entry, "title"),
+            "link": _entry_link(entry),
+            "published": (
+                _direct_child_text(entry, "pubDate")
+                or _direct_child_text(entry, "published")
+                or _direct_child_text(entry, "updated")
+                or _direct_child_text(entry, "date")
+            ),
+            "summary": (
+                _direct_child_text(entry, "description")
+                or _direct_child_text(entry, "summary")
+                or _direct_child_text(entry, "content")
+            ),
+            "language": _direct_child_text(entry, "language") or feed_language,
+        }
+        for entry in entries
+    ]
+
+
+def _rss_payload_text(payload: Any) -> str:
+    if isinstance(payload, bytes):
+        return payload.decode("utf-8", errors="replace")
+    return str(payload or "")
+
+
+def _rss_item_in_date_window(item: Mapping[str, Any], *, start_date: str, end_date: str) -> bool:
+    published = _utc(item.get("published", ""))
+    if not published:
+        return True
+    published_date = published[:10]
+    return (
+        (not start_date or published_date >= start_date)
+        and (not end_date or published_date <= end_date)
+    )
+
+
+def _descendants(root: ElementTree.Element, local_name: str) -> list[ElementTree.Element]:
+    return [
+        element for element in root.iter()
+        if _local_name(element.tag) == local_name.lower()
+    ]
+
+
+def _direct_child_text(root: ElementTree.Element, local_name: str) -> str:
+    for child in list(root):
+        if _local_name(child.tag) == local_name.lower():
+            return "".join(child.itertext()).strip()
+    return ""
+
+
+def _first_descendant_text(root: ElementTree.Element, local_name: str) -> str:
+    for element in _descendants(root, local_name):
+        text = "".join(element.itertext()).strip()
+        if text:
+            return text
+    return ""
+
+
+def _entry_link(root: ElementTree.Element) -> str:
+    for child in list(root):
+        if _local_name(child.tag) == "link":
+            href = str(child.attrib.get("href", "")).strip()
+            if href:
+                return href
+            return "".join(child.itertext()).strip()
+    return ""
+
+
+def _local_name(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1].lower()
+
+
+def _domain(url: str) -> str:
+    return urlparse(str(url or "")).netloc
+
+
+def _redact_url(url: str) -> str:
+    parsed = urlparse(str(url or ""))
+    if not parsed.scheme or not parsed.netloc:
+        return str(url or "")
+    return parsed._replace(query="", fragment="").geturl()
 
 
 def _looks_rate_limited(message: str) -> bool:
@@ -452,6 +727,11 @@ def _utc(value: Any) -> str:
             compact = text.replace("T", "").replace("Z", "").replace("-", "").replace(":", "")
             if len(compact) >= 14 and compact[:14].isdigit():
                 parsed = datetime.strptime(compact[:14], "%Y%m%d%H%M%S")
+        if parsed is None and text:
+            try:
+                parsed = parsedate_to_datetime(text)
+            except (TypeError, ValueError, IndexError, OverflowError):
+                parsed = None
         if parsed is None:
             return ""
     return parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")

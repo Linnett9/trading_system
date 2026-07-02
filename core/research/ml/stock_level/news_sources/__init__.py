@@ -1,5 +1,6 @@
 from core.research.ml.stock_level.news_sources.providers import (
     AlphaVantageNewsSource,
+    CompanyPressReleaseRssSource,
     FinnhubNewsSource,
     FmpNewsSource,
     GdeltNewsSource,
@@ -11,7 +12,7 @@ from core.research.ml.stock_level.news_sources.providers import (
 )
 
 __all__ = [
-    "AlphaVantageNewsSource", "FinnhubNewsSource", "FmpNewsSource",
+    "AlphaVantageNewsSource", "CompanyPressReleaseRssSource", "FinnhubNewsSource", "FmpNewsSource",
     "GdeltNewsSource", "MassiveStockNewsSource", "NewsApiNewsSource", "SecEdgarNewsSource",
     "PROVIDER_METADATA", "default_news_sources",
 ]
