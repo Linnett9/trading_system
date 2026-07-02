@@ -249,6 +249,13 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         - {""}
     )
     payload.update(_row_diagnostics(deduplicated, requested_symbol_count=len(set(symbols))))
+    form_types = [
+        str(row.get("form_type", "")).strip()
+        for row in deduplicated
+        if str(row.get("form_type", "")).strip()
+    ]
+    if form_types:
+        payload["rows_by_form_type"] = dict(sorted(Counter(form_types).items()))
     universe_symbol_count = int(registry_validation.get("universe_symbol_count", len(set(symbols))))
     payload["total_universe_symbol_count"] = universe_symbol_count
     payload["total_universe_coverage"] = (
@@ -282,6 +289,9 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
 def _canonical_row(row: Mapping[str, Any], provider: str) -> dict[str, Any]:
     normalized = {column: row.get(column, "") for column in REQUIRED_NEWS_CONTRACT_COLUMNS}
     normalized.update({column: row.get(column, "") for column in PROVENANCE_COLUMNS})
+    for key, value in row.items():
+        if key not in normalized:
+            normalized[str(key)] = value
     normalized["provider"] = str(normalized.get("provider") or provider)
     normalized["source"] = str(normalized.get("source") or provider)
     return normalized

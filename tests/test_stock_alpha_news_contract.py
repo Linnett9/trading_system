@@ -40,7 +40,7 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, CompanyPressReleaseRssSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
+from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, CompanyPressReleaseRssSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecCompanyFilingsSource, SecEdgarNewsSource, sec_submissions_url
 from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
@@ -75,6 +75,7 @@ from core.research.ml.stock_level.stock_alpha_news_source_setup_check import (
     write_stock_alpha_news_source_setup_check,
 )
 from scripts.stock_alpha_news_collect_summary import build_summary
+from scripts.stock_alpha_news_coverage_audit import build_stock_alpha_news_coverage_audit
 from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
 
@@ -2849,6 +2850,119 @@ def test_sec_edgar_repeated_forms_have_distinct_metadata_headlines():
     assert all("AAPL SEC 4 filing filed 2026-02-" in row["headline"] for row in rows)
     assert all(" accession 0000320193-26-" in row["headline"] for row in rows)
     assert all(row["sentiment_score"] == "" for row in rows)
+
+
+def test_sec_company_filings_uses_official_submissions_and_distinct_provider():
+    payload = {"filings": {"recent": {
+        "accessionNumber": ["0000320193-26-000001", "0000320193-26-000002", "0000320193-26-000003"],
+        "filingDate": ["2026-01-02", "2026-01-03", "2026-01-04"],
+        "acceptanceDateTime": ["2026-01-02T12:30:00Z", "", "2026-01-04T14:30:00Z"],
+        "reportDate": ["2026-01-01", "2026-01-02", "2026-01-03"],
+        "form": ["8-K", "10-Q", "4"],
+        "primaryDocument": ["event.htm", "quarter.htm", "owner.xml"],
+    }}}
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        return payload
+
+    source = SecCompanyFilingsSource(fake_get, cik_by_symbol={"AAPL": "320193"}, forms=["8-K", "10-Q"])
+    rows = source.collect(symbols=["AAPL"], start_date="2026-01-01", end_date="2026-01-31", limit=5, timeout=2)
+
+    assert requested_urls == ["https://data.sec.gov/submissions/CIK0000320193.json"]
+    assert sec_submissions_url("320193") == "https://data.sec.gov/submissions/CIK0000320193.json"
+    assert [row["form_type"] for row in rows] == ["8-K", "10-Q"]
+    assert all(row["provider"] == "sec_company_filings" for row in rows)
+    assert all(row["provider"] != "company_press_release_rss" for row in rows)
+    assert all(row["source_type"] == "sec_filing" for row in rows)
+    assert rows[0]["published_at_utc"] == "2026-01-02T12:30:00Z"
+    assert rows[1]["published_at_utc"] == "2026-01-03T00:00:00Z"
+    assert rows[1]["published_at_source"] == "filing_date"
+    assert rows[1]["headline"] == "10-Q filed by AAPL"
+    assert rows[1]["cik"] == "0000320193"
+    assert rows[1]["filing_url"].startswith("https://www.sec.gov/Archives/edgar/data/320193/")
+    assert rows[1]["sentiment_score"] == ""
+    assert "official_filings_source" in PROVIDER_METADATA["sec_company_filings"]["statuses"]
+
+
+def test_sec_company_filings_reports_missing_cik_without_fabricating_mapping():
+    source = SecCompanyFilingsSource(lambda url, timeout: {}, cik_by_symbol={"AAPL": "320193"})
+    rows = source.collect(symbols=["MISSING"], start_date="2026-01-01", end_date="2026-01-31", limit=5, timeout=2)
+    assert rows == []
+    assert source.last_batch_diagnostic["sec_company_filings_missing_cik_symbols"] == ["MISSING"]
+
+
+def test_stock_alpha_news_coverage_audit_flags_gaps_and_duplicates(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    universe.write_text("available_count: 3\nsymbols: [AAA, BBB, CCC]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: [AAA, BBB]
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [CCC]
+AAA:
+  sources:
+    - type: investor_relations_rss
+      name: AAA News
+      url: https://ir.aaa.example/rss.xml
+      official: true
+      enabled: true
+      verified_source_url: https://ir.aaa.example/news
+BBB:
+  sources:
+    - type: investor_relations_rss
+      name: BBB News
+      url: https://ir.bbb.example/rss.xml
+      official: true
+      enabled: true
+      verified_source_url: https://ir.bbb.example/news
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow({
+            "article_id": "a1", "symbol": "AAA", "published_at_utc": "2026-01-02T10:00:00Z",
+            "source": "AAA News", "headline": "Same headline", "body_or_summary": "",
+            "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+            "language": "", "ingested_at": "2026-01-02T10:01:00Z", "provider": "company_press_release_rss",
+            "provider_article_id": "rss:a1", "provider_url": "https://aaa.example/a",
+        })
+        writer.writerow({
+            "article_id": "a2", "symbol": "AAA", "published_at_utc": "2026-01-03T10:00:00Z",
+            "source": "AAA News", "headline": "Same headline", "body_or_summary": "",
+            "sentiment_score": "", "relevance_score": "", "novelty_score": "", "event_type": "press_release",
+            "language": "", "ingested_at": "2026-01-03T10:01:00Z", "provider": "company_press_release_rss",
+            "provider_article_id": "rss:a2", "provider_url": "https://aaa.example/a",
+        })
+
+    audit = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        reports_root=tmp_path / "missing_reports",
+    )
+
+    assert audit["raw_row_count"] == 2
+    assert audit["raw_symbol_coverage_count"] == 1
+    assert audit["verified_feed_symbols_without_rows"] == ["BBB"]
+    assert audit["rows_by_symbol"] == {"AAA": 2}
+    assert audit["symbols_with_2_rows"] == ["AAA"]
+    assert audit["duplicate_provider_url_count"] == 1
+    assert audit["duplicate_headline_count"] == 1
+    assert audit["missing_required_fields"]["body_or_summary"] == 2
+    assert audit["safe_for_feature_generation"] is False
+    assert "coverage below 80% of canonical universe" in audit["unsafe_reasons"]
+    assert "RSS-only source concentration" in audit["unsafe_reasons"]
+    assert "Keep news_analysis_transformer disabled." in audit["recommended_next_steps"]
 
 
 def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):
