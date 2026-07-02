@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from config.config_loader import load_config
+from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
 
 REAL_DIAGNOSTIC_STOCK_ROWS_PATH = (
@@ -392,8 +393,8 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert len(symbols) == len(set(symbols)) == 379
     assert report["registry_complete"] is True
     assert sum(report["classification_counts"].values()) == 379
-    assert report["classification_counts"]["verified_rss_feed"] == 29
-    assert report["classification_counts"]["disabled_pending_review"] == 342
+    assert report["classification_counts"]["verified_rss_feed"] == 111
+    assert report["classification_counts"]["disabled_pending_review"] == 260
     assert report["classification_counts"]["known_error_feed"] == 6
     assert report["classification_counts"]["no_verified_official_rss"] == 2
     assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
@@ -401,6 +402,10 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert {"CSCO", "IBM", "LRCX", "QCOM"} <= set(report["verified_rss_feed_symbols"])
     assert {"INTU", "KLAC", "NKE", "TMO", "VZ"} <= set(report["verified_rss_feed_symbols"])
     assert {"DHR", "FCX", "NEM", "SPGI", "TER"} <= set(report["verified_rss_feed_symbols"])
+    assert {"PGR", "MDT", "BLK", "SLB", "BMY", "LOW", "TGT", "CCL", "AZO"} <= set(report["verified_rss_feed_symbols"])
+    assert {"UPS", "MCK", "SYK", "SHW", "ELV", "CVS", "FISV", "ADP", "DAL", "TT"} <= set(report["verified_rss_feed_symbols"])
+    assert {"MO", "PH", "FDX", "CSX", "AMT", "JCI", "MMM", "CB", "SO"} <= set(report["verified_rss_feed_symbols"])
+    assert {"COR", "WMB", "KR", "DVN", "DUK", "RF", "GD", "MNST"} <= set(report["verified_rss_feed_symbols"])
     assert set(feeds) == set(report["verified_rss_feed_symbols"] + report["known_error_feed_symbols"])
     for symbol, symbol_feeds in feeds.items():
         for feed in symbol_feeds:
@@ -504,6 +509,135 @@ def test_company_press_release_rss_batch_04_config_is_bounded_and_dry_run_only()
     assert collect["providers"]["company_press_release_rss"]["skip_known_error_feeds"] is True
     assert ml["stock_alpha_news_enable_transformer"] is False
     assert ml["trading_impact"] == "none"
+
+
+def test_company_press_release_rss_batch_05_config_is_bounded_and_dry_run_only():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_05_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    expected = [
+        "TJX", "PGR", "MDT", "BLK", "SLB", "BMY", "LOW", "TGT", "CDNS", "MCHP",
+        "CCL", "AZO", "UPS", "MCK", "XLB", "SYK", "SHW", "ELV", "CVS", "FISV",
+        "ADP", "OXY", "DAL", "TT", "B",
+    ]
+
+    assert collect["dry_run"] is True
+    assert collect["output_written"] is False
+    assert collect["only_symbols"] == expected
+    assert collect["max_symbols_per_run"] == 25
+    assert collect["providers"]["company_press_release_rss"]["max_enabled_feeds_per_run"] == 19
+    assert collect["providers"]["company_press_release_rss"]["skip_known_error_feeds"] is True
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["trading_impact"] == "none"
+
+
+def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe():
+    configs = [
+        (
+            "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_02_write_raw.yaml",
+            [
+                "BRK-B", "V", "AMAT", "XLF", "COST", "QCOM", "LRCX", "ASML", "XLE",
+                "NOW", "BAC", "XLV", "GS", "CSCO", "MA", "XLI", "JNJ", "CVX", "CAT",
+                "BA", "IBM", "TXN", "GE", "PANW", "C",
+            ],
+        ),
+        (
+            "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_03_write_raw.yaml",
+            [
+                "HD", "ADBE", "INTU", "KLAC", "PG", "BKNG", "WFC", "ABBV", "XLP",
+                "PFE", "MRK", "XLY", "KO", "ACN", "APH", "PEP", "GLW", "ADI", "TMO",
+                "VZ", "T", "NKE", "DIS", "SNPS", "MCD",
+            ],
+        ),
+        (
+            "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_04_write_raw.yaml",
+            [
+                "MS", "XLU", "ABT", "BSX", "AXP", "ETN", "NEM", "SCHW", "RTX", "COF",
+                "HON", "FCX", "F", "CMCSA", "GILD", "SPGI", "AMGN", "NEE", "TER", "UNP",
+                "DHR", "SBUX", "COP", "LMT", "CIEN",
+            ],
+        ),
+        (
+            "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_05_write_raw.yaml",
+            [
+                "TJX", "PGR", "MDT", "BLK", "SLB", "BMY", "LOW", "TGT", "CDNS", "MCHP",
+                "CCL", "AZO", "UPS", "MCK", "XLB", "SYK", "SHW", "ELV", "CVS", "FISV",
+                "ADP", "OXY", "DAL", "TT", "B",
+            ],
+        ),
+    ]
+
+    for config_path, expected_symbols in configs:
+        config = load_config(config_path, overlay_project_config=True)
+        ml = config["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        rss = collect["providers"]["company_press_release_rss"]
+
+        assert collect["dry_run"] is False
+        assert collect["output_written"] is False
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is True
+        assert collect["backup_existing"] is True
+        assert ml["stock_alpha_news_collect_output_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+        assert collect["only_symbols"] == expected_symbols
+        assert collect["max_symbols_per_run"] == 25
+        assert collect["load_feeds_from_registry"] is True
+        assert collect["source_registry_path"] == "config/news_source_registry.stock_alpha_rss.yaml"
+        assert rss["enabled"] is True
+        assert rss["max_enabled_feeds_per_run"] == (19 if "batch_05" in config_path else 10)
+        assert rss["skip_known_error_feeds"] is True
+        for name, provider in collect["providers"].items():
+            assert provider["enabled"] is (name == "company_press_release_rss")
+        assert "stock_alpha_news_features_path" not in ml
+        assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+        assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+
+def test_company_press_release_rss_batch_06_to_16_configs_are_bounded_and_safe():
+    batches = build_universe_batches("data/reference/universes/us_liquid_500.yaml", 25)
+
+    for batch_index in range(6, 17):
+        expected_symbols = batches[batch_index - 1]
+        for kind, expected_dry_run in (("dry_run", True), ("write_raw", False)):
+            config_path = (
+                "config/"
+                f"config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_{batch_index:02d}_{kind}.yaml"
+            )
+            config = load_config(config_path, overlay_project_config=True)
+            ml = config["ml"]
+            collect = ml["stock_alpha_news_collect"]
+            rss = collect["providers"]["company_press_release_rss"]
+
+            assert collect["dry_run"] is expected_dry_run
+            assert collect["output_written"] is False
+            assert collect["allow_overwrite"] is False
+            assert collect["merge_existing"] is (not expected_dry_run)
+            assert collect["backup_existing"] is (not expected_dry_run)
+            assert collect["only_symbols"] == expected_symbols
+            assert collect["max_symbols_per_run"] == 25
+            assert collect["load_feeds_from_registry"] is True
+            assert collect["source_registry_path"] == "config/news_source_registry.stock_alpha_rss.yaml"
+            assert ml["stock_alpha_news_collect_output_path"] == "data/news/raw/stock_alpha_news_provider_export.csv"
+            assert rss["enabled"] is True
+            assert rss["skip_known_error_feeds"] is True
+            for name, provider in collect["providers"].items():
+                assert provider["enabled"] is (name == "company_press_release_rss")
+            assert "stock_alpha_news_features_path" not in ml
+            assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+            assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+            assert ml["stock_alpha_news_enable_transformer"] is False
+            assert ml["research_only"] is True
+            assert ml["trading_impact"] == "none"
+            assert ml["production_validated"] is False
+            assert ml["promotion_thresholds_changed"] is False
 
 
 def test_company_press_release_rss_25_symbol_errors_only_config_targets_known_error_feeds():
