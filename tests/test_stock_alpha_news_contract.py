@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -39,7 +40,7 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import GdeltNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
+from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, GdeltNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
 from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
@@ -825,7 +826,13 @@ def test_tiny_news_coverage_audit_reports_alignment_metrics():
     assert payload["stock_row_count"] == 10
     assert payload["news_symbol_count"] == 2
     assert payload["stock_symbol_count"] == 2
+    assert payload["pre_pit_symbol_overlap_count"] == 2
+    assert payload["pre_pit_symbol_overlap"] == ["AAPL", "MSFT"]
     assert payload["rebalance_date_count"] == 5
+    assert payload["news_published_at_utc_min"] == "2024-01-01T10:00:00Z"
+    assert payload["news_published_at_utc_max"] == "2024-01-05T13:00:00Z"
+    assert payload["stock_rebalance_date_min"] == "2024-01-02"
+    assert payload["stock_rebalance_date_max"] == "2024-01-06"
     assert payload["covered_symbol_count"] == 2
     assert payload["symbol_coverage"] == 1.0
     assert payload["covered_rebalance_date_count"] == 5
@@ -843,10 +850,53 @@ def test_tiny_news_coverage_audit_reports_alignment_metrics():
     }
     assert payload["event_type_covered_stock_rows"]["mna"] == 1
     assert payload["freshness_bucket_counts"]["30d"] > 0
+    assert payload["same_symbol_stock_article_pair_count"] == 25
     assert payload["future_article_candidate_count"] == 10
     assert payload["future_article_excluded_count"] == 10
+    assert payload["published_after_rebalance_count"] == 10
+    assert payload["ingested_after_rebalance_count"] == 10
     assert payload["pit_violation_count"] == 0
     assert "future article candidates correctly excluded" in payload["warning_issues"][1]
+
+
+def test_news_coverage_audit_reports_ingestion_time_alignment_blocker(tmp_path):
+    contract = tmp_path / "contract.csv"
+    stock_rows = tmp_path / "stock_rows.csv"
+    contract.write_text(
+        "\n".join(
+            [
+                "article_id,symbol,published_at_utc,source,headline,body_or_summary,sentiment_score,relevance_score,novelty_score,event_type,language,ingested_at",
+                "a1,AAPL,2026-01-01T10:00:00Z,vendor,AAPL update,body,0.1,0.9,0.5,analyst,en,2026-07-02T08:00:00Z",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stock_rows.write_text(
+        "rebalance_date,symbol\n2026-04-20,AAPL\n",
+        encoding="utf-8",
+    )
+
+    paths = write_stock_alpha_news_coverage_audit(
+        {
+            "ml": {
+                "stock_alpha_news_contract_path": str(contract),
+                "stock_alpha_news_stock_rows_path": str(stock_rows),
+                "stock_alpha_news_coverage_audit_dir": str(tmp_path / "audit"),
+            }
+        }
+    )
+
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    assert payload["safe_for_feature_generation"] is False
+    assert payload["pre_pit_symbol_overlap_count"] == 1
+    assert payload["same_symbol_stock_article_pair_count"] == 1
+    assert payload["future_article_candidate_count"] == 1
+    assert payload["published_after_rebalance_count"] == 0
+    assert payload["ingested_after_rebalance_count"] == 1
+    assert payload["covered_stock_row_count"] == 0
+    assert "all same-symbol articles fail PIT ingested_at alignment" in payload["blocking_issues"]
+    assert any("ingested_at is after rebalance_date" in issue for issue in payload["warning_issues"])
 
 
 def test_news_coverage_audit_missing_contract_path_blocks_cleanly(tmp_path, capsys):
@@ -1564,6 +1614,30 @@ def test_gdelt_fake_response_normalizes_without_invented_scores():
     assert rows[0]["sentiment_score"] == ""
     assert rows[0]["relevance_score"] == ""
     assert rows[0]["novelty_score"] == ""
+
+
+def test_alpha_vantage_news_source_honors_configured_date_window():
+    requested_urls = []
+
+    def fake_get(url, timeout):
+        requested_urls.append(url)
+        return {"feed": []}
+
+    AlphaVantageNewsSource(fake_get).collect(
+        symbols=["AAPL"],
+        start_date="2026-01-01",
+        end_date="2026-04-20",
+        limit=5,
+        timeout=2,
+        api_key="test-key",
+    )
+
+    query = parse_qs(urlparse(requested_urls[0]).query)
+    assert query["function"] == ["NEWS_SENTIMENT"]
+    assert query["tickers"] == ["AAPL"]
+    assert query["time_from"] == ["20260101T0000"]
+    assert query["time_to"] == ["20260420T2359"]
+    assert query["limit"] == ["5"]
 
 
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):

@@ -90,8 +90,20 @@ class GdeltNewsSource(NewsSource):
 
 class AlphaVantageNewsSource(NewsSource):
     name = "alpha_vantage"
+
     def _url(self, symbol: str, start: str, end: str, limit: int, api_key: str) -> str:
-        return "https://www.alphavantage.co/query?" + urlencode({"function": "NEWS_SENTIMENT", "tickers": symbol, "limit": limit, "apikey": api_key})
+        params: dict[str, Any] = {
+            "function": "NEWS_SENTIMENT",
+            "tickers": symbol,
+            "limit": limit,
+            "apikey": api_key,
+        }
+        if start:
+            params["time_from"] = _alpha_vantage_news_time(start, end_of_day=False)
+        if end:
+            params["time_to"] = _alpha_vantage_news_time(end, end_of_day=True)
+        return "https://www.alphavantage.co/query?" + urlencode(params)
+
     def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
         return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("time_published"), source=item.get("source"), headline=item.get("title"), body=item.get("summary"), sentiment=item.get("overall_sentiment_score", ""), event_type="", language="en") for item in payload.get("feed", [])]
 
@@ -205,6 +217,16 @@ def _column_value(values: Mapping[str, Any], column: str, index: int) -> Any:
 
 def _blank_or_value(value: Any) -> Any:
     return "" if value is None else value
+
+
+def _alpha_vantage_news_time(value: str, *, end_of_day: bool) -> str:
+    text = str(value or "").strip()
+    compact = text.replace("-", "").replace(":", "")
+    if "T" in compact and len(compact) >= 13:
+        return compact[:13]
+    date_part = text[:10].replace("-", "")
+    suffix = "T2359" if end_of_day else "T0000"
+    return f"{date_part}{suffix}"
 
 
 def _utc(value: Any) -> str:
