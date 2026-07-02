@@ -23,8 +23,14 @@ PROVIDER_METADATA = {
 SEC_CIK_BY_SYMBOL = {
     "AAPL": "0000320193", "MSFT": "0000789019", "NVDA": "0001045810",
     "AMZN": "0001018724", "GOOGL": "0001652044", "META": "0001326801",
-    "TSLA": "0001318605", "JPM": "0000019617", "XOM": "0000034088",
-    "WMT": "0000104169", "KO": "0000021344", "PEP": "0000077476",
+    "TSLA": "0001318605", "AVGO": "0001730168", "BRK.B": "0001067983",
+    "JPM": "0000019617", "V": "0001403161", "MA": "0001141391",
+    "XOM": "0000034088", "UNH": "0000731766", "COST": "0000909832",
+    "HD": "0000354950", "PG": "0000080424", "JNJ": "0000200406",
+    "ABBV": "0001551152", "NFLX": "0001065280", "CRM": "0001108524",
+    "AMD": "0000002488", "ORCL": "0001341439", "BAC": "0000070858",
+    "KO": "0000021344", "PEP": "0000077476", "WMT": "0000104169",
+    "CVX": "0000093410", "MRK": "0000310158", "CSCO": "0000858877",
 }
 
 
@@ -134,10 +140,13 @@ class SecEdgarNewsSource(NewsSource):
 
     def _rows(self, payload: Any, symbol: str) -> list[dict[str, Any]]:
         recent = ((payload.get("filings") or {}).get("recent") or {})
-        columns = ("accessionNumber", "filingDate", "acceptanceDateTime", "form", "primaryDocument")
-        values = [list(recent.get(column, [])) for column in columns]
         rows = []
-        for accession, filing_date, accepted, form, document in zip(*values):
+        accessions = list(recent.get("accessionNumber", []))
+        for index, accession in enumerate(accessions):
+            filing_date = _column_value(recent, "filingDate", index)
+            accepted = _column_value(recent, "acceptanceDateTime", index)
+            form = _column_value(recent, "form", index)
+            document = _column_value(recent, "primaryDocument", index)
             if form not in {"8-K", "10-Q", "10-K", "4", "3", "5"}:
                 continue
             accession_path = str(accession).replace("-", "")
@@ -146,7 +155,13 @@ class SecEdgarNewsSource(NewsSource):
             rows.append(self._normalized(
                 symbol=symbol, provider_id=accession, url=url,
                 published=accepted or filing_date, source="SEC EDGAR",
-                headline=f"{symbol.upper()} filed Form {form}",
+                headline=_sec_headline(
+                    symbol=symbol,
+                    form=str(form),
+                    filing_date=str(filing_date or ""),
+                    accepted=str(accepted or ""),
+                    accession=str(accession or ""),
+                ),
                 body=f"Official SEC filing metadata for Form {form}.",
                 sentiment="", relevance="", novelty="",
                 event_type=_sec_event_type(str(form)), language="en",
@@ -163,6 +178,29 @@ def _sec_event_type(form: str) -> str:
     if form in {"10-Q", "10-K"}: return "earnings"
     if form in {"3", "4", "5"}: return "ownership"
     return "filing"
+
+
+def _sec_headline(
+    *,
+    symbol: str,
+    form: str,
+    filing_date: str,
+    accepted: str,
+    accession: str,
+) -> str:
+    date_value = (accepted or filing_date).strip()[:10]
+    date_label = "accepted" if accepted.strip() else "filed"
+    parts = [symbol.upper(), "SEC", form, "filing"]
+    if date_value:
+        parts.extend((date_label, date_value))
+    if accession.strip():
+        parts.extend(("accession", accession.strip()))
+    return " ".join(parts)
+
+
+def _column_value(values: Mapping[str, Any], column: str, index: int) -> Any:
+    column_values = list(values.get(column, []))
+    return column_values[index] if index < len(column_values) else ""
 
 
 def _blank_or_value(value: Any) -> Any:

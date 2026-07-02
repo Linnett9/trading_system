@@ -696,6 +696,53 @@ def test_provider_audit_alias_fixture_reports_quality_metrics():
     assert payload["novelty_present_count"] == 6
 
 
+def test_provider_audit_explains_sec_edgar_duplicate_headlines(tmp_path):
+    raw = tmp_path / "provider.csv"
+    rows = [
+        _collected_news_row(f"sec-{index}", "sec_edgar")
+        | {
+            "symbol": "AAPL",
+            "source": "SEC EDGAR",
+            "headline": "AAPL filed Form 4",
+        }
+        for index in range(3)
+    ] + [
+        _collected_news_row("alpha-1", "alpha_vantage")
+        | {"symbol": "MSFT", "headline": "MSFT reports earnings"}
+    ]
+    with raw.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    config = {"ml": {
+        "stock_alpha_news_raw_path": str(raw),
+        "stock_alpha_news_provider_audit_dir": str(tmp_path / "audit"),
+        "stock_alpha_news_provider_audit_min_symbol_count": 25,
+        "stock_alpha_news_provider_audit_max_duplicate_headline_rate": 0.05,
+    }}
+
+    paths = write_stock_alpha_news_provider_audit(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["threshold_comparisons"]["symbol_count"] == {
+        "actual": 2,
+        "minimum": 25.0,
+        "passes": False,
+    }
+    assert payload["threshold_comparisons"]["duplicate_headline_rate"]["passes"] is False
+    assert payload["duplicate_headline_count_by_provider"] == {
+        "alpha_vantage": 0,
+        "sec_edgar": 2,
+    }
+    assert payload["symbol_distribution_by_provider"]["sec_edgar"] == {"AAPL": 3}
+    assert payload["duplicate_headline_examples"][0]["headline"] == "AAPL filed Form 4"
+    assert payload["sec_edgar_generic_headline_count"] == 3
+    assert payload["duplicates_mainly_sec_edgar_generic_filings"] is True
+
+
 def test_provider_audit_missing_mapped_provider_column_blocks(tmp_path):
     raw = tmp_path / "alias_missing.csv"
     raw.write_text(
@@ -1554,6 +1601,47 @@ def test_free_source_collection_writes_deduplicated_canonical_csv(tmp_path):
     assert rows[0]["source"] == "gdelt-source"
 
 
+def test_free_source_collection_merges_with_backup_and_stable_deduplication(tmp_path):
+    existing = _collected_news_row("existing", "gdelt")
+    new = _collected_news_row("new", "gdelt") | {
+        "published_at_utc": "2024-01-02T10:00:00Z",
+        "ingested_at": "2024-01-02T10:05:00Z",
+    }
+    config = _collection_config(tmp_path, dry_run=False)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["merge_existing"] = True
+    settings["backup_existing"] = True
+    output = Path(config["ml"]["stock_alpha_news_collect_output_path"])
+    with output.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"],
+        )
+        writer.writeheader()
+        writer.writerow(existing)
+
+    class FakeSource:
+        api_key_required = False
+
+        def collect(self, **kwargs):
+            return [dict(existing) | {"headline": "Refreshed headline"}, new]
+
+    paths = write_stock_alpha_news_free_source_collect(
+        config, sources={"gdelt": FakeSource()}
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    output_rows = list(csv.DictReader(output.open(encoding="utf-8")))
+
+    assert payload["existing_input_row_count"] == 1
+    assert payload["new_row_count"] == 2
+    assert payload["merge_deduplicated_row_count"] == 1
+    assert payload["output_row_count"] == 2
+    assert payload["output_written"] is True
+    assert Path(payload["backup_path"]).exists()
+    assert len(output_rows) == 2
+    assert output_rows[0]["headline"] == "Refreshed headline"
+
+
 def test_free_source_collection_protects_output_and_isolates_provider_error(tmp_path):
     class Good:
         api_key_required = False
@@ -1759,7 +1847,43 @@ def test_sec_edgar_fake_response_normalizes_official_filings_without_sentiment()
     assert all(row["source"] == "SEC EDGAR" for row in rows)
     assert all(row["sentiment_score"] == "" for row in rows)
     assert all(row["relevance_score"] == "" and row["novelty_score"] == "" for row in rows)
+    assert rows[0]["headline"] == (
+        "AAPL SEC 8-K filing accepted 2026-01-02 "
+        "accession 0000320193-26-000001"
+    )
+    assert rows[1]["headline"] == (
+        "AAPL SEC 10-Q filing accepted 2026-01-03 "
+        "accession 0000320193-26-000002"
+    )
+    assert len({row["article_id"] for row in rows}) == 2
     assert "official_filings_source" in PROVIDER_METADATA["sec_edgar"]["statuses"]
+
+
+def test_sec_edgar_repeated_forms_have_distinct_metadata_headlines():
+    payload = {"filings": {"recent": {
+        "accessionNumber": [
+            "0000320193-26-000010",
+            "0000320193-26-000011",
+            "0000320193-26-000012",
+        ],
+        "filingDate": ["2026-02-01", "2026-02-02", "2026-02-03"],
+        "acceptanceDateTime": ["", "", ""],
+        "form": ["4", "4", "4"],
+        "primaryDocument": ["one.xml", "two.xml", "three.xml"],
+    }}}
+    rows = SecEdgarNewsSource(lambda url, timeout: payload).collect(
+        symbols=["AAPL"],
+        start_date="2026-02-01",
+        end_date="2026-02-28",
+        limit=5,
+        timeout=2,
+    )
+
+    assert len(rows) == 3
+    assert len({row["headline"] for row in rows}) == 3
+    assert all("AAPL SEC 4 filing filed 2026-02-" in row["headline"] for row in rows)
+    assert all(" accession 0000320193-26-" in row["headline"] for row in rows)
+    assert all(row["sentiment_score"] == "" for row in rows)
 
 
 def test_gdelt_http_429_is_rate_limited_with_clean_next_action(tmp_path):
