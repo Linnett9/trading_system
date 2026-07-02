@@ -6,12 +6,12 @@ from typing import Any, Mapping
 
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.artifacts import MLExperimentPathBuilder, MLFeatureCache
-from core.research.ml.features import (
+from core.research.ml.features.features import (
     HistoricalFeatureBuilder,
     MLFeatureBuildResult,
     add_champion_state_features,
 )
-from core.research.ml.history_coverage import (
+from core.research.ml.data.history_coverage import (
     assess_history_coverage,
     write_history_coverage_report,
 )
@@ -259,7 +259,7 @@ class MLFeaturePipeline:
         from application.services.dual_momentum_config import (
             active_dual_momentum_config,
         )
-        from core.research.dual_momentum_factory import build_dual_momentum_tester
+        from core.research.dual_momentum.factory import build_dual_momentum_tester
 
         champion_config = active_dual_momentum_config(self._config)
         return build_dual_momentum_tester(

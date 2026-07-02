@@ -121,7 +121,7 @@ ml:
   stock_alpha_overnight_run_attribution: false
   stock_alpha_run_size: benchmark
   stock_ranker_model_set: fast
-  stock_target_comparison_model_set: ultrafast
+  stock_target_comparison_model_set: fast
   stock_alpha_dev_max_dates: 80
   stock_alpha_dev_max_symbols: 120
   stock_alpha_dev_recent_dates_only: true

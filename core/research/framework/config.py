@@ -23,6 +23,8 @@ class StockLevelResearchConfig:
     alpha_feature_n_jobs: int
     overnight_stage_n_jobs: int
     include_sequence_models: bool
+    ranker_model_set: str
+    target_comparison_model_set: str
     include_engineered_features: bool
     sequence_length: int
     sequence_epochs: int
@@ -38,6 +40,8 @@ class StockLevelResearchConfig:
     dev_max_dates: int
     dev_max_symbols: int
     dev_recent_dates_only: bool
+    dev_symbol_sample_method: str
+    dev_required_symbols: tuple[str, ...]
     resume_existing_outputs: bool
     force_refresh: bool
     target_comparison_n_jobs: int
@@ -105,6 +109,8 @@ class StockLevelResearchConfig:
             include_sequence_models=bool(
                 ml.get("stock_ranker_include_sequence_models", True)
             ),
+            ranker_model_set=str(ml.get("stock_ranker_model_set", "fast" if run_size == "dev" else "full")).lower(),
+            target_comparison_model_set=str(ml.get("stock_target_comparison_model_set", "fast" if run_size == "dev" else "full")).lower(),
             include_engineered_features=bool(
                 ml.get("stock_ranker_include_engineered_features", False)
             ),
@@ -126,6 +132,8 @@ class StockLevelResearchConfig:
             dev_max_dates=int(ml.get("stock_alpha_dev_max_dates", 80)),
             dev_max_symbols=int(ml.get("stock_alpha_dev_max_symbols", 120)),
             dev_recent_dates_only=bool(ml.get("stock_alpha_dev_recent_dates_only", True)),
+            dev_symbol_sample_method=str(ml.get("stock_alpha_dev_symbol_sample_method", "sorted")).lower(),
+            dev_required_symbols=tuple(str(symbol).upper() for symbol in ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])),
             resume_existing_outputs=bool(ml.get("stock_alpha_resume_existing_outputs", True)),
             force_refresh=bool(ml.get("stock_alpha_force_refresh", False)),
             target_comparison_n_jobs=int(ml.get("stock_target_comparison_n_jobs", stock_alpha_default_workers)),
@@ -175,5 +183,11 @@ class StockLevelResearchConfig:
             )
         if self.run_size not in {"dev", "benchmark", "full"}:
             raise ValueError("ml.stock_alpha_run_size must be dev, benchmark, or full")
+        if self.dev_symbol_sample_method not in {"sorted", "deterministic_hash"}:
+            raise ValueError("ml.stock_alpha_dev_symbol_sample_method must be sorted or deterministic_hash")
+        if self.ranker_model_set not in {"fast", "standard", "validated_standard", "full"}:
+            raise ValueError("ml.stock_ranker_model_set must be fast, standard, validated_standard, or full")
+        if self.target_comparison_model_set not in {"ultrafast", "fast", "standard", "validated_standard", "full"}:
+            raise ValueError("ml.stock_target_comparison_model_set must be ultrafast, fast, standard, validated_standard, or full")
         if not 0.0 < self.portfolio_max_position_weight <= 1.0:
             raise ValueError("ml.stock_portfolio_replay_max_position_weight must be in (0, 1]")

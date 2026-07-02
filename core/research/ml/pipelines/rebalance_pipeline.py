@@ -7,13 +7,13 @@ from typing import Any, Mapping
 
 from core.research.ml.artifacts import MLFeatureCache
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.rule_overlay import (
+from core.research.ml.features.features import MLFeatureBuildResult
+from core.research.ml.overlays.rule_overlay import (
     run_drawdown_risk_diagnostics,
     run_rule_exposure_study,
     run_volatility_managed_walk_forward,
 )
-from core.research.ml.sector_reference import load_sector_by_symbol
+from core.research.ml.data.sector_reference import load_sector_by_symbol
 
 
 class MLRebalancePipeline:
@@ -80,7 +80,7 @@ class MLRebalancePipeline:
             if cached is not None:
                 return cached
 
-        from core.research.ml.rebalance_dataset import (
+        from core.research.ml.data.rebalance_dataset import (
             build_expanded_rebalance_rows,
             write_expanded_rebalance_audit,
             write_rebalance_dataset,
@@ -137,7 +137,7 @@ class MLRebalancePipeline:
         candles_by_symbol: dict[str, list[Any]],
         rule_study_path: Path,
     ) -> list[dict[str, float | str]]:
-        from core.research.ml.rebalance_dataset import (
+        from core.research.ml.data.rebalance_dataset import (
             build_champion_rebalance_rows,
             write_rebalance_dataset,
         )
