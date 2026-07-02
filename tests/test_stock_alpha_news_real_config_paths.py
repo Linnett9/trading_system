@@ -5,6 +5,12 @@ from pathlib import Path
 import yaml
 
 from config.config_loader import load_config
+from scripts.stock_alpha_news_generate_sec_36mo_dry_run_configs import (
+    AUDITED_EXCEPTION_SYMBOLS,
+    ETF_FUND_SYMBOLS as GENERATOR_ETF_FUND_SYMBOLS,
+    ISOLATED_SYMBOLS,
+    build_sec_36mo_dry_run_configs,
+)
 from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
 
@@ -1019,6 +1025,67 @@ def test_sec_company_filings_36mo_pilot_configs_are_report_only_single_symbol_ru
         assert ml["stock_alpha_news_enable_transformer"] is False
         assert ml["research_only"] is True
         assert ml["trading_impact"] == "none"
+
+
+def test_generated_sec_company_filings_36mo_configs_are_cap_safe_report_only():
+    generated = build_sec_36mo_dry_run_configs(config_dir="config", max_symbols_per_config=4)
+    config_paths = sorted(Path("config").glob("config.stock_alpha_news_collect_sec_company_filings_36mo_part_*_dry_run.yaml"))
+    assert [path for path, _ in generated] == config_paths
+    assert len(config_paths) == 89
+
+    all_symbols: list[str] = []
+    symbols_by_config: dict[Path, list[str]] = {}
+    for config_path in config_paths:
+        ml = yaml.safe_load(config_path.read_text(encoding="utf-8"))["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+        symbols = collect["only_symbols"]
+        symbols_by_config[config_path] = symbols
+        all_symbols.extend(symbols)
+
+        assert collect["enabled"] is True
+        assert collect["dry_run"] is True
+        assert collect["output_written"] is False
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is False
+        assert collect["backup_existing"] is False
+        assert 1 <= len(symbols) <= 4
+        assert collect["symbols"] == symbols
+        assert collect["symbols_per_batch"] == len(symbols)
+        assert collect["max_symbols_per_run"] == len(symbols)
+        assert collect["start_date"] == "2023-07-01"
+        assert collect["end_date"] == "2026-07-02"
+        assert collect["source_window"] == "36mo"
+        assert ml["stock_alpha_news_collect_output_path"].startswith("reports/")
+        assert "data/news/" not in ml["stock_alpha_news_collect_output_path"]
+        assert providers["sec_company_filings"]["enabled"] is True
+        assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+        assert providers["sec_company_filings"]["load_official_sec_company_tickers"] is True
+        for provider_name, provider in providers.items():
+            if provider_name != "sec_company_filings":
+                assert provider["enabled"] is False
+        assert "stock_alpha_news_features_path" not in ml
+        assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+        assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+        assert ml["production_validated"] is False
+        assert ml["promotion_thresholds_changed"] is False
+
+    assert len(all_symbols) == 349
+    assert len(set(all_symbols)) == 349
+    assert ETF_FUND_SYMBOLS.isdisjoint(all_symbols)
+    assert GENERATOR_ETF_FUND_SYMBOLS == ETF_FUND_SYMBOLS
+    assert AUDITED_EXCEPTION_SYMBOLS.isdisjoint(all_symbols)
+    assert "B" not in all_symbols
+    for isolated_symbol in ISOLATED_SYMBOLS:
+        matching = [
+            config_path
+            for config_path in config_paths
+            if symbols_by_config[config_path] == [isolated_symbol]
+        ]
+        assert len(matching) == 1
 
 
 def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
