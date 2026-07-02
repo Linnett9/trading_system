@@ -15,6 +15,15 @@ from core.research.ml.stock_level.stock_alpha_news_contract_ingest import (
     _normalize_event_type,
     _parse_utc_timestamp,
 )
+from core.research.ml.stock_level.stock_alpha_news_pit_policy import (
+    PROVIDER_AVAILABLE_AT,
+    StockAlphaNewsPitPolicy,
+    article_is_pit_eligible,
+    article_pit_exclusion_flags,
+    enrich_news_row_with_pit_timestamps,
+    pit_policy_payload,
+    resolve_stock_alpha_news_pit_policy,
+)
 
 
 REQUIRED_STOCK_ROW_COLUMNS = ("rebalance_date", "symbol")
@@ -47,13 +56,14 @@ def build_stock_alpha_news_coverage_audit(config: Mapping[str, Any]) -> dict[str
     contract_path = Path(str(ml.get("stock_alpha_news_contract_path", "")))
     stock_rows_path = Path(str(ml.get("stock_alpha_news_stock_rows_path", "")))
     thresholds = _thresholds(ml)
+    pit_policy = resolve_stock_alpha_news_pit_policy(config)
     blocking_issues: list[str] = []
     if not contract_path.exists():
         blocking_issues.append(f"news contract file not found: {contract_path}")
     if not stock_rows_path.exists():
         blocking_issues.append(f"stock rows file not found: {stock_rows_path}")
     if blocking_issues:
-        return _empty_payload(contract_path, stock_rows_path, blocking_issues)
+        return _empty_payload(contract_path, stock_rows_path, blocking_issues, pit_policy)
 
     news_rows = CsvRowRepository().read(contract_path)
     stock_rows = CsvRowRepository().read(stock_rows_path)
@@ -62,10 +72,10 @@ def build_stock_alpha_news_coverage_audit(config: Mapping[str, Any]) -> dict[str
     blocking_issues.extend(
         _column_blockers(missing_news_columns, missing_stock_columns)
     )
-    normalized_news = _normalize_news_rows(news_rows) if not missing_news_columns else []
+    normalized_news = _normalize_news_rows(news_rows, pit_policy) if not missing_news_columns else []
     normalized_stock_rows = _normalize_stock_rows(stock_rows) if not missing_stock_columns else []
-    metrics = _coverage_metrics(normalized_news, normalized_stock_rows)
-    blocking_issues.extend(_threshold_blockers(metrics, thresholds))
+    metrics = _coverage_metrics(normalized_news, normalized_stock_rows, pit_policy)
+    blocking_issues.extend(_threshold_blockers(metrics, thresholds, pit_policy))
     return {
         **metrics,
         "safe_for_feature_generation": not blocking_issues,
@@ -75,6 +85,7 @@ def build_stock_alpha_news_coverage_audit(config: Mapping[str, Any]) -> dict[str
         "stock_rows_path": str(stock_rows_path),
         "missing_required_news_columns": missing_news_columns,
         "missing_required_stock_row_columns": missing_stock_columns,
+        **pit_policy_payload(pit_policy),
         **GUARDRAILS,
     }
 
@@ -100,9 +111,10 @@ def _empty_payload(
     contract_path: Path,
     stock_rows_path: Path,
     blocking_issues: list[str],
+    pit_policy: StockAlphaNewsPitPolicy,
 ) -> dict[str, Any]:
     return {
-        **_coverage_metrics([], []),
+        **_coverage_metrics([], [], pit_policy),
         "safe_for_feature_generation": False,
         "blocking_issues": blocking_issues,
         "warning_issues": [],
@@ -110,6 +122,7 @@ def _empty_payload(
         "stock_rows_path": str(stock_rows_path),
         "missing_required_news_columns": [],
         "missing_required_stock_row_columns": [],
+        **pit_policy_payload(pit_policy),
         **GUARDRAILS,
     }
 
@@ -138,17 +151,23 @@ def _column_blockers(
     return blockers
 
 
-def _normalize_news_rows(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _normalize_news_rows(
+    rows: list[Mapping[str, Any]],
+    pit_policy: StockAlphaNewsPitPolicy,
+) -> list[dict[str, Any]]:
     normalized = []
     for row in rows:
         normalized.append(
-            {
-                **dict(row),
-                "symbol": str(row.get("symbol", "")).strip().upper(),
-                "published_at_utc": _parse_utc_timestamp(row.get("published_at_utc")),
-                "ingested_at": _parse_utc_timestamp(row.get("ingested_at")),
-                "event_type": _normalize_event_type(row.get("event_type", "")),
-            }
+            enrich_news_row_with_pit_timestamps(
+                {
+                    **dict(row),
+                    "symbol": str(row.get("symbol", "")).strip().upper(),
+                    "published_at_utc": _parse_utc_timestamp(row.get("published_at_utc")),
+                    "ingested_at": _parse_utc_timestamp(row.get("ingested_at")),
+                    "event_type": _normalize_event_type(row.get("event_type", "")),
+                },
+                pit_policy,
+            )
         )
     return normalized
 
@@ -169,6 +188,7 @@ def _normalize_stock_rows(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]
 def _coverage_metrics(
     news_rows: list[Mapping[str, Any]],
     stock_rows: list[Mapping[str, Any]],
+    pit_policy: StockAlphaNewsPitPolicy,
 ) -> dict[str, Any]:
     published_values = [
         row.get("published_at_utc")
@@ -179,6 +199,16 @@ def _coverage_metrics(
         row.get("ingested_at")
         for row in news_rows
         if row.get("ingested_at") is not None
+    ]
+    collected_values = [
+        row.get("collected_at_utc")
+        for row in news_rows
+        if row.get("collected_at_utc") is not None
+    ]
+    available_values = [
+        row.get("available_at_utc")
+        for row in news_rows
+        if row.get("available_at_utc") is not None
     ]
     rebalance_values = [
         row.get("rebalance_date")
@@ -206,7 +236,10 @@ def _coverage_metrics(
     same_symbol_stock_article_pair_count = 0
     published_after_rebalance_count = 0
     ingested_after_rebalance_count = 0
+    available_after_rebalance_count = 0
+    eligibility_after_rebalance_count = 0
     published_and_ingested_after_rebalance_count = 0
+    published_and_available_after_rebalance_count = 0
 
     for stock_row in stock_rows:
         symbol = str(stock_row.get("symbol", ""))
@@ -223,21 +256,26 @@ def _coverage_metrics(
             same_symbol_stock_article_pair_count += 1
             if published is None or ingested is None:
                 continue
-            if published <= rebalance and ingested <= rebalance:
+            if article_is_pit_eligible(article, rebalance, pit_policy):
                 eligible.append(article)
                 for bucket, days in FRESHNESS_BUCKETS.items():
                     if published >= rebalance - timedelta(days=days):
                         freshness_bucket_counts[bucket] += 1
             else:
                 future_article_candidate_count += 1
-                published_after = published > rebalance
-                ingested_after = ingested > rebalance
-                if published_after:
+                flags = article_pit_exclusion_flags(article, rebalance, pit_policy)
+                if flags["published_after_rebalance"]:
                     published_after_rebalance_count += 1
-                if ingested_after:
+                if flags["collected_after_rebalance"]:
                     ingested_after_rebalance_count += 1
-                if published_after and ingested_after:
+                if flags["available_after_rebalance"]:
+                    available_after_rebalance_count += 1
+                if flags["eligibility_after_rebalance"]:
+                    eligibility_after_rebalance_count += 1
+                if flags["published_after_rebalance"] and flags["collected_after_rebalance"]:
                     published_and_ingested_after_rebalance_count += 1
+                if flags["published_after_rebalance"] and flags["available_after_rebalance"]:
+                    published_and_available_after_rebalance_count += 1
         if eligible:
             covered_stock_row_count += 1
             covered_symbols.add(symbol)
@@ -261,6 +299,10 @@ def _coverage_metrics(
         "news_published_at_utc_max": _iso_max(published_values),
         "news_ingested_at_min": _iso_min(ingested_values),
         "news_ingested_at_max": _iso_max(ingested_values),
+        "news_collected_at_utc_min": _iso_min(collected_values),
+        "news_collected_at_utc_max": _iso_max(collected_values),
+        "news_available_at_utc_min": _iso_min(available_values),
+        "news_available_at_utc_max": _iso_max(available_values),
         "stock_rebalance_date_min": _date_min(rebalance_values),
         "stock_rebalance_date_max": _date_max(rebalance_values),
         "covered_symbol_count": len(covered_symbols),
@@ -279,7 +321,11 @@ def _coverage_metrics(
         "future_article_excluded_count": future_article_candidate_count,
         "published_after_rebalance_count": published_after_rebalance_count,
         "ingested_after_rebalance_count": ingested_after_rebalance_count,
+        "collected_after_rebalance_count": ingested_after_rebalance_count,
+        "available_after_rebalance_count": available_after_rebalance_count,
+        "eligibility_after_rebalance_count": eligibility_after_rebalance_count,
         "published_and_ingested_after_rebalance_count": published_and_ingested_after_rebalance_count,
+        "published_and_available_after_rebalance_count": published_and_available_after_rebalance_count,
         "pit_violation_count": 0,
     }
 
@@ -287,8 +333,17 @@ def _coverage_metrics(
 def _threshold_blockers(
     metrics: Mapping[str, Any],
     thresholds: Mapping[str, float],
+    pit_policy: StockAlphaNewsPitPolicy,
 ) -> list[str]:
     blockers = []
+    if (
+        pit_policy.mode == PROVIDER_AVAILABLE_AT
+        and not pit_policy.historical_provider_availability_assumed
+    ):
+        blockers.append(
+            "provider_available_at PIT policy requires "
+            "stock_alpha_news_historical_provider_availability_enabled=true"
+        )
     if metrics["symbol_coverage"] < thresholds["min_symbol_coverage"]:
         blockers.append("symbol coverage below minimum")
     if metrics["date_coverage"] < thresholds["min_date_coverage"]:
@@ -302,8 +357,15 @@ def _threshold_blockers(
         and metrics["covered_stock_row_count"] == 0
     ):
         if (
+            pit_policy.mode == PROVIDER_AVAILABLE_AT
+            and metrics["available_after_rebalance_count"]
+            == metrics["same_symbol_stock_article_pair_count"]
+        ):
+            blockers.append("all same-symbol articles fail PIT available_at alignment")
+        elif (
             metrics["ingested_after_rebalance_count"]
             == metrics["same_symbol_stock_article_pair_count"]
+            and pit_policy.mode != PROVIDER_AVAILABLE_AT
         ):
             blockers.append("all same-symbol articles fail PIT ingested_at alignment")
         elif (
@@ -334,6 +396,11 @@ def _warnings(metrics: Mapping[str, Any]) -> list[str]:
         warnings.append(
             "same-symbol article pairs excluded because ingested_at is after "
             f"rebalance_date: {metrics['ingested_after_rebalance_count']}"
+        )
+    if metrics.get("available_after_rebalance_count", 0):
+        warnings.append(
+            "same-symbol article pairs excluded because available_at_utc is after "
+            f"rebalance_date: {metrics['available_after_rebalance_count']}"
         )
     return warnings
 
@@ -384,8 +451,14 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             f"- Stock rows: {payload.get('stock_rows_path', '')}",
             f"- News rows: {payload.get('news_row_count', 0)}",
             f"- Stock rows: {payload.get('stock_row_count', 0)}",
+            f"- PIT policy: {payload.get('pit_policy', 'strict_collected_at')}",
+            f"- Eligibility timestamp: {payload.get('eligibility_timestamp_field', 'collected_at_utc')}",
+            f"- Availability lag hours: {payload.get('availability_lag_hours', 0.0)}",
+            f"- Historical provider availability assumed: {payload.get('historical_provider_availability_assumed', False)}",
+            f"- Production PIT validated: {payload.get('production_pit_validated', False)}",
             f"- News published range: {payload.get('news_published_at_utc_min') or 'n/a'} to {payload.get('news_published_at_utc_max') or 'n/a'}",
             f"- News ingested range: {payload.get('news_ingested_at_min') or 'n/a'} to {payload.get('news_ingested_at_max') or 'n/a'}",
+            f"- News available range: {payload.get('news_available_at_utc_min') or 'n/a'} to {payload.get('news_available_at_utc_max') or 'n/a'}",
             f"- Stock rebalance range: {payload.get('stock_rebalance_date_min') or 'n/a'} to {payload.get('stock_rebalance_date_max') or 'n/a'}",
             f"- Pre-PIT symbol overlap: {payload.get('pre_pit_symbol_overlap_count', 0)}",
             f"- Symbol coverage: {payload.get('symbol_coverage', 0.0)}",
@@ -397,6 +470,7 @@ def _markdown(payload: Mapping[str, Any]) -> str:
             f"- Future article exclusions: {payload.get('future_article_excluded_count', 0)}",
             f"- Published-after-rebalance exclusions: {payload.get('published_after_rebalance_count', 0)}",
             f"- Ingested-after-rebalance exclusions: {payload.get('ingested_after_rebalance_count', 0)}",
+            f"- Available-after-rebalance exclusions: {payload.get('available_after_rebalance_count', 0)}",
             f"- PIT violations: {payload.get('pit_violation_count', 0)}",
             "",
             "## Blocking Issues",

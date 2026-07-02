@@ -27,3 +27,21 @@ def test_real_news_templates_use_existing_diagnostic_stock_rows_path():
     for config_path, key in config_keys:
         ml = load_config(config_path, overlay_project_config=True)["ml"]
         assert ml[key] == REAL_DIAGNOSTIC_STOCK_ROWS_PATH
+
+
+def test_real_historical_news_templates_label_provider_availability_policy():
+    config_paths = [
+        "config/config.stock_alpha_news_pipeline_preflight_real_template.yaml",
+        "config/config.stock_alpha_news_coverage_audit_real_template.yaml",
+        "config/config.stock_alpha_news_pipeline_inspect_real_template.yaml",
+        "config/config.stock_alpha_news_features_real_template.yaml",
+        "config/config.stock_alpha_news_readiness_preflight_real_template.yaml",
+        "config/config.stock_alpha_dev_diagnostic_news_transformer_real_disabled_template.yaml",
+        "config/config.stock_alpha_dev_diagnostic_news_transformer_real_enabled_template.yaml",
+    ]
+
+    for config_path in config_paths:
+        ml = load_config(config_path, overlay_project_config=True)["ml"]
+        assert ml["stock_alpha_news_pit_policy"] == "provider_available_at"
+        assert ml["stock_alpha_news_availability_lag_hours"] == 24
+        assert ml["stock_alpha_news_historical_provider_availability_enabled"] is True

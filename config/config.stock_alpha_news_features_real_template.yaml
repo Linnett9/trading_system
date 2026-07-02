@@ -6,6 +6,9 @@ ml:
   stock_alpha_news_features_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_features_real/dev/stock_alpha_news_features.csv
   stock_alpha_news_min_symbol_coverage: 0.60
   stock_alpha_news_min_date_coverage: 0.60
+  stock_alpha_news_pit_policy: provider_available_at
+  stock_alpha_news_availability_lag_hours: 24
+  stock_alpha_news_historical_provider_availability_enabled: true
   stock_alpha_news_negative_sentiment_threshold: 0.0
   stock_alpha_news_enable_transformer: false
   research_only: true
