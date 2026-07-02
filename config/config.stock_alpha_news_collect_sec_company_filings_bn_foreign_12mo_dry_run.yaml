@@ -1,0 +1,37 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_bn_foreign_12mo_dry_run/dev
+  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_bn_foreign_12mo_dry_run/dev/sec_company_filings_12mo_dry_run_rows.csv
+  stock_alpha_news_collect:
+    enabled: true
+    dry_run: true
+    output_written: false
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    start_date: "2025-07-01"
+    end_date: "2026-07-02"
+    max_articles_per_provider: 100
+    max_rows_per_provider: 100
+    provider_request_limit: 25
+    symbols_per_batch: 1
+    max_symbols_per_run: 1
+    symbols: [BN]
+    only_symbols: [BN]
+    providers:
+      sec_company_filings:
+        enabled: true
+        forms: [6-K, 40-F]
+        load_official_sec_company_tickers: true
+      company_press_release_rss: {enabled: false}
+      alpha_vantage: {enabled: false}
+      finnhub: {enabled: false}
+      fmp: {enabled: false}
+      newsapi: {enabled: false}
+      gdelt: {enabled: false}
+      sec_edgar: {enabled: false}
+      massive: {enabled: false}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
