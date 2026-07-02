@@ -58,6 +58,11 @@ assert 'core.research.dual_momentum_experiments' not in sys.modules
     subprocess.run([sys.executable, "-c", script], cwd=project_root, check=True)
 
 
+def test_paper_command_services_import_with_tracked_factory_compatibility():
+    import application.services.paper_commands  # noqa: F401
+    import application.services.paper_trading_service  # noqa: F401
+
+
 def test_paper_trial_dispatch_does_not_load_champion_commands(monkeypatch):
     loaded_modules = []
 
