@@ -393,8 +393,8 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert len(symbols) == len(set(symbols)) == 379
     assert report["registry_complete"] is True
     assert sum(report["classification_counts"].values()) == 379
-    assert report["classification_counts"]["verified_rss_feed"] == 166
-    assert report["classification_counts"]["disabled_pending_review"] == 205
+    assert report["classification_counts"]["verified_rss_feed"] == 184
+    assert report["classification_counts"]["disabled_pending_review"] == 187
     assert report["classification_counts"]["known_error_feed"] == 6
     assert report["classification_counts"]["no_verified_official_rss"] == 2
     assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
@@ -402,6 +402,8 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert {"CSCO", "IBM", "LRCX", "QCOM"} <= set(report["verified_rss_feed_symbols"])
     assert {"INTU", "KLAC", "NKE", "TMO", "VZ"} <= set(report["verified_rss_feed_symbols"])
     assert {"DHR", "FCX", "NEM", "SPGI", "TER"} <= set(report["verified_rss_feed_symbols"])
+    assert {"INTC", "CAT", "BA", "GE", "PFE", "GLW", "SNPS", "SCHW"} <= set(report["verified_rss_feed_symbols"])
+    assert {"HON", "GILD", "LMT", "SBUX", "AJG", "SRE", "AFL", "BRO", "THC", "GAP"} <= set(report["verified_rss_feed_symbols"])
     assert {"PGR", "MDT", "BLK", "SLB", "BMY", "LOW", "TGT", "CCL", "AZO"} <= set(report["verified_rss_feed_symbols"])
     assert {"UPS", "MCK", "SYK", "SHW", "ELV", "CVS", "FISV", "ADP", "DAL", "TT"} <= set(report["verified_rss_feed_symbols"])
     assert {"MO", "PH", "FDX", "CSX", "AMT", "JCI", "MMM", "CB", "SO"} <= set(report["verified_rss_feed_symbols"])
@@ -542,12 +544,22 @@ def test_company_press_release_rss_batch_05_config_is_bounded_and_dry_run_only()
 def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe():
     configs = [
         (
+            "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_01_write_raw.yaml",
+            [
+                "SPY", "QQQ", "NVDA", "TSLA", "MU", "AAPL", "MSFT", "AMD", "AMZN",
+                "META", "GOOGL", "AVGO", "INTC", "GLD", "ORCL", "NFLX", "MRVL",
+                "UNH", "LLY", "TLT", "JPM", "WMT", "XOM", "XLK", "CRM",
+            ],
+            10,
+        ),
+        (
             "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_02_write_raw.yaml",
             [
                 "BRK-B", "V", "AMAT", "XLF", "COST", "QCOM", "LRCX", "ASML", "XLE",
                 "NOW", "BAC", "XLV", "GS", "CSCO", "MA", "XLI", "JNJ", "CVX", "CAT",
                 "BA", "IBM", "TXN", "GE", "PANW", "C",
             ],
+            10,
         ),
         (
             "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_03_write_raw.yaml",
@@ -556,6 +568,7 @@ def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe(
                 "PFE", "MRK", "XLY", "KO", "ACN", "APH", "PEP", "GLW", "ADI", "TMO",
                 "VZ", "T", "NKE", "DIS", "SNPS", "MCD",
             ],
+            11,
         ),
         (
             "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_04_write_raw.yaml",
@@ -564,6 +577,7 @@ def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe(
                 "HON", "FCX", "F", "CMCSA", "GILD", "SPGI", "AMGN", "NEE", "TER", "UNP",
                 "DHR", "SBUX", "COP", "LMT", "CIEN",
             ],
+            10,
         ),
         (
             "config/config.stock_alpha_news_collect_company_press_release_rss_379symbol_batch_05_write_raw.yaml",
@@ -572,10 +586,11 @@ def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe(
                 "CCL", "AZO", "UPS", "MCK", "XLB", "SYK", "SHW", "ELV", "CVS", "FISV",
                 "ADP", "OXY", "DAL", "TT", "B",
             ],
+            19,
         ),
     ]
 
-    for config_path, expected_symbols in configs:
+    for config_path, expected_symbols, expected_feed_cap in configs:
         config = load_config(config_path, overlay_project_config=True)
         ml = config["ml"]
         collect = ml["stock_alpha_news_collect"]
@@ -592,7 +607,7 @@ def test_company_press_release_rss_batch_write_raw_configs_are_bounded_and_safe(
         assert collect["load_feeds_from_registry"] is True
         assert collect["source_registry_path"] == "config/news_source_registry.stock_alpha_rss.yaml"
         assert rss["enabled"] is True
-        assert rss["max_enabled_feeds_per_run"] == (19 if "batch_05" in config_path else 10)
+        assert rss["max_enabled_feeds_per_run"] == expected_feed_cap
         assert rss["skip_known_error_feeds"] is True
         for name, provider in collect["providers"].items():
             assert provider["enabled"] is (name == "company_press_release_rss")
