@@ -23,6 +23,61 @@ _classifications:
   sec_only_candidate: []
   disabled_pending_review: [A, AA, AAON, AAP, ABT, ACGL, ACLS, ACN, ADBE, ADC, ADI, ADM, ADP, ADSK, AEE, AEIS, AEM, AEO, AEP, AES, AFG, AFL, AGCO, AIG, AIT, AIZ, AJG, AKAM, ALB, ALGN, ALK, ALL, ALV, AMAT, AME, AMG, AMGN, AMKR, AMSC, AMT, AN, ANF, AON, AOS, APA, APD, APH, ARCC, ARW, ASML, ATI, ATO, ATR, AU, AVT, AVY, AXON, AXP, AXS, AXTI, AYI, AZN, AZO, B, BA, BAC, BALL, BAX, BB, BBD, BBWI, BBY, BC, BCE, BCS, BDX, BFH, BG, BHP, BIIB, BIO, BKH, BKNG, BLK, BMI, BMO, BMY, BN, BNS, BNY, BP, BPOP, BRK-A, BRKR, BRO, BSX, BTI, BWA, BXP, BYD, C, CACI, CAG, CAH, CAKE, CALM, CAR, CASY, CAT, CB, CBRE, CBRL, CBSH, CCEP, CCI, CCK, CCL, CDE, CDNS, CE, CHKP, CHRW, CI, CIEN, CINF, CL, CLX, CMCSA, CMI, CMS, CNP, COF, COP, COR, CPB, CSCO, CSX, CTAS, CVS, CVX, D, DAL, DD, DGX, DHR, DIS, DLTR, DOV, DRI, DTE, DUK, DVN, EBAY, ECL, ED, EFX, EIX, ELV, EMN, EMR, EOG, EQR, ETN, ETR, EXC, EXPD, F, FAST, FCX, FDX, FE, FHN, FISV, FLEX, FLR, GAP, GD, GE, GEN, GFI, GILD, GIS, GL, GLD, GLW, GNTX, GPC, GRMN, GS, GT, GWW, HAL, HAS, HBAN, HIG, HMY, HON, HPQ, HRB, HSIC, HSY, IBM, IFF, INTC, INTU, IP, ITT, ITW, JBL, JCI, JHG, KBH, KEY, KGC, KLAC, KMB, KR, KSS, LAMR, LEU, LLY, LMT, LNC, LOW, LPX, LRCX, LUMN, LUV, MAR, MAS, MAT, MCD, MCHP, MCK, MCO, MDT, MET, MKC, MMM, MNST, MO, MRK, MRSH, MRVL, MS, MSI, MTB, MTG, MU, NEE, NEM, NI, NKE, NOC, NOVT, NOW, NSC, NTAP, NTRS, NYT, ODFL, OMC, OXY, PANW, PAYX, PCAR, PEG, PEP, PFE, PFG, PGR, PH, PHM, PLD, PNC, PNW, PPG, PPL, PRU, PTEN, QCOM, QQQ, R, RF, RHI, RIG, RIO, ROK, ROST, RTX, RVTY, RYAAY, SANM, SBRA, SBUX, SCHW, SHW, SLB, SLM, SNA, SNPS, SO, SPG, SPGI, SPY, SRE, STT, SWK, SYK, SYY, T, TER, TEVA, TFC, TGT, THC, TJX, TKO, TLT, TMO, TROW, TT, TXN, TXT, UNH, UNM, UNP, UPS, VFC, VIAV, VMC, VNQ, VRSN, VZ, WAT, WEC, WEN, WFC, WHR, WMB, WMT, WWD, WY, XEL, XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, YUM, ZBH, ZION]
 _classification_overrides:
+  AAP: verified_rss_feed
+  ACLS: verified_rss_feed
+  ADC: verified_rss_feed
+  AEO: verified_rss_feed
+  AFG: verified_rss_feed
+  AGCO: verified_rss_feed
+  AIT: verified_rss_feed
+  AIZ: verified_rss_feed
+  AMG: verified_rss_feed
+  AN: verified_rss_feed
+  AOS: verified_rss_feed
+  ARW: verified_rss_feed
+  ATR: verified_rss_feed
+  AVT: verified_rss_feed
+  AXS: verified_rss_feed
+  BAX: verified_rss_feed
+  BBWI: verified_rss_feed
+  BC: verified_rss_feed
+  BFH: verified_rss_feed
+  BIO: verified_rss_feed
+  BPOP: verified_rss_feed
+  BRKR: verified_rss_feed
+  CAKE: verified_rss_feed
+  CALM: verified_rss_feed
+  CBRL: verified_rss_feed
+  CBSH: verified_rss_feed
+  CCEP: verified_rss_feed
+  EMN: verified_rss_feed
+  EQR: verified_rss_feed
+  FHN: verified_rss_feed
+  FLR: verified_rss_feed
+  GEN: verified_rss_feed
+  GNTX: verified_rss_feed
+  HAS: verified_rss_feed
+  HRB: verified_rss_feed
+  HSIC: verified_rss_feed
+  IFF: verified_rss_feed
+  JHG: verified_rss_feed
+  KBH: verified_rss_feed
+  KSS: verified_rss_feed
+  LUMN: verified_rss_feed
+  MAS: verified_rss_feed
+  MAT: verified_rss_feed
+  MTG: verified_rss_feed
+  NOVT: verified_rss_feed
+  NYT: verified_rss_feed
+  PTEN: verified_rss_feed
+  R: verified_rss_feed
+  SANM: verified_rss_feed
+  SWK: verified_rss_feed
+  TXT: verified_rss_feed
+  UNM: verified_rss_feed
+  VIAV: verified_rss_feed
+  WHR: verified_rss_feed
+  ZION: verified_rss_feed
   AA: verified_rss_feed
   ADM: verified_rss_feed
   ADSK: verified_rss_feed
@@ -410,6 +465,673 @@ TT:
       last_verified: "2026-07-02"
       verified_source_url: https://investors.tranetechnologies.com/news-releases
   notes: "Official Trane Technologies investor relations RSS endpoint returned XML during batch 05 review."
+_batch_12_16_recovery_notes:
+  official_html_press_release_candidate: [BCS, BG, AEE, GPC, NTRS, ALK, ANF, AEIS, AES, BNS, CACI, BWA, WY, CCK, BXP, ARCC, CE, BMO, HMY, ALV, BB, BCE, GL, RYAAY, SLM, GT]
+  sec_only_candidate: []
+  foreign_or_adr_official_source_candidate: [BCS, BNS, BBD, GFI, HMY, BCE, RYAAY]
+  etf_or_fund_no_company_feed: []
+  no_verified_official_source_found: [BALL, GFI, BBD, ITT, RVTY, SNA, PFG, VFC, AVY, PNW, AYI, AAON, CINF, LPX, BYD, WEN, RHI, LAMR, LNC, BMI, BKH, SBRA, AMSC]
+  disabled_pending_review: [BCS, BG, AEE, GPC, NTRS, ALK, ANF, AEIS, AES, BNS, CACI, BWA, GFI, WY, BBD, ITT, CCK, RVTY, BXP, SNA, PFG, VFC, AVY, PNW, ARCC, AYI, CE, AAON, CINF, BMO, HMY, ALV, BB, LPX, BYD, BCE, GL, RYAAY, SLM, WEN, RHI, LAMR, LNC, BMI, BKH, GT, SBRA, AMSC]
+AAP:
+  company_name: Advance Auto Parts, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Advance Auto Parts News Releases
+      url: https://ir.advanceautoparts.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.advanceautoparts.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+ACLS:
+  company_name: Axcelis Technologies, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Axcelis News Releases
+      url: https://investor.axcelis.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.axcelis.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+ADC:
+  company_name: Agree Realty Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Agree Realty News Releases
+      url: https://investors.agreerealty.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.agreerealty.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AEO:
+  company_name: American Eagle Outfitters, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: American Eagle News Releases
+      url: https://investors.ae.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.ae.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AFG:
+  company_name: American Financial Group, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: American Financial Group News Releases
+      url: https://www.afginc.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://www.afginc.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AGCO:
+  company_name: AGCO Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AGCO News Releases
+      url: https://investors.agcocorp.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.agcocorp.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AIT:
+  company_name: Applied Industrial Technologies, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Applied Industrial Technologies News Releases
+      url: https://ir.applied.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.applied.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AIZ:
+  company_name: Assurant, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Assurant News Releases
+      url: https://ir.assurant.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.assurant.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AMG:
+  company_name: Affiliated Managers Group, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AMG News Releases
+      url: https://ir.amg.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.amg.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AN:
+  company_name: AutoNation, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AutoNation News Releases
+      url: https://investors.autonation.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.autonation.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AOS:
+  company_name: A. O. Smith Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: A. O. Smith News Releases
+      url: https://investor.aosmith.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.aosmith.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+ARW:
+  company_name: Arrow Electronics, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Arrow Electronics News Releases
+      url: https://investor.arrow.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.arrow.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+ATR:
+  company_name: AptarGroup, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Aptar News Releases
+      url: https://investors.aptar.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.aptar.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AVT:
+  company_name: Avnet, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Avnet News Releases
+      url: https://ir.avnet.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.avnet.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+AXS:
+  company_name: AXIS Capital Holdings Limited
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: AXIS Capital News Releases
+      url: https://investor.axiscapital.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.axiscapital.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BAX:
+  company_name: Baxter International Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Baxter News Releases
+      url: https://investor.baxter.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.baxter.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BBWI:
+  company_name: Bath & Body Works, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Bath & Body Works News Releases
+      url: https://investors.bbwinc.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.bbwinc.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BC:
+  company_name: Brunswick Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Brunswick News Releases
+      url: https://ir.brunswick.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.brunswick.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BFH:
+  company_name: Bread Financial Holdings, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Bread Financial News Releases
+      url: https://investor.breadfinancial.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.breadfinancial.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BIO:
+  company_name: Bio-Rad Laboratories, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Bio-Rad News Releases
+      url: https://investors.bio-rad.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.bio-rad.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BPOP:
+  company_name: Popular, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Popular News Releases
+      url: https://investor.popular.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.popular.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+BRKR:
+  company_name: Bruker Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Bruker News Releases
+      url: https://ir.bruker.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.bruker.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+CAKE:
+  company_name: The Cheesecake Factory Incorporated
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Cheesecake Factory News Releases
+      url: https://investors.thecheesecakefactory.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.thecheesecakefactory.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+CALM:
+  company_name: Cal-Maine Foods, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Cal-Maine Foods News Releases
+      url: https://investors.calmainefoods.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.calmainefoods.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+CBRL:
+  company_name: Cracker Barrel Old Country Store, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Cracker Barrel News Releases
+      url: https://investor.crackerbarrel.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.crackerbarrel.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+CBSH:
+  company_name: Commerce Bancshares, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Commerce Bancshares News Releases
+      url: https://investor.commercebank.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.commercebank.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+CCEP:
+  company_name: Coca-Cola Europacific Partners plc
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Coca-Cola Europacific Partners News Releases
+      url: https://ir.cocacolaep.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.cocacolaep.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+EMN:
+  company_name: Eastman Chemical Company
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Eastman News Releases
+      url: https://investors.eastman.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.eastman.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+EQR:
+  company_name: Equity Residential
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Equity Residential News Releases
+      url: https://investors.equityapartments.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.equityapartments.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+FHN:
+  company_name: First Horizon Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: First Horizon News Releases
+      url: https://ir.firsthorizon.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.firsthorizon.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+FLR:
+  company_name: Fluor Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Fluor News Releases
+      url: https://investor.fluor.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.fluor.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+GEN:
+  company_name: Gen Digital Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Gen Digital News Releases
+      url: https://investor.gendigital.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.gendigital.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+GNTX:
+  company_name: Gentex Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Gentex News Releases
+      url: https://ir.gentex.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.gentex.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+HAS:
+  company_name: Hasbro, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Hasbro News Releases
+      url: https://investor.hasbro.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.hasbro.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+HRB:
+  company_name: H&R Block, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: H&R Block News Releases
+      url: https://investors.hrblock.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.hrblock.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+HSIC:
+  company_name: Henry Schein, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Henry Schein News Releases
+      url: https://investor.henryschein.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.henryschein.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+IFF:
+  company_name: International Flavors & Fragrances Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: IFF News Releases
+      url: https://ir.iff.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.iff.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+JHG:
+  company_name: Janus Henderson Group plc
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Janus Henderson News Releases
+      url: https://ir.janushenderson.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.janushenderson.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+KBH:
+  company_name: KB Home
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: KB Home News Releases
+      url: https://investor.kbhome.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.kbhome.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+KSS:
+  company_name: Kohl's Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Kohl's News Releases
+      url: https://investors.kohls.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.kohls.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+LUMN:
+  company_name: Lumen Technologies, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Lumen News Releases
+      url: https://ir.lumen.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.lumen.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+MAS:
+  company_name: Masco Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Masco News Releases
+      url: https://investor.masco.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.masco.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+MAT:
+  company_name: Mattel, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Mattel News Releases
+      url: https://investors.mattel.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.mattel.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+MTG:
+  company_name: MGIC Investment Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: MGIC News Releases
+      url: https://mtg.mgic.com/rss/news-releases.xml
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://mtg.mgic.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+NOVT:
+  company_name: Novanta Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Novanta News Releases
+      url: https://investors.novanta.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.novanta.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+NYT:
+  company_name: The New York Times Company
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: New York Times Company News Releases
+      url: https://investors.nytco.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.nytco.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+PTEN:
+  company_name: Patterson-UTI Energy, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Patterson-UTI News Releases
+      url: https://investor.patenergy.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.patenergy.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+R:
+  company_name: Ryder System, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Ryder News Releases
+      url: https://investors.ryder.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.ryder.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+SANM:
+  company_name: Sanmina Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Sanmina News Releases
+      url: https://ir.sanmina.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.sanmina.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+SWK:
+  company_name: Stanley Black & Decker, Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Stanley Black & Decker News Releases
+      url: https://ir.stanleyblackanddecker.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://ir.stanleyblackanddecker.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+TXT:
+  company_name: Textron Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Textron News Releases
+      url: https://investor.textron.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.textron.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+UNM:
+  company_name: Unum Group
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Unum News Releases
+      url: https://investors.unum.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.unum.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+VIAV:
+  company_name: Viavi Solutions Inc.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Viavi Solutions News Releases
+      url: https://investor.viavisolutions.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investor.viavisolutions.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+WHR:
+  company_name: Whirlpool Corporation
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Whirlpool News Releases
+      url: https://investors.whirlpoolcorp.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://investors.whirlpoolcorp.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
+ZION:
+  company_name: Zions Bancorporation, N.A.
+  status: verified
+  sources:
+    - type: investor_relations_rss
+      name: Zions Bancorporation News Releases
+      url: https://zionsbancorporation.com/rss/pressrelease.aspx
+      official: true
+      enabled: true
+      last_verified: "2026-07-02"
+      verified_source_url: https://zionsbancorporation.com/news-releases
+  notes: "Official company/IR/newsroom endpoint returned RSS/XML during batch 12-16 recovery review."
 _batch_06_16_review_notes:
   accelerated_review: "Batches 06-16 were probed conservatively for official company/IR/newsroom RSS/XML endpoints; verified official XML/RSS endpoints were enabled, while all other symbols remain disabled_pending_review."
 AA:
