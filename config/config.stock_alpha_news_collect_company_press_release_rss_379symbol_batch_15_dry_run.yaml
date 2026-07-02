@@ -1,0 +1,41 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_company_press_release_rss_379symbol_batch_15_dry_run/dev
+  stock_alpha_news_collect_output_path: data/news/raw/stock_alpha_news_provider_export.csv
+  stock_alpha_news_collect:
+    enabled: true
+    dry_run: true
+    output_written: false
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    universe_path: data/reference/universes/us_liquid_500.yaml
+    source_registry_path: config/news_source_registry.stock_alpha_rss.yaml
+    load_feeds_from_registry: true
+    max_articles_per_provider: 250
+    max_rows_per_provider: 250
+    provider_request_limit: 250
+    symbols_per_batch: 25
+    max_symbols_per_run: 25
+    only_symbols: [RYAAY, SLM, CAKE, MAT, R, PTEN, KBH, WEN, RHI, LAMR, LNC, BPOP, AFG, BMI, AVT, AXS, ATR, ACLS, BKH, GT, BC, CBSH, NOVT, GNTX, MTG]
+    rate_limit_sleep_seconds: 0.5
+    request_timeout_seconds: 20
+    start_date: '2026-04-01'
+    end_date: '2026-07-02'
+    providers:
+      company_press_release_rss:
+        enabled: true
+        max_rows_per_feed: 10
+        max_enabled_feeds_per_run: 10
+        skip_known_error_feeds: true
+      alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
+      sec_edgar: {enabled: false}
+      massive_stock_news: {enabled: false, api_key_env: MASSIVE_API_KEY}
+      finnhub: {enabled: false, api_key_env: FINNHUB_API_KEY}
+      gdelt: {enabled: false}
+      fmp: {enabled: false, api_key_env: FMP_API_KEY}
+      newsapi: {enabled: false, api_key_env: NEWSAPI_API_KEY}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
