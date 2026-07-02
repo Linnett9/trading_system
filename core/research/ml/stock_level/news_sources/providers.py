@@ -240,10 +240,14 @@ class CompanyPressReleaseRssSource(NewsSource):
         *,
         feeds: Mapping[str, Any] | None = None,
         max_rows_per_feed: int = 20,
+        max_enabled_feeds_per_run: int = 0,
+        skip_known_error_feeds: bool = False,
     ) -> None:
         super().__init__(http_get)
         self._feeds = _normalise_rss_feed_registry(feeds or {})
         self._max_rows_per_feed = max(1, int(max_rows_per_feed or 20))
+        self._max_enabled_feeds_per_run = max(0, int(max_enabled_feeds_per_run or 0))
+        self._skip_known_error_feeds = skip_known_error_feeds
         self.last_batch_diagnostic: dict[str, Any] = {}
 
     def with_provider_config(self, provider_config: Mapping[str, Any]) -> "CompanyPressReleaseRssSource":
@@ -251,6 +255,8 @@ class CompanyPressReleaseRssSource(NewsSource):
             self._http_get,
             feeds=provider_config.get("feeds", {}),
             max_rows_per_feed=int(provider_config.get("max_rows_per_feed", self._max_rows_per_feed)),
+            max_enabled_feeds_per_run=int(provider_config.get("max_enabled_feeds_per_run", self._max_enabled_feeds_per_run)),
+            skip_known_error_feeds=bool(provider_config.get("skip_known_error_feeds", self._skip_known_error_feeds)),
         )
 
     def collect(
@@ -266,6 +272,7 @@ class CompanyPressReleaseRssSource(NewsSource):
         del api_key
         rows: list[dict[str, Any]] = []
         feed_diagnostics: list[dict[str, Any]] = []
+        enabled_feed_attempts = 0
         for symbol_value in symbols:
             symbol = symbol_value.upper()
             symbol_feeds = self._feeds.get(symbol, [])
@@ -293,12 +300,24 @@ class CompanyPressReleaseRssSource(NewsSource):
                     diagnostic["zero_row_reason"] = "feed_disabled"
                     feed_diagnostics.append(diagnostic)
                     continue
+                if self._skip_known_error_feeds and bool(feed.get("known_error", False)):
+                    diagnostic["zero_row_reason"] = "known_error_feed_skipped"
+                    feed_diagnostics.append(diagnostic)
+                    continue
+                if (
+                    self._max_enabled_feeds_per_run > 0
+                    and enabled_feed_attempts >= self._max_enabled_feeds_per_run
+                ):
+                    diagnostic["zero_row_reason"] = "max_enabled_feeds_per_run_reached"
+                    feed_diagnostics.append(diagnostic)
+                    continue
                 if not feed_url:
                     diagnostic["zero_row_reason"] = "feed_url_missing"
                     feed_diagnostics.append(diagnostic)
                     continue
                 try:
                     _validate_rss_feed_url(feed_url)
+                    enabled_feed_attempts += 1
                     items = _rss_items(self._http_get(feed_url, timeout))
                     diagnostic["response_row_count"] = len(items)
                     selected = [

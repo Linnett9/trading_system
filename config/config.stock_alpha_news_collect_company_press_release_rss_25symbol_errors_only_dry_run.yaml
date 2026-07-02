@@ -1,0 +1,104 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_company_press_release_rss_25symbol_errors_only_dry_run/dev
+  stock_alpha_news_collect_output_path: data/news/raw/stock_alpha_news_provider_export.csv
+  stock_alpha_news_collect:
+    enabled: true
+    dry_run: true
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    source_registry_path: config/news_source_registry.stock_alpha_rss.yaml
+    max_articles_per_provider: 60
+    max_rows_per_provider: 60
+    max_rows_per_feed: 10
+    provider_request_limit: 60
+    symbols_per_batch: 6
+    max_symbols_per_run: 6
+    only_symbols: [ABBV, AVGO, JPM, ORCL, V, XOM]
+    rate_limit_sleep_seconds: 0
+    request_timeout_seconds: 12
+    start_date: '2026-04-01'
+    end_date: '2026-07-02'
+    symbols: [ABBV, AVGO, JPM, ORCL, V, XOM]
+    providers:
+      company_press_release_rss:
+        enabled: true
+        max_rows_per_feed: 10
+        max_enabled_feeds_per_run: 6
+        skip_known_error_feeds: false
+        feeds:
+          ABBV:
+            - name: AbbVie News Releases
+              url: "https://investors.abbvie.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://investors.abbvie.com/financial-releases"
+          AVGO:
+            - name: Broadcom News Releases
+              url: "https://investors.broadcom.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://investors.broadcom.com/financial-information/financial-news-releases"
+          JPM:
+            - name: JPMorgan Chase News Releases
+              url: "https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://jpmorganchaseco.gcs-web.com/ir/shareholder-information/rss-news-feeds"
+          ORCL:
+            - name: Oracle Press Releases
+              url: "https://www.oracle.com/corporate/press/rss/rss-pr.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://www.oracle.com/corporate/rss/"
+          V:
+            - name: Visa News Releases
+              url: "https://visa.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://investor.visa.com/news/default.aspx"
+          XOM:
+            - name: ExxonMobil News Releases
+              url: "https://exxonmobil.gcs-web.com/rss/news-releases.xml"
+              enabled: true
+              official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; this cleanup config intentionally retries it."
+              event_type: press_release
+              verified_source_url: "https://investor.exxonmobil.com/company-information/press-releases"
+      alpha_vantage: {enabled: false, api_key_env: ALPHA_VANTAGE_API_KEY}
+      sec_edgar: {enabled: false}
+      massive_stock_news:
+        enabled: false
+        api_key_env: MASSIVE_API_KEY
+        api_key_env_fallbacks: [POLYGON_API_KEY]
+      finnhub: {enabled: false, api_key_env: FINNHUB_API_KEY}
+      gdelt: {enabled: false}
+      fmp: {enabled: false, api_key_env: FMP_API_KEY}
+      newsapi: {enabled: false, api_key_env: NEWSAPI_API_KEY}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

@@ -96,9 +96,12 @@ AVGO:
       url: https://investors.broadcom.com/rss/news-releases.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://investors.broadcom.com/financial-information/financial-news-releases
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 BRK.B:
   company_name: Berkshire Hathaway Inc.
   status: no_verified_rss
@@ -113,9 +116,12 @@ JPM:
       url: https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://jpmorganchaseco.gcs-web.com/ir/shareholder-information/rss-news-feeds
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 V:
   company_name: Visa Inc.
   status: verified
@@ -125,9 +131,12 @@ V:
       url: https://visa.gcs-web.com/rss/news-releases.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://investor.visa.com/news/default.aspx
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 MA:
   company_name: Mastercard Incorporated
   status: verified
@@ -149,9 +158,12 @@ XOM:
       url: https://exxonmobil.gcs-web.com/rss/news-releases.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://investor.exxonmobil.com/company-information/press-releases
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 UNH:
   company_name: UnitedHealth Group Incorporated
   status: needs_manual_review
@@ -214,9 +226,12 @@ ABBV:
       url: https://investors.abbvie.com/rss/news-releases.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://investors.abbvie.com/financial-releases
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 NFLX:
   company_name: Netflix, Inc.
   status: verified
@@ -262,9 +277,12 @@ ORCL:
       url: https://www.oracle.com/corporate/press/rss/rss-pr.xml
       official: true
       enabled: true
+      known_error: true
       last_verified: "2026-07-02"
+      last_error_observed: "2026-07-02"
+      last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but route cleanup through the errors-only dry-run config."
       verified_source_url: https://www.oracle.com/corporate/rss/
-  notes: ""
+  notes: "Official URL is retained; endpoint is marked for targeted cleanup after the 25-symbol dry-run reported a feed-level error."
 BAC:
   company_name: Bank of America Corporation
   status: feed_error

@@ -13,6 +13,8 @@ ml:
     max_rows_per_feed: 10
     provider_request_limit: 250
     symbols_per_batch: 25
+    max_symbols_per_run: 25
+    only_symbols: []
     rate_limit_sleep_seconds: 0.5
     request_timeout_seconds: 20
     start_date: '2026-04-01'
@@ -22,6 +24,8 @@ ml:
       company_press_release_rss:
         enabled: true
         max_rows_per_feed: 10
+        max_enabled_feeds_per_run: 15
+        skip_known_error_feeds: true
         feeds:
           AAPL:
             - name: Apple Newsroom
@@ -76,6 +80,9 @@ ml:
               url: "https://investors.broadcom.com/rss/news-releases.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://investors.broadcom.com/financial-information/financial-news-releases"
           BRK.B:
@@ -89,6 +96,9 @@ ml:
               url: "https://jpmorganchaseco.gcs-web.com/rss/news-releases.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://jpmorganchaseco.gcs-web.com/ir/shareholder-information/rss-news-feeds"
           V:
@@ -96,6 +106,9 @@ ml:
               url: "https://visa.gcs-web.com/rss/news-releases.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://investor.visa.com/news/default.aspx"
           MA:
@@ -110,6 +123,9 @@ ml:
               url: "https://exxonmobil.gcs-web.com/rss/news-releases.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://investor.exxonmobil.com/company-information/press-releases"
           UNH:
@@ -151,6 +167,9 @@ ml:
               url: "https://investors.abbvie.com/rss/news-releases.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://investors.abbvie.com/financial-releases"
           NFLX:
@@ -179,6 +198,9 @@ ml:
               url: "https://www.oracle.com/corporate/press/rss/rss-pr.xml"
               enabled: true
               official: true
+              known_error: true
+              last_error_observed: "2026-07-02"
+              last_error_note: "25-symbol dry-run returned a feed-level error; keep URL official but skip by default until cleanup rerun."
               event_type: press_release
               verified_source_url: "https://www.oracle.com/corporate/rss/"
           BAC:
