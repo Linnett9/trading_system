@@ -985,6 +985,42 @@ def test_cien_cap_starvation_recovery_config_is_single_symbol_dry_run_only():
     assert ml["trading_impact"] == "none"
 
 
+def test_sec_company_filings_36mo_pilot_configs_are_report_only_single_symbol_runs():
+    expected_symbols = {
+        "config/config.stock_alpha_news_collect_sec_company_filings_batch_01_36mo_pilot_dry_run.yaml": ["AAPL"],
+        "config/config.stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run.yaml": ["CIEN"],
+        "config/config.stock_alpha_news_collect_sec_company_filings_batch_16_36mo_pilot_dry_run.yaml": ["CBRL"],
+    }
+
+    for config_path, symbols in expected_symbols.items():
+        ml = load_config(config_path, overlay_project_config=True)["ml"]
+        collect = ml["stock_alpha_news_collect"]
+        providers = collect["providers"]
+
+        assert collect["enabled"] is True
+        assert collect["dry_run"] is True
+        assert collect["output_written"] is False
+        assert collect["allow_overwrite"] is False
+        assert collect["merge_existing"] is False
+        assert collect["backup_existing"] is False
+        assert collect["symbols"] == symbols
+        assert collect["only_symbols"] == symbols
+        assert collect["symbols_per_batch"] == 1
+        assert collect["max_symbols_per_run"] == 1
+        assert collect["start_date"] == "2023-07-01"
+        assert collect["end_date"] == "2026-07-02"
+        assert ml["stock_alpha_news_collect_output_path"].startswith("reports/")
+        assert "data/news/" not in ml["stock_alpha_news_collect_output_path"]
+        assert providers["sec_company_filings"]["enabled"] is True
+        assert providers["sec_company_filings"]["forms"] == ["8-K", "10-Q", "10-K"]
+        for provider_name, provider in providers.items():
+            if provider_name != "sec_company_filings":
+                assert provider["enabled"] is False
+        assert ml["stock_alpha_news_enable_transformer"] is False
+        assert ml["research_only"] is True
+        assert ml["trading_impact"] == "none"
+
+
 def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
     configs = [
         (

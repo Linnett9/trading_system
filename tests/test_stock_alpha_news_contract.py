@@ -3056,8 +3056,13 @@ def test_stock_alpha_news_coverage_audit_reports_cap_starved_sec_symbols(tmp_pat
 
     assert audit["sec_cap_starved_symbols"] == ["CIEN"]
     assert audit["unresolved_sec_cap_starved_symbols"] == ["CIEN"]
+    assert audit["sec_cap_starved_count"] == 1
+    assert audit["unresolved_sec_cap_starved_count"] == 1
     assert audit["sec_cap_starvation_diagnostics"][0]["requested_limit"] == 250
     assert audit["sec_cap_starvation_diagnostics"][0]["attempted_symbol_count"] == 1
+    assert audit["audited_exception_symbols"] == ["B"]
+    assert "GLD" in audit["blocked_etf_or_fund_symbols"]
+    assert audit["blocked_fund_count"] == 14
 
 
 def test_stock_alpha_news_coverage_audit_combines_rss_and_sec_reports(tmp_path):
@@ -3117,6 +3122,13 @@ AAA:
     assert audit["symbols_covered_by_sec_only"] == ["BBB"]
     assert audit["symbols_covered_by_both"] == ["AAA"]
     assert audit["symbols_with_no_official_rows"] == ["CCC"]
+    assert audit["symbols_with_zero_official_rows"] == ["CCC"]
+    assert audit["symbols_with_1_to_9_valid_official_rows"] == ["AAA", "BBB"]
+    assert audit["symbols_with_10_plus_valid_official_rows"] == []
+    assert audit["zero_row_symbol_count"] == 1
+    assert audit["thin_symbol_count_under_10"] == 2
+    assert audit["covered_symbol_count_10_plus"] == 0
+    assert audit["valid_official_rows_by_symbol"] == {"AAA": 2, "BBB": 2}
     assert audit["duplicate_provider_url_count"] == 0
     assert audit["forms_by_type"] == {"10-Q": 1, "8-K": 2}
     assert audit["safe_for_feature_generation"] is False
