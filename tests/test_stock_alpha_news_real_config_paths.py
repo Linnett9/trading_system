@@ -197,3 +197,48 @@ def test_daily_confirmation_config_is_research_only_and_bounded():
     assert ml["trading_impact"] == "none"
     assert ml["production_validated"] is False
     assert ml["promotion_thresholds_changed"] is False
+
+
+def test_company_press_release_rss_config_is_dry_run_only_with_disabled_placeholders():
+    config = load_config(
+        "config/config.stock_alpha_news_collect_company_press_release_rss_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    collect = ml["stock_alpha_news_collect"]
+    providers = collect["providers"]
+    rss = providers["company_press_release_rss"]
+
+    assert collect["enabled"] is True
+    assert collect["dry_run"] is True
+    assert collect["allow_overwrite"] is False
+    assert collect["merge_existing"] is False
+    assert collect["backup_existing"] is False
+    assert collect["symbols"] == ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL"]
+    assert collect["symbols_per_batch"] == 7
+    assert collect["provider_request_limit"] == 50
+    assert collect["max_rows_per_provider"] == 200
+    assert collect["rate_limit_sleep_seconds"] == 0.5
+    assert rss["enabled"] is True
+    assert rss["max_rows_per_feed"] == 20
+    assert "api_key_env" not in rss
+    assert sorted(rss["feeds"]) == ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"]
+    for feeds in rss["feeds"].values():
+        assert feeds
+        for feed in feeds:
+            assert feed["enabled"] is False
+            assert not str(feed.get("url", "")).strip()
+            assert feed["event_type"] == "press_release"
+    for name, provider in providers.items():
+        if name != "company_press_release_rss":
+            assert provider["enabled"] is False
+    assert "stock_alpha_news_features_path" not in ml
+    assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+    assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+    assert ml.get("model_type") != "news_analysis_transformer"
+    assert ml.get("shadow_model_type") != "news_analysis_transformer"
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False

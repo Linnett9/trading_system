@@ -40,7 +40,7 @@ from core.research.ml.stock_level.stock_alpha_news_coverage_audit import (
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import (
     write_stock_alpha_news_feature_diagnostics,
 )
-from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
+from core.research.ml.stock_level.news_sources import AlphaVantageNewsSource, CompanyPressReleaseRssSource, GdeltNewsSource, MassiveStockNewsSource, PROVIDER_METADATA, SecEdgarNewsSource
 from urllib.error import HTTPError
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
     write_stock_alpha_news_free_source_collect,
@@ -1827,6 +1827,146 @@ def test_massive_stock_news_zero_results_are_empty_not_failure():
         api_key="test-key",
     )
     assert rows == []
+
+
+def test_company_press_release_rss_source_maps_sample_to_canonical_without_scores():
+    requested_urls = []
+    rss = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Apple Newsroom</title>
+        <language>en-US</language>
+        <item>
+          <title>Apple announces test expansion</title>
+          <link>https://example.test/apple-press-release</link>
+          <pubDate>Mon, 20 Apr 2026 14:30:00 GMT</pubDate>
+          <description>Official RSS summary only.</description>
+        </item>
+      </channel>
+    </rss>
+    """
+
+    def fake_get(url, timeout):
+        requested_urls.append((url, timeout))
+        return rss
+
+    source = CompanyPressReleaseRssSource(fake_get).with_provider_config({
+        "max_rows_per_feed": 5,
+        "feeds": {
+            "AAPL": [{
+                "name": "Apple Newsroom",
+                "url": "https://example.test/apple/rss.xml",
+                "enabled": True,
+                "event_type": "press_release",
+            }]
+        },
+    })
+
+    rows = source.collect(
+        symbols=["AAPL"],
+        start_date="2026-04-19",
+        end_date="2026-04-21",
+        limit=5,
+        timeout=2,
+    )
+
+    assert requested_urls == [("https://example.test/apple/rss.xml", 2)]
+    assert source.api_key_required is False
+    assert PROVIDER_METADATA["company_press_release_rss"]["api_key_required"] is False
+    assert rows[0]["article_id"].startswith("company_press_release_rss:rss:AAPL:")
+    assert rows[0]["symbol"] == "AAPL"
+    assert rows[0]["published_at_utc"] == "2026-04-20T14:30:00Z"
+    assert rows[0]["source"] == "Apple Newsroom"
+    assert rows[0]["headline"] == "Apple announces test expansion"
+    assert rows[0]["body_or_summary"] == "Official RSS summary only."
+    assert rows[0]["sentiment_score"] == ""
+    assert rows[0]["relevance_score"] == ""
+    assert rows[0]["novelty_score"] == ""
+    assert rows[0]["event_type"] == "press_release"
+    assert rows[0]["language"] == "en-US"
+    assert rows[0]["provider"] == "company_press_release_rss"
+    assert rows[0]["provider_article_id"].startswith("rss:AAPL:")
+    assert rows[0]["provider_url"] == "https://example.test/apple-press-release"
+    assert source.last_batch_diagnostic["feed_diagnostics"][0] == {
+        "provider": "company_press_release_rss",
+        "symbol": "AAPL",
+        "feed_name": "Apple Newsroom",
+        "feed_url": "https://example.test/apple/rss.xml",
+        "response_row_count": 1,
+        "normalized_row_count": 1,
+        "zero_row_reason": "",
+        "error_type": "",
+        "error_message": "",
+        "rate_limited": False,
+    }
+
+
+def test_company_press_release_rss_empty_feed_reports_zero_reason_not_failure():
+    source = CompanyPressReleaseRssSource(lambda url, timeout: "<rss><channel /></rss>").with_provider_config({
+        "feeds": {
+            "AAPL": [{
+                "name": "Apple Newsroom",
+                "url": "https://example.test/apple/rss.xml",
+                "enabled": True,
+            }]
+        },
+    })
+
+    rows = source.collect(
+        symbols=["AAPL"],
+        start_date="2026-04-19",
+        end_date="2026-04-21",
+        limit=5,
+        timeout=2,
+    )
+
+    diagnostic = source.last_batch_diagnostic["feed_diagnostics"][0]
+    assert rows == []
+    assert diagnostic["zero_row_reason"] == "empty_feed"
+    assert diagnostic["error_type"] == ""
+    assert diagnostic["error_message"] == ""
+    assert diagnostic["rate_limited"] is False
+
+
+def test_company_press_release_rss_invalid_feed_url_is_diagnostic_not_collection_failure(tmp_path):
+    def fake_get(url, timeout):
+        raise AssertionError("invalid URL should fail before network fetch")
+
+    config = _collection_config(tmp_path, dry_run=True)
+    settings = config["ml"]["stock_alpha_news_collect"]
+    settings["providers"] = {
+        "company_press_release_rss": {
+            "enabled": True,
+            "feeds": {
+                "AAPL": [{
+                    "name": "Invalid feed",
+                    "url": "not-a-url",
+                    "enabled": True,
+                }]
+            },
+        }
+    }
+    paths = write_stock_alpha_news_free_source_collect(
+        config,
+        sources={"company_press_release_rss": CompanyPressReleaseRssSource(fake_get)},
+    )
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+    feed_diagnostic = payload["provider_batch_diagnostics"][0]["feed_diagnostics"][0]
+
+    assert payload["providers_failed"] == {}
+    assert payload["provider_row_counts"] == {"company_press_release_rss": 0}
+    assert payload["providers_returned_zero_rows"] == ["company_press_release_rss"]
+    assert payload["provider_zero_row_reasons"] == {
+        "company_press_release_rss": "all_batches_returned_zero_rows"
+    }
+    assert feed_diagnostic["provider"] == "company_press_release_rss"
+    assert feed_diagnostic["symbol"] == "AAPL"
+    assert feed_diagnostic["feed_name"] == "Invalid feed"
+    assert feed_diagnostic["feed_url"] == "not-a-url"
+    assert feed_diagnostic["zero_row_reason"] == "provider_error"
+    assert feed_diagnostic["error_type"] == "ValueError"
+    assert feed_diagnostic["error_message"] == "invalid RSS feed URL"
+    assert feed_diagnostic["rate_limited"] is False
 
 
 def test_free_source_collection_missing_keys_skip_and_dry_run_is_safe(tmp_path, monkeypatch):

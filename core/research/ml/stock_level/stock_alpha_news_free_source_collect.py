@@ -120,6 +120,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         if adapter is None:
             failures[name] = "provider_adapter_unavailable"
             continue
+        adapter = _configured_provider_adapter(adapter, provider_config)
         env_names = _api_key_env_names(provider_config)
         api_key = _first_env_value(env_names)
         if getattr(adapter, "api_key_required", True) and not api_key:
@@ -387,6 +388,11 @@ def _provider_batch_diagnostic(
 def _provider_extra_diagnostic(adapter: Any) -> dict[str, Any]:
     value = getattr(adapter, "last_batch_diagnostic", {})
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _configured_provider_adapter(adapter: Any, provider_config: Mapping[str, Any]) -> Any:
+    configure = getattr(adapter, "with_provider_config", None)
+    return configure(provider_config) if callable(configure) else adapter
 
 
 def _is_rate_limited(exc: Exception) -> bool:
