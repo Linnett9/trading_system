@@ -10,6 +10,7 @@ from scripts.stock_alpha_news_generate_sec_36mo_dry_run_configs import (
     ETF_FUND_SYMBOLS as GENERATOR_ETF_FUND_SYMBOLS,
     ISOLATED_SYMBOLS,
     build_sec_36mo_dry_run_configs,
+    build_sec_window_dry_run_configs,
 )
 from scripts.stock_alpha_news_universe_batches import build_universe_batches
 
@@ -1086,6 +1087,90 @@ def test_generated_sec_company_filings_36mo_configs_are_cap_safe_report_only():
             if symbols_by_config[config_path] == [isolated_symbol]
         ]
         assert len(matching) == 1
+
+
+def test_sec_company_filings_window_generator_preserves_36mo_outputs():
+    legacy = build_sec_36mo_dry_run_configs(config_dir="config", max_symbols_per_config=4)
+    generic = build_sec_window_dry_run_configs(
+        config_dir="config",
+        max_symbols_per_config=4,
+        window_months=36,
+    )
+
+    assert generic == legacy
+
+
+def test_sec_company_filings_window_generator_prepares_longer_windows_safely(tmp_path):
+    source = tmp_path / "config.stock_alpha_news_collect_sec_company_filings_batch_01_12mo_dry_run.yaml"
+    source.write_text(
+        yaml.safe_dump({
+            "ml": {
+                "stock_alpha_news_collect": {
+                    "only_symbols": ["AAPL", "MSFT", "GLD", "B", "CIEN", "AMD"],
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    expected = {
+        60: ("2021-07-01", "sec_company_filings_60mo_dry_run_rows.csv"),
+        120: ("2016-07-01", "sec_company_filings_120mo_dry_run_rows.csv"),
+    }
+    for window_months, (start_date, output_name) in expected.items():
+        generated = build_sec_window_dry_run_configs(
+            config_dir=tmp_path,
+            max_symbols_per_config=2,
+            window_months=window_months,
+        )
+
+        assert [path.name for path, _ in generated] == [
+            f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part_001_dry_run.yaml",
+            f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part_002_dry_run.yaml",
+            f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part_003_dry_run.yaml",
+            f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part_004_dry_run.yaml",
+        ]
+        assert [payload["ml"]["stock_alpha_news_collect"]["only_symbols"] for _, payload in generated] == [
+            ["AAPL"],
+            ["MSFT"],
+            ["CIEN"],
+            ["AMD"],
+        ]
+
+        for path, payload in generated:
+            ml = payload["ml"]
+            collect = ml["stock_alpha_news_collect"]
+            providers = collect["providers"]
+
+            assert f"_{window_months}mo_part_" in path.name
+            assert ml["stock_alpha_news_collect_report_dir"].startswith("reports/")
+            assert ml["stock_alpha_news_collect_output_path"].startswith("reports/")
+            assert ml["stock_alpha_news_collect_output_path"].endswith(output_name)
+            assert "data/news/" not in ml["stock_alpha_news_collect_report_dir"]
+            assert "data/news/" not in ml["stock_alpha_news_collect_output_path"]
+            assert collect["source_window"] == f"{window_months}mo"
+            assert collect["start_date"] == start_date
+            assert collect["end_date"] == "2026-07-02"
+            assert collect["enabled"] is True
+            assert collect["dry_run"] is True
+            assert collect["output_written"] is False
+            assert collect["allow_overwrite"] is False
+            assert collect["merge_existing"] is False
+            assert collect["backup_existing"] is False
+            assert "GLD" not in collect["only_symbols"]
+            assert "B" not in collect["only_symbols"]
+            assert providers["sec_company_filings"]["enabled"] is True
+            for provider_name, provider in providers.items():
+                if provider_name != "sec_company_filings":
+                    assert provider["enabled"] is False
+            assert "stock_alpha_news_features_path" not in ml
+            assert "stock_alpha_news_readiness_preflight_output_dir" not in ml
+            assert "stock_alpha_news_source_diagnostics_report_dir" not in ml
+            assert ml["stock_alpha_news_enable_transformer"] is False
+            assert ml["research_only"] is True
+            assert ml["trading_impact"] == "none"
+            assert ml["production_validated"] is False
+            assert ml["promotion_thresholds_changed"] is False
 
 
 def test_sec_company_filings_missing_symbol_recovery_configs_are_dry_run_only():
