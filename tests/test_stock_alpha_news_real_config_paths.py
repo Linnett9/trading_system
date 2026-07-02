@@ -168,3 +168,32 @@ def test_200_symbol_gdelt_collection_configs_are_dry_run_only():
     assert gdelt["ml"]["stock_alpha_news_collect"]["providers"]["sec_edgar"]["enabled"] is False
     assert combined["ml"]["stock_alpha_news_collect"]["max_rows_per_provider"] == 1000
     assert combined["ml"]["stock_alpha_news_collect"]["providers"]["sec_edgar"] == {"enabled": True}
+
+
+def test_daily_confirmation_config_is_research_only_and_bounded():
+    config = load_config(
+        "config/config.stock_alpha_news_daily_confirmation_alpha_sec_dry_run.yaml",
+        overlay_project_config=True,
+    )
+    ml = config["ml"]
+    confirmation = ml["stock_alpha_news_confirmation"]
+    providers = confirmation["providers"]
+
+    assert confirmation["enabled"] is True
+    assert confirmation["dry_run"] is True
+    assert confirmation["inspection_only"] is True
+    assert confirmation["lookback_hours"] == 72
+    assert confirmation["max_symbols"] == 20
+    assert confirmation["max_articles_per_symbol"] == 5
+    assert confirmation["max_provider_requests"] == 20
+    assert confirmation["symbols"] == ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOGL"]
+    assert providers["alpha_vantage"] == {
+        "enabled": True,
+        "api_key_env": "ALPHA_VANTAGE_API_KEY",
+    }
+    assert providers["sec_edgar"] == {"enabled": True}
+    assert ml["stock_alpha_news_enable_transformer"] is False
+    assert ml["research_only"] is True
+    assert ml["trading_impact"] == "none"
+    assert ml["production_validated"] is False
+    assert ml["promotion_thresholds_changed"] is False

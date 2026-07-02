@@ -2,6 +2,7 @@ from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_a
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
 from core.research.ml.stock_level.stock_alpha_news_collection_plan import write_stock_alpha_news_collection_plan
+from core.research.ml.stock_level.stock_alpha_news_daily_confirmation import write_stock_alpha_news_daily_confirmation
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
 from core.research.ml.stock_level.stock_alpha_news_pipeline_preflight import write_stock_alpha_news_pipeline_preflight
@@ -217,6 +218,33 @@ def run_ml_stock_alpha_news_collection_plan(config):
     print(f"symbol_threshold_gap={payload['symbol_threshold_gap']}")
     print("collection_invoked=false")
     print("raw_export_written=false")
+    print("model_training_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"JSON: {result.json_path}")
+    print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_daily_confirmation(config):
+    print("\nSTOCK-ALPHA DAILY NEWS CONFIRMATION")
+    print("mode=research | confirmation_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_daily_confirmation(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    print(f"symbols_checked={payload['symbol_count']}")
+    print(f"providers_attempted={','.join(payload['providers_attempted']) or 'none'}")
+    print(f"providers_skipped_missing_key={','.join(payload['providers_skipped_missing_key']) or 'none'}")
+    print(f"providers_rate_limited={','.join(payload['providers_rate_limited']) or 'none'}")
+    print(f"providers_failed={payload['providers_failed'] or 'none'}")
+    print(f"symbols_requiring_review={','.join(payload['symbols_requiring_review']) or 'none'}")
+    print("orders_generated=false")
+    print("broker_invoked=false")
+    print("features_generated=false")
+    print("readiness_invoked=false")
+    print("diagnostics_invoked=false")
     print("model_training_invoked=false")
     print("news_transformer_enabled=false")
     print(f"JSON: {result.json_path}")

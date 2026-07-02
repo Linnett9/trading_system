@@ -1,0 +1,27 @@
+ml:
+  stock_alpha_news_daily_confirmation_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_daily_confirmation/dev
+  stock_alpha_news_confirmation:
+    enabled: true
+    dry_run: true
+    inspection_only: true
+    lookback_hours: 72
+    max_symbols: 20
+    max_articles_per_symbol: 5
+    max_provider_requests: 20
+    request_timeout_seconds: 20
+    symbols:
+      - AAPL
+      - MSFT
+      - NVDA
+      - TSLA
+      - AMZN
+      - META
+      - GOOGL
+    providers:
+      alpha_vantage: {enabled: true, api_key_env: ALPHA_VANTAGE_API_KEY}
+      sec_edgar: {enabled: true}
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false

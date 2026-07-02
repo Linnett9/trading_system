@@ -62,6 +62,7 @@ def parse_args():
             "ml-stock-alpha-news-contract-ingest",
             "ml-stock-alpha-news-collect-free-sources",
             "ml-stock-alpha-news-collection-plan",
+            "ml-stock-alpha-news-daily-confirmation",
             "ml-stock-alpha-news-coverage-audit",
             "ml-stock-alpha-news-provider-audit",
             "ml-stock-alpha-news-provider-sample-check",
