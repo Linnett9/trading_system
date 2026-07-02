@@ -393,8 +393,8 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert len(symbols) == len(set(symbols)) == 379
     assert report["registry_complete"] is True
     assert sum(report["classification_counts"].values()) == 379
-    assert report["classification_counts"]["verified_rss_feed"] == 111
-    assert report["classification_counts"]["disabled_pending_review"] == 260
+    assert report["classification_counts"]["verified_rss_feed"] == 166
+    assert report["classification_counts"]["disabled_pending_review"] == 205
     assert report["classification_counts"]["known_error_feed"] == 6
     assert report["classification_counts"]["no_verified_official_rss"] == 2
     assert report["known_error_feed_symbols"] == ["ABBV", "AVGO", "JPM", "ORCL", "V", "XOM"]
@@ -406,6 +406,11 @@ def test_company_press_release_rss_registry_covers_canonical_379_universe():
     assert {"UPS", "MCK", "SYK", "SHW", "ELV", "CVS", "FISV", "ADP", "DAL", "TT"} <= set(report["verified_rss_feed_symbols"])
     assert {"MO", "PH", "FDX", "CSX", "AMT", "JCI", "MMM", "CB", "SO"} <= set(report["verified_rss_feed_symbols"])
     assert {"COR", "WMB", "KR", "DVN", "DUK", "RF", "GD", "MNST"} <= set(report["verified_rss_feed_symbols"])
+    assert {"FHN", "MAS", "CCEP", "BAX", "HAS", "EQR", "FLR", "AEO", "SWK", "BBWI", "VIAV", "IFF"} <= set(report["verified_rss_feed_symbols"])
+    assert {"GEN", "WHR", "NYT", "SANM", "TXT", "EMN", "BRKR", "LUMN", "UNM", "HSIC"} <= set(report["verified_rss_feed_symbols"])
+    assert {"AAP", "KSS", "ZION", "JHG", "AOS", "AMG", "AN", "AIT", "AGCO", "CALM", "ADC", "ARW", "AIZ", "BIO", "HRB"} <= set(report["verified_rss_feed_symbols"])
+    assert {"CAKE", "MAT", "R", "PTEN", "KBH", "BPOP", "AFG", "AVT", "AXS", "ATR", "ACLS", "BC", "CBSH", "NOVT", "GNTX", "MTG"} <= set(report["verified_rss_feed_symbols"])
+    assert {"CBRL", "BFH"} <= set(report["verified_rss_feed_symbols"])
     assert set(feeds) == set(report["verified_rss_feed_symbols"] + report["known_error_feed_symbols"])
     for symbol, symbol_feeds in feeds.items():
         for feed in symbol_feeds:
