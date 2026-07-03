@@ -1,21 +1,47 @@
+# macOS
 .DS_Store
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
-cache/
-reports/**/*.json
-reports/**/*.csv
+.venv/
+venv/
 
-# Local/system/generated files
-.DS_Store
-__pycache__/
-*.py[cod]
+# Caches
+cache/
+
+# Data - do not push large datasets to GitHub
+data/
+datasets/
+raw_data/
+processed_data/
 
 # Generated research outputs
 reports/
 logs/
-data/news/
+runs/
+outputs/
+artifacts/
+
+# Models / checkpoints
+models/
+checkpoints/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+*.onnx
+
+# Local secrets/config
+.env
+*.key
+*.pem
+config.local.yaml
+secrets.yaml
 
 # Keep empty artifact directories if needed
 !reports/**/.gitkeep
 !logs/.gitkeep
+!data/.gitkeep
