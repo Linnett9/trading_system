@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scripts.audit_stock_alpha_thin_symbols import build_thin_symbol_audit
 from scripts.audit_stock_alpha_sec_event_row_coverage import build_sec_event_row_coverage_summary
+from scripts.plan_stock_alpha_sec_missing_window_waves import build_missing_window_wave_plans
 from scripts.plan_stock_alpha_sec_window_reruns import build_sec_window_rerun_plan
 
 
@@ -263,3 +265,95 @@ def test_planner_expands_missing_grouped_configs_only_when_requested(tmp_path: P
     assert "Missing grouped 120mo config is not expanded by default." in default_plan
     assert "120mo_retry_part_009_AAA" in expanded_plan
     assert "PYTHONDONTWRITEBYTECODE" not in expanded_plan
+
+
+def test_missing_report_wave_planner_uses_grouped_missing_configs_only() -> None:
+    summary = {
+        "window_months": 120,
+        "items": [
+            {
+                "classification": "success_with_event_rows",
+                "family_name": "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_001_MSFT_dry_run",
+                "config_path": "config/config.msft.yaml",
+                "requested_symbols": ["MSFT"],
+            },
+            {
+                "classification": "timeout_failure",
+                "family_name": "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_002_META_dry_run",
+                "config_path": "config/config.meta.yaml",
+                "requested_symbols": ["META"],
+            },
+            *[
+                {
+                    "classification": "missing_report",
+                    "family_name": f"stock_alpha_news_collect_sec_company_filings_120mo_part_{index:03d}_dry_run",
+                    "config_path": f"config/config.stock_alpha_news_collect_sec_company_filings_120mo_part_{index:03d}_dry_run.yaml",
+                    "requested_symbols": [f"SYM{index}A", f"SYM{index}B"],
+                }
+                for index in range(1, 7)
+            ],
+        ],
+    }
+
+    plans = build_missing_window_wave_plans(summary, wave_size=5)
+    combined = "\n".join(plans)
+
+    assert len(plans) == 2
+    assert plans[0].count("main.py --mode ml-stock-alpha-news-collect-free-sources") == 5
+    assert plans[1].count("main.py --mode ml-stock-alpha-news-collect-free-sources") == 1
+    assert "MSFT" not in combined
+    assert "META" not in combined
+    assert "120mo_retry" not in combined
+    assert "data/news" not in combined
+    forbidden = ("transformer", "feature", "training", "trading", "broker", "paper", "live")
+    assert not any(marker in combined.lower() for marker in forbidden)
+
+
+def test_thin_symbol_audit_classifies_low_row_cases(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    coverage_dir = reports_root / "coverage"
+    coverage_dir.mkdir(parents=True)
+    (coverage_dir / "stock_alpha_news_coverage_audit.json").write_text(
+        json.dumps(
+            {
+                "valid_official_rows_by_symbol": {"AEM": 2, "ASML": 1, "MSFT": 20},
+                "rows_by_symbol_by_provider": {
+                    "company_press_release_rss": {"AEM": 2, "ASML": 1, "MSFT": 5},
+                    "sec_company_filings": {"AEM": 0, "ASML": 0, "MSFT": 15},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_report(
+        reports_root,
+        "stock_alpha_news_collect_sec_company_filings_36mo_part_001_dry_run",
+        _payload("AEM", rows=0),
+    )
+    _write_report(
+        reports_root,
+        "stock_alpha_news_collect_sec_company_filings_120mo_part_001_dry_run",
+        _payload("AEM", rows=0),
+    )
+    _write_report(
+        reports_root,
+        "stock_alpha_news_collect_sec_company_filings_120mo_part_002_dry_run",
+        _payload("ASML", provider_failed="TimeoutError: read timed out"),
+    )
+    _write_report(
+        reports_root,
+        "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_003_MSFT_dry_run",
+        _payload("MSFT", rows=15),
+        event_rows=[{"symbol": "MSFT", "source": "sec_company_filings"}],
+    )
+
+    summary = build_thin_symbol_audit(reports_root=reports_root, symbols=["AEM", "ASML", "MSFT"])
+
+    assert summary["symbols"]["AEM"]["current_official_row_count"] == 2
+    assert summary["symbols"]["AEM"]["has_36mo_artifact"] is True
+    assert summary["symbols"]["AEM"]["has_120mo_artifact"] is True
+    assert summary["symbols"]["AEM"]["returned_zero_sec_rows"] is True
+    assert summary["symbols"]["AEM"]["recommended_action"] == "mapping_or_form_investigation"
+    assert summary["symbols"]["ASML"]["provider_failure_or_timeout"] is True
+    assert summary["symbols"]["ASML"]["recommended_action"] == "retry_120mo_single_symbol"
+    assert summary["symbols"]["MSFT"]["recommended_action"] == "already_sufficient"
