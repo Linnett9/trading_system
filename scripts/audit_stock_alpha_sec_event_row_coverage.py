@@ -45,7 +45,17 @@ def build_sec_event_row_coverage_summary(
     timeout_symbols = _symbols_for(items, "timeout_failure")
     provider_failure_symbols = _symbols_for(items, "provider_failure")
     rate_limited_symbols = _symbols_for(items, "rate_limited")
-    unattempted_symbols = sorted({symbol for item in items for symbol in item["unattempted_symbols"]})
+    successful_event_symbols = _symbols_for(items, "success_with_event_rows")
+    unattempted_symbols = sorted({
+        symbol
+        for item in items
+        if item["classification"] == "unattempted_symbols"
+        for symbol in item["unattempted_symbols"]
+    })
+    retry_symbols = sorted(
+        (set(timeout_symbols) | set(provider_failure_symbols) | set(rate_limited_symbols) | set(unattempted_symbols))
+        - set(successful_event_symbols)
+    )
     missing_event_rows = [
         item for item in items
         if item["classification"] == "success_missing_event_rows"
@@ -69,24 +79,38 @@ def build_sec_event_row_coverage_summary(
         "config_dir": str(config_dir_path) if config_dir_path else "",
         "window_months": window_months,
         "include_retries": include_retries,
+        "total_reports": len(items),
         "classification_counts": {name: counts.get(name, 0) for name in CLASSIFICATIONS},
         "successful_reports": counts.get("success_with_event_rows", 0) + counts.get("success_zero_rows_clean", 0),
+        "success_with_event_rows": counts.get("success_with_event_rows", 0),
+        "success_missing_event_rows": counts.get("success_missing_event_rows", 0),
         "successful_reports_missing_event_rows": len(missing_event_rows),
+        "timeout_failures": counts.get("timeout_failure", 0),
+        "provider_failures": counts.get("provider_failure", 0),
+        "rate_limited": counts.get("rate_limited", 0),
+        "missing_reports": counts.get("missing_report", 0),
         "timeout_symbols": timeout_symbols,
         "provider_failure_symbols": provider_failure_symbols,
         "rate_limited_symbols": rate_limited_symbols,
+        "successful_event_symbols": successful_event_symbols,
         "unattempted_symbols": unattempted_symbols,
         "total_event_rows_found": sum(item["event_row_count"] for item in items),
         "total_provider_rows_reported": sum(item["provider_row_count"] for item in items),
         "touches_data_news": any(item["touches_data_news"] for item in items),
+        "outputs_outside_reports": sum(
+            1 for item in items
+            if (item["output_path"] or item["event_rows_path"]) and not item["output_under_reports"]
+        ),
         "mismatch_count": sum(
             1 for item in items
             if item["event_rows_exists"] and item["provider_row_count"] != item["event_row_count"]
         ),
-        "reports_that_should_be_rerun": [item["family_name"] for item in rerun_items],
-        "symbols_that_should_be_one_symbol_retried": sorted(
-            set(timeout_symbols) | set(provider_failure_symbols) | set(rate_limited_symbols) | set(unattempted_symbols)
+        "event_row_mismatch_count": sum(
+            1 for item in items
+            if item["event_rows_exists"] and item["provider_row_count"] != item["event_row_count"]
         ),
+        "reports_that_should_be_rerun": [item["family_name"] for item in rerun_items],
+        "symbols_that_should_be_one_symbol_retried": retry_symbols,
         "items": items,
     }
 
@@ -192,7 +216,7 @@ def _missing_report_item(config_path: Path, reports_root: Path, family_name: str
         "attempted_symbols": [],
         "returned_symbols": [],
         "zero_return_symbols": requested,
-        "unattempted_symbols": requested,
+        "unattempted_symbols": [],
         "provider_row_count": 0,
         "event_rows_path": "",
         "event_rows_exists": False,
