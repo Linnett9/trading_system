@@ -31,6 +31,8 @@ def build_stock_alpha_news_contract_ingest_preflight(
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
     sec_artifact_selection: str = "all",
+    sec_artifact_window_months: int | None = None,
+    reports_root: str | Path | None = None,
     min_symbol_coverage: int = 300,
 ) -> dict[str, Any]:
     rows = []
@@ -42,17 +44,23 @@ def build_stock_alpha_news_contract_ingest_preflight(
         artifact = str(report.get("sec_company_filings_event_rows_path", "")).strip()
         if artifact:
             event_row_paths.append(artifact)
-    selected_event_row_paths = _select_sec_event_row_paths(event_row_paths, sec_artifact_selection)
+    selected_event_row_paths = _select_sec_event_row_paths(
+        event_row_paths,
+        sec_artifact_selection,
+        window_months=sec_artifact_window_months,
+    )
     sec_artifact_diagnostics = _sec_artifact_selection_diagnostics(
         all_paths=event_row_paths,
         selected_paths=selected_event_row_paths,
         selection=sec_artifact_selection,
+        window_months=sec_artifact_window_months,
     )
     sec_common_rows, sec_aggregate_report_count = _sec_report_common_rows(
         sec_report_summaries,
         sec_event_rows=_read_sec_event_rows(selected_event_row_paths),
     )
     rows.extend(sec_common_rows)
+    provider_timeouts = _provider_timeout_diagnostics(reports_root)
 
     providers_checked = sorted({str(row.get("provider", "")) for row in rows if row.get("provider")})
     rows_checked = Counter(str(row.get("provider", "")) for row in rows)
@@ -109,6 +117,9 @@ def build_stock_alpha_news_contract_ingest_preflight(
         "sec_artifact_selection": sec_artifact_selection,
         "sec_event_rows_included": [str(path) for path in selected_event_row_paths],
         **sec_artifact_diagnostics,
+        "provider_timeout_symbols": provider_timeouts["symbols"],
+        "unresolved_provider_timeout_symbols": provider_timeouts["unresolved_symbols"],
+        "provider_timeout_artifacts": provider_timeouts["artifacts"],
         "sec_aggregate_reports_checked": sec_aggregate_report_count,
         "providers_checked": providers_checked,
         "rows_checked_by_provider": dict(sorted(rows_checked.items())),
@@ -135,12 +146,16 @@ def write_stock_alpha_news_contract_ingest_preflight(
     sec_report_paths: Sequence[str | Path] | None = None,
     sec_event_row_paths: Sequence[str | Path] | None = None,
     sec_artifact_selection: str = "all",
+    sec_artifact_window_months: int | None = None,
+    reports_root: str | Path | None = None,
 ) -> Path:
     payload = build_stock_alpha_news_contract_ingest_preflight(
         rss_raw_news_path=rss_raw_news_path,
         sec_report_paths=sec_report_paths,
         sec_event_row_paths=sec_event_row_paths,
         sec_artifact_selection=sec_artifact_selection,
+        sec_artifact_window_months=sec_artifact_window_months,
+        reports_root=reports_root,
     )
     output = Path(output_path)
     ResearchArtifactWriter().write_json(output, payload)
@@ -233,11 +248,16 @@ def _sec_event_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
     )
 
 
-def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> list[str | Path]:
+def _select_sec_event_row_paths(
+    paths: Sequence[str | Path],
+    selection: str,
+    *,
+    window_months: int | None = None,
+) -> list[str | Path]:
     if selection == "all":
         return list(paths)
-    if selection not in {"prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts"}:
-        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', 'prefer_36mo', 'merge_36mo_pilots', or 'merge_36mo_parts'")
+    if selection not in {"prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts", "merge_sec_window_parts"}:
+        raise ValueError("sec_artifact_selection must be 'all', 'prefer_12mo', 'prefer_36mo', 'merge_36mo_pilots', 'merge_36mo_parts', or 'merge_sec_window_parts'")
     by_batch, other_paths = _group_sec_event_row_paths(paths)
     if selection == "prefer_36mo":
         return _prefer_36mo_sec_event_row_paths(by_batch, other_paths)
@@ -245,6 +265,14 @@ def _select_sec_event_row_paths(paths: Sequence[str | Path], selection: str) -> 
         return _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_pilot")
     if selection == "merge_36mo_parts":
         return _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_part_")
+    if selection == "merge_sec_window_parts":
+        if window_months not in {36, 60, 120}:
+            raise ValueError("sec_artifact_window_months must be 36, 60, or 120 for merge_sec_window_parts")
+        return _merge_sec_window_event_row_paths(
+            by_batch,
+            other_paths,
+            markers=(f"_{window_months}mo_part_", f"_{window_months}mo_retry_"),
+        )
     return _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
 
 
@@ -273,7 +301,7 @@ def _prefer_12mo_sec_event_row_paths(
         selected.extend(preferred or batch_paths)
     selected.extend(
         path for path in other_paths
-        if not _is_data_news_path(path) and not _is_36mo_path(path)
+        if not _is_data_news_path(path) and not _is_sec_window_path(path)
     )
     return selected
 
@@ -316,6 +344,26 @@ def _merge_36mo_sec_event_row_paths(
     return [*baseline, *overlay]
 
 
+def _merge_sec_window_event_row_paths(
+    by_batch: Mapping[str, list[str | Path]],
+    other_paths: Sequence[str | Path],
+    *,
+    markers: Sequence[str],
+) -> list[str | Path]:
+    baseline = _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_part_")
+    baseline_text = {str(path) for path in baseline}
+    overlay = [
+        path for path in sorted(other_paths, key=str)
+        if (
+            any(marker in str(path) for marker in markers)
+            and not _is_data_news_path(path)
+            and not _is_provider_timeout_event_row_path(path)
+            and str(path) not in baseline_text
+        )
+    ]
+    return [*baseline, *overlay]
+
+
 def _is_data_news_path(path: str | Path) -> bool:
     path_text = str(path).replace("\\", "/")
     return path_text.startswith("data/news/") or "/data/news/" in path_text
@@ -325,22 +373,36 @@ def _is_36mo_path(path: str | Path) -> bool:
     return "_36mo" in str(path)
 
 
+def _is_sec_window_path(path: str | Path) -> bool:
+    path_text = str(path)
+    return any(marker in path_text for marker in ("_36mo", "_60mo", "_120mo"))
+
+
+def _is_provider_timeout_event_row_path(path: str | Path) -> bool:
+    report_path = Path(path).with_name("stock_alpha_news_free_source_collect.json")
+    return _collector_report_has_provider_timeout(_read_json(report_path))
+
+
 def _sec_artifact_selection_diagnostics(
     *,
     all_paths: Sequence[str | Path],
     selected_paths: Sequence[str | Path],
     selection: str,
+    window_months: int | None = None,
 ) -> dict[str, Any]:
-    if selection not in {"merge_36mo_pilots", "merge_36mo_parts"}:
+    if selection not in {"merge_36mo_pilots", "merge_36mo_parts", "merge_sec_window_parts"}:
         return {
             "sec_artifact_selection_mode": selection,
             "selected_sec_artifacts": [str(path) for path in selected_paths],
         }
     by_batch, other_paths = _group_sec_event_row_paths(all_paths)
-    baseline_paths = [
-        path for path in _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
-        if not _is_data_news_path(path)
-    ]
+    if selection == "merge_sec_window_parts":
+        baseline_paths = _merge_36mo_sec_event_row_paths(by_batch, other_paths, marker="_36mo_part_")
+    else:
+        baseline_paths = [
+            path for path in _prefer_12mo_sec_event_row_paths(by_batch, other_paths)
+            if not _is_data_news_path(path)
+        ]
     baseline_rows = _read_sec_event_rows(baseline_paths)
     selected_rows = _read_sec_event_rows(selected_paths)
     baseline_keys = {_sec_event_key(row) for row in baseline_rows}
@@ -349,8 +411,14 @@ def _sec_artifact_selection_diagnostics(
     selected_counts = _row_counts_by_symbol(selected_rows)
     all_symbols = set(baseline_counts) | set(selected_counts)
     added_artifacts = [str(path) for path in selected_paths if str(path) not in {str(item) for item in baseline_paths}]
+    excluded_timeout_artifacts = [
+        str(path)
+        for path in all_paths
+        if _is_provider_timeout_event_row_path(path)
+    ]
     return {
         "sec_artifact_selection_mode": selection,
+        "sec_artifact_window_months": window_months if selection == "merge_sec_window_parts" else None,
         "baseline_12mo_sec_row_count": len(baseline_rows),
         "selected_sec_row_count": len(selected_rows),
         "additional_sec_event_key_count": len(selected_keys - baseline_keys),
@@ -366,6 +434,15 @@ def _sec_artifact_selection_diagnostics(
         "selected_sec_artifacts": [str(path) for path in selected_paths],
         "baseline_sec_artifacts": [str(path) for path in baseline_paths],
         "added_sec_artifacts": added_artifacts,
+        "added_sec_window_part_artifacts": [
+            path for path in added_artifacts
+            if window_months is not None and f"_{window_months}mo_part_" in path
+        ],
+        "added_sec_window_retry_artifacts": [
+            path for path in added_artifacts
+            if window_months is not None and f"_{window_months}mo_retry_" in path
+        ],
+        "excluded_timeout_artifacts": excluded_timeout_artifacts,
     }
 
 
@@ -376,6 +453,69 @@ def _row_counts_by_symbol(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
         if symbol:
             counter[symbol] += 1
     return dict(sorted(counter.items()))
+
+
+def _provider_timeout_diagnostics(reports_root: str | Path | None) -> dict[str, Any]:
+    if reports_root is None or not Path(reports_root).exists():
+        return {"symbols": [], "unresolved_symbols": [], "artifacts": []}
+    timeout_symbols: set[str] = set()
+    successful_symbols: set[str] = set()
+    artifacts: list[dict[str, Any]] = []
+    for path in sorted(Path(reports_root).rglob("stock_alpha_news_free_source_collect.json")):
+        payload = _read_json(path)
+        if "_120mo" not in str(path):
+            continue
+        if not _collector_report_has_provider_timeout(payload):
+            successful_symbols.update(
+                str(symbol).strip().upper()
+                for symbol in (payload.get("rows_by_symbol", {}) or {})
+                if str(symbol).strip()
+            )
+            continue
+        requested = _collector_requested_symbols(payload)
+        returned = {
+            str(symbol).strip().upper()
+            for symbol in (payload.get("rows_by_symbol", {}) or {})
+            if str(symbol).strip()
+        }
+        unresolved = sorted(requested - returned)
+        timeout_symbols.update(unresolved or requested)
+        artifacts.append({
+            "report_path": str(path),
+            "event_rows_path": str(payload.get("sec_company_filings_event_rows_path", "") or ""),
+            "provider": "sec_company_filings",
+            "requested_symbols": sorted(requested),
+            "returned_symbols": sorted(returned),
+            "unresolved_symbols": unresolved,
+            "providers_failed": dict(payload.get("providers_failed", {}) or {}),
+        })
+    return {
+        "symbols": sorted(timeout_symbols),
+        "unresolved_symbols": sorted(timeout_symbols - successful_symbols),
+        "artifacts": artifacts,
+    }
+
+
+def _collector_report_has_provider_timeout(payload: Mapping[str, Any]) -> bool:
+    failure = str((payload.get("providers_failed", {}) or {}).get("sec_company_filings", ""))
+    if "TimeoutError" in failure or "timed out" in failure.lower():
+        return True
+    for batch in payload.get("provider_batch_diagnostics", []) or []:
+        if batch.get("provider") != "sec_company_filings":
+            continue
+        error_type = str(batch.get("error_type", ""))
+        error_message = str(batch.get("error", "") or batch.get("message", ""))
+        if error_type == "TimeoutError" or "timed out" in error_message.lower():
+            return True
+    return False
+
+
+def _collector_requested_symbols(payload: Mapping[str, Any]) -> set[str]:
+    return {
+        str(symbol).strip().upper()
+        for symbol in (payload.get("only_symbols", []) or payload.get("symbols", []) or [])
+        if str(symbol).strip()
+    }
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -402,7 +542,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--sec-report", action="append", default=[])
     parser.add_argument("--sec-event-rows", action="append", default=[])
     parser.add_argument("--include-sec-event-rows", action="store_true")
-    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts"], default="all")
+    parser.add_argument("--sec-artifact-selection", choices=["all", "prefer_12mo", "prefer_36mo", "merge_36mo_pilots", "merge_36mo_parts", "merge_sec_window_parts"], default="all")
+    parser.add_argument("--sec-artifact-window-months", type=int, choices=[36, 60, 120])
     parser.add_argument("--reports-root", default="reports")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
@@ -422,6 +563,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
         ],
         sec_artifact_selection=args.sec_artifact_selection,
+        sec_artifact_window_months=args.sec_artifact_window_months,
+        reports_root=args.reports_root,
     )
     print(f"Wrote stock-alpha news contract ingest preflight: {path}")
     return 0

@@ -22,6 +22,9 @@ WINDOW_START_DATES = {
     120: "2016-07-01",
 }
 WINDOW_END_DATE = "2026-07-02"
+WINDOW_RECOVERY_SYMBOLS = {
+    120: ("AMD", "GOOGL", "NFLX"),
+}
 
 
 def build_sec_36mo_dry_run_configs(
@@ -48,7 +51,10 @@ def build_sec_window_dry_run_configs(
         raise ValueError("window_months must be one of 36, 60, or 120")
 
     root = Path(config_dir)
-    symbols = _eligible_symbols(root.glob(DEFAULT_SOURCE_GLOB))
+    symbols = _eligible_symbols(
+        root.glob(DEFAULT_SOURCE_GLOB),
+        additional_symbols=WINDOW_RECOVERY_SYMBOLS.get(window_months, ()),
+    )
     groups = _cap_safe_symbol_groups(symbols, max_symbols_per_config=max_symbols_per_config)
     output_prefix = f"config.stock_alpha_news_collect_sec_company_filings_{window_months}mo_part"
     return [
@@ -98,7 +104,7 @@ def write_sec_window_dry_run_configs(
     return written
 
 
-def _eligible_symbols(paths: Iterable[Path]) -> list[str]:
+def _eligible_symbols(paths: Iterable[Path], *, additional_symbols: Iterable[str] = ()) -> list[str]:
     symbols: list[str] = []
     seen: set[str] = set()
     for path in sorted(paths):
@@ -114,6 +120,16 @@ def _eligible_symbols(paths: Iterable[Path]) -> list[str]:
             ):
                 seen.add(normalized)
                 symbols.append(normalized)
+    for symbol in additional_symbols:
+        normalized = str(symbol).strip().upper()
+        if (
+            normalized
+            and normalized not in seen
+            and normalized not in ETF_FUND_SYMBOLS
+            and normalized not in AUDITED_EXCEPTION_SYMBOLS
+        ):
+            seen.add(normalized)
+            symbols.append(normalized)
     if not symbols:
         raise ValueError("no eligible SEC company symbols found")
     return symbols

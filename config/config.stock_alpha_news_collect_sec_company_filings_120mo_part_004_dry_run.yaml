@@ -1,0 +1,63 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_120mo_part_004_dry_run/dev
+  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_sec_company_filings_120mo_part_004_dry_run/dev/sec_company_filings_120mo_dry_run_rows.csv
+  stock_alpha_news_collect:
+    enabled: true
+    dry_run: true
+    output_written: false
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    max_articles_per_provider: 250
+    max_rows_per_provider: 1000
+    provider_request_limit: 250
+    symbols_per_batch: 4
+    max_symbols_per_run: 4
+    source_window: 120mo
+    source_universe: sec_company_filings_batch_01_to_16_12mo_dry_run
+    source_batch_policy: cap_safe_sub_batches
+    max_symbols_per_generated_config: 4
+    cap_starvation_policy: small_sub_batches_with_attempted_symbol_diagnostics
+    symbols:
+    - QCOM
+    - LRCX
+    - ASML
+    - NOW
+    only_symbols:
+    - QCOM
+    - LRCX
+    - ASML
+    - NOW
+    rate_limit_sleep_seconds: 0
+    request_timeout_seconds: 20
+    start_date: '2016-07-01'
+    end_date: '2026-07-02'
+    providers:
+      sec_company_filings:
+        enabled: true
+        forms:
+        - 8-K
+        - 10-Q
+        - 10-K
+        load_official_sec_company_tickers: true
+      company_press_release_rss:
+        enabled: false
+      alpha_vantage:
+        enabled: false
+      sec_edgar:
+        enabled: false
+      massive_stock_news:
+        enabled: false
+      finnhub:
+        enabled: false
+      gdelt:
+        enabled: false
+      fmp:
+        enabled: false
+      newsapi:
+        enabled: false
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  promotion_thresholds_changed: false
