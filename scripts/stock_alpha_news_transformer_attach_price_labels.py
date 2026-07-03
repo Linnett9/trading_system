@@ -8,6 +8,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from infrastructure.data.adjusted_price_csv_data_feed import LocalAdjustedPriceCsvDataFeed
+
 
 LABEL_COLUMNS = (
     "label_date",
@@ -25,6 +27,7 @@ def attach_price_labels_report_only(
     output_dir: str | Path,
     reports_root: str | Path,
     price_csv_path: str | Path | None = None,
+    adjusted_price_dir: str | Path | None = None,
     reduce_exposure_drawdown_threshold: float = -0.05,
 ) -> dict[str, Any]:
     reports_root_path = Path(reports_root)
@@ -41,7 +44,7 @@ def attach_price_labels_report_only(
     if future_timestamp_count:
         blocking_reasons.append("future_timestamps")
 
-    if price_csv_path is None:
+    if price_csv_path is None and adjusted_price_dir is None:
         blocking_reasons.append("price_loader_not_found")
         report = _report(
             rows=rows,
@@ -57,7 +60,11 @@ def attach_price_labels_report_only(
         _write_reports(output_dir_path, [], report)
         return report
 
-    prices_by_symbol = _read_prices(Path(price_csv_path))
+    prices_by_symbol = (
+        _read_adjusted_price_dir(Path(adjusted_price_dir), rows)
+        if adjusted_price_dir is not None
+        else _read_prices(Path(price_csv_path))
+    )
     labeled_rows, missing_symbols, leakage_violations = _label_rows(
         rows,
         prices_by_symbol=prices_by_symbol,
@@ -216,6 +223,20 @@ def _read_prices(path: Path) -> dict[str, list[tuple[date, float]]]:
     return {symbol: sorted(items) for symbol, items in prices.items()}
 
 
+def _read_adjusted_price_dir(path: Path, rows: Sequence[Mapping[str, str]]) -> dict[str, list[tuple[date, float]]]:
+    feed = LocalAdjustedPriceCsvDataFeed(data_dir=str(path))
+    prices: dict[str, list[tuple[date, float]]] = {}
+    symbols = sorted({str(row.get("symbol", "")).strip().upper() for row in rows if row.get("symbol")})
+    for symbol in symbols:
+        points = feed.get_adjusted_prices(symbol)
+        if points:
+            prices[symbol] = [
+                (point.timestamp.date(), point.adjusted_close)
+                for point in points
+            ]
+    return prices
+
+
 def _duplicate_count(values: Sequence[str]) -> int:
     materialized = [value for value in values if value]
     return len(materialized) - len(set(materialized))
@@ -262,6 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--reports-root", required=True)
     parser.add_argument("--price-csv")
+    parser.add_argument("--adjusted-price-dir")
     parser.add_argument("--reduce-exposure-drawdown-threshold", type=float, default=-0.05)
     args = parser.parse_args(argv)
 
@@ -270,6 +292,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_dir=args.output_dir,
         reports_root=args.reports_root,
         price_csv_path=args.price_csv,
+        adjusted_price_dir=args.adjusted_price_dir,
         reduce_exposure_drawdown_threshold=args.reduce_exposure_drawdown_threshold,
     )
     print(json.dumps(report, indent=2, sort_keys=True))

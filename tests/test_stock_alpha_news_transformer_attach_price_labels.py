@@ -97,6 +97,34 @@ def test_emits_blocking_report_when_price_loader_is_missing(tmp_path: Path) -> N
     assert report["next_allowed_step"] == "implement_or_select_canonical_price_loader"
 
 
+def test_attaches_labels_from_adjusted_price_directory(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    event_path = _write_csv(
+        reports / "features" / "events.csv",
+        _event_rows(available_at_timestamp="2024-01-01T22:00:00Z"),
+    )
+    adjusted_dir = tmp_path / "adjusted"
+    _write_csv(
+        adjusted_dir / "AAA.csv",
+        [
+            {"Date": row["date"], "Adj Close": row["close"]}
+            for row in _price_rows()
+        ],
+    )
+
+    report = attach_price_labels_report_only(
+        event_dataset_path=event_path,
+        adjusted_price_dir=adjusted_dir,
+        output_dir=reports / "labeled",
+        reports_root=reports,
+    )
+
+    row = next(csv.DictReader((reports / "labeled" / "news_transformer_event_features_labeled.csv").open(encoding="utf-8")))
+    assert report["labels_attached"] is True
+    assert row["label_date"] == "2024-01-02"
+    assert row["future_return_20d"] == "-0.0900000000"
+
+
 def test_outputs_must_stay_under_reports_and_no_training_paths_are_emitted(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="output_dir must be under reports"):
         _run(tmp_path, output_dir=tmp_path / "outside")
