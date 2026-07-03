@@ -52,7 +52,9 @@ def attach_price_labels_report_only(
             duplicate_event_key_count=duplicate_event_key_count,
             future_timestamp_count=future_timestamp_count,
             leakage_violation_count=0,
-            missing_price_symbols=sorted({row.get("symbol", "") for row in rows if row.get("symbol")}),
+            missing_price_file_symbols=sorted({row.get("symbol", "") for row in rows if row.get("symbol")}),
+            rows_unlabeled_due_to_missing_price=len(rows),
+            rows_unlabeled_due_to_insufficient_future_bars=0,
             blocking_reasons=blocking_reasons,
             warnings=["no canonical project price loader was found for stock-alpha news labels"],
             labels_attached=False,
@@ -65,7 +67,7 @@ def attach_price_labels_report_only(
         if adjusted_price_dir is not None
         else _read_prices(Path(price_csv_path))
     )
-    labeled_rows, missing_symbols, leakage_violations = _label_rows(
+    labeled_rows, label_diagnostics, leakage_violations = _label_rows(
         rows,
         prices_by_symbol=prices_by_symbol,
         reduce_exposure_drawdown_threshold=reduce_exposure_drawdown_threshold,
@@ -79,7 +81,9 @@ def attach_price_labels_report_only(
         duplicate_event_key_count=duplicate_event_key_count,
         future_timestamp_count=future_timestamp_count,
         leakage_violation_count=leakage_violations,
-        missing_price_symbols=missing_symbols,
+        missing_price_file_symbols=label_diagnostics["missing_price_file_symbols"],
+        rows_unlabeled_due_to_missing_price=label_diagnostics["rows_unlabeled_due_to_missing_price"],
+        rows_unlabeled_due_to_insufficient_future_bars=label_diagnostics["rows_unlabeled_due_to_insufficient_future_bars"],
         blocking_reasons=blocking_reasons,
         warnings=[] if labels_attached else ["labels were computed only for rows with sufficient future price bars"],
         labels_attached=labels_attached,
@@ -93,9 +97,11 @@ def _label_rows(
     *,
     prices_by_symbol: Mapping[str, Sequence[tuple[date, float]]],
     reduce_exposure_drawdown_threshold: float,
-) -> tuple[list[dict[str, str]], list[str], int]:
+) -> tuple[list[dict[str, str]], dict[str, Any], int]:
     labeled: list[dict[str, str]] = []
-    missing_symbols: set[str] = set()
+    missing_price_file_symbols: set[str] = set()
+    rows_unlabeled_due_to_missing_price = 0
+    rows_unlabeled_due_to_insufficient_future_bars = 0
     leakage_violations = 0
     for row in rows:
         symbol = str(row.get("symbol", "")).strip().upper()
@@ -106,13 +112,14 @@ def _label_rows(
             labeled_row[column] = ""
         if not available_at or not prices:
             if symbol:
-                missing_symbols.add(symbol)
+                missing_price_file_symbols.add(symbol)
+            rows_unlabeled_due_to_missing_price += 1
             labeled.append(labeled_row)
             continue
         price_dates = [item[0] for item in prices]
         index = bisect_left(price_dates, available_at.date())
         if index >= len(prices):
-            missing_symbols.add(symbol)
+            rows_unlabeled_due_to_insufficient_future_bars += 1
             labeled.append(labeled_row)
             continue
         label_date = prices[index][0]
@@ -132,8 +139,15 @@ def _label_rows(
             ).lower()
         elif close_t <= 0:
             labeled_row["reduce_exposure_label"] = ""
+        if not labeled_row["future_return_20d"]:
+            rows_unlabeled_due_to_insufficient_future_bars += 1
         labeled.append(labeled_row)
-    return labeled, sorted(missing_symbols), leakage_violations
+    diagnostics = {
+        "missing_price_file_symbols": sorted(missing_price_file_symbols),
+        "rows_unlabeled_due_to_missing_price": rows_unlabeled_due_to_missing_price,
+        "rows_unlabeled_due_to_insufficient_future_bars": rows_unlabeled_due_to_insufficient_future_bars,
+    }
+    return labeled, diagnostics, leakage_violations
 
 
 def _future_return(prices: Sequence[tuple[date, float]], index: int, horizon: int) -> str:
@@ -159,7 +173,9 @@ def _report(
     duplicate_event_key_count: int,
     future_timestamp_count: int,
     leakage_violation_count: int,
-    missing_price_symbols: Sequence[str],
+    missing_price_file_symbols: Sequence[str],
+    rows_unlabeled_due_to_missing_price: int,
+    rows_unlabeled_due_to_insufficient_future_bars: int,
     blocking_reasons: Sequence[str],
     warnings: Sequence[str],
     labels_attached: bool,
@@ -167,6 +183,16 @@ def _report(
     rows_labeled = sum(1 for row in labeled_rows if row.get("future_return_20d"))
     symbols_in = sorted({row.get("symbol", "") for row in rows if row.get("symbol")})
     symbols_labeled = sorted({row.get("symbol", "") for row in labeled_rows if row.get("future_return_20d")})
+    unlabeled_symbols = sorted({row.get("symbol", "") for row in labeled_rows if row.get("symbol") and not row.get("future_return_20d")})
+    symbols_with_no_labeled_rows = sorted(set(symbols_in) - set(symbols_labeled))
+    symbols_with_some_unlabeled_rows = sorted(set(unlabeled_symbols) & set(symbols_labeled))
+    label_coverage_by_horizon = {
+        "1d": _coverage(labeled_rows, "future_return_1d"),
+        "5d": _coverage(labeled_rows, "future_return_5d"),
+        "20d": _coverage(labeled_rows, "future_return_20d"),
+        "drawdown_20d": _coverage(labeled_rows, "future_drawdown_20d"),
+        "reduce_exposure_label": _coverage(labeled_rows, "reduce_exposure_label"),
+    }
     return {
         "labels_attached": labels_attached,
         "rows_in": len(rows),
@@ -174,7 +200,14 @@ def _report(
         "rows_unlabeled": len(rows) - rows_labeled,
         "symbols_in": symbols_in,
         "symbols_labeled": symbols_labeled,
-        "missing_price_symbols": list(missing_price_symbols),
+        "missing_price_file_symbols": list(missing_price_file_symbols),
+        "missing_price_symbols": list(missing_price_file_symbols),
+        "missing_price_symbols_deprecated": "Use missing_price_file_symbols; recent rows without enough future bars are reported separately.",
+        "symbols_with_no_labeled_rows": symbols_with_no_labeled_rows,
+        "symbols_with_some_unlabeled_rows": symbols_with_some_unlabeled_rows,
+        "rows_unlabeled_due_to_missing_price": rows_unlabeled_due_to_missing_price,
+        "rows_unlabeled_due_to_insufficient_future_bars": rows_unlabeled_due_to_insufficient_future_bars,
+        "label_coverage_by_horizon": label_coverage_by_horizon,
         "duplicate_event_key_count": duplicate_event_key_count,
         "future_timestamp_count": future_timestamp_count,
         "leakage_violation_count": leakage_violation_count,
@@ -185,6 +218,16 @@ def _report(
             if labels_attached
             else "implement_or_select_canonical_price_loader"
         ),
+    }
+
+
+def _coverage(rows: Sequence[Mapping[str, str]], column: str) -> dict[str, float | int]:
+    present = sum(1 for row in rows if row.get(column))
+    total = len(rows)
+    return {
+        "rows_present": present,
+        "rows_missing": total - present,
+        "coverage": (present / total) if total else 0.0,
     }
 
 

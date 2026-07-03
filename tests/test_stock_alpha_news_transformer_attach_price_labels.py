@@ -94,6 +94,9 @@ def test_emits_blocking_report_when_price_loader_is_missing(tmp_path: Path) -> N
 
     assert report["labels_attached"] is False
     assert report["blocking_reasons"] == ["price_loader_not_found"]
+    assert report["missing_price_file_symbols"] == ["AAA"]
+    assert report["missing_price_symbols"] == ["AAA"]
+    assert report["rows_unlabeled_due_to_missing_price"] == 1
     assert report["next_allowed_step"] == "implement_or_select_canonical_price_loader"
 
 
@@ -135,3 +138,63 @@ def test_outputs_must_stay_under_reports_and_no_training_paths_are_emitted(tmp_p
     assert "model_training" not in rendered
     assert "transformer_training" not in rendered
     assert "broker" not in rendered
+
+
+def test_label_diagnostics_separate_missing_prices_from_insufficient_future_bars(tmp_path: Path) -> None:
+    events = [
+        _event_rows(
+            event_id="event-1",
+            event_key="sec|AAA|url|2024-01-02T13:00:00Z",
+            symbol="AAA",
+            available_at_timestamp="2024-01-02T13:00:00Z",
+        )[0],
+        _event_rows(
+            event_id="event-2",
+            event_key="sec|AAA|url|2024-01-22T13:00:00Z",
+            symbol="AAA",
+            available_at_timestamp="2024-01-22T13:00:00Z",
+        )[0],
+        _event_rows(
+            event_id="event-3",
+            event_key="sec|MISSING|url|2024-01-02T13:00:00Z",
+            symbol="MISSING",
+            available_at_timestamp="2024-01-02T13:00:00Z",
+        )[0],
+    ]
+
+    report = _run(tmp_path, events=events, prices=_price_rows("AAA"))
+
+    assert report["rows_labeled"] == 1
+    assert report["rows_unlabeled"] == 2
+    assert report["missing_price_file_symbols"] == ["MISSING"]
+    assert report["missing_price_symbols"] == ["MISSING"]
+    assert report["rows_unlabeled_due_to_missing_price"] == 1
+    assert report["rows_unlabeled_due_to_insufficient_future_bars"] == 1
+    assert report["symbols_with_no_labeled_rows"] == ["MISSING"]
+    assert report["symbols_with_some_unlabeled_rows"] == ["AAA"]
+    assert report["label_coverage_by_horizon"]["20d"]["rows_present"] == 1
+
+
+def test_all_symbols_with_labelled_rows_do_not_produce_missing_price_file_warnings(tmp_path: Path) -> None:
+    events = [
+        _event_rows(
+            event_id="event-1",
+            event_key="sec|AAA|url|2024-01-02T13:00:00Z",
+            symbol="AAA",
+            available_at_timestamp="2024-01-02T13:00:00Z",
+        )[0],
+        _event_rows(
+            event_id="event-2",
+            event_key="sec|AAA|url|2024-01-22T13:00:00Z",
+            symbol="AAA",
+            available_at_timestamp="2024-01-22T13:00:00Z",
+        )[0],
+    ]
+
+    report = _run(tmp_path, events=events, prices=_price_rows("AAA"))
+
+    assert report["symbols_labeled"] == ["AAA"]
+    assert report["symbols_with_no_labeled_rows"] == []
+    assert report["missing_price_file_symbols"] == []
+    assert report["missing_price_symbols"] == []
+    assert report["rows_unlabeled_due_to_insufficient_future_bars"] == 1
