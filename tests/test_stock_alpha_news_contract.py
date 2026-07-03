@@ -3771,6 +3771,167 @@ def test_contract_ingest_preflight_can_merge_generated_36mo_parts(tmp_path):
     assert report["sec_artifact_selection"] == "merge_36mo_parts"
 
 
+def test_stock_alpha_news_coverage_audit_can_merge_sec_window_parts(tmp_path):
+    universe = tmp_path / "universe.yaml"
+    registry = tmp_path / "registry.yaml"
+    raw = tmp_path / "raw.csv"
+    twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_01_12mo_dry_run" / "dev"
+    part_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_part_001_dry_run" / "dev"
+    retry_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_002_BBB_dry_run" / "dev"
+    timeout_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_003_CCC_dry_run" / "dev"
+    part_60_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_60mo_part_001_dry_run" / "dev"
+    raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_120mo_part_001_dry_run" / "dev"
+    for directory in (twelve_dir, part_120_dir, retry_120_dir, timeout_120_dir, part_60_dir, raw_data_dir):
+        directory.mkdir(parents=True)
+    twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+    part_120_events = part_120_dir / "sec_company_filings_event_rows.jsonl"
+    retry_120_events = retry_120_dir / "sec_company_filings_event_rows.jsonl"
+    part_60_events = part_60_dir / "sec_company_filings_event_rows.jsonl"
+    raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+    universe.write_text("available_count: 2\nsymbols: [AAA, BBB]\n", encoding="utf-8")
+    registry.write_text(
+        """
+_classifications:
+  verified_rss_feed: []
+  known_error_feed: []
+  no_verified_official_rss: []
+  sec_only_candidate: []
+  disabled_pending_review: [AAA, BBB]
+""".strip(),
+        encoding="utf-8",
+    )
+    fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+    with raw.open("w", encoding="utf-8", newline="") as handle:
+        csv.DictWriter(handle, fieldnames=fieldnames).writeheader()
+    base_row = {
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "form_type": "8-K",
+        "cik": "0000000001",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+    baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+    part_120_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-16-000001", "published_at_utc": "2016-01-03T09:00:00Z"}
+    retry_120_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-16-000001", "published_at_utc": "2016-01-03T09:00:00Z"}
+    part_60_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-21-000001", "published_at_utc": "2021-01-03T09:00:00Z"}
+    raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-16-000002"}
+    twelve_events.write_text(json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n", encoding="utf-8")
+    part_120_events.write_text(json.dumps(baseline_aaa) + "\n" + json.dumps(part_120_aaa) + "\n", encoding="utf-8")
+    retry_120_events.write_text(json.dumps(retry_120_bbb) + "\n", encoding="utf-8")
+    part_60_events.write_text(json.dumps(part_60_aaa) + "\n", encoding="utf-8")
+    raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+    (timeout_120_dir / "stock_alpha_news_free_source_collect.json").write_text(json.dumps({
+        "only_symbols": ["CCC"],
+        "providers_failed": {"sec_company_filings": "TimeoutError: The read operation timed out"},
+        "rows_by_symbol": {},
+        "provider_batch_diagnostics": [{"provider": "sec_company_filings", "error_type": "TimeoutError"}],
+    }), encoding="utf-8")
+
+    merged = build_stock_alpha_news_coverage_audit(
+        universe_path=universe,
+        registry_path=registry,
+        raw_news_path=raw,
+        sec_event_row_paths=[twelve_events, part_120_events, retry_120_events, part_60_events, raw_data_events],
+        sec_artifact_selection="merge_sec_window_parts",
+        sec_artifact_window_months=120,
+        reports_root=tmp_path / "reports",
+    )
+
+    assert merged["sec_dry_run_row_count"] == 4
+    assert merged["rows_by_symbol_by_provider"]["sec_company_filings"] == {"AAA": 2, "BBB": 2}
+    assert merged["baseline_12mo_sec_row_count"] == 2
+    assert merged["selected_sec_row_count"] == 4
+    assert merged["additional_sec_event_key_count"] == 2
+    assert merged["removed_sec_event_key_count"] == 0
+    assert merged["symbols_with_row_count_increase"] == ["AAA", "BBB"]
+    assert merged["symbols_with_row_count_decrease"] == []
+    assert merged["added_sec_artifacts"] == [str(part_120_events), str(retry_120_events)]
+    assert merged["added_sec_window_part_artifacts"] == [str(part_120_events)]
+    assert merged["added_sec_window_retry_artifacts"] == [str(retry_120_events)]
+    assert merged["provider_timeout_symbols"] == ["CCC"]
+    assert merged["unresolved_provider_timeout_symbols"] == ["CCC"]
+    assert all("data/news" not in path for path in merged["selected_sec_artifacts"])
+    assert all("60mo_part" not in path for path in merged["selected_sec_artifacts"])
+    assert merged["sec_artifact_selection"] == "merge_sec_window_parts"
+    assert merged["sec_artifact_window_months"] == 120
+
+
+def test_contract_ingest_preflight_can_merge_sec_window_parts(tmp_path):
+    twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_01_12mo_dry_run" / "dev"
+    part_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_part_001_dry_run" / "dev"
+    retry_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_002_BBB_dry_run" / "dev"
+    timeout_120_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_120mo_retry_part_003_CCC_dry_run" / "dev"
+    part_60_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_60mo_part_001_dry_run" / "dev"
+    raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_120mo_part_001_dry_run" / "dev"
+    for directory in (twelve_dir, part_120_dir, retry_120_dir, timeout_120_dir, part_60_dir, raw_data_dir):
+        directory.mkdir(parents=True)
+    twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+    part_120_events = part_120_dir / "sec_company_filings_event_rows.jsonl"
+    retry_120_events = retry_120_dir / "sec_company_filings_event_rows.jsonl"
+    part_60_events = part_60_dir / "sec_company_filings_event_rows.jsonl"
+    raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+    base_row = {
+        "provider": "sec_company_filings",
+        "source_type": "sec_filing",
+        "headline_or_title": "8-K filed",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "cik": "0000000001",
+        "form_type": "8-K",
+        "filing_date": "2026-01-03",
+        "published_at_utc": "2026-01-03T09:00:00Z",
+        "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+        "collected_at_utc": "2026-01-03T10:00:00Z",
+    }
+    baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+    baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+    part_120_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-16-000001", "published_at_utc": "2016-01-03T09:00:00Z"}
+    retry_120_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-16-000001", "published_at_utc": "2016-01-03T09:00:00Z"}
+    part_60_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-21-000001", "published_at_utc": "2021-01-03T09:00:00Z"}
+    raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-16-000002"}
+    twelve_events.write_text(json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n", encoding="utf-8")
+    part_120_events.write_text(json.dumps(baseline_aaa) + "\n" + json.dumps(part_120_aaa) + "\n", encoding="utf-8")
+    retry_120_events.write_text(json.dumps(retry_120_bbb) + "\n", encoding="utf-8")
+    part_60_events.write_text(json.dumps(part_60_aaa) + "\n", encoding="utf-8")
+    raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+    (timeout_120_dir / "stock_alpha_news_free_source_collect.json").write_text(json.dumps({
+        "only_symbols": ["CCC"],
+        "providers_failed": {"sec_company_filings": "TimeoutError: The read operation timed out"},
+        "rows_by_symbol": {},
+        "provider_batch_diagnostics": [{"provider": "sec_company_filings", "error_type": "TimeoutError"}],
+    }), encoding="utf-8")
+
+    report = build_stock_alpha_news_contract_ingest_preflight(
+        sec_event_row_paths=[twelve_events, part_120_events, retry_120_events, part_60_events, raw_data_events],
+        sec_artifact_selection="merge_sec_window_parts",
+        sec_artifact_window_months=120,
+        reports_root=tmp_path / "reports",
+        min_symbol_coverage=2,
+    )
+
+    assert report["rows_checked_by_provider"] == {"sec_company_filings": 4}
+    assert report["valid_rows_by_provider"] == {"sec_company_filings": 4}
+    assert report["duplicate_event_key_count"] == 0
+    assert report["baseline_12mo_sec_row_count"] == 2
+    assert report["selected_sec_row_count"] == 4
+    assert report["additional_sec_event_key_count"] == 2
+    assert report["removed_sec_event_key_count"] == 0
+    assert report["symbols_with_row_count_increase"] == ["AAA", "BBB"]
+    assert report["symbols_with_row_count_decrease"] == []
+    assert report["added_sec_artifacts"] == [str(part_120_events), str(retry_120_events)]
+    assert report["added_sec_window_part_artifacts"] == [str(part_120_events)]
+    assert report["added_sec_window_retry_artifacts"] == [str(retry_120_events)]
+    assert report["provider_timeout_symbols"] == ["CCC"]
+    assert report["unresolved_provider_timeout_symbols"] == ["CCC"]
+    assert all("data/news" not in path for path in report["selected_sec_artifacts"])
+    assert all("60mo_part" not in path for path in report["selected_sec_artifacts"])
+    assert report["sec_artifact_selection"] == "merge_sec_window_parts"
+    assert report["sec_artifact_window_months"] == 120
+
+
 def test_sec_company_filings_dry_run_writes_row_level_event_artifact(tmp_path):
     class FakeSecCompanyFilingsSource:
         api_key_required = False
