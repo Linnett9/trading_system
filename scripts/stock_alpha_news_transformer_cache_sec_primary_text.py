@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import hashlib
 import html
 import json
+import os
 import re
+import socket
+import ssl
 import time
+import zlib
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -21,7 +26,7 @@ ENRICHMENT_REPORT_FILENAME = "news_transformer_official_text_enrichment_plan.jso
 ENRICHMENT_MANIFEST_FILENAME = "news_transformer_official_text_enrichment_manifest.csv"
 CACHE_MANIFEST_FILENAME = "sec_primary_document_text_cache_manifest.json"
 CACHE_SUMMARY_FILENAME = "sec_primary_document_text_cache_summary.json"
-DEFAULT_USER_AGENT = "stock-alpha-research/1.0 research-contact@example.invalid"
+DEFAULT_USER_AGENT = ""
 NEXT_ALLOWED_STEP = "build_enriched_official_text_dataset_report_only"
 MIN_DOCUMENT_TEXT_LENGTH = 200
 
@@ -35,12 +40,17 @@ class DocumentRequest:
     event_keys: tuple[str, ...]
     symbols: tuple[str, ...]
     form_types: tuple[str, ...]
+    document_id: str | None = None
 
     @property
     def cache_filename(self) -> str:
         accession = _safe_slug(self.accession_number or "missing-accession")
         url_hash = hashlib.sha256(self.primary_document_url.encode("utf-8")).hexdigest()[:16]
         return f"{accession}_{url_hash}.txt"
+
+    @property
+    def stable_document_id(self) -> str:
+        return self.document_id or f"{self.accession_number}|{self.primary_document_url}"
 
 
 def cache_sec_primary_text_report_only(
@@ -75,7 +85,7 @@ def cache_sec_primary_text_report_only(
     skipped_existing_documents = 0
     failed_documents = 0
     empty_text_documents = 0
-    rate_limit_or_timeout_failures = 0
+    failure_categories: list[str] = []
     text_lengths: list[int] = []
 
     for index, document in enumerate(selected_documents):
@@ -106,11 +116,10 @@ def cache_sec_primary_text_report_only(
                 entry["status"] = "cached"
         except Exception as exc:
             failed_documents += 1
-            if _is_rate_limit_or_timeout(exc):
-                rate_limit_or_timeout_failures += 1
+            failure_metadata = _failure_metadata(exc, document.primary_document_url)
+            failure_categories.append(str(failure_metadata["error_category"]))
             entry["status"] = "failed"
-            entry["error_type"] = type(exc).__name__
-            entry["error"] = str(exc)
+            entry.update(failure_metadata)
         manifest.append(entry)
 
         if sleep_seconds > 0.0 and index < len(selected_documents) - 1:
@@ -124,7 +133,7 @@ def cache_sec_primary_text_report_only(
         skipped_existing_documents=skipped_existing_documents,
         failed_documents=failed_documents,
         empty_text_documents=empty_text_documents,
-        rate_limit_or_timeout_failures=rate_limit_or_timeout_failures,
+        failure_categories=failure_categories,
         cache_dir=documents_dir,
         text_lengths=text_lengths,
     )
@@ -192,14 +201,22 @@ def _retry_manifest_document(row: Mapping[str, Any], *, line_number: int) -> Doc
         event_keys=(),
         symbols=_single_value_tuple(row.get("symbol")),
         form_types=_single_value_tuple(row.get("form_type")),
+        document_id=document_id or f"{accession}|{url}",
     )
 
 
 def standard_library_sec_text_get(url: str, user_agent: str, timeout_seconds: int) -> str:
     _validate_sec_url(url)
-    request = Request(url, headers={"User-Agent": user_agent})
+    _validate_sec_user_agent(user_agent)
+    request = Request(url, headers={"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"})
     with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - URL is restricted to sec.gov.
-        return response.read().decode("utf-8", errors="replace")
+        body = response.read()
+        encoding = response.headers.get("Content-Encoding", "").lower()
+        if encoding == "gzip":
+            body = gzip.decompress(body)
+        elif encoding == "deflate":
+            body = zlib.decompress(body)
+        return body.decode("utf-8", errors="replace")
 
 
 def extract_sec_document_text(raw_document: str) -> str:
@@ -292,6 +309,7 @@ def _deduplicated_documents(rows: Sequence[Mapping[str, str]]) -> list[DocumentR
                 event_keys=tuple(sorted(values["event_keys"])),
                 symbols=tuple(sorted(values["symbols"])),
                 form_types=tuple(sorted(values["form_types"])),
+                document_id=f"{values['accession_number']}|{url}",
             )
         )
     return documents
@@ -299,6 +317,7 @@ def _deduplicated_documents(rows: Sequence[Mapping[str, str]]) -> list[DocumentR
 
 def _base_manifest_entry(document: DocumentRequest, cache_path: Path) -> dict[str, Any]:
     return {
+        "document_id": document.stable_document_id,
         "accession_number": document.accession_number,
         "primary_document_url": document.primary_document_url,
         "cache_path": str(cache_path),
@@ -319,7 +338,7 @@ def _summary(
     skipped_existing_documents: int,
     failed_documents: int,
     empty_text_documents: int,
-    rate_limit_or_timeout_failures: int,
+    failure_categories: Sequence[str],
     cache_dir: Path,
     text_lengths: Sequence[int],
 ) -> dict[str, Any]:
@@ -333,6 +352,12 @@ def _summary(
         blocking_reasons.append("no_documents_requested")
     if requested_documents < unique_document_urls:
         warnings.append("max_documents limited this run; full cache has not been attempted")
+    failure_counts_by_category = {category: failure_categories.count(category) for category in sorted(set(failure_categories))}
+    rate_limit_failure_count = failure_counts_by_category.get("http_429_rate_limit", 0)
+    timeout_failure_count = failure_counts_by_category.get("timeout", 0)
+    connection_failure_count = sum(
+        failure_counts_by_category.get(category, 0) for category in ("connection_error", "connection_reset")
+    )
     return {
         "mode": "sec_primary_document_text_cache_report_only",
         "research_only": True,
@@ -350,7 +375,17 @@ def _summary(
         "document_text_min_length": min(text_lengths) if text_lengths else 0,
         "document_text_median_length": median(text_lengths) if text_lengths else 0,
         "document_text_max_length": max(text_lengths) if text_lengths else 0,
-        "rate_limit_or_timeout_failures": rate_limit_or_timeout_failures,
+        "rate_limit_or_timeout_failures": rate_limit_failure_count + timeout_failure_count,
+        "http_403_count": failure_counts_by_category.get("http_403_or_access_denied", 0),
+        "http_404_count": failure_counts_by_category.get("http_404_or_missing_document", 0),
+        "http_429_count": rate_limit_failure_count,
+        "http_5xx_count": failure_counts_by_category.get("http_5xx", 0),
+        "timeout_failure_count": timeout_failure_count,
+        "rate_limit_failure_count": rate_limit_failure_count,
+        "connection_failure_count": connection_failure_count,
+        "dns_failure_count": failure_counts_by_category.get("dns_error", 0),
+        "ssl_failure_count": failure_counts_by_category.get("ssl_error", 0),
+        "failure_counts_by_category": failure_counts_by_category,
         "blocking_reasons": blocking_reasons,
         "warnings": warnings,
         "next_allowed_step": NEXT_ALLOWED_STEP if not blocking_reasons else "resolve_sec_primary_document_text_cache_failures",
@@ -363,15 +398,65 @@ def _validate_sec_url(url: str) -> None:
         raise ValueError("primary_document_url must be an https://www.sec.gov URL")
 
 
-def _is_rate_limit_or_timeout(exc: Exception) -> bool:
+def _validate_sec_user_agent(user_agent: str) -> None:
+    if not user_agent or not re.search(r"[^@\s]+@[^@\s]+\.[^@\s]+", user_agent):
+        raise ValueError("SEC User-Agent must include a real monitored contact email")
+
+
+def _failure_metadata(exc: Exception, url: str) -> dict[str, Any]:
+    category = _classify_failure(exc)
+    http_status = exc.code if isinstance(exc, HTTPError) else None
+    retry_after = exc.headers.get("Retry-After") if isinstance(exc, HTTPError) and exc.headers else None
+    metadata = {
+        "error_category": category,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "error": str(exc),
+        "http_status": http_status,
+        "url_host": urlparse(url).netloc.lower() or None,
+        "retry_after": retry_after,
+        "is_timeout": category == "timeout",
+        "is_rate_limit": category == "http_429_rate_limit",
+        "is_connection_error": category in {"connection_error", "connection_reset"},
+        "is_ssl_error": category == "ssl_error",
+        "is_dns_error": category == "dns_error",
+    }
+    if isinstance(exc, HTTPError) and exc.headers:
+        metadata["http_response_headers"] = dict(exc.headers.items())
+    return metadata
+
+
+def _classify_failure(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        if exc.code == 403:
+            return "http_403_or_access_denied"
+        if exc.code == 404:
+            return "http_404_or_missing_document"
+        if exc.code == 429:
+            return "http_429_rate_limit"
+        if 500 <= exc.code <= 599:
+            return "http_5xx"
+        return "unknown_http_error"
+    reason = exc.reason if isinstance(exc, URLError) else exc
     message = str(exc).lower()
-    if isinstance(exc, TimeoutError):
-        return True
-    if isinstance(exc, HTTPError) and exc.code in {403, 408, 429, 500, 502, 503, 504}:
-        return True
+    reason_message = str(reason).lower()
+    if isinstance(reason, TimeoutError | socket.timeout) or "timed out" in message or "timeout" in message:
+        return "timeout"
+    if isinstance(reason, socket.gaierror) or "nodename nor servname" in reason_message or "name or service not known" in reason_message:
+        return "dns_error"
+    if isinstance(reason, ssl.SSLError) or "ssl" in reason_message:
+        return "ssl_error"
+    if isinstance(reason, ConnectionResetError) or "connection reset" in reason_message:
+        return "connection_reset"
+    if isinstance(exc, ValueError) and "primary_document_url" in message:
+        return "invalid_url"
+    if "extraction" in message or "shorter than" in message:
+        return "text_extraction_error"
     if isinstance(exc, URLError):
-        return "timed out" in message or "timeout" in message
-    return "rate limit" in message or "timed out" in message or "timeout" in message
+        return "unknown_network_error"
+    if isinstance(reason, ConnectionError | OSError):
+        return "connection_error"
+    return "other"
 
 
 def _normalize_text(text: str) -> str:
@@ -421,7 +506,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--reports-root", required=True)
     parser.add_argument("--max-documents", type=int, default=None)
     parser.add_argument("--sleep-seconds", type=float, default=0.0)
-    parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
+    parser.add_argument("--user-agent", default=os.environ.get("SEC_USER_AGENT", DEFAULT_USER_AGENT))
     parser.add_argument("--timeout-seconds", type=int, default=30)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--resume", action="store_true")

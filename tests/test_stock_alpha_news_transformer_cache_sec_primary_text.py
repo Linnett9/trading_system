@@ -1,7 +1,9 @@
 import csv
 import json
+import socket
+import ssl
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -13,6 +15,7 @@ from scripts.stock_alpha_news_transformer_cache_sec_primary_text import (
     cache_sec_primary_text_report_only,
     extract_sec_document_text,
     main,
+    standard_library_sec_text_get,
 )
 
 
@@ -108,6 +111,7 @@ def _run(
     overwrite=False,
     input_manifest=None,
     enrichment_plan_dir=None,
+    user_agent="Brandon Linnett brandon@example.com",
 ):
     reports_root = tmp_path / "reports"
     return cache_sec_primary_text_report_only(
@@ -118,6 +122,7 @@ def _run(
         max_documents=max_documents,
         sleep_seconds=0.0,
         overwrite=overwrite,
+        user_agent=user_agent,
         fetch_text=fetch_text or (lambda _url, _user_agent, _timeout: LONG_HTML),
     )
 
@@ -190,6 +195,7 @@ def test_sec_primary_text_cache_records_failed_fetches_separately(tmp_path: Path
     assert summary["failed_documents"] == 1
     assert summary["cached_documents"] == 0
     assert summary["rate_limit_or_timeout_failures"] == 1
+    assert summary["timeout_failure_count"] == 1
     assert manifest["documents"][0]["status"] == "failed"
 
 
@@ -237,6 +243,9 @@ def test_sec_primary_text_cache_uses_exact_retry_manifest_subset(tmp_path: Path)
         "https://www.sec.gov/Archives/edgar/data/3/000000000324000003/ccc-8k.htm",
     ]
     assert [row["symbols"] for row in manifest["documents"]] == [["BBB"], ["CCC"]]
+    assert manifest["documents"][0]["document_id"] == (
+        "0000000002-24-000002|https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm"
+    )
 
 
 def test_sec_primary_text_cache_retry_manifest_ignores_successes_outside_manifest(tmp_path: Path) -> None:
@@ -247,6 +256,23 @@ def test_sec_primary_text_cache_retry_manifest_ignores_successes_outside_manifes
     assert summary["requested_documents"] == 1
     assert manifest["documents"][0]["accession_number"] == "0000000002-24-000002"
     assert all(row["accession_number"] != "0000000001-24-000001" for row in manifest["documents"])
+
+
+def test_sec_primary_text_cache_retry_manifest_derives_document_id_when_safe(tmp_path: Path) -> None:
+    retry_manifest = _write_jsonl(
+        tmp_path / "reports" / "retry.jsonl",
+        [
+            {
+                "document_url": "https://www.sec.gov/Archives/edgar/data/7/0007/doc.htm",
+                "accession": "0007",
+                "retry_priority": "high",
+            }
+        ],
+    )
+    _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None)
+    manifest = json.loads((tmp_path / "reports" / "sec_cache" / CACHE_MANIFEST_FILENAME).read_text())
+
+    assert manifest["documents"][0]["document_id"] == "0007|https://www.sec.gov/Archives/edgar/data/7/0007/doc.htm"
 
 
 def test_sec_primary_text_cache_retry_manifest_skips_existing_file(tmp_path: Path) -> None:
@@ -346,8 +372,124 @@ def test_sec_primary_text_cache_cli_accepts_retry_manifest_resume_flags_without_
             "1",
             "--resume",
             "--skip-existing",
+            "--user-agent",
+            "Brandon Linnett brandon@example.com",
         ]
     )
 
     assert exit_code == 0
     assert calls == ["https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm"]
+
+
+def test_sec_primary_text_cache_classifies_http_status_failures(tmp_path: Path) -> None:
+    cases = [
+        (403, "Forbidden", "http_403_or_access_denied", "http_403_count"),
+        (429, "Too Many Requests", "http_429_rate_limit", "http_429_count"),
+        (503, "Service Unavailable", "http_5xx", "http_5xx_count"),
+        (418, "Unexpected", "unknown_http_error", None),
+    ]
+    for status, message, category, count_field in cases:
+        output_dir = tmp_path / "reports" / f"sec_cache_{status}"
+
+        def fetch(url: str, _user_agent: str, _timeout: int) -> str:
+            raise HTTPError(url, status, message, {"Retry-After": "9"}, None)
+
+        summary = _run(tmp_path, output_dir=output_dir, fetch_text=fetch, max_documents=1)
+        manifest = json.loads((output_dir / CACHE_MANIFEST_FILENAME).read_text())
+
+        assert summary["failure_counts_by_category"] == {category: 1}
+        assert manifest["documents"][0]["error_category"] == category
+        assert manifest["documents"][0]["http_status"] == status
+        assert manifest["documents"][0]["retry_after"] == "9"
+        if count_field is not None:
+            assert summary[count_field] == 1
+
+
+def test_sec_primary_text_cache_http_403_does_not_increment_rate_limit_or_timeout(tmp_path: Path) -> None:
+    def fetch(url: str, _user_agent: str, _timeout: int) -> str:
+        raise HTTPError(url, 403, "Forbidden", {}, None)
+
+    summary = _run(tmp_path, fetch_text=fetch, max_documents=1)
+
+    assert summary["http_403_count"] == 1
+    assert summary["timeout_failure_count"] == 0
+    assert summary["rate_limit_failure_count"] == 0
+    assert summary["rate_limit_or_timeout_failures"] == 0
+
+
+def test_sec_primary_text_cache_http_429_increments_only_rate_limit(tmp_path: Path) -> None:
+    def fetch(url: str, _user_agent: str, _timeout: int) -> str:
+        raise HTTPError(url, 429, "Too Many Requests", {}, None)
+
+    summary = _run(tmp_path, fetch_text=fetch, max_documents=1)
+
+    assert summary["http_429_count"] == 1
+    assert summary["rate_limit_failure_count"] == 1
+    assert summary["timeout_failure_count"] == 0
+    assert summary["rate_limit_or_timeout_failures"] == 1
+
+
+def test_sec_primary_text_cache_classifies_network_failures(tmp_path: Path) -> None:
+    cases = [
+        (URLError(socket.timeout("timed out")), "timeout", "timeout_failure_count"),
+        (URLError(socket.gaierror(8, "nodename nor servname provided")), "dns_error", "dns_failure_count"),
+        (URLError(ssl.SSLError("certificate verify failed")), "ssl_error", "ssl_failure_count"),
+        (URLError(ConnectionResetError("connection reset by peer")), "connection_reset", "connection_failure_count"),
+        (URLError("opaque network problem"), "unknown_network_error", None),
+    ]
+    for index, (exc, category, count_field) in enumerate(cases):
+        output_dir = tmp_path / "reports" / f"network_{index}"
+
+        def fetch(_url: str, _user_agent: str, _timeout: int, error: Exception = exc) -> str:
+            raise error
+
+        summary = _run(tmp_path, output_dir=output_dir, fetch_text=fetch, max_documents=1)
+        manifest = json.loads((output_dir / CACHE_MANIFEST_FILENAME).read_text())
+
+        assert summary["failure_counts_by_category"] == {category: 1}
+        assert manifest["documents"][0]["error_category"] == category
+        if count_field is not None:
+            assert summary[count_field] == 1
+
+
+def test_standard_library_sec_text_get_sets_sec_headers_without_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = {}
+
+    class Response:
+        headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b"plain sec text"
+
+    def fake_urlopen(request, timeout: int):
+        captured["headers"] = dict(request.header_items())
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("scripts.stock_alpha_news_transformer_cache_sec_primary_text.urlopen", fake_urlopen)
+
+    text = standard_library_sec_text_get(
+        "https://www.sec.gov/Archives/edgar/data/1/0001/doc.htm",
+        "Brandon Linnett brandon@example.com",
+        60,
+    )
+
+    assert text == "plain sec text"
+    assert captured["headers"]["User-agent"] == "Brandon Linnett brandon@example.com"
+    assert captured["headers"]["Accept-encoding"] == "gzip, deflate"
+    assert captured["timeout"] == 60
+
+
+def test_standard_library_sec_text_get_rejects_user_agent_without_email() -> None:
+    with pytest.raises(ValueError, match="real monitored contact email"):
+        standard_library_sec_text_get(
+            "https://www.sec.gov/Archives/edgar/data/1/0001/doc.htm",
+            "stock-alpha-research/1.0 local smoke",
+            60,
+        )
