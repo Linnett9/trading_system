@@ -12,6 +12,7 @@ from scripts.stock_alpha_news_transformer_cache_sec_primary_text import (
     ENRICHMENT_REPORT_FILENAME,
     cache_sec_primary_text_report_only,
     extract_sec_document_text,
+    main,
 )
 
 
@@ -42,6 +43,13 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> Path:
 def _write_json(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _write_jsonl(path: Path, rows: list[dict | str]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [row if isinstance(row, str) else json.dumps(row) for row in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -91,16 +99,50 @@ def _plan_dir(tmp_path: Path, *, report=None, rows=None) -> Path:
     return plan_dir
 
 
-def _run(tmp_path: Path, *, output_dir=None, fetch_text=None, max_documents=None, overwrite=False):
+def _run(
+    tmp_path: Path,
+    *,
+    output_dir=None,
+    fetch_text=None,
+    max_documents=None,
+    overwrite=False,
+    input_manifest=None,
+    enrichment_plan_dir=None,
+):
     reports_root = tmp_path / "reports"
     return cache_sec_primary_text_report_only(
-        enrichment_plan_dir=_plan_dir(tmp_path),
+        enrichment_plan_dir=enrichment_plan_dir if enrichment_plan_dir is not None else _plan_dir(tmp_path),
         output_dir=output_dir or reports_root / "sec_cache",
         reports_root=reports_root,
+        input_manifest=input_manifest,
         max_documents=max_documents,
         sleep_seconds=0.0,
         overwrite=overwrite,
         fetch_text=fetch_text or (lambda _url, _user_agent, _timeout: LONG_HTML),
+    )
+
+
+def _retry_manifest(path: Path) -> Path:
+    return _write_jsonl(
+        path,
+        [
+            {
+                "document_id": "0000000002-24-000002|https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm",
+                "document_url": "https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm",
+                "accession": "0000000002-24-000002",
+                "symbol": "BBB",
+                "form_type": "10-Q",
+                "retry_priority": "high",
+            },
+            {
+                "document_id": "0000000003-24-000003|https://www.sec.gov/Archives/edgar/data/3/000000000324000003/ccc-8k.htm",
+                "document_url": "https://www.sec.gov/Archives/edgar/data/3/000000000324000003/ccc-8k.htm",
+                "accession": "0000000003-24-000003",
+                "symbol": "CCC",
+                "form_type": "8-K",
+                "retry_priority": "medium",
+            },
+        ],
     )
 
 
@@ -180,3 +222,132 @@ def test_sec_primary_text_cache_emits_clear_next_allowed_step(tmp_path: Path) ->
     summary = _run(tmp_path)
 
     assert summary["next_allowed_step"] == "build_enriched_official_text_dataset_report_only"
+
+
+def test_sec_primary_text_cache_uses_exact_retry_manifest_subset(tmp_path: Path) -> None:
+    urls: list[str] = []
+    retry_manifest = _retry_manifest(tmp_path / "reports" / "retry.jsonl")
+
+    summary = _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None, fetch_text=lambda url, _ua, _timeout: urls.append(url) or LONG_HTML)
+    manifest = json.loads((tmp_path / "reports" / "sec_cache" / CACHE_MANIFEST_FILENAME).read_text())
+
+    assert summary["requested_documents"] == 2
+    assert urls == [
+        "https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm",
+        "https://www.sec.gov/Archives/edgar/data/3/000000000324000003/ccc-8k.htm",
+    ]
+    assert [row["symbols"] for row in manifest["documents"]] == [["BBB"], ["CCC"]]
+
+
+def test_sec_primary_text_cache_retry_manifest_ignores_successes_outside_manifest(tmp_path: Path) -> None:
+    retry_manifest = _retry_manifest(tmp_path / "reports" / "retry.jsonl")
+    summary = _run(tmp_path, input_manifest=retry_manifest, max_documents=1, enrichment_plan_dir=None)
+    manifest = json.loads((tmp_path / "reports" / "sec_cache" / CACHE_MANIFEST_FILENAME).read_text())
+
+    assert summary["requested_documents"] == 1
+    assert manifest["documents"][0]["accession_number"] == "0000000002-24-000002"
+    assert all(row["accession_number"] != "0000000001-24-000001" for row in manifest["documents"])
+
+
+def test_sec_primary_text_cache_retry_manifest_skips_existing_file(tmp_path: Path) -> None:
+    retry_manifest = _retry_manifest(tmp_path / "reports" / "retry.jsonl")
+    calls = {"count": 0}
+
+    def fetch(_url: str, _user_agent: str, _timeout: int) -> str:
+        calls["count"] += 1
+        return LONG_HTML
+
+    first = _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None, fetch_text=fetch, max_documents=1)
+    second = _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None, fetch_text=fetch, max_documents=1)
+
+    assert first["cached_documents"] == 1
+    assert second["skipped_existing_documents"] == 1
+    assert second["attempted_documents"] == 0
+    assert calls["count"] == 1
+
+
+def test_sec_primary_text_cache_rejects_malformed_retry_manifest_rows(tmp_path: Path) -> None:
+    malformed = _write_jsonl(tmp_path / "reports" / "retry.jsonl", ["{not-json"])
+    missing_url = _write_jsonl(tmp_path / "reports" / "missing-url.jsonl", [{"document_id": "stable", "retry_priority": "high"}])
+    missing_identity = _write_jsonl(
+        tmp_path / "reports" / "missing-identity.jsonl",
+        [{"document_url": "https://www.sec.gov/Archives/edgar/data/4/0004/doc.htm", "retry_priority": "high"}],
+    )
+
+    with pytest.raises(ValueError, match="malformed retry manifest JSON"):
+        _run(tmp_path, input_manifest=malformed, enrichment_plan_dir=None)
+    with pytest.raises(ValueError, match="missing document_url"):
+        _run(tmp_path, input_manifest=missing_url, enrichment_plan_dir=None)
+    with pytest.raises(ValueError, match="missing stable document identity"):
+        _run(tmp_path, input_manifest=missing_identity, enrichment_plan_dir=None)
+
+
+def test_sec_primary_text_cache_retry_manifest_deduplicates_and_excludes_do_not_retry(tmp_path: Path) -> None:
+    retry_manifest = _write_jsonl(
+        tmp_path / "reports" / "retry.jsonl",
+        [
+            {
+                "document_id": "same|https://www.sec.gov/Archives/edgar/data/5/0005/doc.htm",
+                "document_url": "https://www.sec.gov/Archives/edgar/data/5/0005/doc.htm",
+                "accession": "same",
+                "retry_priority": "high",
+            },
+            {
+                "document_id": "same|https://www.sec.gov/Archives/edgar/data/5/0005/doc.htm",
+                "document_url": "https://www.sec.gov/Archives/edgar/data/5/0005/doc.htm",
+                "accession": "same",
+                "retry_priority": "high",
+            },
+            {
+                "document_id": "skip|https://www.sec.gov/Archives/edgar/data/6/0006/doc.htm",
+                "document_url": "https://www.sec.gov/Archives/edgar/data/6/0006/doc.htm",
+                "accession": "skip",
+                "retry_priority": "do_not_retry",
+            },
+        ],
+    )
+
+    summary = _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None)
+    manifest = json.loads((tmp_path / "reports" / "sec_cache" / CACHE_MANIFEST_FILENAME).read_text())
+
+    assert summary["requested_documents"] == 1
+    assert [row["accession_number"] for row in manifest["documents"]] == ["same"]
+
+
+def test_sec_primary_text_cache_retry_manifest_can_write_to_separate_output_dir(tmp_path: Path) -> None:
+    retry_manifest = _retry_manifest(tmp_path / "reports" / "retry.jsonl")
+    output_dir = tmp_path / "reports" / "retry_smoke"
+    summary = _run(tmp_path, input_manifest=retry_manifest, enrichment_plan_dir=None, output_dir=output_dir, max_documents=1)
+
+    assert summary["cache_dir"] == str(output_dir / "documents")
+    assert (output_dir / CACHE_SUMMARY_FILENAME).exists()
+    assert not (tmp_path / "reports" / "sec_cache" / CACHE_SUMMARY_FILENAME).exists()
+
+
+def test_sec_primary_text_cache_cli_accepts_retry_manifest_resume_flags_without_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    retry_manifest = _retry_manifest(tmp_path / "reports" / "retry.jsonl")
+    calls: list[str] = []
+
+    def fetch(url: str, _user_agent: str, _timeout: int) -> str:
+        calls.append(url)
+        return LONG_HTML
+
+    monkeypatch.setattr("scripts.stock_alpha_news_transformer_cache_sec_primary_text.standard_library_sec_text_get", fetch)
+
+    exit_code = main(
+        [
+            "--input-manifest",
+            str(retry_manifest),
+            "--output-dir",
+            str(tmp_path / "reports" / "retry_smoke"),
+            "--reports-root",
+            str(tmp_path / "reports"),
+            "--max-documents",
+            "1",
+            "--resume",
+            "--skip-existing",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == ["https://www.sec.gov/Archives/edgar/data/2/000000000224000002/bbb-10q.htm"]
