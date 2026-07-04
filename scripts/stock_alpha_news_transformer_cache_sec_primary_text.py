@@ -45,9 +45,10 @@ class DocumentRequest:
 
 def cache_sec_primary_text_report_only(
     *,
-    enrichment_plan_dir: str | Path,
+    enrichment_plan_dir: str | Path | None,
     output_dir: str | Path,
     reports_root: str | Path,
+    input_manifest: str | Path | None = None,
     max_documents: int | None = None,
     sleep_seconds: float = 0.0,
     user_agent: str = DEFAULT_USER_AGENT,
@@ -61,11 +62,7 @@ def cache_sec_primary_text_report_only(
         raise ValueError("output_dir must be under reports/")
     _validate_runtime_options(max_documents=max_documents, sleep_seconds=sleep_seconds, timeout_seconds=timeout_seconds)
 
-    plan_dir = Path(enrichment_plan_dir)
-    enrichment_report = _read_json(plan_dir / ENRICHMENT_REPORT_FILENAME)
-    _validate_enrichment_report(enrichment_report)
-    rows = _read_csv(plan_dir / ENRICHMENT_MANIFEST_FILENAME)
-    documents = _deduplicated_documents(rows)
+    documents = _load_documents(enrichment_plan_dir=enrichment_plan_dir, input_manifest=input_manifest)
     selected_documents = documents[:max_documents] if max_documents is not None else documents
 
     fetcher = fetch_text or standard_library_sec_text_get
@@ -134,6 +131,68 @@ def cache_sec_primary_text_report_only(
     _write_json(output_dir_path / CACHE_MANIFEST_FILENAME, {"documents": manifest})
     _write_json(output_dir_path / CACHE_SUMMARY_FILENAME, summary)
     return summary
+
+
+def _load_documents(
+    *,
+    enrichment_plan_dir: str | Path | None,
+    input_manifest: str | Path | None,
+) -> list[DocumentRequest]:
+    if input_manifest is not None:
+        return _read_retry_manifest(Path(input_manifest))
+    if enrichment_plan_dir is None:
+        raise ValueError("enrichment_plan_dir is required when input_manifest is not provided")
+    plan_dir = Path(enrichment_plan_dir)
+    enrichment_report = _read_json(plan_dir / ENRICHMENT_REPORT_FILENAME)
+    _validate_enrichment_report(enrichment_report)
+    rows = _read_csv(plan_dir / ENRICHMENT_MANIFEST_FILENAME)
+    return _deduplicated_documents(rows)
+
+
+def _read_retry_manifest(path: Path) -> list[DocumentRequest]:
+    documents: list[DocumentRequest] = []
+    seen: set[str] = set()
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"malformed retry manifest JSON on line {line_number}: {exc.msg}") from exc
+            if not isinstance(row, Mapping):
+                raise ValueError(f"retry manifest line {line_number} must be a JSON object")
+            if row.get("retry_priority") == "do_not_retry":
+                continue
+            document = _retry_manifest_document(row, line_number=line_number)
+            identity = str(row.get("document_id") or f"{document.accession_number}|{document.primary_document_url}")
+            if identity in seen:
+                continue
+            seen.add(identity)
+            documents.append(document)
+    return documents
+
+
+def _retry_manifest_document(row: Mapping[str, Any], *, line_number: int) -> DocumentRequest:
+    url = str(row.get("document_url") or row.get("primary_document_url") or "").strip()
+    if not url:
+        raise ValueError(f"retry manifest line {line_number} is missing document_url")
+    _validate_sec_url(url)
+    accession = str(row.get("accession") or row.get("accession_number") or "").strip()
+    document_id = str(row.get("document_id") or "").strip()
+    if not accession and not document_id:
+        raise ValueError(f"retry manifest line {line_number} is missing stable document identity")
+    if not accession and "|" in document_id:
+        accession = document_id.split("|", 1)[0]
+    if not accession:
+        raise ValueError(f"retry manifest line {line_number} is missing accession")
+    return DocumentRequest(
+        accession_number=accession,
+        primary_document_url=url,
+        event_keys=(),
+        symbols=_single_value_tuple(row.get("symbol")),
+        form_types=_single_value_tuple(row.get("form_type")),
+    )
 
 
 def standard_library_sec_text_get(url: str, user_agent: str, timeout_seconds: int) -> str:
@@ -327,6 +386,11 @@ def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())[:120]
 
 
+def _single_value_tuple(value: Any) -> tuple[str, ...]:
+    text = str(value or "").strip()
+    return (text,) if text else ()
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8", newline="") as handle:
         return [dict(row) for row in csv.DictReader(handle)]
@@ -351,7 +415,8 @@ def _is_under_reports(path: Path, reports_root: Path) -> bool:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Cache official SEC primary-document text under reports/.")
-    parser.add_argument("--enrichment-plan-dir", required=True)
+    parser.add_argument("--enrichment-plan-dir")
+    parser.add_argument("--input-manifest")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--reports-root", required=True)
     parser.add_argument("--max-documents", type=int, default=None)
@@ -359,12 +424,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--timeout-seconds", type=int, default=30)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--skip-existing", action="store_true")
     args = parser.parse_args(argv)
+    if args.overwrite and (args.resume or args.skip_existing):
+        parser.error("--overwrite cannot be combined with --resume or --skip-existing")
 
     summary = cache_sec_primary_text_report_only(
         enrichment_plan_dir=args.enrichment_plan_dir,
         output_dir=args.output_dir,
         reports_root=args.reports_root,
+        input_manifest=args.input_manifest,
         max_documents=args.max_documents,
         sleep_seconds=args.sleep_seconds,
         user_agent=args.user_agent,
