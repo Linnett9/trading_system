@@ -15,6 +15,31 @@ def apply_runtime_overrides(config, args):
     for key, value in runtime_overrides.items():
         if value is not None:
             ml_config[key] = value
+    if getattr(args, "news_risk_parallel", False):
+        ml_config["news_risk_parallel_enabled"] = True
+    news_risk_overrides = {
+        "news_risk_max_workers": getattr(args, "news_risk_workers", None),
+        "news_risk_parallel_backend": getattr(args, "news_risk_parallel_backend", None),
+        "news_risk_parallel_min_items": getattr(args, "news_risk_parallel_min_items", None),
+        "news_risk_parallel_chunk_size": getattr(args, "news_risk_parallel_chunk_size", None),
+        "news_risk_parallel_benchmark_symbol_limit": getattr(
+            args,
+            "news_risk_parallel_benchmark_symbol_limit",
+            None,
+        ),
+        "stock_alpha_news_risk_overlay_output_dir": getattr(args, "news_risk_output_dir", None),
+    }
+    for key, value in news_risk_overrides.items():
+        if value is not None:
+            ml_config[key] = value
+    if getattr(args, "json_output", False):
+        ml_config["stock_alpha_news_risk_overlay_output_mode"] = "json"
+    elif getattr(args, "artifact_list", False):
+        ml_config["stock_alpha_news_risk_overlay_output_mode"] = "artifact-list"
+    elif getattr(args, "verbose", False):
+        ml_config["stock_alpha_news_risk_overlay_output_mode"] = "verbose"
+    elif getattr(args, "summary", False):
+        ml_config["stock_alpha_news_risk_overlay_output_mode"] = "summary"
     if runtime_overrides["num_workers"] is not None:
         config.setdefault("ml_research_batch", {})["max_workers"] = runtime_overrides[
             "num_workers"

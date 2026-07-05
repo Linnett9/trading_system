@@ -10,6 +10,12 @@ from core.research.ml.stock_level.stock_alpha_news_pipeline_inspect import write
 from core.research.ml.stock_level.stock_alpha_news_provider_audit import write_stock_alpha_news_provider_audit
 from core.research.ml.stock_level.stock_alpha_news_provider_sample_check import write_stock_alpha_news_provider_sample_check
 from core.research.ml.stock_level.stock_alpha_news_readiness_preflight import write_stock_alpha_news_readiness_preflight
+from core.research.ml.stock_level.news_risk_overlay_research import (
+    format_news_risk_overlay_summary,
+    inspect_stock_alpha_news_risk_overlay_results,
+    write_stock_alpha_news_risk_overlay_parallel_benchmark,
+    write_stock_alpha_news_risk_overlay_research,
+)
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
 
@@ -309,6 +315,47 @@ def run_ml_stock_alpha_news_coverage_audit(config):
         print(f"blocking_issue={issue}")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_risk_overlay_research(config):
+    mode = _news_risk_output_mode(config)
+    if mode != "json":
+        print("\nSTOCK-ALPHA NEWS RISK OVERLAY RESEARCH")
+        print("mode=research | historical_only=true | trading_impact=none | transformer_trained=false | paper_orders=false")
+    try:
+        result = write_stock_alpha_news_risk_overlay_research(config)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    inspection = inspect_stock_alpha_news_risk_overlay_results(config)
+    print(format_news_risk_overlay_summary(inspection.summary, inspection.artifact_status, mode=mode))
+
+def run_ml_stock_alpha_news_risk_overlay_inspect(config):
+    mode = _news_risk_output_mode(config)
+    if mode != "json":
+        print("\nSTOCK-ALPHA NEWS RISK OVERLAY INSPECT")
+        print("mode=read_only | trading_impact=none | loads_bars=false | trains_model=false | paper_orders=false")
+    inspection = inspect_stock_alpha_news_risk_overlay_results(config)
+    print(format_news_risk_overlay_summary(inspection.summary, inspection.artifact_status, mode=mode))
+
+def run_ml_stock_alpha_news_risk_overlay_parallel_benchmark(config):
+    print("\nSTOCK-ALPHA NEWS RISK OVERLAY PARALLEL BENCHMARK")
+    print("mode=research | read_only=true | trading_impact=none | paper_orders=false | live_orders=false")
+    try:
+        result = write_stock_alpha_news_risk_overlay_parallel_benchmark(config)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    print(f"Output directory: {result.output_dir}")
+    print(f"Parallel benchmark JSON: {result.report_json_path}")
+
+def _news_risk_output_mode(config):
+    mode = str(
+        (config.get("ml", {}) or {}).get(
+            "stock_alpha_news_risk_overlay_output_mode",
+            "summary",
+        )
+    )
+    return mode if mode in {"summary", "verbose", "json", "artifact-list"} else "summary"
 
 def run_ml_stock_alpha_news_readiness_preflight(config):
     result = write_stock_alpha_news_readiness_preflight(config)
