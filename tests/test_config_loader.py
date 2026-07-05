@@ -442,11 +442,28 @@ def test_load_config_accepts_ml_inventory_and_universe_defaults():
     config = load_config()
 
     assert config["ml"]["parquet_dir"] == "data/processed/stooq_parquet"
+    assert config["ml"]["market_data"]["processed_root"] == "data/processed"
+    assert config["ml"]["market_data"]["enabled_timeframes"] == ["1Day"]
     assert config["ml"]["inventory_output_dir"] == "reports/ml"
     assert config["ml"]["universe_output_dir"] == "data/reference/universes"
     assert config["ml"]["min_history_years"] == 9
     assert config["ml"]["max_latest_gap_days"] == 14
     assert config["ml"]["min_average_dollar_volume_252d"] == 50_000_000
+
+
+def test_full_market_multi_timeframe_config_validates():
+    config = load_config(
+        "configs/research/full_market_multi_timeframe.yaml",
+        overlay_project_config=True,
+    )
+
+    assert config["backtest"]["provider"] == "market_parquet"
+    assert config["ml"]["market_data"]["enabled_timeframes"] == [
+        "1Day",
+        "5m",
+        "1h",
+    ]
+    assert config["ml"]["expanded_rebalance_dataset"]["universe_mode"] == "full"
 
 
 def test_load_config_merges_override_file_with_project_config(tmp_path):

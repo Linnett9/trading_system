@@ -19,6 +19,16 @@ def dispatch(args, config, feed):
             exclude_warrants_units_rights=args.exclude_warrants_units_rights,
         )
         return
+    if args.mode == "import-market-parquet":
+        _commands("market_parquet_commands").run_market_parquet_import(
+            config,
+            symbols=args.symbols,
+            timeframes=args.timeframes,
+        )
+        return
+    if args.mode == "dataset-audit":
+        _commands("dataset_audit_commands").run_dataset_audit(config)
+        return
     if args.mode == "ml-refresh-adjusted-prices":
         _commands("adjusted_price_commands").run_refresh_adjusted_prices(
             config,
@@ -261,6 +271,10 @@ def dispatch(args, config, feed):
 
     if args.mode == "ml-research-batch":
         _commands("ml_commands").run_ml_research_batch(config)
+        return
+
+    if args.mode == "ml-online-intraday-benchmark":
+        _commands("ml_commands").run_ml_online_intraday_benchmark(config)
         return
 
     if args.mode == "ml-expanded-rebalance-dataset":

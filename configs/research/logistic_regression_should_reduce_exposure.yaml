@@ -7,6 +7,10 @@ ml:
   mode: research
   model_type: logistic_regression
   shadow_model_type: logistic_regression
+  logistic_scale_features: true
+  logistic_max_iter: 5000
+  logistic_l2_penalty: 1.0
+  shadow_holdout_risk_percentile: 0.85
   label_type: should_reduce_exposure
   prediction_target: should_reduce_exposure
   feature_set: expanded_rebalance_v1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from statistics import mean
 from typing import Any, Mapping
 
 from core.research.ml.config import MLExperimentConfig
@@ -93,11 +94,9 @@ class MLOverlayReportWriter:
                             )
                             result = simulate_shadow_overlay(
                                 equity_by_date,
-                                dict(
-                                    zip(
-                                        fold.split.test.feature_dates,
-                                        prediction.probabilities,
-                                    )
+                                self.probabilities_by_date(
+                                    fold.split.test.feature_dates,
+                                    prediction.probabilities,
                                 ),
                                 threshold,
                                 reduced_exposure,
@@ -180,8 +179,8 @@ class MLOverlayReportWriter:
                 fold.split.test,
                 prediction_context=self._model_pipeline.prediction_context(fold.split),
             )
-            probabilities_by_date = dict(
-                zip(fold.split.test.feature_dates, prediction.probabilities)
+            probabilities_by_date = self.probabilities_by_date(
+                fold.split.test.feature_dates, prediction.probabilities
             )
             for scenario in scenarios:
                 result = simulate_shadow_overlay(
@@ -220,6 +219,7 @@ class MLOverlayReportWriter:
         )
         model_type = str(config.get("shadow_model_type", "gradient_boosting"))
         threshold = float(config.get("shadow_holdout_threshold", 0.20))
+        risk_percentile = config.get("shadow_holdout_risk_percentile")
         reduced_exposure = float(
             config.get("shadow_holdout_reduced_exposure", 0.70)
         )
@@ -230,6 +230,12 @@ class MLOverlayReportWriter:
             model_config=self._ml_config(),
         )
         self._model_pipeline.fit(model, split.train)
+        if risk_percentile is not None:
+            train_prediction = self._model_pipeline.predict(model, split.train)
+            threshold = self.quantile_threshold(
+                train_prediction.probabilities,
+                float(risk_percentile),
+            )
         prediction = self._model_pipeline.predict(
             model,
             split.test,
@@ -237,7 +243,9 @@ class MLOverlayReportWriter:
         )
         result = simulate_shadow_overlay(
             self.equity_by_date(),
-            dict(zip(split.test.feature_dates, prediction.probabilities)),
+            self.probabilities_by_date(
+                split.test.feature_dates, prediction.probabilities
+            ),
             threshold,
             reduced_exposure,
             rebalance_dates=self._champion_rebalance_dates,
@@ -248,6 +256,14 @@ class MLOverlayReportWriter:
             "mode": "final_holdout_shadow_research_only",
             "model_type": model_type,
             "decision_threshold": threshold,
+            "threshold_source": (
+                "training_probability_percentile"
+                if risk_percentile is not None
+                else "configured_absolute_threshold"
+            ),
+            "training_risk_percentile": (
+                float(risk_percentile) if risk_percentile is not None else None
+            ),
             "reduced_exposure": reduced_exposure,
             "rebalance_only": True,
             "overlay_probability": self.overlay_probability_label(),
@@ -258,6 +274,29 @@ class MLOverlayReportWriter:
             "trading_impact": "none",
             "candidate_frozen_before_holdout": True,
         }, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def probabilities_by_date(
+        feature_dates: list[str],
+        probabilities: list[float],
+    ) -> dict[str, float]:
+        grouped: dict[str, list[float]] = {}
+        for feature_date, probability in zip(feature_dates, probabilities):
+            grouped.setdefault(feature_date, []).append(float(probability))
+        return {
+            feature_date: mean(values)
+            for feature_date, values in grouped.items()
+        }
+
+    @staticmethod
+    def quantile_threshold(probabilities: list[float], percentile: float) -> float:
+        if not probabilities:
+            raise ValueError("Cannot derive risk threshold from empty training probabilities")
+        if not 0 < percentile < 1:
+            raise ValueError("shadow_holdout_risk_percentile must be between zero and one")
+        ordered = sorted(float(value) for value in probabilities)
+        index = min(len(ordered) - 1, int(percentile * len(ordered)))
+        return ordered[index]
 
     def overlay_probability_label(self) -> str:
         return f"{self._experiment_config.label_type}_probability"

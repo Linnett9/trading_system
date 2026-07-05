@@ -7,6 +7,7 @@ ml:
   mode: research
   model_type: gradient_boosting
   shadow_model_type: gradient_boosting
+  shadow_holdout_risk_percentile: 0.85
   label_type: should_reduce_exposure
   prediction_target: should_reduce_exposure
   feature_set: expanded_rebalance_v1

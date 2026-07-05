@@ -38,3 +38,27 @@ def test_models_package_preserves_registry_import_path():
     model = build_ml_model("noop")
 
     assert model.model_type == "noop"
+
+
+def test_logistic_regression_scales_features_and_reports_convergence():
+    model = build_ml_model(
+        "logistic_regression",
+        model_config={
+            "logistic_scale_features": True,
+            "logistic_max_iter": 5000,
+            "logistic_l2_penalty": 1.0,
+        },
+    )
+    rows = [
+        {"small": index / 100.0, "large": float(index * 10000)}
+        for index in range(40)
+    ]
+    labels = [int(index >= 20) for index in range(40)]
+
+    model.fit(rows, labels)
+    diagnostics = model.training_diagnostics()
+
+    assert diagnostics["scaled_features"] is True
+    assert diagnostics["max_iterations"] == 5000
+    assert diagnostics["converged"] is True
+    assert len(model.predict_proba(rows)) == len(rows)

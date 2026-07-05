@@ -11,6 +11,7 @@ from core.entities.candle import Candle
 
 
 FEATURE_LOOKBACK_DAYS = 252
+FEATURE_FIELD_PREFIX = ("feature_date",)
 
 
 @dataclass(frozen=True)
@@ -214,11 +215,29 @@ class HistoricalFeatureBuilder:
 
 def write_feature_rows(path: Path, rows: list[dict[str, float | str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(rows[0]) if rows else ["feature_date"]
+    fieldnames = _feature_fieldnames(rows)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(
+            {fieldname: row.get(fieldname) for fieldname in fieldnames}
+            for row in rows
+        )
+
+
+def _feature_fieldnames(rows: list[dict[str, float | str]]) -> list[str]:
+    if not rows:
+        return list(FEATURE_FIELD_PREFIX)
+    all_fields = {fieldname for row in rows for fieldname in row}
+    ordered = [
+        fieldname
+        for fieldname in FEATURE_FIELD_PREFIX
+        if fieldname in all_fields
+    ]
+    ordered.extend(
+        sorted(fieldname for fieldname in all_fields if fieldname not in ordered)
+    )
+    return ordered
 
 
 def add_champion_state_features(

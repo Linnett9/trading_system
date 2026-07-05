@@ -15,6 +15,34 @@ ML_DEFAULTS = {
     "stooq_bulk_zip_path": "data/raw/stooq_bulk/us_daily_ascii.zip",
     "stooq_parquet_dir": "data/processed/stooq_parquet",
     "parquet_dir": "data/processed/stooq_parquet",
+    "market_data": {
+        "processed_root": "data/processed",
+        "raw_root": "~/Downloads",
+        "timezone": "UTC",
+        "timestamp_semantics": "bar_close",
+        "alignment": {
+            "base_timeframe": "1Day",
+            "rule": "asof",
+            "session_close_utc": "21:00",
+        },
+        "enabled_timeframes": ["1Day"],
+        "timeframes": {
+            "1Day": {
+                "raw_dir": "~/Downloads/daily",
+                "feature_pipeline": "price_regime_v1",
+            },
+            "5m": {
+                "raw_dir": "~/Downloads/5_us_txt/data",
+                "feature_pipeline": "intraday_summary_v1",
+            },
+            "1h": {
+                "raw_dir": "~/Downloads/h_us_txt/data",
+                "feature_pipeline": "intraday_summary_v1",
+            },
+        },
+        "resume_import": True,
+        "import_report_path": "reports/ml/market_parquet_import.json",
+    },
     "inventory_output_dir": "reports/ml",
     "universe_output_dir": "data/reference/universes",
     "min_history_years": 9,

@@ -4,6 +4,26 @@ from copy import deepcopy
 def apply_runtime_overrides(config, args):
     config = deepcopy(config)
 
+    ml_config = config.setdefault("ml", {})
+    runtime_overrides = {
+        "num_workers": getattr(args, "num_workers", None),
+        "feature_workers": getattr(args, "feature_workers", None),
+        "model_threads": getattr(args, "model_threads", None),
+        "torch_num_threads": getattr(args, "torch_num_threads", None),
+        "sklearn_n_jobs": getattr(args, "sklearn_n_jobs", None),
+    }
+    for key, value in runtime_overrides.items():
+        if value is not None:
+            ml_config[key] = value
+    if runtime_overrides["num_workers"] is not None:
+        config.setdefault("ml_research_batch", {})["max_workers"] = runtime_overrides[
+            "num_workers"
+        ]
+    if runtime_overrides["model_threads"] is not None:
+        config.setdefault("ml_research_batch", {})["model_threads"] = runtime_overrides[
+            "model_threads"
+        ]
+
     if args.fast:
         apply_fast_mode(config)
 

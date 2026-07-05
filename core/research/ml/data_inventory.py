@@ -46,6 +46,8 @@ def build_data_inventory(
     max_latest_gap_days: int = 14,
     min_average_dollar_volume_252d: float = 50_000_000,
     as_of_date: date | None = None,
+    layout: str = "flat",
+    timeframe: str = "1Day",
 ) -> list[SymbolInventory]:
     parquet_path = Path(parquet_dir)
     output_path = Path(output_dir)
@@ -57,10 +59,21 @@ def build_data_inventory(
             min_average_dollar_volume_252d=min_average_dollar_volume_252d,
             as_of_date=as_of_date,
         )
-        for path in sorted(parquet_path.glob("*.parquet"))
+        for path in _inventory_parquet_files(parquet_path, layout=layout, timeframe=timeframe)
     ]
     write_inventory_reports(inventories, output_path, parquet_path)
     return inventories
+
+
+def _inventory_parquet_files(
+    parquet_path: Path,
+    *,
+    layout: str = "flat",
+    timeframe: str = "1Day",
+) -> list[Path]:
+    if layout == "market_parquet":
+        return sorted(parquet_path.glob(f"*/{timeframe}/bars.parquet"))
+    return sorted(parquet_path.glob("*.parquet"))
 
 
 def inspect_symbol_file(
@@ -70,13 +83,12 @@ def inspect_symbol_file(
     min_average_dollar_volume_252d: float = 50_000_000,
     as_of_date: date | None = None,
 ) -> SymbolInventory:
-    rows = _read_parquet_rows(path)
-    symbol = path.stem.upper()
-    dates = _date_values(rows)
-    closes = _numeric_column(rows, ("close", "Close"))
-    volumes = _numeric_column(rows, ("volume", "Volume"))
+    columns, bar_count = _read_parquet_columns(path)
+    symbol = path.parents[1].name.upper() if path.name == "bars.parquet" and len(path.parents) >= 2 else path.stem.upper()
+    dates = _date_values(columns)
+    closes = _numeric_column(columns, ("close", "Close"))
+    volumes = _numeric_column(columns, ("volume", "Volume"))
 
-    bar_count = len(rows)
     first_date = dates[0] if dates else None
     last_date = dates[-1] if dates else None
     available_days = (last_date - first_date).days if first_date and last_date else 0
@@ -160,7 +172,7 @@ def write_inventory_reports(
             writer.writerow(asdict(item) | {"included": item.included})
 
 
-def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
+def _read_parquet_columns(path: Path) -> tuple[dict[str, list[Any]], int]:
     try:
         import pyarrow.parquet as pq
     except ImportError as exc:
@@ -168,31 +180,49 @@ def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
             "ML data inventory requires pyarrow. Install dependencies with: "
             "python -m pip install -r requirements.txt"
         ) from exc
-    table = pq.read_table(path)
-    columns = table.to_pydict()
+    wanted = (
+        "timestamp",
+        "Timestamp",
+        "date",
+        "Date",
+        "__index_level_0__",
+        "index",
+        "close",
+        "Close",
+        "volume",
+        "Volume",
+    )
+    available = set(pq.read_schema(path).names)
+    columns = [name for name in wanted if name in available]
+    table = pq.read_table(path, columns=columns or None)
+    return table.to_pydict(), table.num_rows
+
+
+def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
+    columns, row_count = _read_parquet_columns(path)
     names = list(columns)
     return [
         {name: columns[name][index] for name in names}
-        for index in range(table.num_rows)
+        for index in range(row_count)
     ]
 
 
-def _date_values(rows: list[dict[str, Any]]) -> list[date]:
+def _date_values(columns: dict[str, list[Any]]) -> list[date]:
+    values = _first_present(columns, ("timestamp", "Timestamp", "date", "Date"))
+    if values is None:
+        values = _first_present(columns, ("__index_level_0__", "index"))
     dates = []
-    for index, row in enumerate(rows):
-        value = _first_present(row, ("timestamp", "Timestamp", "date", "Date"))
-        if value is None:
-            value = _first_present(row, ("__index_level_0__", "index"))
+    for value in values or []:
         parsed = _to_date(value)
         if parsed is not None:
             dates.append(parsed)
     return sorted(dates)
 
 
-def _numeric_column(rows: list[dict[str, Any]], names: tuple[str, ...]) -> list[float]:
+def _numeric_column(columns: dict[str, list[Any]], names: tuple[str, ...]) -> list[float]:
+    raw_values = _first_present(columns, names)
     values = []
-    for row in rows:
-        value = _first_present(row, names)
+    for value in raw_values or []:
         if value is None:
             continue
         try:
