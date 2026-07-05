@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.research.ml.datasets import MLDataset
+from core.research.ml.data.datasets import MLDataset
 
 
 @dataclass(frozen=True)

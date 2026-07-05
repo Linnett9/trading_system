@@ -1,3 +1,3 @@
-"""Compatibility wrapper for legacy ML artifact validator imports."""
+from __future__ import annotations
 
-from core.research.ml.artifacts.artifact_validator import *  # noqa: F401,F403
+from core.research.ml.artifacts.artifact_validator import *
