@@ -1,0 +1,60 @@
+backtest:
+  provider: market_parquet
+  data_dir: data/processed
+  years: 5
+  timeframe: 1Day
+
+ml:
+  enabled: true
+  mode: research
+  historical_data_provider: market_parquet
+  data_dir: data/processed
+  parquet_dir: data/processed
+  stooq_parquet_dir: data/processed
+  feature_set: expanded_rebalance_v1
+  output_dir: reports/ml/full_market_multi_timeframe/debug_3
+  expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
+  inventory_output_dir: reports/ml/full_market_multi_timeframe/inventory
+  research_label: FULL_MARKET_MULTI_TIMEFRAME_DEBUG_3_RESEARCH_ONLY
+  num_workers: 3
+  feature_workers: 4
+  model_threads: 2
+  torch_num_threads: 1
+  sklearn_n_jobs: 2
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  market_data:
+    processed_root: data/processed
+    raw_root: ~/Downloads
+    timezone: "UTC"
+    timestamp_semantics: bar_close
+    enabled_timeframes:
+      - 1Day
+      - 5m
+      - 1h
+    alignment:
+      base_timeframe: 1Day
+      rule: asof
+      session_close_utc: "21:00"
+    timeframes:
+      1Day:
+        raw_dir: ~/Downloads/daily
+        feature_pipeline: price_regime_v1
+      5m:
+        raw_dir: ~/Downloads/5_us_txt/data
+        feature_pipeline: intraday_summary_v1
+      1h:
+        raw_dir: ~/Downloads/h_us_txt/data
+        feature_pipeline: intraday_summary_v1
+
+ml_research_batch:
+  max_workers: 3
+  model_threads: 2
+  fail_fast: true
+  resume_completed: true
+  output_dir_root: reports/ml/full_market_multi_timeframe/debug_3/models
+  config_paths:
+    - configs/research/logistic_regression_should_reduce_exposure.yaml
+    - configs/research/random_forest_should_reduce_exposure.yaml
+    - configs/research/gradient_boosting_should_reduce_exposure.yaml

@@ -12,7 +12,11 @@ from core.research.ml.overlays.drawdown_review import build_drawdown_event_revie
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.artifacts.experiment_paths import MLExperimentPathBuilder
 from core.research.ml.experiment_runner import MLExperimentResult, MLExperimentRunner
-from core.research.ml.features.features import HistoricalFeatureBuilder, add_champion_state_features
+from core.research.ml.features.features import (
+    HistoricalFeatureBuilder,
+    add_champion_state_features,
+    write_feature_rows,
+)
 from core.research.ml.features.labels import (
     DrawdownRiskLabelBuilder,
     RiskRegimeLabelBuilder,
@@ -376,6 +380,34 @@ def test_ml_experiment_runner_caches_historical_features(tmp_path):
     assert audit["sample_count"] == 106
     assert audit["feature_count"] == 33
     assert audit["leakage_check_passed"] is True
+
+
+def test_write_feature_rows_preserves_dynamic_feature_columns(tmp_path):
+    path = tmp_path / "features.csv"
+    write_feature_rows(
+        path,
+        [
+            {"feature_date": "2024-01-01", "spy_return_1m": 0.1},
+            {
+                "feature_date": "2024-01-02",
+                "1h_spy_return_last_bar": 0.2,
+                "5m_spy_volume_last_bar": 100.0,
+            },
+        ],
+    )
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    assert reader.fieldnames == [
+        "feature_date",
+        "1h_spy_return_last_bar",
+        "5m_spy_volume_last_bar",
+        "spy_return_1m",
+    ]
+    assert rows[0]["1h_spy_return_last_bar"] == ""
+    assert rows[1]["1h_spy_return_last_bar"] == "0.2"
 
 
 def test_ml_experiment_runner_reuses_valid_feature_cache(tmp_path, monkeypatch):

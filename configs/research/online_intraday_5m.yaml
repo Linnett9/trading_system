@@ -1,0 +1,27 @@
+ml:
+  enabled: true
+  mode: research
+  research_label: ONLINE_INTRADAY_5M_RESEARCH_ONLY
+  random_seed: 42
+  online_intraday:
+    dataset_path: cache/ml/online_intraday/5m_observations.csv
+    build_from_parquet: true
+    processed_root: data/processed
+    source_symbol: SPY
+    label_horizon_bars: 12
+    target_type: future_drawdown_below
+    target_threshold: -0.005
+    context_symbols: [QQQ]
+    output_path: reports/ml/online_intraday/5m_prequential_benchmark.json
+    decision_threshold: 0.50
+    model_workers: 3
+    minimum_training_samples: 500
+    online_logistic_alpha: 0.0001
+    online_update_batch_size: 12
+    periodic_refit_every_bars: 78
+    include_warm_start_neural: false
+    neural_hidden_size: 16
+    neural_learning_rate: 0.001
+    neural_replay_size: 8192
+    neural_replay_batch_size: 256
+    neural_gradient_steps_per_bar: 1

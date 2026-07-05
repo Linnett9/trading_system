@@ -210,7 +210,7 @@ class MLExperimentRunner:
             split.test,
             predictions,
         )
-        self._write_metadata(paths.metadata_path, dataset, split)
+        self._write_metadata(paths.metadata_path, dataset, split, model)
         self._write_prediction_artifacts(
             paths.prediction_artifacts_path,
             paths.prediction_artifacts_metadata_path,
@@ -902,8 +902,9 @@ class MLExperimentRunner:
         path: Path,
         dataset: MLDataset,
         split: ChronologicalSplit,
+        model: Any | None = None,
     ) -> None:
-        self._artifact_writer().write_metadata(path, dataset, split)
+        self._artifact_writer().write_metadata(path, dataset, split, model)
 
     def _dataset_hash(self, dataset: MLDataset) -> str:
         return self._artifact_writer().dataset_hash(dataset)

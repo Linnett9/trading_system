@@ -10,7 +10,11 @@ from typing import Any, Mapping
 
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
+from core.research.ml.datasets import (
+    MODEL_INPUT_CONTRACT_VERSION,
+    MLDataset,
+    dataset_leakage_audit,
+)
 from core.research.ml.evaluation import classification_metrics
 from core.research.ml.features import MLFeatureBuildResult
 from core.research.ml.labels import MLLabelBuildResult
@@ -84,9 +88,12 @@ class MLCoreArtifactWriter:
     ) -> None:
         positive_labels = sum(dataset.labels)
         sample_count = dataset.sample_count
+        leakage_audit = dataset_leakage_audit(dataset)
         payload = {
             "sample_count": sample_count,
             "feature_count": dataset.feature_count,
+            "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+            "unique_feature_date_count": len(set(dataset.feature_dates)),
             "date_coverage": (
                 [dataset.feature_dates[0], dataset.feature_dates[-1]]
                 if dataset.feature_dates
@@ -100,14 +107,7 @@ class MLCoreArtifactWriter:
             "dropped_rows_insufficient_label_horizon": (
                 label_result.dropped_rows_insufficient_horizon
             ),
-            "leakage_check_passed": all(
-                feature_date < label_start <= label_end
-                for feature_date, label_start, label_end in zip(
-                    dataset.feature_dates,
-                    dataset.label_start_dates,
-                    dataset.label_end_dates,
-                )
-            ),
+            **leakage_audit,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -130,6 +130,7 @@ class MLCoreArtifactWriter:
             "train_sample_count": split.train.sample_count,
             "test_sample_count": split.test.sample_count,
             "source_dataset_row_count": dataset.sample_count,
+            "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
             "dataset_hash": dataset_hash,
             "feature_count": split.train.feature_count,
             "test_start_date": split.test_start_date,
@@ -240,6 +241,7 @@ class MLCoreArtifactWriter:
         path: Path,
         dataset: MLDataset,
         split: ChronologicalSplit,
+        model: Any | None = None,
     ) -> None:
         dataset_hash = self.source_dataset_hash(dataset)
         payload = {
@@ -258,9 +260,17 @@ class MLCoreArtifactWriter:
                 "method": "purged_chronological_holdout",
                 "train_sample_count": split.train.sample_count,
                 "test_sample_count": split.test.sample_count,
+                "source_unique_feature_dates": len(set(dataset.feature_dates)),
+                "train_unique_feature_dates": len(set(split.train.feature_dates)),
+                "test_unique_feature_dates": len(set(split.test.feature_dates)),
                 "test_start_date": split.test_start_date,
                 "purged_train_samples": split.purged_train_samples,
             },
+            "model_training_diagnostics": (
+                model.training_diagnostics()
+                if model is not None and callable(getattr(model, "training_diagnostics", None))
+                else None
+            ),
             "research_only": True,
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

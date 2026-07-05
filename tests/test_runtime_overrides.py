@@ -32,6 +32,32 @@ def test_ml_runtime_parallelism_settings_from_config():
     assert settings.feature_workers == 6
 
 
+def test_runtime_cli_parallelism_only_overrides_explicit_values():
+    config = {
+        "ml": {"num_workers": 4, "feature_workers": 2},
+        "ml_research_batch": {"max_workers": 4},
+        "backtest": {},
+        "research": {},
+    }
+    base = dict(
+        fast=False, symbols=None, universe="default", years=None,
+        mode="ml-research-batch", strategies=None, grid_values=None,
+        selector_mode=None, num_workers=None, feature_workers=None,
+        model_threads=None, torch_num_threads=None, sklearn_n_jobs=None,
+    )
+
+    unchanged = apply_runtime_overrides(config, SimpleNamespace(**base))
+    overridden = apply_runtime_overrides(
+        config, SimpleNamespace(**{**base, "num_workers": 3, "feature_workers": 1})
+    )
+
+    assert unchanged["ml"]["num_workers"] == 4
+    assert unchanged["ml"]["feature_workers"] == 2
+    assert overridden["ml"]["num_workers"] == 3
+    assert overridden["ml_research_batch"]["max_workers"] == 3
+    assert overridden["ml"]["feature_workers"] == 1
+
+
 def test_apply_ml_runtime_parallelism_sets_thread_env(monkeypatch):
     for name in (
         "OMP_NUM_THREADS",

@@ -1,3 +1,5 @@
+import logging
+
 from application.cli_dispatch import dispatch
 from application.cli_feed import build_feed
 from application.cli_parser import parse_args
@@ -7,7 +9,9 @@ from config.config_loader import load_config
 
 
 FEEDLESS_MODES = {
+        "dataset-audit",
         "import-stooq-bulk",
+        "import-market-parquet",
         "ml-data-inventory",
         "ml-build-universes",
         "ml-model-contract-audit",
@@ -19,6 +23,7 @@ FEEDLESS_MODES = {
         "ml-benchmark-return-audit",
         "ml-refresh-adjusted-prices",
         "ml-research-batch",
+        "ml-online-intraday-benchmark",
         "ml-stock-level-alpha-benchmark",
         "ml-stock-level-target-comparison",
         "ml-stock-level-portfolio-replay",
@@ -55,6 +60,10 @@ FEEDLESS_MODES = {
 
 def run_cli():
     args = parse_args()
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper()),
+        format="%(levelname)s:%(name)s:%(message)s",
+    )
     loaded_config = apply_research_profile(
         load_config(args.config, overlay_project_config=True),
         getattr(args, "profile", None),

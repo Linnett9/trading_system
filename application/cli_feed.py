@@ -21,6 +21,12 @@ def build_feed(config):
                 "data_dir", "data/processed/stooq_parquet"
             )
         )
+    if provider == "market_parquet":
+        from infrastructure.data.market_parquet import MarketParquetDataFeed
+
+        return MarketParquetDataFeed(
+            data_root=config["backtest"].get("data_dir", "data/processed")
+        )
     if provider != "alpaca":
         raise ValueError(f"Unsupported historical data provider: {provider}")
 

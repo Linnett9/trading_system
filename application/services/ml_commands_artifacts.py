@@ -3,7 +3,9 @@ from typing import Any
 
 from core.research.ml.artifact_validator import validate_prediction_artifact_dirs
 from core.research.ml.metrics.leaderboard import write_source_leaderboard
-from core.research.ml.trading_research_leaderboard import write_trading_research_leaderboard
+from core.research.ml.stock_level.trading_research_leaderboard import (
+    write_trading_research_leaderboard,
+)
 
 
 def _refresh_trading_research_leaderboard(config):
@@ -96,14 +98,23 @@ def _is_incomplete_run_dir(path: Path) -> bool:
 def _update_source_leaderboard(
     config: dict[str, Any],
     completed_output_dir: Path,
+    additional_output_dirs: list[Path] | None = None,
 ) -> tuple[Path, Path]:
     report_dir = _leaderboard_report_dir(config, completed_output_dir)
     leaderboard_dir = report_dir / "regime_transformer_meta_ensemble_v1"
-    source_dirs = _valid_source_leaderboard_dirs(report_dir)
-    if completed_output_dir not in source_dirs and _is_valid_source_artifact_dir(
-        completed_output_dir
-    ):
-        source_dirs.append(completed_output_dir)
+    completed_dirs = [completed_output_dir, *(additional_output_dirs or [])]
+    if additional_output_dirs is None:
+        source_dirs = _valid_source_leaderboard_dirs(report_dir)
+        source_dirs.extend(
+            path for path in completed_dirs if _is_valid_source_artifact_dir(path)
+        )
+    else:
+        # A batch is one evaluation context. Build its leaderboard atomically
+        # from the complete result set instead of mixing direct report children
+        # with one nested model at a time.
+        source_dirs = [
+            path for path in completed_dirs if _is_valid_source_artifact_dir(path)
+        ]
     source_dirs = sorted(set(source_dirs))
     markdown_path = leaderboard_dir / "leaderboard.md"
     json_path = leaderboard_dir / "leaderboard.json"

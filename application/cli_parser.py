@@ -14,6 +14,7 @@ def parse_args():
             "walk-forward",
             "compare-strategies",
             "data-audit",
+            "dataset-audit",
             "relative-strength",
             "dual-momentum",
             "dual-momentum-walk-forward",
@@ -35,6 +36,7 @@ def parse_args():
             "multi-strategy-walk-forward",
             "ml-research",
             "ml-research-batch",
+            "ml-online-intraday-benchmark",
             "ml-model-contract-audit",
             "ml-run-inventory",
             "ml-clean-incomplete-runs",
@@ -78,6 +80,7 @@ def parse_args():
             "ml-stock-level-alpha-features",
             "ml-overnight-stock-alpha",
             "import-stooq-bulk",
+            "import-market-parquet",
             "champion-robustness",
         ],
         default="backtest",
@@ -87,6 +90,12 @@ def parse_args():
         "--details",
         action="store_true",
         help="Show fold-level walk-forward details.",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info", "warning", "error"],
+        default="info",
+        help="Set CLI logging verbosity.",
     )
     parser.add_argument(
         "--all-results",
@@ -136,10 +145,21 @@ def parse_args():
         help="Exclude likely warrants, units, and rights from raw Stooq imports.",
     )
     parser.add_argument(
+        "--timeframes",
+        nargs="+",
+        choices=["1Day", "daily", "5m", "1h", "hourly"],
+        help="Override timeframes for local market Parquet import.",
+    )
+    parser.add_argument(
         "--years",
         type=int,
         help="Override backtest history length for this run.",
     )
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--feature-workers", type=int, default=None)
+    parser.add_argument("--model-threads", type=int, default=None)
+    parser.add_argument("--torch-num-threads", type=int, default=None)
+    parser.add_argument("--sklearn-n-jobs", type=int, default=None)
     parser.add_argument(
         "--strategies",
         nargs="+",

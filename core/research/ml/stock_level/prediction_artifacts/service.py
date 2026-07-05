@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.research.framework.reporting import ResearchArtifactWriter
-from core.research.ml.data.sector_reference import load_sector_by_symbol
+from core.research.ml.sector_reference import load_sector_by_symbol
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 from core.research.ml.stock_level.prediction_artifacts.io import (
     _markdown,

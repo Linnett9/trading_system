@@ -76,13 +76,16 @@ class LogisticRegressionMLModel(IMLModel):
         max_iterations: int = 1_000,
         l2_penalty: float = 0.01,
         class_weight: str | None = None,
+        scale_features: bool = True,
     ):
         self.random_seed = random_seed
         self.max_iterations = max_iterations
         self.l2_penalty = l2_penalty
         self.class_weight = class_weight
+        self.scale_features = bool(scale_features)
         self.feature_names: list[str] = []
         self.model: Any = None
+        self.scaler: Any = None
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
         if len(x_train) != len(y_train):
@@ -102,7 +105,13 @@ class LogisticRegressionMLModel(IMLModel):
             solver="lbfgs",
             class_weight=self.class_weight,
         )
-        self.model.fit(self._matrix(x_train), y_train)
+        matrix = self._matrix(x_train)
+        if self.scale_features:
+            from sklearn.preprocessing import StandardScaler
+
+            self.scaler = StandardScaler()
+            matrix = self.scaler.fit_transform(matrix)
+        self.model.fit(matrix, y_train)
 
     def predict(self, x: list[dict[str, float]]) -> list[int]:
         return [int(probability >= 0.5) for probability in self.predict_proba(x)]
@@ -110,7 +119,26 @@ class LogisticRegressionMLModel(IMLModel):
     def predict_proba(self, x: list[dict[str, float]]) -> list[float]:
         if self.model is None:
             return [0.5 for _ in x]
-        return self.model.predict_proba(self._matrix(x))[:, 1].tolist()
+        matrix = self._matrix(x)
+        if self.scaler is not None:
+            matrix = self.scaler.transform(matrix)
+        return self.model.predict_proba(matrix)[:, 1].tolist()
+
+    def training_diagnostics(self) -> dict[str, Any]:
+        iterations = (
+            [int(value) for value in self.model.n_iter_]
+            if self.model is not None and hasattr(self.model, "n_iter_")
+            else []
+        )
+        return {
+            "scaled_features": self.scaler is not None,
+            "solver": "lbfgs",
+            "max_iterations": self.max_iterations,
+            "iterations": iterations,
+            "converged": bool(iterations) and max(iterations) < self.max_iterations,
+            "l2_penalty": self.l2_penalty,
+            "C": 1.0 / self.l2_penalty,
+        }
 
     def feature_importances(self) -> dict[str, float]:
         if self.model is None:
@@ -248,9 +276,13 @@ def build_ml_model(
         return NoOpMLModel()
 
     if model_type == LogisticRegressionMLModel.model_type:
+        config = model_config or {}
         return LogisticRegressionMLModel(
             random_seed=random_seed,
             class_weight=class_weight,
+            max_iterations=int(config.get("logistic_max_iter", 5_000)),
+            l2_penalty=float(config.get("logistic_l2_penalty", 1.0)),
+            scale_features=bool(config.get("logistic_scale_features", True)),
         )
 
     if model_type in {"random_forest", "gradient_boosting"}:

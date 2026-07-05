@@ -4,6 +4,9 @@ from core.research.ml.universe_builder import build_universe_files
 
 def run_ml_data_inventory(config):
     ml_config = config.get("ml", {})
+    provider = str(ml_config.get("historical_data_provider", "")).lower()
+    layout = "market_parquet" if provider == "market_parquet" else "flat"
+    market_data = ml_config.get("market_data", {}) or {}
     inventories = build_data_inventory(
         parquet_dir=ml_config.get("parquet_dir", ml_config.get(
             "stooq_parquet_dir", "data/processed/stooq_parquet"
@@ -14,6 +17,8 @@ def run_ml_data_inventory(config):
         min_average_dollar_volume_252d=float(
             ml_config.get("min_average_dollar_volume_252d", 50_000_000)
         ),
+        layout=layout,
+        timeframe=str(ml_config.get("inventory_timeframe", market_data.get("inventory_timeframe", "1Day"))),
     )
     included_count = sum(1 for item in inventories if item.included)
     missing_count = len(inventories) - included_count

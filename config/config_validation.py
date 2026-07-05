@@ -1,4 +1,5 @@
 from core.entities.trading_mode import TradingMode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def validate_config(config):
@@ -93,6 +94,45 @@ def validate_config(config):
         raise RuntimeError(
             f"Unsupported ml.mode '{ml_mode}'. Use one of: research, shadow"
         )
+
+    market_data_config = ml_config.get("market_data", {})
+    if not isinstance(market_data_config, dict):
+        raise RuntimeError("ml.market_data must be a mapping")
+    try:
+        ZoneInfo(str(market_data_config.get("timezone", "UTC")))
+    except ZoneInfoNotFoundError as exc:
+        raise RuntimeError(
+            "ml.market_data.timezone must be a valid IANA timezone, "
+            "for example UTC or America/New_York"
+        ) from exc
+    if str(market_data_config.get("timestamp_semantics", "bar_close")) != "bar_close":
+        raise RuntimeError("ml.market_data.timestamp_semantics must be bar_close")
+    allowed_timeframes = {"1Day", "5m", "1h"}
+    timeframe_config = market_data_config.get("timeframes", {})
+    if not isinstance(timeframe_config, dict):
+        raise RuntimeError("ml.market_data.timeframes must be a mapping")
+    for timeframe in timeframe_config:
+        if str(timeframe) not in allowed_timeframes:
+            raise RuntimeError(
+                "Unsupported ml.market_data.timeframes key "
+                f"'{timeframe}'. Use one of: 1Day, 5m, 1h"
+            )
+    enabled_timeframes = market_data_config.get("enabled_timeframes", ["1Day"])
+    if not isinstance(enabled_timeframes, list) or not enabled_timeframes:
+        raise RuntimeError("ml.market_data.enabled_timeframes must be a non-empty list")
+    for timeframe in enabled_timeframes:
+        if str(timeframe) not in allowed_timeframes:
+            raise RuntimeError(
+                "Unsupported ml.market_data.enabled_timeframes value "
+                f"'{timeframe}'. Use one of: 1Day, 5m, 1h"
+            )
+    alignment_config = market_data_config.get("alignment", {})
+    if not isinstance(alignment_config, dict):
+        raise RuntimeError("ml.market_data.alignment must be a mapping")
+    if str(alignment_config.get("rule", "asof")) != "asof":
+        raise RuntimeError("ml.market_data.alignment.rule must be asof")
+    if str(alignment_config.get("base_timeframe", "1Day")) != "1Day":
+        raise RuntimeError("ml.market_data.alignment.base_timeframe must be 1Day")
 
     ml_model_type = str(ml_config.get("model_type", "noop"))
     if ml_model_type not in {

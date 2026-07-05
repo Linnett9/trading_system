@@ -1,7 +1,6 @@
-from core.research.ml.meta.meta_ensemble import run_meta_ensemble
-
-
 def run_ml_meta_ensemble(config):
+    from core.research.ml.meta.meta_ensemble import run_meta_ensemble
+
     result = run_meta_ensemble(config)
     print("\nML META ENSEMBLE")
     print("mode=research | trading_impact=none")

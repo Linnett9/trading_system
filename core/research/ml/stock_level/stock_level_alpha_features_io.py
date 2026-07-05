@@ -24,6 +24,9 @@ def _load_price_histories(
     for symbol in symbols:
         path = parquet_dir / f"{symbol}.parquet"
         if not path.exists():
+            structured_path = parquet_dir / symbol.upper() / "1Day" / "bars.parquet"
+            path = structured_path
+        if not path.exists():
             output[symbol] = []
             continue
         table = pq.read_table(path, columns=["timestamp", "high", "low", "close"])
