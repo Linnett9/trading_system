@@ -66,6 +66,9 @@ def parse_args():
             "ml-stock-alpha-news-collection-plan",
             "ml-stock-alpha-news-daily-confirmation",
             "ml-stock-alpha-news-coverage-audit",
+            "ml-stock-alpha-news-risk-overlay-research",
+            "ml-stock-alpha-news-risk-overlay-inspect",
+            "ml-stock-alpha-news-risk-overlay-parallel-benchmark",
             "ml-stock-alpha-news-provider-audit",
             "ml-stock-alpha-news-provider-sample-check",
             "ml-stock-alpha-news-pipeline-preflight",
@@ -160,6 +163,21 @@ def parse_args():
     parser.add_argument("--model-threads", type=int, default=None)
     parser.add_argument("--torch-num-threads", type=int, default=None)
     parser.add_argument("--sklearn-n-jobs", type=int, default=None)
+    parser.add_argument("--news-risk-parallel", action="store_true")
+    parser.add_argument("--news-risk-workers", type=int, default=None)
+    parser.add_argument(
+        "--news-risk-parallel-backend",
+        choices=["thread", "process"],
+        default=None,
+    )
+    parser.add_argument("--news-risk-parallel-min-items", type=int, default=None)
+    parser.add_argument("--news-risk-parallel-chunk-size", type=int, default=None)
+    parser.add_argument("--news-risk-parallel-benchmark-symbol-limit", type=int, default=None)
+    parser.add_argument("--news-risk-output-dir", default=None)
+    parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--json", action="store_true", dest="json_output")
+    parser.add_argument("--artifact-list", action="store_true")
     parser.add_argument(
         "--strategies",
         nargs="+",
