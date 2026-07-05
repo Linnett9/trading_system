@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-from core.research.ml.stock_level.stock_level_prediction_artifacts import *
+from core.research.ml.stock_level.prediction_artifacts import service as _service
+
+globals().update({name: value for name, value in vars(_service).items() if not name.startswith("__")})

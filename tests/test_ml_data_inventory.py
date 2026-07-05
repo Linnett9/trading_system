@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import application.cli as cli
+import application.cli_runtime as cli_runtime
 from core.research.ml.data.data_inventory import build_data_inventory, inspect_symbol_file
 
 
@@ -73,6 +74,7 @@ def test_ml_data_inventory_cli_mode_does_not_build_feed(monkeypatch, tmp_path):
     args = SimpleNamespace(
         mode="ml-data-inventory",
         config="config/config.yaml",
+        log_level="info",
         symbols=None,
     )
     config = {
@@ -84,13 +86,23 @@ def test_ml_data_inventory_cli_mode_does_not_build_feed(monkeypatch, tmp_path):
             "min_average_dollar_volume_252d": 10_000_000,
         }
     }
-    monkeypatch.setattr(cli, "parse_args", lambda: args)
-    monkeypatch.setattr(cli, "load_config", lambda *args, **kwargs: config)
-    monkeypatch.setattr(cli, "apply_runtime_overrides", lambda loaded, parsed: loaded)
+    monkeypatch.setattr(cli_runtime, "parse_args", lambda: args)
     monkeypatch.setattr(
-        cli,
+        cli_runtime,
+        "load_config",
+        lambda *args, **kwargs: config,
+    )
+    monkeypatch.setattr(
+        cli_runtime,
+        "apply_runtime_overrides",
+        lambda loaded, parsed: loaded,
+    )
+    monkeypatch.setattr(
+        cli_runtime,
         "build_feed",
-        lambda config: (_ for _ in ()).throw(AssertionError("feed should not build")),
+        lambda config: (_ for _ in ()).throw(
+            AssertionError("feed should not build")
+        ),
     )
 
     cli.run_cli()

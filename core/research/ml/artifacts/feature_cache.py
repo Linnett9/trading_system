@@ -7,8 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.features import write_feature_rows as write_ml_feature_rows
+from core.research.ml.features.features import MLFeatureBuildResult
+from core.research.ml.features.features import write_feature_rows as write_ml_feature_rows
 
 
 class MLFeatureCache:

@@ -1,85 +1,29 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.artifacts import (
-    MLCoreArtifactWriter,
-    MLExperimentPathBuilder,
-    MLExperimentPaths,
-    MLFeatureCache,
-)
-from core.research.ml.artifacts.report_annotation import annotate_report_artifacts
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset, write_dataset
-from core.research.ml.drawdown_review import write_drawdown_event_review
-from core.research.ml.pipelines import (
-    MLDatasetPipeline,
-    MLFeaturePipeline,
-    MLFeaturePipelineResult,
-    MLLabelPipeline,
-    MLModelPipeline,
-    MLRebalancePipeline,
-)
-from core.research.ml.reports import (
-    MLCalibrationReportWriter,
-    MLDiagnosticReportWriter,
-    MLOverlayReportWriter,
-)
-from core.research.ml.reports.ranking_outcomes import (
-    future_drawdown_event,
-    outcomes_by_feature_date,
-    period_return,
-)
+from core.research.ml.data.datasets import write_dataset
+from core.research.ml.experiment_result import MLExperimentResult
+from core.research.ml.overlays.drawdown_review import write_drawdown_event_review
 from core.research.ml.html_report import write_research_html_report
-from core.research.ml.features import (
-    MLFeatureBuildResult,
-    write_feature_rows,
+from core.research.ml.features.features import write_feature_rows
+from core.research.ml.features.labels import write_label_rows
+from core.research.ml.experiment_runner_components import (
+    MLExperimentRunnerComponentMixin,
 )
-from core.research.ml.labels import (
-    MLLabelBuildResult,
-    write_label_rows,
-)
-from core.research.ml.validation import ChronologicalSplit
+from core.research.ml.experiment_runner_features import MLExperimentRunnerFeatureMixin
+from core.research.ml.experiment_runner_model import MLExperimentRunnerModelMixin
+from core.research.ml.experiment_runner_reporting import MLExperimentRunnerReportingMixin
 
 
-@dataclass(frozen=True)
-class MLExperimentResult:
-    output_dir: Path
-    metrics_path: Path
-    predictions_path: Path
-    feature_importance_path: Path
-    confusion_matrix_path: Path
-    metadata_path: Path
-    model_path: Path
-    features_path: Path
-    feature_summary_path: Path
-    labels_path: Path
-    dataset_path: Path
-    dataset_audit_path: Path
-    walk_forward_metrics_path: Path
-    threshold_sweep_path: Path
-    model_comparison_path: Path
-    shadow_overlay_path: Path
-    holdout_shadow_overlay_path: Path
-    rebalance_dataset_path: Path
-    rebalance_dataset_audit_path: Path
-    history_coverage_path: Path
-    drawdown_event_review_path: Path
-    rule_exposure_study_path: Path
-    probability_calibration_path: Path
-    walk_forward_probability_calibration_path: Path
-    baseline_model_comparison_path: Path
-    ranking_diagnostics_path: Path
-    calibrated_probability_calibration_path: Path
-    overlay_model_comparison_path: Path
-    prediction_artifacts_path: Path
-    prediction_artifacts_metadata_path: Path
-    html_report_path: Path
-
-
-class MLExperimentRunner:
+class MLExperimentRunner(
+    MLExperimentRunnerReportingMixin,
+    MLExperimentRunnerModelMixin,
+    MLExperimentRunnerFeatureMixin,
+    MLExperimentRunnerComponentMixin,
+):
     """Research-only ML runner. It does not affect trading decisions."""
 
     def __init__(self, config: dict[str, Any], feed: Any = None):
@@ -902,9 +846,8 @@ class MLExperimentRunner:
         path: Path,
         dataset: MLDataset,
         split: ChronologicalSplit,
-        model: Any | None = None,
     ) -> None:
-        self._artifact_writer().write_metadata(path, dataset, split, model)
+        self._artifact_writer().write_metadata(path, dataset, split)
 
     def _dataset_hash(self, dataset: MLDataset) -> str:
         return self._artifact_writer().dataset_hash(dataset)

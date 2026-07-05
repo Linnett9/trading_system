@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
+from core.research.ml.data.datasets import MLDataset
 from core.research.ml.models import build_ml_model
 from core.research.ml.validation import ChronologicalSplit
 

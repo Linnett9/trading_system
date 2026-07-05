@@ -1,5 +1,5 @@
 from core.entities.backtest_result import BacktestResult
-from core.research.dual_momentum_portfolio import (
+from core.research.dual_momentum.portfolio import (
     DualMomentumPortfolioBacktester,
 )
 from core.research.performance_metrics import (
@@ -7,7 +7,7 @@ from core.research.performance_metrics import (
     sharpe_ratio,
     total_return,
 )
-from core.research.relative_strength_portfolio import (
+from core.research.relative_strength.portfolio import (
     RelativeStrengthPortfolioBacktester,
 )
 from core.research.walk_forward import normalize_datetime

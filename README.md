@@ -7,6 +7,26 @@ walk-forward validation.
 This project is currently a research/backtesting tool, not a live trading
 system.
 
+## Documentation
+
+Repository-specific guides generated from `PROJECT_TREE.txt`:
+
+- [Architecture overview](docs/architecture_overview.md)
+- [Architecture diagrams](docs/architecture_diagrams.md)
+- [Architecture diagram explainer](docs/architecture_diagram_explainer.md)
+- [Project structure](docs/project_structure.md)
+- [Research workflows](docs/research_workflows.md)
+- [Stock-alpha research runbook](docs/stock_alpha_research_runbook.md)
+- [Stock-alpha pipeline deep dive](docs/stock_alpha_pipeline_deep_dive.md)
+- [Stock-alpha feature explainer](docs/stock_alpha_feature_explainer.md)
+- [Model and gate explainer](docs/model_and_gate_explainer.md)
+- [Data lineage](docs/data_lineage.md)
+- [Model catalog](docs/model_catalog.md)
+- [Metrics glossary](docs/metrics_glossary.md)
+- [Research gates and trade conditions](docs/research_gates_and_trade_conditions.md)
+- [Research outputs guide](docs/research_outputs_guide.md)
+- [Development guardrails](docs/development_guardrails.md)
+
 ## What It Does
 
 - Loads historical market data from Alpaca.

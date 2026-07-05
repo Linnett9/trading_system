@@ -39,8 +39,6 @@ class StockLevelResearchConfig:
     dev_max_dates: int
     dev_max_symbols: int
     dev_recent_dates_only: bool
-    dev_required_symbols: tuple[str, ...]
-    dev_symbol_sample_method: str
     resume_existing_outputs: bool
     force_refresh: bool
     ranker_model_set: str
@@ -131,8 +129,6 @@ class StockLevelResearchConfig:
             dev_max_dates=int(ml.get("stock_alpha_dev_max_dates", 80)),
             dev_max_symbols=int(ml.get("stock_alpha_dev_max_symbols", 120)),
             dev_recent_dates_only=bool(ml.get("stock_alpha_dev_recent_dates_only", True)),
-            dev_required_symbols=tuple(str(symbol).upper() for symbol in ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])),
-            dev_symbol_sample_method=str(ml.get("stock_alpha_dev_symbol_sample_method", "sorted")),
             resume_existing_outputs=bool(ml.get("stock_alpha_resume_existing_outputs", True)),
             force_refresh=bool(ml.get("stock_alpha_force_refresh", False)),
             ranker_model_set=str(ml.get("stock_ranker_model_set", default_model_set(run_size))).lower(),
@@ -184,9 +180,5 @@ class StockLevelResearchConfig:
             )
         if self.run_size not in {"dev", "benchmark", "full"}:
             raise ValueError("ml.stock_alpha_run_size must be dev, benchmark, or full")
-        if self.ranker_model_set not in {"fast", "standard", "validated_standard", "full"}:
-            raise ValueError("ml.stock_ranker_model_set must be fast, standard, validated_standard, or full")
-        if self.target_comparison_model_set not in {"ultrafast", "fast", "standard", "validated_standard", "full"}:
-            raise ValueError("ml.stock_target_comparison_model_set must be ultrafast, fast, standard, validated_standard, or full")
         if not 0.0 < self.portfolio_max_position_weight <= 1.0:
             raise ValueError("ml.stock_portfolio_replay_max_position_weight must be in (0, 1]")

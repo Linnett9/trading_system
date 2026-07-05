@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from core.research.ml.labels import MLLabelBuildResult
+from core.research.ml.features.labels import MLLabelBuildResult
 
 
 def outcomes_by_feature_date(
