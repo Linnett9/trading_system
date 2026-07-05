@@ -12,7 +12,7 @@ venv/
 cache/
 
 # Data - do not push large datasets to GitHub
-data/
+/data/
 datasets/
 raw_data/
 processed_data/
