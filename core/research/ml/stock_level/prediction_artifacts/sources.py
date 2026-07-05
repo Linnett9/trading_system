@@ -52,18 +52,23 @@ def _select_symbols(
 
 
 def _load_closes_by_symbol(config: dict[str, Any]) -> dict[str, dict[str, dict[str, float]]]:
-    parquet_dir = Path(
-        str(config.get("ml", {}).get("stooq_parquet_dir", "data/processed/stooq_parquet"))
-    )
-    closes = {}
     ml = config.get("ml", {})
+    parquet_dir = Path(str(ml.get("stooq_parquet_dir", ml.get("parquet_dir", "data/processed/stooq_parquet"))))
+    closes = {}
     required = ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])
     symbols = {*_universe_symbols(config), *(str(symbol).upper() for symbol in required)}
     for symbol in sorted(symbols):
-        path = parquet_dir / f"{symbol.upper()}.parquet"
+        path = _symbol_parquet_path(parquet_dir, symbol)
         if path.exists():
             closes[symbol.upper()] = _read_parquet_closes(path)
     return closes
+
+
+def _symbol_parquet_path(parquet_dir: Path, symbol: str) -> Path:
+    flat_path = parquet_dir / f"{symbol.upper()}.parquet"
+    if flat_path.exists():
+        return flat_path
+    return parquet_dir / symbol.upper() / "1Day" / "bars.parquet"
 
 
 def _read_parquet_closes(path: Path) -> dict[str, dict[str, float]]:

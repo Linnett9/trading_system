@@ -13,6 +13,59 @@ MULTITASK_AUXILIARY_TARGET_COLUMNS = [
     "max_adverse_excursion",
     "max_favourable_excursion",
 ]
+MODEL_INPUT_CONTRACT_VERSION = 2
+
+# Columns whose values are known only after feature_date or are used directly to
+# construct a target. They may remain in source rows for labels and diagnostics,
+# but must never enter a model predictor matrix.
+TARGET_DERIVED_COLUMNS = frozenset({
+    "champion_return_next_period",
+    "benchmark_return_next_period",
+    "champion_excess_return",
+    "volatility_adjusted_excess_return",
+    "future_volatility",
+    "future_drawdown",
+    "future_max_drawdown",
+    "max_adverse_excursion",
+    "max_favourable_excursion",
+    "good_period",
+    "bad_period",
+    "underperforms_spy",
+    "drawdown_event",
+    "should_reduce_exposure",
+})
+
+
+def forbidden_predictor_columns(columns: set[str] | list[str]) -> list[str]:
+    return sorted(
+        name
+        for name in columns
+        if name in TARGET_DERIVED_COLUMNS
+        or name.startswith("future_")
+        or name.startswith("forward_")
+        or name.endswith("_next_period")
+    )
+
+
+def dataset_leakage_audit(dataset: "MLDataset") -> dict[str, Any]:
+    predictor_columns = {
+        name for features in dataset.features for name in features
+    }
+    forbidden = forbidden_predictor_columns(predictor_columns)
+    temporal_order_passed = all(
+        feature_date < label_start <= label_end
+        for feature_date, label_start, label_end in zip(
+            dataset.feature_dates,
+            dataset.label_start_dates,
+            dataset.label_end_dates,
+        )
+    )
+    return {
+        "temporal_order_passed": temporal_order_passed,
+        "forbidden_predictor_columns": forbidden,
+        "target_derived_predictors_absent": not forbidden,
+        "leakage_check_passed": temporal_order_passed and not forbidden,
+    }
 
 
 @dataclass(frozen=True)
@@ -60,8 +113,15 @@ def build_dataset(
         if not feature_date < label_start <= label_end:
             raise ValueError("Dataset contains a label that leaks future information")
 
+        predictor_values = _numeric_feature_values(feature_row)
+        forbidden = forbidden_predictor_columns(list(predictor_values))
+        if forbidden:
+            raise ValueError(
+                "Dataset predictor matrix contains target-derived columns: "
+                + ", ".join(forbidden)
+            )
         samples.append({
-            "features": _numeric_feature_values(feature_row),
+            "features": predictor_values,
             "label": int(label_row[label_name]),
             "feature_date": feature_date,
             "label_start_date": label_start,
@@ -124,25 +184,12 @@ def _numeric_feature_values(row: dict[str, float | str]) -> dict[str, float]:
         "variant_rebalance_frequency",
         "variant_weighting",
         "variant_universe",
-        "champion_return_next_period",
-        "benchmark_return_next_period",
-        "champion_excess_return",
-        "forward_return_5d",
-        "forward_return_10d",
-        "future_volatility",
-        "future_drawdown",
-        "future_max_drawdown",
-        "max_adverse_excursion",
-        "max_favourable_excursion",
-        "good_period",
-        "bad_period",
-        "underperforms_spy",
-        "drawdown_event",
-        "should_reduce_exposure",
+        *TARGET_DERIVED_COLUMNS,
+        *MULTITASK_AUXILIARY_TARGET_COLUMNS,
     }
     features = {}
     for name, value in row.items():
-        if name in ignored:
+        if name in ignored or forbidden_predictor_columns([name]):
             continue
         try:
             features[name] = float(value)
@@ -153,21 +200,30 @@ def _numeric_feature_values(row: dict[str, float | str]) -> dict[str, float]:
 
 def write_dataset(path: Path, dataset: MLDataset, label_name: str = "risk_regime") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = [
+    leading_fields = [
         "feature_date",
         "label_start_date",
         "label_end_date",
         label_name,
-        *list(dataset.features[0] if dataset.features else {}),
+    ]
+    fieldnames = [
+        *leading_fields,
+        *sorted({
+            fieldname
+            for features in dataset.features
+            for fieldname in features
+            if fieldname not in leading_fields
+        }),
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for index, features in enumerate(dataset.features):
-            writer.writerow({
+            row = {
                 "feature_date": dataset.feature_dates[index],
                 "label_start_date": dataset.label_start_dates[index],
                 "label_end_date": dataset.label_end_dates[index],
                 label_name: dataset.labels[index],
                 **features,
-            })
+            }
+            writer.writerow({fieldname: row.get(fieldname) for fieldname in fieldnames})

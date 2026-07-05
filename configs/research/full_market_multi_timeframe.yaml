@@ -1,0 +1,74 @@
+backtest:
+  provider: market_parquet
+  data_dir: data/processed
+  years: 5
+  timeframe: 1Day
+
+ml:
+  enabled: true
+  mode: research
+  historical_data_provider: market_parquet
+  data_dir: data/processed
+  parquet_dir: data/processed
+  stooq_parquet_dir: data/processed
+  feature_set: expanded_rebalance_v1
+  output_dir: reports/ml/full_market_multi_timeframe
+  expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
+  inventory_output_dir: reports/ml/full_market_multi_timeframe/inventory
+  research_label: FULL_MARKET_MULTI_TIMEFRAME_RESEARCH_ONLY
+  num_workers: 4
+  feature_workers: 2
+  model_threads: 1
+  torch_num_threads: 1
+  sklearn_n_jobs: 1
+  benchmark_symbols:
+    - SPY
+    - QQQ
+  market_data:
+    processed_root: data/processed
+    raw_root: ~/Downloads
+    timezone: "UTC"
+    timestamp_semantics: bar_close
+    enabled_timeframes:
+      - 1Day
+      - 5m
+      - 1h
+    alignment:
+      base_timeframe: 1Day
+      rule: asof
+      session_close_utc: "21:00"
+    timeframes:
+      1Day:
+        raw_dir: ~/Downloads/daily
+        feature_pipeline: price_regime_v1
+      5m:
+        raw_dir: ~/Downloads/5_us_txt/data
+        feature_pipeline: intraday_summary_v1
+      1h:
+        raw_dir: ~/Downloads/h_us_txt/data
+        feature_pipeline: intraday_summary_v1
+    import_report_path: reports/ml/full_market_multi_timeframe/market_parquet_import.json
+  expanded_rebalance_dataset:
+    universe_mode: full
+    universe_paths:
+      - data/reference/universes/us_liquid_500.yaml
+
+ml_research_batch:
+  max_workers: 4
+  model_threads: 1
+  fail_fast: true
+  resume_completed: true
+  output_dir_root: reports/ml/full_market_multi_timeframe/models
+  config_paths:
+    - configs/research/logistic_regression_should_reduce_exposure.yaml
+    - configs/research/random_forest_should_reduce_exposure.yaml
+    - configs/research/gradient_boosting_should_reduce_exposure.yaml
+    - configs/research/dlinear_should_reduce_exposure.yaml
+    - configs/research/patchtst_should_reduce_exposure.yaml
+    - configs/research/transformer_should_reduce_exposure.yaml
+    - configs/research/itransformer_should_reduce_exposure.yaml
+    - configs/research/momentum_transformer_should_reduce_exposure.yaml
+    - configs/research/multitask_transformer_should_reduce_exposure.yaml
+    - configs/research/market_context_encoder_should_reduce_exposure.yaml
+    - configs/research/news_analysis_transformer_should_reduce_exposure.yaml
+    - configs/research/tft_should_reduce_exposure.yaml

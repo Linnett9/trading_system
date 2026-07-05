@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -25,6 +26,8 @@ class MLFeaturePipelineResult:
     champion_rebalance_dates: set[str]
     champion_selections: list[Any]
     history_data_metadata: dict[str, dict]
+    multi_timeframe_candles_by_timeframe: dict[str, dict[str, list[Any]]] | None = None
+    multi_timeframe_metadata_by_timeframe: dict[str, dict[str, dict]] | None = None
     champion_state_updated: bool = False
     history_data_metadata_updated: bool = False
 
@@ -65,6 +68,8 @@ class MLFeaturePipeline:
                 champion_rebalance_dates=set(),
                 champion_selections=[],
                 history_data_metadata={},
+                multi_timeframe_candles_by_timeframe={},
+                multi_timeframe_metadata_by_timeframe={},
             )
 
         symbols = self.feature_symbols()
@@ -95,6 +100,30 @@ class MLFeaturePipeline:
             builder,
             candles_by_symbol,
         )
+        multi_timeframe_candles_by_timeframe = {}
+        multi_timeframe_metadata_by_timeframe = {}
+        if self._multi_timeframe_enabled(ml_config):
+            loaded_by_timeframe = self._load_multi_timeframe_candles(
+                symbols,
+                ml_config,
+            )
+            multi_timeframe_candles_by_timeframe = {
+                timeframe: {
+                    symbol: result.candles for symbol, result in loaded.items()
+                }
+                for timeframe, loaded in loaded_by_timeframe.items()
+            }
+            multi_timeframe_metadata_by_timeframe = {
+                timeframe: {
+                    symbol: result.metadata for symbol, result in loaded.items()
+                }
+                for timeframe, loaded in loaded_by_timeframe.items()
+            }
+            feature_result = self._add_multi_timeframe_features(
+                feature_result,
+                multi_timeframe_candles_by_timeframe,
+                ml_config,
+            )
         champion_equity_curve: list[Any] = []
         champion_rebalance_dates: set[str] = set()
         champion_selections: list[Any] = []
@@ -126,6 +155,8 @@ class MLFeaturePipeline:
             champion_rebalance_dates=champion_rebalance_dates,
             champion_selections=champion_selections,
             history_data_metadata=history_data_metadata,
+            multi_timeframe_candles_by_timeframe=multi_timeframe_candles_by_timeframe,
+            multi_timeframe_metadata_by_timeframe=multi_timeframe_metadata_by_timeframe,
             champion_state_updated=champion_state_updated,
             history_data_metadata_updated=True,
         )
@@ -250,10 +281,100 @@ class MLFeaturePipeline:
     def _load_candles(self, symbols: list[str]) -> dict[str, Any]:
         from application.services.market_data_loader import load_candles_with_metadata
 
-        return {
-            symbol: load_candles_with_metadata(symbol, self._config, self._feed)
-            for symbol in symbols
-        }
+        feature_workers = int(self._ml_config().get("feature_workers", 1))
+        if feature_workers == 1 or len(symbols) <= 1:
+            return {
+                symbol: load_candles_with_metadata(symbol, self._config, self._feed)
+                for symbol in symbols
+            }
+        max_workers = min(feature_workers, len(symbols))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(
+                lambda symbol: load_candles_with_metadata(
+                    symbol, self._config, self._feed
+                ),
+                symbols,
+            )
+            return dict(zip(symbols, results))
+
+    def _load_multi_timeframe_candles(
+        self,
+        symbols: list[str],
+        ml_config: Mapping[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        from application.services.market_data_loader import load_candles_with_metadata
+
+        market_config = ml_config.get("market_data", {})
+        base_timeframe = str(
+            market_config.get("alignment", {}).get("base_timeframe", "1Day")
+        )
+        timeframes = [
+            str(timeframe)
+            for timeframe in market_config.get("enabled_timeframes", [])
+            if str(timeframe) != base_timeframe
+        ]
+        loaded = {}
+        for timeframe in timeframes:
+            timeframe_config = dict(self._config)
+            timeframe_config["backtest"] = {
+                **self._config.get("backtest", {}),
+                "provider": "market_parquet",
+                "data_dir": market_config.get("processed_root", "data/processed"),
+                "timeframe": timeframe,
+            }
+            feature_workers = int(ml_config.get("feature_workers", 1))
+            if feature_workers == 1 or len(symbols) <= 1:
+                loaded[timeframe] = {
+                    symbol: load_candles_with_metadata(
+                        symbol, timeframe_config, self._feed
+                    )
+                    for symbol in symbols
+                }
+            else:
+                max_workers = min(feature_workers, len(symbols))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    results = executor.map(
+                        lambda symbol: load_candles_with_metadata(
+                            symbol, timeframe_config, self._feed
+                        ),
+                        symbols,
+                    )
+                    loaded[timeframe] = dict(zip(symbols, results))
+        return loaded
+
+    def _add_multi_timeframe_features(
+        self,
+        feature_result: MLFeatureBuildResult,
+        candles_by_timeframe: dict[str, dict[str, list[Any]]],
+        ml_config: Mapping[str, Any],
+    ) -> MLFeatureBuildResult:
+        from core.research.ml.multi_timeframe import add_intraday_summary_features
+
+        market_config = ml_config.get("market_data", {})
+        rows = add_intraday_summary_features(
+            feature_result.rows,
+            candles_by_timeframe,
+            benchmark_symbols=[
+                str(symbol)
+                for symbol in ml_config.get("benchmark_symbols", ["SPY", "QQQ"])
+            ],
+            session_close_utc=str(
+                market_config.get("alignment", {}).get("session_close_utc", "21:00")
+            ),
+        )
+        return MLFeatureBuildResult(
+            rows=rows,
+            dropped_rows=feature_result.dropped_rows,
+            date_range=feature_result.date_range,
+        )
+
+    def _multi_timeframe_enabled(self, ml_config: Mapping[str, Any]) -> bool:
+        market_config = ml_config.get("market_data", {})
+        enabled = market_config.get("enabled_timeframes", ["1Day"])
+        return (
+            self._config.get("backtest", {}).get("provider") == "market_parquet"
+            and len(enabled) > 1
+        )
 
     def _run_champion_research(self, candles_by_symbol: dict[str, list[Any]]) -> Any:
         from application.services.dual_momentum_config import (

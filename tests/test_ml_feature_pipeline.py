@@ -12,6 +12,36 @@ from core.research.ml.config import MLExperimentConfig
 from core.research.ml.pipelines.feature_pipeline import MLFeaturePipeline
 
 
+def test_feature_workers_reach_candle_loader_executor(monkeypatch):
+    captured = {}
+
+    class CapturingExecutor:
+        def __init__(self, max_workers):
+            captured["max_workers"] = max_workers
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def map(self, function, values):
+            return map(function, values)
+
+    monkeypatch.setattr(
+        "core.research.ml.pipelines.feature_pipeline.ThreadPoolExecutor",
+        CapturingExecutor,
+    )
+    monkeypatch.setattr(
+        "application.services.market_data_loader.load_candles_with_metadata",
+        lambda symbol, config, feed: symbol,
+    )
+    config = {"ml": {"feature_workers": 2}}
+    pipeline = MLFeaturePipeline(config, MLExperimentConfig.from_config(config), feed=object())
+
+    assert pipeline._load_candles(["AAPL", "MSFT", "SPY"]) == {
+        "AAPL": "AAPL", "MSFT": "MSFT", "SPY": "SPY"
+    }
+    assert captured["max_workers"] == 2
+
+
 def test_feature_pipeline_returns_empty_result_without_feed(tmp_path):
     config = {
         "reports": {"ml_dir": str(tmp_path / "reports")},

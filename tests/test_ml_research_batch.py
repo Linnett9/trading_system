@@ -80,16 +80,60 @@ def test_ml_research_batch_runs_two_dummy_configs_in_parallel(tmp_path):
             prediction_artifacts_path="prediction_artifacts.csv",
         )
 
-    results = run_ml_research_batch(
+    captured_leaderboard_dirs = []
+    from application.services import ml_commands_batch
+    original_update = ml_commands_batch._update_source_leaderboard
+    ml_commands_batch._update_source_leaderboard = lambda config, first, rest=None: (
+        captured_leaderboard_dirs.append([first, *(rest or [])])
+        or (tmp_path / "leaderboard.md", tmp_path / "leaderboard.json")
+    )
+    try:
+        results = run_ml_research_batch(
         _batch_config(shared_cache, [first, second], max_workers=2, model_threads=3),
         executor_cls=ThreadPoolExecutor,
         worker_fn=fake_worker,
-    )
+        )
+    finally:
+        ml_commands_batch._update_source_leaderboard = original_update
 
     assert len(results) == 2
     assert len(submitted) == 2
     assert {item[1] for item in submitted} == {3}
     assert all(item[2].endswith("expanded_rebalance_dataset.csv") for item in submitted)
+    assert len(captured_leaderboard_dirs) == 1
+    assert len(captured_leaderboard_dirs[0]) == 2
+
+
+def test_ml_research_batch_passes_resolved_workers_to_executor(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n", encoding="utf-8"
+    )
+    config_path = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    captured = {}
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, output_dir, additional=None: (
+            tmp_path / "leaderboard.md", tmp_path / "leaderboard.json"
+        ),
+    )
+
+    class CapturingExecutor(ThreadPoolExecutor):
+        def __init__(self, max_workers):
+            captured["max_workers"] = max_workers
+            super().__init__(max_workers=max_workers)
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        return MLResearchBatchResult(config_path, "reports/first", True)
+
+    run_ml_research_batch(
+        _batch_config(shared_cache, [config_path], max_workers=4),
+        executor_cls=CapturingExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert captured["max_workers"] == 4
 
 
 def test_ml_research_applies_runtime_parallelism_settings(monkeypatch, tmp_path):
