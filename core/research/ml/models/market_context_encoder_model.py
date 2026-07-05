@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.sequence_dataset import (
+from core.research.ml.data.sequence_dataset import (
     build_sequence_indices,
     sequence_group_ids_from_metadata,
 )

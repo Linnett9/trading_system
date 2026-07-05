@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from core.research.ml.calibration import (
+from core.research.ml.metrics.calibration import (
     build_probability_calibration,
     compare_calibration_methods,
 )
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
+from core.research.ml.data.datasets import MLDataset
 from core.research.ml.pipelines import MLModelPipeline
 from core.research.ml.validation import ChronologicalSplit, rolling_walk_forward
 

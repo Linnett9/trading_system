@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.features import MLFeatureBuildResult
-from core.research.ml.labels import (
+from core.research.ml.features.features import MLFeatureBuildResult
+from core.research.ml.features.labels import (
     ChampionSuccessLabelBuilder,
     DrawdownRiskLabelBuilder,
     MLLabelBuildResult,

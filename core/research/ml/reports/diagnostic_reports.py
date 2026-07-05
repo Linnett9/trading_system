@@ -7,13 +7,13 @@ from typing import Any, Mapping
 
 from core.research.ml.artifacts import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MLDataset
-from core.research.ml.diagnostics import (
+from core.research.ml.data.datasets import MLDataset
+from core.research.ml.metrics.diagnostics import (
     build_ranking_diagnostics,
     probability_summary,
     rolling_base_rate_probabilities,
 )
-from core.research.ml.evaluation import classification_metrics
+from core.research.ml.metrics.evaluation import classification_metrics
 from core.research.ml.pipelines import MLModelPipeline
 from core.research.ml.validation import rolling_walk_forward
 
