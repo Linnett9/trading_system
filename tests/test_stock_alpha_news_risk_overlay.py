@@ -62,6 +62,47 @@ def test_after_hours_news_maps_to_later_decision() -> None:
     assert enriched[1]["news_sentiment"] == -0.8
 
 
+def test_point_in_time_join_propagates_matched_news_evidence() -> None:
+    stock = [_stock_row("AAPL", "2024-01-03T14:30:00+00:00")]
+    news = [{
+        "symbol": "AAPL",
+        "event_id": "event-1",
+        "ingested_at": "2024-01-03T14:00:00+00:00",
+        "published_at_utc": "2024-01-03T13:55:00+00:00",
+        "headline_text": "Company announces ordinary update",
+        "summary_text": "Point-in-time summary",
+        "body_text": "Point-in-time body",
+        "provider": "official_feed",
+        "sentiment": "-0.2",
+    }]
+
+    enriched, audit = join_news_to_stock_alpha_observations(stock, news)
+    row = enriched[0]
+
+    assert row["headline_text"] == "Company announces ordinary update"
+    assert row["summary_text"] == "Point-in-time summary"
+    assert row["body_text"] == "Point-in-time body"
+    assert row["provider"] == "official_feed"
+    assert row["availability_timestamp"] == "2024-01-03T14:00:00+00:00"
+    assert row["availability_timestamp_source"] == "ingested_at"
+    assert row["publication_timestamp"] == "2024-01-03T13:55:00+00:00"
+    assert row["availability_timestamp"] <= row["decision_timestamp"]
+    assert audit["leakage_violation_count"] == 0
+
+
+def test_join_does_not_fabricate_missing_news_evidence() -> None:
+    enriched, _ = join_news_to_stock_alpha_observations(
+        [_stock_row("AAPL", "2024-01-03T14:30:00+00:00")],
+        [{"symbol": "AAPL", "event_id": "event-1", "published_at": "2024-01-03T14:00:00+00:00", "sentiment": "0.0"}],
+    )
+
+    row = enriched[0]
+    assert "headline_text" not in row
+    assert "provider" not in row
+    assert "availability_timestamp" not in row
+    assert row["news_feature_timestamp"] == "2024-01-03T14:00:00+00:00"
+
+
 def test_duplicate_news_does_not_multiply_features() -> None:
     stock = [_stock_row("AAPL", "2024-01-03T14:30:00+00:00")]
     news = [

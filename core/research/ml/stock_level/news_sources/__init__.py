@@ -1,4 +1,15 @@
+"""News-source research helpers."""
+
+from core.research.ml.stock_level.news_sources.catastrophic_events import (
+    CATASTROPHIC_NEWS_TAXONOMY,
+    catastrophic_news_taxonomy_report,
+    classify_catastrophic_news_event,
+    classify_catastrophic_news_rows,
+)
 from core.research.ml.stock_level.news_sources.providers import (
+    PROVIDER_METADATA,
+    SEC_CIK_BY_SYMBOL,
+    SEC_COMPANY_TICKERS_URL,
     AlphaVantageNewsSource,
     CompanyPressReleaseRssSource,
     FinnhubNewsSource,
@@ -6,14 +17,17 @@ from core.research.ml.stock_level.news_sources.providers import (
     GdeltNewsSource,
     MassiveStockNewsSource,
     NewsApiNewsSource,
-    PROVIDER_METADATA,
-    SEC_COMPANY_TICKERS_URL,
+    NewsSource,
+    ProviderRateLimitError,
     SecCompanyFilingsSource,
     SecEdgarNewsSource,
     default_news_sources,
+    gdelt_query_terms,
     normalize_sec_company_tickers,
     normalize_sec_ticker,
     sec_submissions_url,
+    standard_library_json_get,
+    standard_library_text_get,
 )
 from core.research.ml.stock_level.news_sources.registry import (
     NEWS_SOURCE_CLASSIFICATIONS,
@@ -21,10 +35,31 @@ from core.research.ml.stock_level.news_sources.registry import (
 )
 
 __all__ = [
-    "AlphaVantageNewsSource", "CompanyPressReleaseRssSource", "FinnhubNewsSource", "FmpNewsSource",
-    "GdeltNewsSource", "MassiveStockNewsSource", "NewsApiNewsSource", "SecEdgarNewsSource",
-    "SecCompanyFilingsSource", "SEC_COMPANY_TICKERS_URL", "normalize_sec_company_tickers",
-    "normalize_sec_ticker", "sec_submissions_url",
-    "PROVIDER_METADATA", "default_news_sources", "NEWS_SOURCE_CLASSIFICATIONS",
+    "PROVIDER_METADATA",
+    "SEC_CIK_BY_SYMBOL",
+    "SEC_COMPANY_TICKERS_URL",
+    "AlphaVantageNewsSource",
+    "CATASTROPHIC_NEWS_TAXONOMY",
+    "CompanyPressReleaseRssSource",
+    "FinnhubNewsSource",
+    "FmpNewsSource",
+    "GdeltNewsSource",
+    "MassiveStockNewsSource",
+    "NEWS_SOURCE_CLASSIFICATIONS",
+    "NewsApiNewsSource",
+    "NewsSource",
+    "ProviderRateLimitError",
+    "SecCompanyFilingsSource",
+    "SecEdgarNewsSource",
+    "catastrophic_news_taxonomy_report",
+    "classify_catastrophic_news_event",
+    "classify_catastrophic_news_rows",
+    "default_news_sources",
+    "gdelt_query_terms",
     "load_validated_rss_registry",
+    "normalize_sec_company_tickers",
+    "normalize_sec_ticker",
+    "sec_submissions_url",
+    "standard_library_json_get",
+    "standard_library_text_get",
 ]

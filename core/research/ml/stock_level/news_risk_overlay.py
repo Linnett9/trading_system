@@ -10,11 +10,13 @@ from typing import Any, Callable, Iterable, Mapping
 
 TIMESTAMP_COLUMNS = (
     "ingested_at",
+    "availability_timestamp",
     "available_at_utc",
     "available_at_timestamp",
     "available_at",
     "collected_at_utc",
     "first_seen_at",
+    "publication_timestamp",
     "published_at_utc",
     "published_at",
     "event_timestamp",
@@ -36,9 +38,15 @@ NON_FEATURE_COLUMNS = {
     "event_id",
     "event_key",
     "headline",
+    "headline_text",
     "title",
     "summary",
+    "summary_text",
     "summary_or_text",
+    "body",
+    "body_text",
+    "content",
+    "provider",
     "url",
     "url_or_accession",
     *TIMESTAMP_COLUMNS,
@@ -146,6 +154,22 @@ def join_news_to_stock_alpha_observations(
         },
         "max_news_timestamp_by_decision": max_news_by_decision,
         "leakage_violation_count": 0,
+        "evidence_propagation": {
+            field: sum(row.get(field) not in {None, ""} for row in enriched)
+            for field in (
+                "headline_text",
+                "summary_text",
+                "body_text",
+                "provider",
+                "availability_timestamp",
+                "publication_timestamp",
+            )
+        },
+        "evidence_mapping_rule": "latest eligible news row for the same symbol with effective_timestamp <= decision_timestamp",
+        "evidence_mapping_limitations": [
+            "Evidence is not propagated when no point-in-time-eligible same-symbol news row exists.",
+            "Publication-only timestamps are not relabeled as availability timestamps.",
+        ],
     }
     return enriched, audit
 
@@ -379,6 +403,7 @@ def _prepare_news_rows(
             **payload,
             "symbol": symbol,
             "effective_timestamp": timestamp,
+            "effective_timestamp_source": _effective_news_timestamp_source(payload, config),
         }
     return list(deduped.values())
 
@@ -394,7 +419,31 @@ def _aggregate_news_features(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
             parsed = _number(value)
             if parsed is not None:
                 values.setdefault(f"news_{key}", []).append(parsed)
-    return {key: mean(items) for key, items in values.items()}
+    aggregated = {key: mean(items) for key, items in values.items()}
+    latest = rows[-1]
+    propagated = {
+        "headline_text": _first_present(latest, ("headline_text", "headline", "title")),
+        "summary_text": _first_present(latest, ("summary_text", "summary", "description", "summary_or_text")),
+        "body_text": _first_present(latest, ("body_text", "body", "content")),
+        "provider": _first_present(latest, ("provider",)),
+        "publication_timestamp": _first_present(latest, ("publication_timestamp", "published_at_utc", "published_at")),
+    }
+    timestamp_source = str(latest.get("effective_timestamp_source") or "")
+    if timestamp_source in {
+        "ingested_at",
+        "availability_timestamp",
+        "available_at_utc",
+        "available_at_timestamp",
+        "available_at",
+        "collected_at_utc",
+        "first_seen_at",
+    }:
+        propagated["availability_timestamp"] = latest["effective_timestamp"].isoformat()
+        propagated["availability_timestamp_source"] = timestamp_source
+    aggregated.update(
+        {key: value for key, value in propagated.items() if value not in {None, ""}}
+    )
+    return aggregated
 
 
 def _decision_timestamp(
@@ -419,6 +468,16 @@ def _effective_news_timestamp(
         parsed = _parse_timestamp(row.get(column))
         if parsed:
             return parsed
+    return None
+
+
+def _effective_news_timestamp_source(
+    row: Mapping[str, Any],
+    config: NewsRiskOverlayConfig,
+) -> str | None:
+    for column in config.news_timestamp_preference:
+        if _parse_timestamp(row.get(column)):
+            return column
     return None
 
 
