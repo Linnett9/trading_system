@@ -4227,6 +4227,23 @@ def test_news_pipeline_inspect_malformed_thresholds_fail_cleanly(key, value, mes
     assert message in capsys.readouterr().out
 
 
+def test_news_pipeline_inspect_ignores_risk_overlay_min_max_config(tmp_path):
+    config = load_config(
+        "config/config.stock_alpha_news_pipeline_inspect_tiny_fixture.yaml",
+        overlay_project_config=True,
+    )
+    config["ml"]["stock_alpha_news_pipeline_inspect_output_dir"] = str(tmp_path)
+    config["ml"]["stock_alpha_news_risk_overlay_max_features"] = "owned-by-overlay"
+    config["ml"]["stock_alpha_news_risk_overlay_min_free_bytes"] = "owned-by-overlay"
+
+    paths = write_stock_alpha_news_pipeline_inspect(config)
+    payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+
+    assert payload["inspection_only"] is True
+    assert "stock_alpha_news_risk_overlay_max_features" not in payload["config_summary"]["thresholds"]
+    assert "stock_alpha_news_risk_overlay_min_free_bytes" not in payload["config_summary"]["thresholds"]
+
+
 def test_stock_alpha_news_pipeline_preflight_real_template_missing_raw_is_clean(tmp_path, capsys):
     config = load_config(
         "config/config.stock_alpha_news_pipeline_preflight_real_template.yaml",

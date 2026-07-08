@@ -7,11 +7,21 @@ from pathlib import Path
 from typing import Any
 
 
+def _allow_large_csv_fields() -> None:
+    limit = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(limit)
+            return
+        except OverflowError:
+            limit //= 10
+
+
 class CsvRowRepository:
     def read(self, path: Path) -> list[dict[str, str]]:
         if not path.exists():
             return []
-        csv.field_size_limit(sys.maxsize)
+        _allow_large_csv_fields()
         with path.open("r", encoding="utf-8", newline="") as handle:
             return list(csv.DictReader(handle))
 

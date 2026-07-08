@@ -1,5 +1,5 @@
 ml:
-  stock_alpha_news_features_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_tiny_fixture/dev/stock_alpha_news_features.csv
+  stock_alpha_news_features_path: tests/fixtures/stock_alpha_news/features_tiny/stock_alpha_news_features.csv
   stock_alpha_stock_rows_path: tests/fixtures/stock_alpha_news/stock_rows_tiny.csv
   stock_alpha_news_feature_diagnostics_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_feature_diagnostics_tiny_fixture/dev
   stock_alpha_news_enable_transformer: false

@@ -297,7 +297,7 @@ def _prefer_12mo_sec_event_row_paths(
     selected: list[str | Path] = []
     for batch in sorted(by_batch):
         batch_paths = by_batch[batch]
-        preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        preferred = [path for path in batch_paths if "_12mo_dry_run/" in _path_text(path)]
         selected.extend(preferred or batch_paths)
     selected.extend(
         path for path in other_paths
@@ -313,8 +313,8 @@ def _prefer_36mo_sec_event_row_paths(
     selected: list[str | Path] = []
     for batch in sorted(by_batch):
         batch_paths = [path for path in by_batch[batch] if not _is_data_news_path(path)]
-        preferred_36mo = [path for path in batch_paths if "_36mo" in str(path)]
-        preferred_12mo = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        preferred_36mo = [path for path in batch_paths if "_36mo" in _path_text(path)]
+        preferred_12mo = [path for path in batch_paths if "_12mo_dry_run/" in _path_text(path)]
         selected.extend(preferred_36mo or preferred_12mo or batch_paths)
     selected.extend(path for path in other_paths if not _is_data_news_path(path))
     return selected
@@ -335,11 +335,11 @@ def _merge_36mo_sec_event_row_paths(
     for batch in sorted(by_batch):
         overlay.extend(
             path for path in by_batch[batch]
-            if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+            if marker in _path_text(path) and not _is_data_news_path(path) and str(path) not in baseline_text
         )
     overlay.extend(
         path for path in sorted(other_paths, key=str)
-        if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+        if marker in _path_text(path) and not _is_data_news_path(path) and str(path) not in baseline_text
     )
     return [*baseline, *overlay]
 
@@ -355,7 +355,7 @@ def _merge_sec_window_event_row_paths(
     overlay = [
         path for path in sorted(other_paths, key=str)
         if (
-            any(marker in str(path) for marker in markers)
+            any(marker in _path_text(path) for marker in markers)
             and not _is_data_news_path(path)
             and not _is_provider_timeout_event_row_path(path)
             and str(path) not in baseline_text
@@ -365,17 +365,21 @@ def _merge_sec_window_event_row_paths(
 
 
 def _is_data_news_path(path: str | Path) -> bool:
-    path_text = str(path).replace("\\", "/")
+    path_text = _path_text(path)
     return path_text.startswith("data/news/") or "/data/news/" in path_text
 
 
 def _is_36mo_path(path: str | Path) -> bool:
-    return "_36mo" in str(path)
+    return "_36mo" in _path_text(path)
 
 
 def _is_sec_window_path(path: str | Path) -> bool:
-    path_text = str(path)
+    path_text = _path_text(path)
     return any(marker in path_text for marker in ("_36mo", "_60mo", "_120mo"))
+
+
+def _path_text(path: str | Path) -> str:
+    return str(path).replace("\\", "/")
 
 
 def _is_provider_timeout_event_row_path(path: str | Path) -> bool:

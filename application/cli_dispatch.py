@@ -127,6 +127,15 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-coverage-audit":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_coverage_audit(config)
         return
+    if args.mode == "ml-stock-alpha-news-risk-overlay-research":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_risk_overlay_research(config)
+        return
+    if args.mode == "ml-stock-alpha-news-risk-overlay-inspect":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_risk_overlay_inspect(config)
+        return
+    if args.mode == "ml-stock-alpha-news-risk-overlay-parallel-benchmark":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_risk_overlay_parallel_benchmark(config)
+        return
     if args.mode == "ml-stock-alpha-news-provider-audit":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_provider_audit(config)
         return

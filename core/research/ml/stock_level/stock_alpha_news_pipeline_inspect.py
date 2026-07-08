@@ -123,7 +123,11 @@ def build_stock_alpha_news_pipeline_inspect(config: Mapping[str, Any]) -> dict[s
 
 
 def _validated_thresholds(ml: Mapping[str, Any]) -> dict[str, float]:
-    unknown = sorted(key for key in ml if key.startswith("stock_alpha_news_") and ("_min_" in key or "_max_" in key) and key not in THRESHOLDS)
+    unknown = sorted(
+        key
+        for key in ml
+        if _looks_like_pipeline_threshold_key(key) and key not in THRESHOLDS
+    )
     if unknown:
         raise ValueError("unknown stock-alpha news threshold(s): " + ", ".join(unknown))
     values = {}
@@ -138,6 +142,14 @@ def _validated_thresholds(ml: Mapping[str, Any]) -> dict[str, float]:
             raise ValueError(f"ml.{key} is outside its valid range")
         values[key] = value
     return values
+
+
+def _looks_like_pipeline_threshold_key(key: str) -> bool:
+    if key.startswith("stock_alpha_news_risk_overlay_"):
+        return False
+    return key.startswith("stock_alpha_news_") and (
+        "_min_" in key or "_max_" in key
+    )
 
 
 def _required_path(config: Mapping[str, Any], key: str) -> Path:
