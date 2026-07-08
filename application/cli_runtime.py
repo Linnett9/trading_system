@@ -13,6 +13,9 @@ FEEDLESS_MODES = {
         "import-stooq-bulk",
         "import-market-parquet",
         "ml-data-inventory",
+        "ml-market-data-inventory",
+        "ml-build-stock-features",
+        "ml-validate-stock-features",
         "ml-build-universes",
         "ml-model-contract-audit",
         "ml-run-inventory",
@@ -61,7 +64,7 @@ FEEDLESS_MODES = {
 def run_cli():
     args = parse_args()
     logging.basicConfig(
-        level=getattr(logging, str(args.log_level).upper()),
+        level=getattr(logging, str(getattr(args, "log_level", "info")).upper()),
         format="%(levelname)s:%(name)s:%(message)s",
     )
     loaded_config = apply_research_profile(

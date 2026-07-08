@@ -39,6 +39,22 @@ def dispatch(args, config, feed):
     if args.mode == "ml-data-inventory":
         _commands("ml_commands").run_ml_data_inventory(config)
         return
+    if args.mode == "ml-market-data-inventory":
+        _commands("stock_feature_bank_commands").run_market_data_inventory(config)
+        return
+    if args.mode == "ml-build-stock-features":
+        _commands("stock_feature_bank_commands").run_build_stock_features(
+            config,
+            timeframes=args.timeframes,
+            symbols=args.symbols,
+        )
+        return
+    if args.mode == "ml-validate-stock-features":
+        _commands("stock_feature_bank_commands").run_validate_stock_features(
+            config,
+            timeframes=args.timeframes,
+        )
+        return
     if args.mode == "ml-build-universes":
         _commands("ml_commands").run_ml_build_universes(config)
         return
