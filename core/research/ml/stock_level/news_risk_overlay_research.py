@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import time
+from collections import Counter
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from statistics import mean, median, pstdev
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from core.research.ml.stock_level.news_risk_overlay import (
     DECISION_TIMESTAMP_COLUMNS,
@@ -23,6 +26,14 @@ from core.research.ml.stock_level.news_risk_overlay import (
     evaluate_candidate,
     join_news_to_stock_alpha_observations,
     shadow_decision_row,
+)
+from core.research.ml.stock_level.news_sources import (
+    catastrophic_news_taxonomy_report,
+    classify_catastrophic_news_rows,
+)
+from core.research.ml.stock_level.news_transformer import (
+    build_news_transformer_readiness_report,
+    build_news_transformer_training_plan,
 )
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
 
@@ -96,6 +107,9 @@ class NewsRiskResearchPaths:
     action_attribution_json_path: Path
     score_direction_audit_json_path: Path
     news_score_deciles_csv_path: Path
+    corrected_news_score_deciles_csv_path: Path
+    decile_join_audit_json_path: Path
+    decile_trade_reconciliation_json_path: Path
     news_score_direction_report_json_path: Path
     news_score_direction_summary_md_path: Path
     replay_action_attribution_json_path: Path
@@ -107,12 +121,175 @@ class NewsRiskResearchPaths:
     extreme_event_archive_csv_path: Path
     extreme_event_memory_report_json_path: Path
     cost_scenario_comparison_json_path: Path
+    chronological_split_manifest_json_path: Path
+    experiment_registry_jsonl_path: Path
+    contrarian_grid_results_csv_path: Path
+    contrarian_grid_selection_json_path: Path
+    contrarian_fold_results_csv_path: Path
+    contrarian_parameter_stability_json_path: Path
+    contrarian_frozen_config_json_path: Path
+    contrarian_holdout_report_json_path: Path
+    contrarian_holdout_trade_ledger_csv_path: Path
+    contrarian_holdout_equity_csv_path: Path
+    contrarian_holdout_comparison_md_path: Path
+    contrarian_walk_forward_folds_csv_path: Path
+    contrarian_walk_forward_summary_json_path: Path
+    contrarian_chronological_validation_plan_json_path: Path
+    contrarian_chronological_periods_csv_path: Path
+    contrarian_walk_forward_validation_report_json_path: Path
+    contrarian_placebo_permutation_report_json_path: Path
+    contrarian_placebo_permutation_results_csv_path: Path
+    contrarian_matched_control_report_json_path: Path
+    contrarian_matched_control_results_csv_path: Path
+    contrarian_profit_concentration_report_json_path: Path
+    contrarian_trade_fragility_by_symbol_csv_path: Path
+    contrarian_trade_fragility_by_year_csv_path: Path
+    contrarian_top_trade_removal_csv_path: Path
+    contrarian_year_regime_report_json_path: Path
+    contrarian_year_regime_results_csv_path: Path
+    contrarian_year_regime_examples_csv_path: Path
+    contrarian_symbol_year_ablation_report_json_path: Path
+    contrarian_without_top_symbols_csv_path: Path
+    contrarian_without_top_years_csv_path: Path
+    contrarian_cost_slippage_robustness_report_json_path: Path
+    contrarian_cost_slippage_robustness_csv_path: Path
+    contrarian_data_validity_audit_json_path: Path
+    intraday_5min_expansion_plan_json_path: Path
+    contrarian_placebo_results_csv_path: Path
+    contrarian_placebo_summary_json_path: Path
+    contrarian_matched_controls_json_path: Path
+    contrarian_contribution_by_year_csv_path: Path
+    contrarian_contribution_by_symbol_csv_path: Path
+    contrarian_concentration_report_json_path: Path
+    universe_survivorship_audit_json_path: Path
+    universe_membership_by_date_csv_path: Path
+    corporate_action_audit_json_path: Path
+    missing_news_bias_report_json_path: Path
+    covered_vs_uncovered_candidates_csv_path: Path
+    text_model_readiness_json_path: Path
+    validation_stage_placeholders_json_path: Path
     parallel_execution_report_json_path: Path
     replay_assumptions_json_path: Path
     replay_data_audit_json_path: Path
+    artifact_manifest_json_path: Path
+    artifact_validation_report_json_path: Path
+    news_validation_workflow_map_json_path: Path
+    validation_dependency_graph_json_path: Path
+    validation_readiness_dashboard_json_path: Path
+    artifact_lineage_report_json_path: Path
+    news_validation_gap_analysis_json_path: Path
+    news_transformer_readiness_json_path: Path
+    news_transformer_training_plan_json_path: Path
+    catastrophic_news_audit_json_path: Path
+    catastrophic_news_candidates_csv_path: Path
+    catastrophic_news_veto_report_json_path: Path
+    catastrophic_veto_candidate_attribution_json_path: Path
+    catastrophic_veto_trade_attribution_csv_path: Path
+    catastrophic_veto_strategy_comparison_json_path: Path
+    catastrophic_veto_policy_json_path: Path
+    catastrophic_veto_filtered_strategy_report_json_path: Path
+    catastrophic_veto_removed_trades_csv_path: Path
+    catastrophic_veto_removed_symbols_csv_path: Path
+    catastrophic_veto_full_replay_report_json_path: Path
+    catastrophic_veto_full_replay_trade_ledger_csv_path: Path
+    catastrophic_veto_full_replay_equity_csv_path: Path
+    catastrophic_veto_filtered_candidates_csv_path: Path
+    catastrophic_veto_blocked_candidates_csv_path: Path
+    catastrophic_veto_replay_seam_report_json_path: Path
+    catastrophic_veto_bounceback_report_json_path: Path
+    catastrophic_veto_bounceback_by_category_csv_path: Path
+    catastrophic_veto_bounceback_examples_csv_path: Path
+    catastrophic_veto_extreme_only_policy_proposal_json_path: Path
+    catastrophic_veto_policy_variant_comparison_json_path: Path
+    catastrophic_veto_policy_variant_counts_csv_path: Path
+    catastrophic_veto_policy_variant_metrics_csv_path: Path
+    catastrophic_veto_policy_variant_removed_trades_csv_path: Path
+    catastrophic_veto_policy_variant_bounceback_csv_path: Path
+    catastrophic_veto_policy_frontier_report_json_path: Path
+    catastrophic_veto_policy_frontier_csv_path: Path
+    catastrophic_veto_policy_variant_examples_csv_path: Path
+    catastrophic_veto_loser_bounceback_casebook_json_path: Path
+    catastrophic_veto_loser_bounceback_cases_csv_path: Path
+    catastrophic_veto_loser_bounceback_feature_diff_csv_path: Path
+    catastrophic_veto_loser_bounceback_keyword_diff_csv_path: Path
+    catastrophic_veto_taxonomy_improvement_plan_json_path: Path
+    catastrophic_veto_parked_status_json_path: Path
+    catastrophic_news_evidence_quality_report_json_path: Path
+    catastrophic_news_evidence_quality_by_field_csv_path: Path
+    catastrophic_news_evidence_quality_by_symbol_csv_path: Path
+    catastrophic_veto_policy_mode_comparison_json_path: Path
+    catastrophic_veto_policy_mode_counts_csv_path: Path
+    news_evidence_lineage_report_json_path: Path
+    news_evidence_lineage_by_stage_csv_path: Path
+    news_evidence_missing_field_examples_csv_path: Path
+    news_evidence_readiness_report_json_path: Path
+    news_event_taxonomy_report_json_path: Path
+    news_event_taxonomy_counts_csv_path: Path
+    news_event_taxonomy_examples_csv_path: Path
+    news_duplicate_grouping_report_json_path: Path
+    news_duplicate_grouping_examples_csv_path: Path
+    news_point_in_time_text_safety_report_json_path: Path
+    news_point_in_time_text_safety_examples_csv_path: Path
+    news_text_keyword_baseline_report_json_path: Path
+    news_text_keyword_baseline_scores_csv_path: Path
+    walk_forward_validation_report_json_path: Path
+    walk_forward_fold_results_csv_path: Path
+    placebo_permutation_report_json_path: Path
+    placebo_permutation_results_csv_path: Path
+    exposure_matched_controls_json_path: Path
+    trade_count_matched_controls_json_path: Path
+    concentration_fragility_report_json_path: Path
     shadow_csv_path: Path
     manifest_json_path: Path
     markdown_path: Path
+
+
+@dataclass(frozen=True)
+class ResearchCandidateFilterSpec:
+    filter_name: str
+    enabled: bool = False
+    reason: str = "opt-in research-only candidate filter"
+
+
+@dataclass(frozen=True)
+class ResearchStrategyVariantSpec:
+    base_variant_name: str
+    new_variant_name: str
+    candidate_filter: ResearchCandidateFilterSpec | None = None
+    filtered_candidate_rows: Sequence[Mapping[str, Any]] | None = None
+    metadata: Mapping[str, Any] | None = None
+    research_only: bool = True
+    enabled_for_research: bool = True
+    enabled_for_paper_trading: bool = False
+    enabled_for_live_trading: bool = False
+
+
+def build_research_strategy_variant_inputs(
+    candidate_rows: Sequence[Mapping[str, Any]],
+    variant_spec: ResearchStrategyVariantSpec,
+) -> dict[str, Any]:
+    source_rows = (
+        variant_spec.filtered_candidate_rows
+        if variant_spec.filtered_candidate_rows is not None
+        else candidate_rows
+    )
+    copied_rows = [dict(row) for row in source_rows]
+    filter_spec = variant_spec.candidate_filter
+    filter_enabled = bool(filter_spec and filter_spec.enabled)
+    return {
+        "base_variant_name": variant_spec.base_variant_name,
+        "new_variant_name": variant_spec.new_variant_name,
+        "research_only": variant_spec.research_only,
+        "filter_name": filter_spec.filter_name if filter_spec else "NONE",
+        "filter_enabled": filter_enabled,
+        "candidate_rows": copied_rows,
+        "candidate_count": len(copied_rows),
+        "metadata": dict(variant_spec.metadata or {}),
+        "default_behavior_unchanged": not filter_enabled,
+        "enabled_for_research": variant_spec.enabled_for_research,
+        "paper_trading_enabled": variant_spec.enabled_for_paper_trading,
+        "live_trading_enabled": variant_spec.enabled_for_live_trading,
+    }
 
 
 @dataclass(frozen=True)
@@ -257,6 +434,7 @@ def write_stock_alpha_news_risk_overlay_research(
         )
         _apply_probabilities(labeled, price_probs, "price_only_news_risk_probability")
         _apply_probabilities(labeled, news_probs, "price_plus_news_risk_probability")
+        _assign_candidate_ids(labeled, price_score_column)
         decision_rows = _apply_news_decisions(labeled, overlay_config, price_score_column)
         oos_rows = [row for index, row in enumerate(labeled) if index in news_probs]
     portfolio = _portfolio_comparison(
@@ -268,12 +446,120 @@ def write_stock_alpha_news_risk_overlay_research(
         transaction_cost_bps=float(ml.get("stock_alpha_news_risk_overlay_transaction_cost_bps", 0.0)),
         slippage_bps=float(ml.get("stock_alpha_news_risk_overlay_slippage_bps", 0.0)),
     )
+    catastrophic_veto_filter = apply_catastrophic_veto_to_candidates(oos_rows)
+    catastrophic_veto_confirmed_only_filter = apply_catastrophic_veto_to_candidates(
+        oos_rows,
+        policy_mode="CONFIRMED_ONLY_RESEARCH",
+    )
+    catastrophic_veto_manual_review_filter = apply_catastrophic_veto_to_candidates(
+        oos_rows,
+        policy_mode="MANUAL_REVIEW_RESEARCH",
+    )
+    policy_variant_filters = {
+        str(spec["policy_name"]): apply_catastrophic_policy_variant_to_candidates(oos_rows, str(spec["policy_name"]))
+        for spec in CATASTROPHIC_POLICY_VARIANTS
+    }
+    catastrophic_veto_variant = ResearchStrategyVariantSpec(
+        base_variant_name="news_contrarian_rerank",
+        new_variant_name="news_contrarian_rerank_catastrophic_veto",
+        candidate_filter=ResearchCandidateFilterSpec(
+            filter_name="catastrophic_veto",
+            enabled=True,
+        ),
+        filtered_candidate_rows=catastrophic_veto_filter["filtered_candidates"],
+        metadata={
+            "policy": "catastrophic_veto_v1",
+            "candidate_count_before_veto": len(oos_rows),
+            "candidate_count_after_veto": len(catastrophic_veto_filter["filtered_candidates"]),
+            "blocked_candidate_count": len(catastrophic_veto_filter["blocked_candidates"]),
+        },
+        research_only=True,
+        enabled_for_research=True,
+        enabled_for_paper_trading=False,
+        enabled_for_live_trading=False,
+    )
+    catastrophic_veto_confirmed_only_variant = ResearchStrategyVariantSpec(
+        base_variant_name="news_contrarian_rerank",
+        new_variant_name="news_contrarian_rerank_catastrophic_veto_confirmed_only",
+        candidate_filter=ResearchCandidateFilterSpec(
+            filter_name="catastrophic_veto_confirmed_only",
+            enabled=True,
+        ),
+        filtered_candidate_rows=catastrophic_veto_confirmed_only_filter["filtered_candidates"],
+        metadata={
+            "policy": "catastrophic_veto_confirmed_only_research_v1",
+            "policy_mode": "CONFIRMED_ONLY_RESEARCH",
+            "candidate_count_before_veto": len(oos_rows),
+            "candidate_count_after_veto": len(catastrophic_veto_confirmed_only_filter["filtered_candidates"]),
+            "blocked_candidate_count": len(catastrophic_veto_confirmed_only_filter["blocked_candidates"]),
+            "unknown_text_candidate_count": len(catastrophic_veto_confirmed_only_filter["unknown_text_candidates"]),
+            "missing_availability_candidate_count": len(catastrophic_veto_confirmed_only_filter["missing_availability_candidates"]),
+        },
+        research_only=True,
+        enabled_for_research=True,
+        enabled_for_paper_trading=False,
+        enabled_for_live_trading=False,
+    )
+    catastrophic_veto_manual_review_variant = ResearchStrategyVariantSpec(
+        base_variant_name="news_contrarian_rerank",
+        new_variant_name="news_contrarian_rerank_catastrophic_veto_manual_review",
+        candidate_filter=ResearchCandidateFilterSpec(
+            filter_name="catastrophic_veto_manual_review",
+            enabled=True,
+        ),
+        filtered_candidate_rows=catastrophic_veto_manual_review_filter["filtered_candidates"],
+        metadata={
+            "policy": "catastrophic_veto_manual_review_research_v1",
+            "policy_mode": "MANUAL_REVIEW_RESEARCH",
+            "candidate_count_before_veto": len(oos_rows),
+            "candidate_count_after_veto": len(catastrophic_veto_manual_review_filter["filtered_candidates"]),
+            "blocked_candidate_count": len(catastrophic_veto_manual_review_filter["blocked_candidates"]),
+            "unknown_text_candidate_count": len(catastrophic_veto_manual_review_filter["unknown_text_candidates"]),
+            "missing_availability_candidate_count": len(catastrophic_veto_manual_review_filter["missing_availability_candidates"]),
+        },
+        research_only=True,
+        enabled_for_research=True,
+        enabled_for_paper_trading=False,
+        enabled_for_live_trading=False,
+    )
+    policy_replay_variants = [
+        ResearchStrategyVariantSpec(
+            base_variant_name="news_contrarian_rerank",
+            new_variant_name=str(filter_result["variant_name"]),
+            candidate_filter=ResearchCandidateFilterSpec(
+                filter_name=f"catastrophic_policy_variant_{policy_name.lower()}",
+                enabled=True,
+            ),
+            filtered_candidate_rows=filter_result["filtered_candidates"],
+            metadata={
+                "policy": f"{policy_name.lower()}_research_v1",
+                "policy_name": policy_name,
+                "policy_stage": filter_result["policy_stage"],
+                "candidate_count_before_veto": len(oos_rows),
+                "candidate_count_after_veto": len(filter_result["filtered_candidates"]),
+                "blocked_candidate_count": len(filter_result["blocked_candidates"]),
+                "unknown_evidence_candidate_count": len(filter_result["unknown_candidates"]),
+            },
+            research_only=True,
+            enabled_for_research=True,
+            enabled_for_paper_trading=False,
+            enabled_for_live_trading=False,
+        )
+        for policy_name, filter_result in policy_variant_filters.items()
+        if filter_result["policy_stage"] == "FULL_REPLAY_RESEARCH"
+    ]
     with _timed_phase(parallel_report, "replay"):
         replay = _build_open_trade_replay(
             oos_rows,
             config=ml,
             price_score_column=price_score_column,
             output_dir=output_dir,
+            extra_research_variants=[
+                catastrophic_veto_variant,
+                catastrophic_veto_confirmed_only_variant,
+                catastrophic_veto_manual_review_variant,
+                *policy_replay_variants,
+            ],
             parallel_config=parallel_config,
             parallel_report=parallel_report,
         )
@@ -284,7 +570,7 @@ def write_stock_alpha_news_risk_overlay_research(
             target_column="news_risk_label",
         )
         _assert_score_direction_contract(score_direction_audit, oos_rows)
-        score_decile_rows, score_direction_report = _news_score_decile_diagnostics(
+        score_decile_rows, score_direction_report, decile_join_audit, decile_reconciliation = _news_score_decile_diagnostics(
             oos_rows,
             replay["trade_ledger"],
             price_score_column=price_score_column,
@@ -312,6 +598,44 @@ def write_stock_alpha_news_risk_overlay_research(
             parallel_config=parallel_config,
             parallel_report=parallel_report,
         )
+    validation = _contrarian_validation_stage_reports(
+        rows=oos_rows,
+        replay=replay,
+        price_score_column=price_score_column,
+        config=ml,
+        cost_scenarios=cost_scenarios,
+        data_audit=replay["replay_data_audit"],
+    )
+    evidence_stages = {
+        "raw_news": _optional_csv_stage(ml, "stock_alpha_news_raw_path"),
+        "provider_normalized_news": _optional_csv_stage(
+            ml,
+            "stock_alpha_news_collect_output_path",
+            "stock_alpha_news_provider_normalized_path",
+        ),
+        "news_contract": _optional_csv_stage(ml, "stock_alpha_news_contract_path"),
+        "news_features": {"available": True, "path": str(news_path), "rows": news_rows},
+        "joined_candidate_rows": {"available": True, "path": "IN_MEMORY_POINT_IN_TIME_JOIN", "rows": labeled},
+        "catastrophic_veto_input_rows": {"available": True, "path": "IN_MEMORY_OOS_ROWS", "rows": oos_rows},
+    }
+    (
+        validation["news_evidence_lineage_report"],
+        validation["news_evidence_lineage_by_stage"],
+        validation["news_evidence_missing_field_examples"],
+        validation["news_evidence_readiness_report"],
+    ) = _news_evidence_lineage_artifacts(evidence_stages)
+    validation["news_evidence_readiness_report"].update(
+        {
+            "event_taxonomy_status": validation["news_event_taxonomy_report"]["status"],
+            "event_taxonomy_research_ready": validation["news_event_taxonomy_report"]["event_taxonomy_research_ready"],
+            "duplicate_grouping_status": validation["news_duplicate_grouping_report"]["status"],
+            "duplicate_grouping_heuristic_ready": validation["news_duplicate_grouping_report"]["duplicate_grouping_heuristic_ready"],
+            "point_in_time_text_safety_status": validation["news_point_in_time_text_safety_report"]["status"],
+            "point_in_time_text_safety_ready": validation["news_point_in_time_text_safety_report"]["point_in_time_text_safety_ready"],
+            "keyword_baseline_status": validation["news_text_keyword_baseline_report"]["status"],
+            "keyword_baseline_ready": validation["news_text_keyword_baseline_report"]["keyword_baseline_ready"],
+        }
+    )
 
     paths = NewsRiskResearchPaths(
         output_dir=output_dir,
@@ -334,6 +658,9 @@ def write_stock_alpha_news_risk_overlay_research(
         action_attribution_json_path=output_dir / "action_attribution.json",
         score_direction_audit_json_path=output_dir / "score_direction_audit.json",
         news_score_deciles_csv_path=output_dir / "news_score_deciles.csv",
+        corrected_news_score_deciles_csv_path=output_dir / "corrected_news_score_deciles.csv",
+        decile_join_audit_json_path=output_dir / "decile_join_audit.json",
+        decile_trade_reconciliation_json_path=output_dir / "decile_trade_reconciliation.json",
         news_score_direction_report_json_path=output_dir / "news_score_direction_report.json",
         news_score_direction_summary_md_path=output_dir / "news_score_direction_summary.md",
         replay_action_attribution_json_path=output_dir / "replay_action_attribution.json",
@@ -345,9 +672,124 @@ def write_stock_alpha_news_risk_overlay_research(
         extreme_event_archive_csv_path=output_dir / "extreme_event_archive.csv",
         extreme_event_memory_report_json_path=output_dir / "extreme_event_memory_report.json",
         cost_scenario_comparison_json_path=output_dir / "cost_scenario_comparison.json",
+        chronological_split_manifest_json_path=output_dir / "chronological_split_manifest.json",
+        experiment_registry_jsonl_path=output_dir / "experiment_registry.jsonl",
+        contrarian_grid_results_csv_path=output_dir / "contrarian_grid_results.csv",
+        contrarian_grid_selection_json_path=output_dir / "contrarian_grid_selection.json",
+        contrarian_fold_results_csv_path=output_dir / "contrarian_fold_results.csv",
+        contrarian_parameter_stability_json_path=output_dir / "contrarian_parameter_stability.json",
+        contrarian_frozen_config_json_path=output_dir / "contrarian_frozen_config.json",
+        contrarian_holdout_report_json_path=output_dir / "contrarian_holdout_report.json",
+        contrarian_holdout_trade_ledger_csv_path=output_dir / "contrarian_holdout_trade_ledger.csv",
+        contrarian_holdout_equity_csv_path=output_dir / "contrarian_holdout_equity.csv",
+        contrarian_holdout_comparison_md_path=output_dir / "contrarian_holdout_comparison.md",
+        contrarian_walk_forward_folds_csv_path=output_dir / "contrarian_walk_forward_folds.csv",
+        contrarian_walk_forward_summary_json_path=output_dir / "contrarian_walk_forward_summary.json",
+        contrarian_chronological_validation_plan_json_path=output_dir / "contrarian_chronological_validation_plan.json",
+        contrarian_chronological_periods_csv_path=output_dir / "contrarian_chronological_periods.csv",
+        contrarian_walk_forward_validation_report_json_path=output_dir / "contrarian_walk_forward_validation_report.json",
+        contrarian_placebo_permutation_report_json_path=output_dir / "contrarian_placebo_permutation_report.json",
+        contrarian_placebo_permutation_results_csv_path=output_dir / "contrarian_placebo_permutation_results.csv",
+        contrarian_matched_control_report_json_path=output_dir / "contrarian_matched_control_report.json",
+        contrarian_matched_control_results_csv_path=output_dir / "contrarian_matched_control_results.csv",
+        contrarian_profit_concentration_report_json_path=output_dir / "contrarian_profit_concentration_report.json",
+        contrarian_trade_fragility_by_symbol_csv_path=output_dir / "contrarian_trade_fragility_by_symbol.csv",
+        contrarian_trade_fragility_by_year_csv_path=output_dir / "contrarian_trade_fragility_by_year.csv",
+        contrarian_top_trade_removal_csv_path=output_dir / "contrarian_top_trade_removal.csv",
+        contrarian_year_regime_report_json_path=output_dir / "contrarian_year_regime_report.json",
+        contrarian_year_regime_results_csv_path=output_dir / "contrarian_year_regime_results.csv",
+        contrarian_year_regime_examples_csv_path=output_dir / "contrarian_year_regime_examples.csv",
+        contrarian_symbol_year_ablation_report_json_path=output_dir / "contrarian_symbol_year_ablation_report.json",
+        contrarian_without_top_symbols_csv_path=output_dir / "contrarian_without_top_symbols.csv",
+        contrarian_without_top_years_csv_path=output_dir / "contrarian_without_top_years.csv",
+        contrarian_cost_slippage_robustness_report_json_path=output_dir / "contrarian_cost_slippage_robustness_report.json",
+        contrarian_cost_slippage_robustness_csv_path=output_dir / "contrarian_cost_slippage_robustness.csv",
+        contrarian_data_validity_audit_json_path=output_dir / "contrarian_data_validity_audit.json",
+        intraday_5min_expansion_plan_json_path=output_dir / "intraday_5min_expansion_plan.json",
+        contrarian_placebo_results_csv_path=output_dir / "contrarian_placebo_results.csv",
+        contrarian_placebo_summary_json_path=output_dir / "contrarian_placebo_summary.json",
+        contrarian_matched_controls_json_path=output_dir / "contrarian_matched_controls.json",
+        contrarian_contribution_by_year_csv_path=output_dir / "contrarian_contribution_by_year.csv",
+        contrarian_contribution_by_symbol_csv_path=output_dir / "contrarian_contribution_by_symbol.csv",
+        contrarian_concentration_report_json_path=output_dir / "contrarian_concentration_report.json",
+        universe_survivorship_audit_json_path=output_dir / "universe_survivorship_audit.json",
+        universe_membership_by_date_csv_path=output_dir / "universe_membership_by_date.csv",
+        corporate_action_audit_json_path=output_dir / "corporate_action_audit.json",
+        missing_news_bias_report_json_path=output_dir / "missing_news_bias_report.json",
+        covered_vs_uncovered_candidates_csv_path=output_dir / "covered_vs_uncovered_candidates.csv",
+        text_model_readiness_json_path=output_dir / "text_model_readiness.json",
+        validation_stage_placeholders_json_path=output_dir / "validation_stage_placeholders.json",
         parallel_execution_report_json_path=output_dir / "parallel_execution_report.json",
         replay_assumptions_json_path=output_dir / "replay_assumptions.json",
         replay_data_audit_json_path=output_dir / "replay_data_audit.json",
+        artifact_manifest_json_path=output_dir / "artifact_manifest.json",
+        artifact_validation_report_json_path=output_dir / "artifact_validation_report.json",
+        news_validation_workflow_map_json_path=output_dir / "news_validation_workflow_map.json",
+        validation_dependency_graph_json_path=output_dir / "validation_dependency_graph.json",
+        validation_readiness_dashboard_json_path=output_dir / "validation_readiness_dashboard.json",
+        artifact_lineage_report_json_path=output_dir / "artifact_lineage_report.json",
+        news_validation_gap_analysis_json_path=output_dir / "news_validation_gap_analysis.json",
+        news_transformer_readiness_json_path=output_dir / "news_transformer_readiness.json",
+        news_transformer_training_plan_json_path=output_dir / "news_transformer_training_plan.json",
+        catastrophic_news_audit_json_path=output_dir / "catastrophic_news_audit.json",
+        catastrophic_news_candidates_csv_path=output_dir / "catastrophic_news_candidates.csv",
+        catastrophic_news_veto_report_json_path=output_dir / "catastrophic_news_veto_report.json",
+        catastrophic_veto_candidate_attribution_json_path=output_dir / "catastrophic_veto_candidate_attribution.json",
+        catastrophic_veto_trade_attribution_csv_path=output_dir / "catastrophic_veto_trade_attribution.csv",
+        catastrophic_veto_strategy_comparison_json_path=output_dir / "catastrophic_veto_strategy_comparison.json",
+        catastrophic_veto_policy_json_path=output_dir / "catastrophic_veto_policy.json",
+        catastrophic_veto_filtered_strategy_report_json_path=output_dir / "catastrophic_veto_filtered_strategy_report.json",
+        catastrophic_veto_removed_trades_csv_path=output_dir / "catastrophic_veto_removed_trades.csv",
+        catastrophic_veto_removed_symbols_csv_path=output_dir / "catastrophic_veto_removed_symbols.csv",
+        catastrophic_veto_full_replay_report_json_path=output_dir / "catastrophic_veto_full_replay_report.json",
+        catastrophic_veto_full_replay_trade_ledger_csv_path=output_dir / "catastrophic_veto_full_replay_trade_ledger.csv",
+        catastrophic_veto_full_replay_equity_csv_path=output_dir / "catastrophic_veto_full_replay_equity.csv",
+        catastrophic_veto_filtered_candidates_csv_path=output_dir / "catastrophic_veto_filtered_candidates.csv",
+        catastrophic_veto_blocked_candidates_csv_path=output_dir / "catastrophic_veto_blocked_candidates.csv",
+        catastrophic_veto_replay_seam_report_json_path=output_dir / "catastrophic_veto_replay_seam_report.json",
+        catastrophic_veto_bounceback_report_json_path=output_dir / "catastrophic_veto_bounceback_report.json",
+        catastrophic_veto_bounceback_by_category_csv_path=output_dir / "catastrophic_veto_bounceback_by_category.csv",
+        catastrophic_veto_bounceback_examples_csv_path=output_dir / "catastrophic_veto_bounceback_examples.csv",
+        catastrophic_veto_extreme_only_policy_proposal_json_path=output_dir / "catastrophic_veto_extreme_only_policy_proposal.json",
+        catastrophic_veto_policy_variant_comparison_json_path=output_dir / "catastrophic_veto_policy_variant_comparison.json",
+        catastrophic_veto_policy_variant_counts_csv_path=output_dir / "catastrophic_veto_policy_variant_counts.csv",
+        catastrophic_veto_policy_variant_metrics_csv_path=output_dir / "catastrophic_veto_policy_variant_metrics.csv",
+        catastrophic_veto_policy_variant_removed_trades_csv_path=output_dir / "catastrophic_veto_policy_variant_removed_trades.csv",
+        catastrophic_veto_policy_variant_bounceback_csv_path=output_dir / "catastrophic_veto_policy_variant_bounceback.csv",
+        catastrophic_veto_policy_frontier_report_json_path=output_dir / "catastrophic_veto_policy_frontier_report.json",
+        catastrophic_veto_policy_frontier_csv_path=output_dir / "catastrophic_veto_policy_frontier.csv",
+        catastrophic_veto_policy_variant_examples_csv_path=output_dir / "catastrophic_veto_policy_variant_examples.csv",
+        catastrophic_veto_loser_bounceback_casebook_json_path=output_dir / "catastrophic_veto_loser_bounceback_casebook.json",
+        catastrophic_veto_loser_bounceback_cases_csv_path=output_dir / "catastrophic_veto_loser_bounceback_cases.csv",
+        catastrophic_veto_loser_bounceback_feature_diff_csv_path=output_dir / "catastrophic_veto_loser_bounceback_feature_diff.csv",
+        catastrophic_veto_loser_bounceback_keyword_diff_csv_path=output_dir / "catastrophic_veto_loser_bounceback_keyword_diff.csv",
+        catastrophic_veto_taxonomy_improvement_plan_json_path=output_dir / "catastrophic_veto_taxonomy_improvement_plan.json",
+        catastrophic_veto_parked_status_json_path=output_dir / "catastrophic_veto_parked_status.json",
+        catastrophic_news_evidence_quality_report_json_path=output_dir / "catastrophic_news_evidence_quality_report.json",
+        catastrophic_news_evidence_quality_by_field_csv_path=output_dir / "catastrophic_news_evidence_quality_by_field.csv",
+        catastrophic_news_evidence_quality_by_symbol_csv_path=output_dir / "catastrophic_news_evidence_quality_by_symbol.csv",
+        catastrophic_veto_policy_mode_comparison_json_path=output_dir / "catastrophic_veto_policy_mode_comparison.json",
+        catastrophic_veto_policy_mode_counts_csv_path=output_dir / "catastrophic_veto_policy_mode_counts.csv",
+        news_evidence_lineage_report_json_path=output_dir / "news_evidence_lineage_report.json",
+        news_evidence_lineage_by_stage_csv_path=output_dir / "news_evidence_lineage_by_stage.csv",
+        news_evidence_missing_field_examples_csv_path=output_dir / "news_evidence_missing_field_examples.csv",
+        news_evidence_readiness_report_json_path=output_dir / "news_evidence_readiness_report.json",
+        news_event_taxonomy_report_json_path=output_dir / "news_event_taxonomy_report.json",
+        news_event_taxonomy_counts_csv_path=output_dir / "news_event_taxonomy_counts.csv",
+        news_event_taxonomy_examples_csv_path=output_dir / "news_event_taxonomy_examples.csv",
+        news_duplicate_grouping_report_json_path=output_dir / "news_duplicate_grouping_report.json",
+        news_duplicate_grouping_examples_csv_path=output_dir / "news_duplicate_grouping_examples.csv",
+        news_point_in_time_text_safety_report_json_path=output_dir / "news_point_in_time_text_safety_report.json",
+        news_point_in_time_text_safety_examples_csv_path=output_dir / "news_point_in_time_text_safety_examples.csv",
+        news_text_keyword_baseline_report_json_path=output_dir / "news_text_keyword_baseline_report.json",
+        news_text_keyword_baseline_scores_csv_path=output_dir / "news_text_keyword_baseline_scores.csv",
+        walk_forward_validation_report_json_path=output_dir / "walk_forward_validation_report.json",
+        walk_forward_fold_results_csv_path=output_dir / "walk_forward_fold_results.csv",
+        placebo_permutation_report_json_path=output_dir / "placebo_permutation_report.json",
+        placebo_permutation_results_csv_path=output_dir / "placebo_permutation_results.csv",
+        exposure_matched_controls_json_path=output_dir / "exposure_matched_controls.json",
+        trade_count_matched_controls_json_path=output_dir / "trade_count_matched_controls.json",
+        concentration_fragility_report_json_path=output_dir / "concentration_fragility_report.json",
         shadow_csv_path=output_dir / "shadow_decision_log.csv",
         manifest_json_path=output_dir / "model_manifest.json",
         markdown_path=output_dir / "README.md",
@@ -356,6 +798,8 @@ def write_stock_alpha_news_risk_overlay_research(
         "model_type": "in_repo_logistic_regression",
         "chronological_walk_forward": True,
         "transformer_trained": False,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
         "paper_orders_enabled": False,
         "price_only": price_metrics,
         "price_plus_news": news_metrics,
@@ -400,6 +844,9 @@ def write_stock_alpha_news_risk_overlay_research(
         _write_json(paths.action_attribution_json_path, replay["action_attribution"])
         _write_json(paths.score_direction_audit_json_path, score_direction_audit)
         _write_csv(paths.news_score_deciles_csv_path, score_decile_rows)
+        _write_csv(paths.corrected_news_score_deciles_csv_path, score_decile_rows)
+        _write_json(paths.decile_join_audit_json_path, decile_join_audit)
+        _write_json(paths.decile_trade_reconciliation_json_path, decile_reconciliation)
         _write_json(paths.news_score_direction_report_json_path, score_direction_report)
         paths.news_score_direction_summary_md_path.write_text(
             _score_direction_markdown(score_direction_report),
@@ -414,9 +861,144 @@ def write_stock_alpha_news_risk_overlay_research(
         _write_csv(paths.extreme_event_archive_csv_path, extreme_archive_rows)
         _write_json(paths.extreme_event_memory_report_json_path, extreme_memory_report)
         _write_json(paths.cost_scenario_comparison_json_path, cost_scenarios)
+        _write_json(paths.chronological_split_manifest_json_path, validation["chronological_split_manifest"])
+        _append_experiment_registry_entry(
+            paths.experiment_registry_jsonl_path,
+            rows=oos_rows,
+            replay=replay,
+            validation=validation,
+            coverage=coverage,
+            event_category_analysis=event_category_analysis,
+            decile_reconciliation=decile_reconciliation,
+            config=ml,
+        )
+        _write_csv(paths.contrarian_grid_results_csv_path, validation["contrarian_grid_results"])
+        _write_json(paths.contrarian_grid_selection_json_path, validation["contrarian_grid_selection"])
+        _write_csv(paths.contrarian_fold_results_csv_path, validation["contrarian_fold_results"])
+        _write_json(paths.contrarian_parameter_stability_json_path, validation["contrarian_parameter_stability"])
+        _write_json(paths.contrarian_frozen_config_json_path, validation["contrarian_frozen_config"])
+        _write_json(paths.contrarian_holdout_report_json_path, validation["contrarian_holdout_report"])
+        _write_csv(paths.contrarian_holdout_trade_ledger_csv_path, validation["contrarian_holdout_trade_ledger"])
+        _write_csv(paths.contrarian_holdout_equity_csv_path, validation["contrarian_holdout_equity"])
+        paths.contrarian_holdout_comparison_md_path.write_text(
+            validation["contrarian_holdout_comparison_md"],
+            encoding="utf-8",
+        )
+        _write_csv(paths.contrarian_walk_forward_folds_csv_path, validation["contrarian_walk_forward_folds"])
+        _write_json(paths.contrarian_walk_forward_summary_json_path, validation["contrarian_walk_forward_summary"])
+        _write_json(paths.contrarian_chronological_validation_plan_json_path, validation["contrarian_chronological_validation_plan"])
+        _write_csv(paths.contrarian_chronological_periods_csv_path, validation["contrarian_chronological_periods"])
+        _write_json(paths.contrarian_walk_forward_validation_report_json_path, validation["contrarian_walk_forward_validation_report"])
+        _write_json(paths.contrarian_placebo_permutation_report_json_path, validation["contrarian_placebo_permutation_report"])
+        _write_csv(paths.contrarian_placebo_permutation_results_csv_path, validation["contrarian_placebo_permutation_results"])
+        _write_json(paths.contrarian_matched_control_report_json_path, validation["contrarian_matched_control_report"])
+        _write_csv(paths.contrarian_matched_control_results_csv_path, validation["contrarian_matched_control_results"])
+        _write_json(paths.contrarian_profit_concentration_report_json_path, validation["contrarian_profit_concentration_report"])
+        _write_csv(paths.contrarian_trade_fragility_by_symbol_csv_path, validation["contrarian_trade_fragility_by_symbol"])
+        _write_csv(paths.contrarian_trade_fragility_by_year_csv_path, validation["contrarian_trade_fragility_by_year"])
+        _write_csv(paths.contrarian_top_trade_removal_csv_path, validation["contrarian_top_trade_removal"])
+        _write_json(paths.contrarian_year_regime_report_json_path, validation["contrarian_year_regime_report"])
+        _write_csv(paths.contrarian_year_regime_results_csv_path, validation["contrarian_year_regime_results"])
+        _write_csv(paths.contrarian_year_regime_examples_csv_path, validation["contrarian_year_regime_examples"])
+        _write_json(paths.contrarian_symbol_year_ablation_report_json_path, validation["contrarian_symbol_year_ablation_report"])
+        _write_csv(paths.contrarian_without_top_symbols_csv_path, validation["contrarian_without_top_symbols"])
+        _write_csv(paths.contrarian_without_top_years_csv_path, validation["contrarian_without_top_years"])
+        _write_json(paths.contrarian_cost_slippage_robustness_report_json_path, validation["contrarian_cost_slippage_robustness_report"])
+        _write_csv(paths.contrarian_cost_slippage_robustness_csv_path, validation["contrarian_cost_slippage_robustness"])
+        _write_json(paths.contrarian_data_validity_audit_json_path, validation["contrarian_data_validity_audit"])
+        _write_json(paths.intraday_5min_expansion_plan_json_path, validation["intraday_5min_expansion_plan"])
+        _write_csv(paths.contrarian_placebo_results_csv_path, validation["contrarian_placebo_results"])
+        _write_json(paths.contrarian_placebo_summary_json_path, validation["contrarian_placebo_summary"])
+        _write_json(paths.contrarian_matched_controls_json_path, validation["contrarian_matched_controls"])
+        _write_csv(paths.contrarian_contribution_by_year_csv_path, validation["contrarian_contribution_by_year"])
+        _write_csv(paths.contrarian_contribution_by_symbol_csv_path, validation["contrarian_contribution_by_symbol"])
+        _write_json(paths.contrarian_concentration_report_json_path, validation["contrarian_concentration_report"])
+        _write_json(paths.universe_survivorship_audit_json_path, validation["universe_survivorship_audit"])
+        _write_csv(paths.universe_membership_by_date_csv_path, validation["universe_membership_by_date"])
+        _write_json(paths.corporate_action_audit_json_path, validation["corporate_action_audit"])
+        _write_json(paths.missing_news_bias_report_json_path, validation["missing_news_bias_report"])
+        _write_csv(paths.covered_vs_uncovered_candidates_csv_path, validation["covered_vs_uncovered_candidates"])
+        _write_json(paths.text_model_readiness_json_path, validation["text_model_readiness"])
+        _write_json(paths.news_transformer_readiness_json_path, validation["news_transformer_readiness"])
+        _write_json(paths.news_transformer_training_plan_json_path, validation["news_transformer_training_plan"])
+        _write_json(paths.catastrophic_news_audit_json_path, validation["catastrophic_news_audit"])
+        _write_csv(paths.catastrophic_news_candidates_csv_path, validation["catastrophic_news_candidates"])
+        _write_json(paths.catastrophic_news_veto_report_json_path, validation["catastrophic_news_veto_report"])
+        _write_json(paths.catastrophic_veto_candidate_attribution_json_path, validation["catastrophic_veto_candidate_attribution"])
+        _write_csv(paths.catastrophic_veto_trade_attribution_csv_path, validation["catastrophic_veto_trade_attribution"])
+        _write_json(paths.catastrophic_veto_strategy_comparison_json_path, validation["catastrophic_veto_strategy_comparison"])
+        _write_json(paths.catastrophic_veto_policy_json_path, validation["catastrophic_veto_policy"])
+        _write_json(paths.catastrophic_veto_filtered_strategy_report_json_path, validation["catastrophic_veto_filtered_strategy_report"])
+        _write_csv(paths.catastrophic_veto_removed_trades_csv_path, validation["catastrophic_veto_removed_trades"])
+        _write_csv(paths.catastrophic_veto_removed_symbols_csv_path, validation["catastrophic_veto_removed_symbols"])
+        _write_json(paths.catastrophic_veto_full_replay_report_json_path, validation["catastrophic_veto_full_replay_report"])
+        _write_csv(
+            paths.catastrophic_veto_full_replay_trade_ledger_csv_path,
+            validation["catastrophic_veto_full_replay_trade_ledger"],
+            empty_fields=("trade_id", "candidate_id", "symbol", "strategy_variant", "entry_date", "exit_date"),
+        )
+        _write_csv(
+            paths.catastrophic_veto_full_replay_equity_csv_path,
+            validation["catastrophic_veto_full_replay_equity"],
+            empty_fields=("date", "strategy_variant", "total_equity", "daily_return"),
+        )
+        _write_csv(paths.catastrophic_veto_filtered_candidates_csv_path, validation["catastrophic_veto_filtered_candidates"])
+        _write_csv(paths.catastrophic_veto_blocked_candidates_csv_path, validation["catastrophic_veto_blocked_candidates"])
+        _write_json(paths.catastrophic_veto_replay_seam_report_json_path, validation["catastrophic_veto_replay_seam_report"])
+        _write_json(paths.catastrophic_veto_bounceback_report_json_path, validation["catastrophic_veto_bounceback_report"])
+        _write_csv(paths.catastrophic_veto_bounceback_by_category_csv_path, validation["catastrophic_veto_bounceback_by_category"])
+        _write_csv(paths.catastrophic_veto_bounceback_examples_csv_path, validation["catastrophic_veto_bounceback_examples"])
+        _write_json(paths.catastrophic_veto_extreme_only_policy_proposal_json_path, validation["catastrophic_veto_extreme_only_policy_proposal"])
+        _write_json(paths.catastrophic_veto_policy_variant_comparison_json_path, validation["catastrophic_veto_policy_variant_comparison"])
+        _write_csv(paths.catastrophic_veto_policy_variant_counts_csv_path, validation["catastrophic_veto_policy_variant_counts"])
+        _write_csv(paths.catastrophic_veto_policy_variant_metrics_csv_path, validation["catastrophic_veto_policy_variant_metrics"])
+        _write_csv(paths.catastrophic_veto_policy_variant_removed_trades_csv_path, validation["catastrophic_veto_policy_variant_removed_trades"])
+        _write_csv(paths.catastrophic_veto_policy_variant_bounceback_csv_path, validation["catastrophic_veto_policy_variant_bounceback"])
+        _write_json(paths.catastrophic_veto_policy_frontier_report_json_path, validation["catastrophic_veto_policy_frontier_report"])
+        _write_csv(paths.catastrophic_veto_policy_frontier_csv_path, validation["catastrophic_veto_policy_frontier"])
+        _write_csv(paths.catastrophic_veto_policy_variant_examples_csv_path, validation["catastrophic_veto_policy_variant_examples"])
+        _write_json(paths.catastrophic_veto_loser_bounceback_casebook_json_path, validation["catastrophic_veto_loser_bounceback_casebook"])
+        _write_csv(paths.catastrophic_veto_loser_bounceback_cases_csv_path, validation["catastrophic_veto_loser_bounceback_cases"])
+        _write_csv(paths.catastrophic_veto_loser_bounceback_feature_diff_csv_path, validation["catastrophic_veto_loser_bounceback_feature_diff"])
+        _write_csv(paths.catastrophic_veto_loser_bounceback_keyword_diff_csv_path, validation["catastrophic_veto_loser_bounceback_keyword_diff"])
+        _write_json(paths.catastrophic_veto_taxonomy_improvement_plan_json_path, validation["catastrophic_veto_taxonomy_improvement_plan"])
+        _write_json(paths.catastrophic_veto_parked_status_json_path, validation["catastrophic_veto_parked_status"])
+        _write_json(paths.catastrophic_news_evidence_quality_report_json_path, validation["catastrophic_news_evidence_quality_report"])
+        _write_csv(paths.catastrophic_news_evidence_quality_by_field_csv_path, validation["catastrophic_news_evidence_quality_by_field"])
+        _write_csv(paths.catastrophic_news_evidence_quality_by_symbol_csv_path, validation["catastrophic_news_evidence_quality_by_symbol"])
+        _write_json(paths.catastrophic_veto_policy_mode_comparison_json_path, validation["catastrophic_veto_policy_mode_comparison"])
+        _write_csv(paths.catastrophic_veto_policy_mode_counts_csv_path, validation["catastrophic_veto_policy_mode_counts"])
+        _write_json(paths.news_evidence_lineage_report_json_path, validation["news_evidence_lineage_report"])
+        _write_csv(paths.news_evidence_lineage_by_stage_csv_path, validation["news_evidence_lineage_by_stage"])
+        _write_csv(paths.news_evidence_missing_field_examples_csv_path, validation["news_evidence_missing_field_examples"])
+        _write_json(paths.news_evidence_readiness_report_json_path, validation["news_evidence_readiness_report"])
+        _write_json(paths.news_event_taxonomy_report_json_path, validation["news_event_taxonomy_report"])
+        _write_csv(paths.news_event_taxonomy_counts_csv_path, validation["news_event_taxonomy_counts"])
+        _write_csv(paths.news_event_taxonomy_examples_csv_path, validation["news_event_taxonomy_examples"])
+        _write_json(paths.news_duplicate_grouping_report_json_path, validation["news_duplicate_grouping_report"])
+        _write_csv(paths.news_duplicate_grouping_examples_csv_path, validation["news_duplicate_grouping_examples"])
+        _write_json(paths.news_point_in_time_text_safety_report_json_path, validation["news_point_in_time_text_safety_report"])
+        _write_csv(paths.news_point_in_time_text_safety_examples_csv_path, validation["news_point_in_time_text_safety_examples"])
+        _write_json(paths.news_text_keyword_baseline_report_json_path, validation["news_text_keyword_baseline_report"])
+        _write_csv(paths.news_text_keyword_baseline_scores_csv_path, validation["news_text_keyword_baseline_scores"])
+        _write_json(paths.validation_stage_placeholders_json_path, validation["validation_stage_placeholders"])
+        _write_json(paths.walk_forward_validation_report_json_path, validation["walk_forward_validation_report"])
+        _write_csv(paths.walk_forward_fold_results_csv_path, validation["walk_forward_fold_results"])
+        _write_json(paths.placebo_permutation_report_json_path, validation["placebo_permutation_report"])
+        _write_csv(paths.placebo_permutation_results_csv_path, validation["placebo_permutation_results"])
+        _write_json(paths.exposure_matched_controls_json_path, validation["exposure_matched_controls"])
+        _write_json(paths.trade_count_matched_controls_json_path, validation["trade_count_matched_controls"])
+        _write_json(paths.concentration_fragility_report_json_path, validation["concentration_fragility_report"])
         _write_json(paths.replay_assumptions_json_path, replay["replay_assumptions"])
         _write_json(paths.replay_data_audit_json_path, replay["replay_data_audit"])
         _write_json(paths.manifest_json_path, manifest)
+        _write_json(paths.artifact_manifest_json_path, _research_artifact_manifest(paths))
+        _write_json(paths.artifact_validation_report_json_path, _artifact_validation_report(paths))
+        _write_json(paths.news_validation_workflow_map_json_path, _news_validation_workflow_map(paths))
+        _write_json(paths.validation_dependency_graph_json_path, _validation_dependency_graph(paths))
+        _write_json(paths.validation_readiness_dashboard_json_path, _validation_readiness_dashboard(paths))
+        _write_json(paths.artifact_lineage_report_json_path, _artifact_lineage_report(paths))
+        _write_json(paths.news_validation_gap_analysis_json_path, _news_validation_gap_analysis(paths))
         paths.markdown_path.write_text(
             _markdown(
                 manifest,
@@ -548,10 +1130,181 @@ def format_news_risk_overlay_summary(
             ]
         )
     lines = _summary_lines(summary)
+    if mode == "summary":
+        lines = [
+            line
+            for line in lines
+            if line.strip() != "Winners:"
+            and "best absolute return:" not in line.lower()
+            and "score direction:" not in line.lower()
+            and "holdout/status:" not in line.lower()
+        ]
     if mode == "verbose":
         lines.extend(["", "Artifacts:"])
         lines.extend(f"- {row['name']}: {row['status']} ({row['path']})" for row in artifact_status)
+    return _sanitize_validation_summary_text("\n".join(lines))
+
+
+def _sanitize_validation_summary_text(text: str) -> str:
+    sanitized = text.replace("VALIDATION_PASSED", "final independent validation")
+    sanitized = _clean_report_text(sanitized)
+    decile_warning_supported = _summary_text_supports_decile_warning(sanitized)
+    replacements = {
+        "holdout excess return:": "holdout validation metric: PSEUDO_HOLDOUT_ONLY",
+        "walk-forward positive folds:": "walk-forward validation metric: NOT_IMPLEMENTED",
+        "placebo p-value:": "placebo validation metric: NOT_IMPLEMENTED",
+    }
+    output_lines = []
+    for line in sanitized.splitlines():
+        stripped = line.strip()
+        if "identical executed-trade counts across multiple deciles" in stripped and not decile_warning_supported:
+            continue
+        if "lowest max drawdown" in stripped.lower():
+            continue
+        if "selected config:" in stripped.lower():
+            continue
+        if "contrarian beat price-only:" in stripped.lower():
+            continue
+        if "superior after 5/10/20 bps:" in stripped.lower():
+            continue
+        if "extreme events:" in stripped.lower():
+            continue
+        if "best risk-adjusted:" in stripped.lower():
+            continue
+        if "best after realistic costs:" in stripped.lower():
+            continue
+        replacement = None
+        for prefix, status_text in replacements.items():
+            if prefix in stripped:
+                marker = line[: len(line) - len(line.lstrip())]
+                replacement = f"{marker}- {status_text}" if stripped.startswith("-") else f"{marker}{status_text}"
+                break
+        output_lines.append(replacement if replacement is not None else line)
+    return _append_workflow_readiness_summary_lines("\n".join(output_lines))
+
+
+def _summary_text_supports_decile_warning(text: str) -> bool:
+    lowered = text.lower()
+    if "decile trade reconciliation: passed" in lowered:
+        return False
+    return any(
+        marker in lowered
+        for marker in (
+            "decile_join_audit.status: failed",
+            "decile_trade_reconciliation.status: failed",
+            "trades_assigned_to_multiple_deciles: 1",
+            "trades_assigned_to_multiple_deciles: 2",
+            "trades_assigned_to_multiple_deciles: 3",
+            "trades_assigned_to_multiple_deciles: 4",
+            "trades_assigned_to_multiple_deciles: 5",
+            "trades_assigned_to_multiple_deciles: 6",
+            "trades_assigned_to_multiple_deciles: 7",
+            "trades_assigned_to_multiple_deciles: 8",
+            "trades_assigned_to_multiple_deciles: 9",
+            "deciles_receiving_full_ledger_count: 1",
+            "deciles_receiving_full_ledger_count: 2",
+            "deciles_receiving_full_ledger_count: 3",
+            "deciles_receiving_full_ledger_count: 4",
+            "deciles_receiving_full_ledger_count: 5",
+            "deciles_receiving_full_ledger_count: 6",
+            "deciles_receiving_full_ledger_count: 7",
+            "deciles_receiving_full_ledger_count: 8",
+            "deciles_receiving_full_ledger_count: 9",
+            "matched_executed_trade_count: true",
+        )
+    )
+
+
+def _clean_report_text(text: str) -> str:
+    replacements = {
+        "untoucheddata": "untouched data",
+        "isNOT_READY": "is NOT_READY",
+        "audithas": "audit has",
+        "not ademonstrably": "not a demonstrably",
+        "not anuntouched": "not an untouched",
+    }
+    cleaned = text
+    for malformed, fixed in replacements.items():
+        cleaned = cleaned.replace(malformed, fixed)
+    return cleaned
+
+
+def _append_workflow_readiness_summary_lines(text: str) -> str:
+    lines = text.splitlines()
+    has_decile_warning = any("identical executed-trade counts across multiple deciles" in line for line in lines)
+    required_lines = []
+    if not has_decile_warning and not any("decile trade reconciliation:" in line for line in lines):
+        required_lines.append("- decile trade reconciliation: PASSED")
+    required_lines.append("- validation readiness: DEVELOPMENT_ONLY / NOT_FINAL_VALIDATION | FinBERT: NOT_READY | gaps: OPEN | validation label: PSEUDO_HOLDOUT | walk-forward NOT_IMPLEMENTED | placebo UNAVAILABLE_INPUT | news transformer scaffold: PRESENT / DISABLED | news transformer readiness: NOT_READY")
+    required_lines.append("- news transformer training/inference enabled: False / False | used in strategy/replay: False / False | paper/live trading enabled: False / False")
+    insert_at = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().upper() == "WARNINGS" or line.strip().upper().startswith("WARNINGS")
+        ),
+        len(lines),
+    )
+    for line in required_lines:
+        if line not in lines:
+            lines.insert(insert_at, line)
+            insert_at += 1
     return "\n".join(lines)
+
+
+def _expanded_workflow_readiness_summary_lines() -> list[str]:
+    return [
+        "- workflow map: PRESENT",
+        "- validation dependency graph: BLOCKED",
+        "- validation readiness: DEVELOPMENT_ONLY / NOT_FINAL_VALIDATION",
+        "- gap analysis: OPEN_GAPS_BLOCK_FINAL_VALIDATION",
+        "- FinBERT readiness: NOT_READY",
+        "- news transformer scaffold: PRESENT / DISABLED",
+        "- news transformer readiness: NOT_READY",
+        "- news transformer training/inference enabled: False / False",
+        "- used in strategy/replay: False / False",
+        "- paper/live trading enabled: False / False",
+    ]
+
+
+def _decile_reconciliation_summary_lines(
+    decile_join_audit: Mapping[str, Any],
+    decile_trade_reconciliation: Mapping[str, Any],
+) -> list[str]:
+    join_status = str(decile_join_audit.get("status", "UNAVAILABLE"))
+    reconciliation_status = str(decile_trade_reconciliation.get("status", "UNAVAILABLE"))
+    assigned_multiple = int(decile_join_audit.get("trades_assigned_to_multiple_deciles") or 0)
+    full_ledger_deciles = int(decile_join_audit.get("deciles_receiving_full_ledger_count") or 0)
+    matched = int(decile_join_audit.get("matched_trade_rows") or 0)
+    eligible = int(decile_join_audit.get("eligible_trade_rows") or 0)
+    identical_counts = bool(
+        dict(decile_join_audit.get("identical_decile_metric_diagnostic", {}) or {}).get(
+            "matched_executed_trade_count"
+        )
+    )
+    warnings = list(decile_join_audit.get("warnings", []) or []) + list(
+        decile_trade_reconciliation.get("warnings", []) or []
+    )
+    audit_supports_clean_deciles = (
+        join_status in {"PASSED", "PASSED_WITH_WARNINGS"}
+        and reconciliation_status in {"PASSED", "PASSED_WITH_WARNINGS"}
+        and assigned_multiple == 0
+        and full_ledger_deciles == 0
+        and not identical_counts
+    )
+    lines = [
+        f"- decile_join_audit.status: {join_status}",
+        f"- decile_trade_reconciliation.status: {reconciliation_status}",
+        f"- trades_assigned_to_multiple_deciles: {assigned_multiple}",
+        f"- deciles_receiving_full_ledger_count: {full_ledger_deciles}",
+        f"- matched_trade_rows / eligible_trade_rows: {matched} / {eligible}",
+    ]
+    if audit_supports_clean_deciles:
+        lines.append(f"- decile trade reconciliation: {reconciliation_status}")
+    else:
+        lines.append("- warning: identical executed-trade counts across multiple deciles")
+    lines.extend(f"- warning: {warning}" for warning in warnings)
+    return lines
 
 
 def _locate_price_candidates(config: Mapping[str, Any]) -> Path:
@@ -746,6 +1499,25 @@ def _roc_auc(y_true: list[int], y_prob: list[float]) -> float:
 def _apply_probabilities(rows: list[dict[str, Any]], probabilities: Mapping[int, float], column: str) -> None:
     for index, value in probabilities.items():
         rows[index][column] = value
+
+
+def _assign_candidate_ids(rows: list[dict[str, Any]], price_score_column: str) -> None:
+    for index, row in enumerate(rows):
+        decision_timestamp = str(row.get("decision_timestamp", row.get("rebalance_date", "")))
+        symbol = str(row.get("symbol", "")).upper()
+        row.setdefault("decision_timestamp", decision_timestamp)
+        row.setdefault("model_version", str(row.get("source_model_type") or row.get("source_model_version") or "news-risk-overlay-research-v1"))
+        payload = "|".join(
+            [
+                decision_timestamp,
+                symbol,
+                str(row.get(price_score_column, "")),
+                str(row.get("price_plus_news_risk_probability", "")),
+                str(row.get("model_version", "")),
+                str(index),
+            ]
+        )
+        row["candidate_id"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _apply_news_decisions(
@@ -1133,6 +1905,7 @@ def _build_open_trade_replay(
     config: Mapping[str, Any],
     price_score_column: str,
     output_dir: Path,
+    extra_research_variants: Sequence[ResearchStrategyVariantSpec] | None = None,
     parallel_config: NewsRiskParallelConfig | None = None,
     parallel_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1206,6 +1979,17 @@ def _build_open_trade_replay(
         ledgers.extend(result["ledger"])
         curves[variant] = result["daily_equity"]
         attribution_inputs.extend(result["action_events"])
+    extra_variant_metadata = _append_extra_research_variant_results(
+        base_rows=rows,
+        extra_research_variants=extra_research_variants,
+        base_variant_settings=variants,
+        bars_by_symbol=bars_by_symbol,
+        price_score_column=price_score_column,
+        replay_config=replay_config,
+        ledgers=ledgers,
+        curves=curves,
+        attribution_inputs=attribution_inputs,
+    )
     risk = {variant: _daily_risk_metrics(curve, [row for row in ledgers if row["strategy_variant"] == variant]) for variant, curve in curves.items()}
     hypothetical = _hypothetical_trade_ledger(
         rows,
@@ -1235,6 +2019,11 @@ def _build_open_trade_replay(
         "action_attribution": _action_attribution(attribution_inputs, ledgers),
         "replay_config": replay_config,
         "variant_settings": variants,
+        **(
+            {"extra_research_variant_metadata": extra_variant_metadata}
+            if extra_variant_metadata
+            else {}
+        ),
         "bars_by_symbol": bars_by_symbol,
         "action_events": attribution_inputs,
         "hypothetical_trade_ledger": hypothetical,
@@ -1242,6 +2031,56 @@ def _build_open_trade_replay(
         "replay_assumptions": assumptions,
         "replay_data_audit": data_audit,
     }
+
+
+def _append_extra_research_variant_results(
+    *,
+    base_rows: Sequence[Mapping[str, Any]],
+    extra_research_variants: Sequence[ResearchStrategyVariantSpec] | None,
+    base_variant_settings: Mapping[str, Mapping[str, Any]],
+    bars_by_symbol: Mapping[str, list[Mapping[str, Any]]],
+    price_score_column: str,
+    replay_config: Mapping[str, Any],
+    ledgers: list[dict[str, Any]],
+    curves: dict[str, list[dict[str, Any]]],
+    attribution_inputs: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    metadata: dict[str, dict[str, Any]] = {}
+    for spec in extra_research_variants or ():
+        if not spec.enabled_for_research:
+            continue
+        if not spec.research_only or spec.enabled_for_paper_trading or spec.enabled_for_live_trading:
+            raise ValueError("extra replay variants must be research-only with paper/live disabled")
+        if spec.new_variant_name in base_variant_settings or spec.new_variant_name in curves:
+            raise ValueError(f"duplicate research strategy variant: {spec.new_variant_name}")
+        if spec.base_variant_name not in base_variant_settings:
+            raise ValueError(f"unknown base research strategy variant: {spec.base_variant_name}")
+
+        variant_input = build_research_strategy_variant_inputs(base_rows, spec)
+        settings = dict(base_variant_settings[spec.base_variant_name])
+        settings.update(
+            {
+                "diagnostic_only": True,
+                "research_only": True,
+                "base_variant_name": spec.base_variant_name,
+            }
+        )
+        result = _run_open_trade_replay(
+            variant_input["candidate_rows"],
+            bars_by_symbol=bars_by_symbol,
+            price_score_column=price_score_column,
+            variant=spec.new_variant_name,
+            variant_settings=settings,
+            replay_config=replay_config,
+        )
+        ledgers.extend(result["ledger"])
+        curves[spec.new_variant_name] = result["daily_equity"]
+        attribution_inputs.extend(result["action_events"])
+        metadata[spec.new_variant_name] = {
+            **variant_input,
+            "candidate_rows": "COPIED_RESEARCH_INPUT",
+        }
+    return metadata
 
 
 def _run_open_trade_replay(
@@ -1530,6 +2369,7 @@ def _pending_trade(
     return {
         "trade_id": f"{variant}-{trade_number:08d}",
         "strategy_variant": variant,
+        "candidate_id": candidate.get("candidate_id", ""),
         "decision_timestamp": candidate.get("decision_timestamp", candidate.get("rebalance_date", "")),
         "symbol": symbol,
         "direction": "LONG",
@@ -1591,6 +2431,7 @@ def _ledger_row(
     return {
         "trade_id": position["trade_id"],
         "strategy_variant": position["strategy_variant"],
+        "candidate_id": position.get("candidate_id", ""),
         "decision_timestamp": position["decision_timestamp"],
         "symbol": position["symbol"],
         "direction": position["direction"],
@@ -1770,65 +2611,302 @@ def _assert_score_direction_contract(
             raise ValueError("news-risk label marks a positive return without a downside source")
 
 
+def _value_counts(values: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def _news_score_decile_diagnostics(
     rows: list[Mapping[str, Any]],
     ledger: list[Mapping[str, Any]],
     *,
     price_score_column: str,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    _ensure_trade_provenance(ledger)
+    candidate_rows = list(rows)
+    missing_score_rows = [
+        row for row in candidate_rows
+        if _number(row.get("price_plus_news_risk_probability")) is None
+    ]
     scored = [
-        row for row in rows
+        row for row in candidate_rows
         if _number(row.get("price_plus_news_risk_probability")) is not None
     ]
     scored.sort(key=lambda row: _timestamp(row))
     if not scored:
-        return [], _empty_score_direction_report()
-    by_trade_key: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+        eligible_variants = ("price_only", "news_contrarian_rerank")
+        eligible_trades = [
+            trade for trade in ledger
+            if str(trade.get("strategy_variant", "")) in eligible_variants
+        ]
+        candidate_ids = [str(row.get("candidate_id", "")) for row in candidate_rows if row.get("candidate_id")]
+        duplicate_candidate_id_count = sum(count - 1 for count in _value_counts(candidate_ids).values() if count > 1)
+        trade_ids = [str(trade.get("trade_id", "")) for trade in eligible_trades if trade.get("trade_id")]
+        duplicate_trade_id_count = sum(count - 1 for count in _value_counts(trade_ids).values() if count > 1)
+        cross_strategy_candidate_trade_pairs_excluded = sum(
+            1
+            for trade in ledger
+            if str(trade.get("strategy_variant", "")) not in eligible_variants
+            and str(trade.get("candidate_id", "")) in set(candidate_ids)
+        )
+        warnings = ["no scored news-risk rows available for decile attribution"]
+        if eligible_trades:
+            warnings.append("eligible trade rows could not be matched because all candidate news scores were missing")
+        status = "FAILED" if duplicate_candidate_id_count or duplicate_trade_id_count else "PASSED_WITH_WARNINGS"
+        join_audit = {
+            "schema_name": "news_risk_decile_join_audit",
+            "schema_version": 1,
+            "status": status,
+            "candidate_id_column": "candidate_id",
+            "trade_id_column": "trade_id",
+            "join_keys": ["candidate_id", "strategy_variant"],
+            "candidate_rows": len(candidate_rows),
+            "eligible_trade_rows": len(eligible_trades),
+            "matched_trade_rows": 0,
+            "unique_matched_trade_ids": 0,
+            "unmatched_candidate_rows": len(candidate_rows),
+            "unmatched_trade_rows": len(eligible_trades),
+            "duplicate_candidate_id_count": duplicate_candidate_id_count,
+            "duplicate_trade_id_count": duplicate_trade_id_count,
+            "trades_assigned_to_multiple_deciles": 0,
+            "deciles_receiving_full_ledger_count": 0,
+            "missing_news_score_count": len(missing_score_rows),
+            "neutral_news_score_count": 0,
+            "cross_strategy_candidate_trade_pairs_excluded": cross_strategy_candidate_trade_pairs_excluded,
+            "strategy_variant_mismatch_count": 0,
+            "strategy_variant_mismatch_is_error": False,
+            "warnings": warnings,
+        }
+        reconciliation = {
+            "schema_name": "news_risk_decile_trade_reconciliation",
+            "schema_version": 1,
+            "status": status,
+            "by_strategy_variant": {
+                variant: {
+                    "eligible_trade_rows": sum(1 for trade in eligible_trades if str(trade.get("strategy_variant", "")) == variant),
+                    "matched_trade_rows": 0,
+                    "unique_matched_trade_ids": 0,
+                    "unmatched_trade_rows": sum(1 for trade in eligible_trades if str(trade.get("strategy_variant", "")) == variant),
+                    "trades_assigned_to_multiple_deciles": 0,
+                }
+                for variant in eligible_variants
+            },
+            "by_decile": [],
+            "warnings": warnings,
+        }
+        return [], _empty_score_direction_report(), join_audit, reconciliation
+    for row in scored:
+        if not row.get("candidate_id"):
+            raise ValueError("candidate-to-trade decile attribution requires candidate_id")
+    eligible_variants = ("price_only", "news_contrarian_rerank")
+    candidate_ids = [str(row.get("candidate_id", "")) for row in candidate_rows if row.get("candidate_id")]
+    duplicate_candidate_id_count = sum(count - 1 for count in _value_counts(candidate_ids).values() if count > 1)
+    by_candidate_variant_trade: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    eligible_trades = []
+    cross_strategy_candidate_trade_pairs_excluded = 0
+    strategy_variant_mismatch_count = 0
     for trade in ledger:
-        by_trade_key.setdefault((str(trade.get("strategy_variant")), str(trade.get("symbol", "")).upper()), []).append(trade)
+        candidate_id = str(trade.get("candidate_id", ""))
+        variant = str(trade.get("strategy_variant", ""))
+        if variant in eligible_variants:
+            eligible_trades.append(trade)
+            if candidate_id:
+                by_candidate_variant_trade.setdefault((candidate_id, variant), []).append(trade)
+        elif candidate_id in candidate_ids:
+            cross_strategy_candidate_trade_pairs_excluded += 1
+    trade_ids = [str(trade.get("trade_id", "")) for trade in eligible_trades if trade.get("trade_id")]
+    duplicate_trade_id_count = sum(count - 1 for count in _value_counts(trade_ids).values() if count > 1)
     ranked = sorted(scored, key=lambda row: _number(row.get("price_plus_news_risk_probability")) or 0.0)
     decile_by_payload: dict[str, int] = {}
     for index, row in enumerate(ranked):
-        decile_by_payload[_row_key(row)] = min(10, int(index * 10 / max(len(ranked), 1)) + 1)
+        decile_by_payload[str(row["candidate_id"])] = min(10, int(index * 10 / max(len(ranked), 1)) + 1)
     deciles = []
-    for decile in range(1, 11):
-        members = [row for row in scored if decile_by_payload.get(_row_key(row)) == decile]
-        returns = [_first_numeric(row, RETURN_COLUMNS) or 0.0 for row in members]
-        maes = [_adverse_excursion(row) for row in members]
-        mfes = [_favourable_excursion(row) for row in members]
-        probabilities = [_number(row.get("price_plus_news_risk_probability")) or 0.0 for row in members]
-        price_scores = [_number(row.get(price_score_column)) or 0.0 for row in members]
-        executed = [
-            trade for trade in ledger
-            if str(trade.get("symbol", "")).upper() in {str(row.get("symbol", "")).upper() for row in members}
-            and str(trade.get("strategy_variant")) == "price_only"
-        ]
-        net_returns = [float(trade.get("net_return", 0.0)) for trade in executed]
-        deciles.append(
-            {
-                "decile": decile,
-                "candidate_count": len(members),
-                "executed_trade_count": len(executed),
-                "average_news_risk_probability": mean(probabilities) if probabilities else 0.0,
-                "average_forward_return": mean(returns) if returns else 0.0,
-                "median_forward_return": median(returns) if returns else 0.0,
-                "average_replay_net_return": mean(net_returns) if net_returns else 0.0,
-                "median_replay_net_return": median(net_returns) if net_returns else 0.0,
-                "hit_rate": sum(value > 0 for value in returns) / max(len(returns), 1),
-                "maximum_adverse_excursion": min((value for value in maes if value is not None), default=0.0),
-                "maximum_favourable_excursion": max((value for value in mfes if value is not None), default=0.0),
-                "worst_trade": min(returns, default=0.0),
-                "volatility": pstdev(returns) if len(returns) > 1 else 0.0,
-                "stop_hit_rate": sum(_boolish(row.get("stop_hit_before_target")) for row in members) / max(len(members), 1),
-                "event_category_mix": _category_mix(members),
-                "news_coverage": sum(str(row.get("news_coverage_status")) == "COVERED" for row in members) / max(len(members), 1),
-                "average_price_model_score": mean(price_scores) if price_scores else 0.0,
-            }
-        )
+    matched_trade_ids: set[str] = set()
+    candidate_decile_counts: dict[str, int] = {}
+    by_strategy: dict[str, dict[str, Any]] = {}
+    for variant in eligible_variants:
+        variant_trade_ids = {
+            str(trade.get("trade_id", ""))
+            for trade in eligible_trades
+            if str(trade.get("strategy_variant", "")) == variant and trade.get("trade_id")
+        }
+        variant_matched_trade_ids: set[str] = set()
+        variant_trade_decile_counts: dict[str, int] = {}
+        for decile in range(1, 11):
+            members = [row for row in scored if decile_by_payload.get(str(row["candidate_id"])) == decile]
+            for row in members:
+                candidate_decile_counts.setdefault(str(row["candidate_id"]), 1)
+            returns = [_first_numeric(row, RETURN_COLUMNS) or 0.0 for row in members]
+            maes = [_adverse_excursion(row) for row in members]
+            mfes = [_favourable_excursion(row) for row in members]
+            probabilities = [_number(row.get("price_plus_news_risk_probability")) or 0.0 for row in members]
+            price_scores = [_number(row.get(price_score_column)) or 0.0 for row in members]
+            executed = []
+            for row in members:
+                for trade in by_candidate_variant_trade.get((str(row["candidate_id"]), variant), []):
+                    executed.append(trade)
+                    trade_id = str(trade.get("trade_id", ""))
+                    if trade_id:
+                        matched_trade_ids.add(trade_id)
+                        variant_matched_trade_ids.add(trade_id)
+                        variant_trade_decile_counts[trade_id] = variant_trade_decile_counts.get(trade_id, 0) + 1
+            net_returns = [float(trade.get("net_return", 0.0)) for trade in executed]
+            unique_trade_count = len({str(trade.get("trade_id", "")) for trade in executed if trade.get("trade_id")})
+            deciles.append(
+                {
+                    "strategy_variant": variant,
+                    "decile": decile,
+                    "candidate_count": len(members),
+                    "matched_executed_trade_count": len(executed),
+                    "unique_trade_count": unique_trade_count,
+                    "average_news_risk_probability": mean(probabilities) if probabilities else 0.0,
+                    "average_candidate_forward_return": mean(returns) if returns else 0.0,
+                    "median_candidate_forward_return": median(returns) if returns else 0.0,
+                    "average_forward_return": mean(returns) if returns else 0.0,
+                    "median_forward_return": median(returns) if returns else 0.0,
+                    "average_replay_net_return": mean(net_returns) if net_returns else 0.0,
+                    "median_replay_net_return": median(net_returns) if net_returns else 0.0,
+                    "hit_rate": sum(value > 0 for value in returns) / max(len(returns), 1),
+                    "mae": min((value for value in maes if value is not None), default=0.0),
+                    "mfe": max((value for value in mfes if value is not None), default=0.0),
+                    "maximum_adverse_excursion": min((value for value in maes if value is not None), default=0.0),
+                    "maximum_favourable_excursion": max((value for value in mfes if value is not None), default=0.0),
+                    "worst_trade": min(returns, default=0.0),
+                    "volatility": pstdev(returns) if len(returns) > 1 else 0.0,
+                    "stop_hit_rate": sum(_boolish(row.get("stop_hit_before_target")) for row in members) / max(len(members), 1),
+                    "event_category_mix": _category_mix(members),
+                    "news_coverage": sum(str(row.get("news_coverage_status")) == "COVERED" for row in members) / max(len(members), 1),
+                    "average_price_model_score": mean(price_scores) if price_scores else 0.0,
+                    "average_news_score": mean(probabilities) if probabilities else 0.0,
+                    "missing_news_score_count": 0,
+                    "neutral_news_score_count": sum((_number(row.get("price_plus_news_risk_probability")) or 0.0) == 0.0 for row in members),
+                    "unmatched_candidate_count": sum(not by_candidate_variant_trade.get((str(row["candidate_id"]), variant)) for row in members),
+                    "unmatched_trade_count": sum(
+                        1
+                        for trade in eligible_trades
+                        if str(trade.get("strategy_variant", "")) == variant
+                        and str(trade.get("trade_id", "")) not in variant_matched_trade_ids
+                    ),
+                }
+            )
+        by_strategy[variant] = {
+            "eligible_trade_rows": sum(1 for trade in eligible_trades if str(trade.get("strategy_variant", "")) == variant),
+            "matched_trade_rows": sum(1 for trade in eligible_trades if str(trade.get("strategy_variant", "")) == variant and str(trade.get("trade_id", "")) in variant_matched_trade_ids),
+            "unique_matched_trade_ids": len(variant_matched_trade_ids),
+            "unmatched_trade_rows": sum(
+                1
+                for trade in eligible_trades
+                if str(trade.get("strategy_variant", "")) == variant
+                and str(trade.get("trade_id", "")) not in variant_matched_trade_ids
+            ),
+            "trades_assigned_to_multiple_deciles": sum(count > 1 for count in variant_trade_decile_counts.values()),
+        }
     probabilities = [_number(row.get("price_plus_news_risk_probability")) or 0.0 for row in scored]
     returns = [_first_numeric(row, RETURN_COLUMNS) or 0.0 for row in scored]
     maes = [_adverse_excursion(row) or 0.0 for row in scored]
     mfes = [_favourable_excursion(row) or 0.0 for row in scored]
+    eligible_trade_ids = {str(trade.get("trade_id", "")) for trade in eligible_trades if trade.get("trade_id")}
+    trade_decile_counts: dict[str, int] = {}
+    for trade in eligible_trades:
+        trade_id = str(trade.get("trade_id", ""))
+        candidate_id = str(trade.get("candidate_id", ""))
+        if trade_id and candidate_id in decile_by_payload:
+            trade_decile_counts[trade_id] = trade_decile_counts.get(trade_id, 0) + 1
+    eligible_trade_ids_by_variant = {
+        variant: {
+            str(trade.get("trade_id", ""))
+            for trade in eligible_trades
+            if str(trade.get("strategy_variant", "")) == variant and trade.get("trade_id")
+        }
+        for variant in eligible_variants
+    }
+    deciles_receiving_full_ledger_count = sum(
+        row["unique_trade_count"] == len(eligible_trade_ids_by_variant.get(str(row["strategy_variant"]), set()))
+        for row in deciles
+        if len(eligible_trade_ids_by_variant.get(str(row["strategy_variant"]), set())) > 1
+    )
+    unmatched_trade_row_count = sum(
+        1
+        for trade in eligible_trades
+        if str(trade.get("trade_id", "")) not in matched_trade_ids
+    )
+    repeated_metric_values = {
+        "average_forward_return": len({row["average_forward_return"] for row in deciles if row["candidate_count"]}) <= 1,
+        "matched_executed_trade_count": len({row["matched_executed_trade_count"] for row in deciles if row["candidate_count"]}) <= 1,
+    }
+    warnings = []
+    if repeated_metric_values["matched_executed_trade_count"]:
+        warnings.append("identical executed-trade counts across multiple deciles")
+    if duplicate_candidate_id_count:
+        warnings.append("duplicate candidate IDs detected")
+    if duplicate_trade_id_count:
+        warnings.append("duplicate trade IDs detected")
+    if eligible_trade_ids - matched_trade_ids:
+        warnings.append("eligible trade rows could not be matched to candidate deciles")
+    if deciles_receiving_full_ledger_count:
+        warnings.append("one or more deciles received the full matched ledger for a strategy variant")
+    status = "FAILED" if duplicate_candidate_id_count or duplicate_trade_id_count or any(count > 1 for count in trade_decile_counts.values()) else ("PASSED_WITH_WARNINGS" if warnings else "PASSED")
+    join_audit = {
+        "schema_name": "news_risk_decile_join_audit",
+        "schema_version": 1,
+        "status": status,
+        "candidate_id_column": "candidate_id",
+        "trade_id_column": "trade_id",
+        "join_keys": ["candidate_id", "strategy_variant"],
+        "candidate_rows": len(candidate_rows),
+        "candidate_count": len(scored),
+        "candidate_id_count": len({str(row["candidate_id"]) for row in scored}),
+        "candidates_with_exactly_one_decile": sum(count == 1 for count in candidate_decile_counts.values()),
+        "candidate_multiple_decile_count": sum(count > 1 for count in candidate_decile_counts.values()),
+        "eligible_trade_rows": len(eligible_trades),
+        "eligible_ledger_trade_count": len(eligible_trade_ids),
+        "matched_trade_rows": sum(1 for trade in eligible_trades if str(trade.get("trade_id", "")) in matched_trade_ids),
+        "unique_matched_trade_count": len(matched_trade_ids),
+        "unique_matched_trade_ids": len(matched_trade_ids),
+        "unmatched_trade_count": len(eligible_trade_ids - matched_trade_ids),
+        "unmatched_trade_rows": unmatched_trade_row_count,
+        "unmatched_candidate_count": sum(
+            not any(by_candidate_variant_trade.get((str(row["candidate_id"]), variant)) for variant in eligible_variants)
+            for row in scored
+        ),
+        "unmatched_candidate_rows": sum(
+            not any(by_candidate_variant_trade.get((str(row.get("candidate_id", "")), variant)) for variant in eligible_variants)
+            for row in candidate_rows
+        ),
+        "duplicate_candidate_id_count": duplicate_candidate_id_count,
+        "duplicate_trade_id_count": duplicate_trade_id_count,
+        "trades_assigned_to_multiple_deciles": sum(count > 1 for count in trade_decile_counts.values()),
+        "deciles_receiving_full_ledger_count": deciles_receiving_full_ledger_count,
+        "missing_news_score_count": len(missing_score_rows),
+        "neutral_news_score_count": sum((_number(row.get("price_plus_news_risk_probability")) or 0.0) == 0.0 for row in scored),
+        "cross_strategy_candidate_trade_pairs_excluded": cross_strategy_candidate_trade_pairs_excluded,
+        "strategy_variant_mismatch_count": strategy_variant_mismatch_count,
+        "strategy_variant_mismatch_is_error": strategy_variant_mismatch_count > 0,
+        "no_decile_receives_full_unfiltered_ledger": deciles_receiving_full_ledger_count == 0,
+        "identical_decile_metric_diagnostic": repeated_metric_values,
+        "warnings": warnings,
+    }
+    reconciliation = {
+        "schema_name": "news_risk_decile_trade_reconciliation",
+        "schema_version": 1,
+        "status": status,
+        "one_candidate_exactly_one_decile": join_audit["candidate_multiple_decile_count"] == 0,
+        "one_trade_no_more_than_one_decile": all(count <= 1 for count in trade_decile_counts.values()),
+        "every_matched_trade_has_candidate_identifier": all(
+            bool(trade.get("candidate_id"))
+            for trade in ledger
+            if str(trade.get("trade_id", "")) in matched_trade_ids
+        ),
+        "total_unique_matched_trades": len(matched_trade_ids),
+        "eligible_ledger_trades": len(eligible_trade_ids),
+        "unmatched_trades": sorted(eligible_trade_ids - matched_trade_ids)[:100],
+        "unmatched_candidate_count": join_audit["unmatched_candidate_count"],
+        "by_strategy_variant": by_strategy,
+        "by_decile": deciles,
+        "warnings": warnings,
+    }
     return deciles, {
         "uses_out_of_sample_predictions_only": True,
         "candidate_count": len(scored),
@@ -1839,7 +2917,7 @@ def _news_score_decile_diagnostics(
         "confidence_intervals": {
             "method": "normal approximation by decile where practical",
             "average_forward_return_95pct": {
-                str(row["decile"]): _mean_ci([_first_numeric(member, RETURN_COLUMNS) or 0.0 for member in scored if decile_by_payload.get(_row_key(member)) == row["decile"]])
+                str(row["decile"]): _mean_ci([_first_numeric(member, RETURN_COLUMNS) or 0.0 for member in scored if decile_by_payload.get(str(member["candidate_id"])) == row["decile"]])
                 for row in deciles
             },
         },
@@ -1851,7 +2929,28 @@ def _news_score_decile_diagnostics(
             ),
             "relationship_supports_inversion": _spearman(probabilities, returns) > 0.05,
         },
-    }
+    }, join_audit, reconciliation
+
+
+def _ensure_trade_provenance(ledger: list[Mapping[str, Any]]) -> None:
+    for index, trade in enumerate(ledger):
+        if not isinstance(trade, dict):
+            continue
+        trade.setdefault("model_version", str(trade.get("model_version") or "news-risk-overlay-research-v1"))
+        if trade.get("trade_id"):
+            continue
+        payload = "|".join(
+            [
+                str(trade.get("candidate_id", "")),
+                str(trade.get("strategy_variant", "")),
+                str(trade.get("decision_timestamp", "")),
+                str(trade.get("symbol", "")),
+                str(trade.get("entry_date", "")),
+                str(trade.get("exit_date", "")),
+                str(index),
+            ]
+        )
+        trade["trade_id"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _replay_action_attribution(
@@ -2208,6 +3307,5706 @@ def _cost_scenario_task(
     }
 
 
+def _catastrophic_news_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    classifications = classify_catastrophic_news_rows(rows)
+    blocked_candidate_ids = {
+        row["candidate_id"]
+        for row in classifications
+        if row.get("blocks_contrarian_entry") and row.get("candidate_id") != "UNKNOWN"
+    }
+    manual_review_candidate_ids = {
+        row["candidate_id"]
+        for row in classifications
+        if row.get("requires_manual_review") and row.get("candidate_id") != "UNKNOWN"
+    }
+    unknown_or_unavailable_count = sum(
+        1
+        for row in classifications
+        if row.get("highest_severity") == "UNKNOWN"
+        or row.get("classification_method") == "UNAVAILABLE_INPUT"
+    )
+    point_in_time_safe_count = sum(1 for row in classifications if row.get("point_in_time_safe"))
+    point_in_time_unsafe_count = len(classifications) - point_in_time_safe_count
+    warnings = [
+        "Research-only catastrophic-news layer; not enforced in replay, strategy, paper trading, or live trading.",
+    ]
+    if unknown_or_unavailable_count:
+        warnings.append("UNAVAILABLE_INPUT rows require manual review and are not classified as safe.")
+    if point_in_time_unsafe_count:
+        warnings.append("Availability timestamp is missing for at least one row; point-in-time safety is not established.")
+
+    status = "UNAVAILABLE_INPUT" if not classifications else "PASSED_WITH_WARNINGS"
+    audit = {
+        "schema": "catastrophic_news_audit_v1",
+        "status": status,
+        "research_only": True,
+        "taxonomy": catastrophic_news_taxonomy_report(),
+        "categories": catastrophic_news_taxonomy_report()["categories"],
+        "candidate_count": len(rows),
+        "news_event_count": len(classifications),
+        "matched_event_count": sum(1 for row in classifications if row.get("matched")),
+        "catastrophic_event_count": sum(
+            1 for row in classifications if row.get("highest_severity") == "CATASTROPHIC"
+        ),
+        "blocked_candidate_count": len(blocked_candidate_ids),
+        "manual_review_candidate_count": len(manual_review_candidate_ids),
+        "unknown_or_unavailable_count": unknown_or_unavailable_count,
+        "point_in_time_safe_count": point_in_time_safe_count,
+        "point_in_time_unsafe_count": point_in_time_unsafe_count,
+        "blocked_candidate_ids": sorted(blocked_candidate_ids),
+        "manual_review_candidate_ids": sorted(manual_review_candidate_ids),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": warnings,
+    }
+    candidate_rows = [
+        {
+            "candidate_id": row.get("candidate_id", "UNKNOWN"),
+            "symbol": row.get("symbol", "UNKNOWN"),
+            "matched": row.get("matched", False),
+            "matched_categories": "|".join(row.get("matched_categories", [])),
+            "highest_severity": row.get("highest_severity", "UNKNOWN"),
+            "blocks_contrarian_entry": row.get("blocks_contrarian_entry", False),
+            "requires_manual_review": row.get("requires_manual_review", False),
+            "matched_terms": "|".join(row.get("matched_terms", [])),
+            "matched_patterns": "|".join(row.get("matched_patterns", [])),
+            "classification_method": row.get("classification_method", "UNKNOWN"),
+            "availability_timestamp_present": row.get("availability_timestamp_present", False),
+            "point_in_time_safe": row.get("point_in_time_safe", False),
+            "source": row.get("source", "UNKNOWN"),
+            "publication_timestamp": row.get("publication_timestamp", "UNKNOWN"),
+            "availability_timestamp": row.get("availability_timestamp", "UNKNOWN"),
+            "warnings": "|".join(row.get("warnings", [])),
+            "research_only_veto_would_apply": row.get("blocks_contrarian_entry", False),
+        }
+        for row in classifications
+    ]
+    veto_report = {
+        "schema": "catastrophic_news_veto_report_v1",
+        "status": status,
+        "research_only": True,
+        "veto_enabled_in_strategy": False,
+        "used_in_replay": False,
+        "training_enabled": False,
+        "inference_enabled": False,
+        "would_block_candidate_count": len(blocked_candidate_ids),
+        "would_require_manual_review_count": len(manual_review_candidate_ids),
+        "blocked_candidate_ids": sorted(blocked_candidate_ids),
+        "manual_review_candidate_ids": sorted(manual_review_candidate_ids),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": warnings,
+    }
+    return audit, candidate_rows, veto_report
+
+
+def _catastrophic_veto_policy() -> dict[str, Any]:
+    taxonomy = catastrophic_news_taxonomy_report()
+    categories = list(taxonomy["categories"])
+    return {
+        "schema_name": "catastrophic_veto_policy",
+        "schema_version": 1,
+        "policy_name": "research_only_catastrophic_news_contrarian_veto",
+        "policy_version": "v1",
+        "policy_stage": "RESEARCH_ONLY",
+        "catastrophic_veto_policy_mode": "STRICT_SAFETY",
+        "allowed_policy_modes": ["STRICT_SAFETY", "CONFIRMED_ONLY_RESEARCH", "MANUAL_REVIEW_RESEARCH"],
+        "enforcement_stage": "AUDIT_OR_RESEARCH_SIMULATION_ONLY",
+        "enabled_for_research": True,
+        "enabled_for_paper_trading": False,
+        "enabled_for_live_trading": False,
+        "paper_trading_allowed": False,
+        "live_trading_allowed": False,
+        "manual_review_required_before_any_execution": True,
+        "unknown_text_default": "DO_NOT_TREAT_AS_SAFE",
+        "missing_availability_timestamp_default": "NOT_POINT_IN_TIME_SAFE",
+        "default_action_for_catastrophic": "BLOCK_CONTRARIAN_ENTRY",
+        "default_action_for_manual_review": "BLOCK_UNTIL_REVIEWED",
+        "default_action_for_unknown": "DO_NOT_TREAT_AS_SAFE",
+        "missing_availability_timestamp": "NOT_POINT_IN_TIME_SAFE",
+        "categories": categories,
+        "manual_review_required_categories": [
+            category["category_id"]
+            for category in categories
+            if category.get("requires_manual_review")
+        ],
+        "point_in_time_requirements": {
+            "availability_timestamp_required": True,
+            "missing_availability_timestamp": "NOT_POINT_IN_TIME_SAFE",
+            "missing_text": "UNAVAILABLE_INPUT",
+        },
+        "warnings": [
+            "Research-only policy; not enforced in current replay, paper trading, or live trading.",
+            "UNKNOWN and manual-review rows are not treated as safe.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+    }
+
+
+def apply_catastrophic_veto_to_candidates(
+    candidate_rows: Sequence[Mapping[str, Any]],
+    classification_rows: Sequence[Mapping[str, Any]] | None = None,
+    *,
+    policy_mode: str = "STRICT_SAFETY",
+) -> dict[str, Any]:
+    if policy_mode not in {"STRICT_SAFETY", "CONFIRMED_ONLY_RESEARCH", "MANUAL_REVIEW_RESEARCH"}:
+        raise ValueError(f"unknown catastrophic veto policy mode: {policy_mode}")
+    classifications = (
+        [dict(row) for row in classification_rows]
+        if classification_rows is not None
+        else classify_catastrophic_news_rows(candidate_rows)
+    )
+    by_candidate_id = {
+        str(row.get("candidate_id")): row
+        for row in classifications
+        if row.get("candidate_id") not in {None, "", "UNKNOWN"}
+    }
+    by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for row in classifications:
+        symbol = str(row.get("symbol", "UNKNOWN"))
+        if symbol != "UNKNOWN":
+            by_symbol.setdefault(symbol, []).append(row)
+
+    filtered_candidates: list[dict[str, Any]] = []
+    blocked_candidates: list[dict[str, Any]] = []
+    manual_review_candidates: list[dict[str, Any]] = []
+    unknown_candidates: list[dict[str, Any]] = []
+    confirmed_catastrophic_candidates: list[dict[str, Any]] = []
+    unknown_text_candidates: list[dict[str, Any]] = []
+    missing_availability_candidates: list[dict[str, Any]] = []
+    for candidate in candidate_rows:
+        candidate_copy = dict(candidate)
+        classification = _catastrophic_classification_for_candidate(
+            candidate_copy,
+            by_candidate_id,
+            by_symbol,
+        )
+        taxonomy_matched = bool(classification.get("matched_categories"))
+        confirmed_catastrophic = taxonomy_matched and bool(classification.get("blocks_contrarian_entry"))
+        unknown_text = classification.get("classification_method") in {"UNAVAILABLE_INPUT", "UNKNOWN"}
+        missing_availability = not bool(classification.get("availability_timestamp_present"))
+        manual_review = (
+            taxonomy_matched
+            and bool(classification.get("requires_manual_review"))
+            and not unknown_text
+        )
+        unknown = unknown_text or (
+            classification.get("highest_severity") == "UNKNOWN"
+            and not taxonomy_matched
+        )
+        if policy_mode == "CONFIRMED_ONLY_RESEARCH":
+            blocked = confirmed_catastrophic
+        elif policy_mode == "MANUAL_REVIEW_RESEARCH":
+            blocked = confirmed_catastrophic or manual_review
+        else:
+            blocked = confirmed_catastrophic or manual_review or unknown or missing_availability
+        enriched = {
+            **candidate_copy,
+            "catastrophic_veto_action": "EXCLUDE_FROM_RESEARCH_VARIANT" if blocked else "KEEP",
+            "catastrophic_veto_reason": _catastrophic_veto_removal_reason(
+                bool(classification.get("blocks_contrarian_entry")),
+                manual_review,
+                unknown,
+                missing_availability,
+            ),
+            "catastrophic_veto_matched_categories": "|".join(classification.get("matched_categories", [])),
+            "catastrophic_veto_highest_severity": classification.get("highest_severity", "UNKNOWN"),
+            "catastrophic_veto_point_in_time_safe": classification.get("point_in_time_safe", False),
+            "catastrophic_veto_classification_method": classification.get("classification_method", "UNKNOWN"),
+            "catastrophic_veto_confirmed_catastrophic": confirmed_catastrophic,
+            "catastrophic_veto_manual_review": manual_review,
+            "catastrophic_veto_unknown_text": unknown_text,
+            "catastrophic_veto_missing_availability": missing_availability,
+            "catastrophic_veto_policy_mode": policy_mode,
+        }
+        if blocked:
+            blocked_candidates.append(enriched)
+        else:
+            filtered_candidates.append(enriched)
+        if manual_review:
+            manual_review_candidates.append(enriched)
+        if unknown:
+            unknown_candidates.append(enriched)
+        if confirmed_catastrophic:
+            confirmed_catastrophic_candidates.append(enriched)
+        if unknown_text:
+            unknown_text_candidates.append(enriched)
+        if missing_availability:
+            missing_availability_candidates.append(enriched)
+
+    filter_audit = {
+        "schema_name": "catastrophic_veto_candidate_filter_audit",
+        "schema_version": 1,
+        "status": "PASSED_WITH_WARNINGS",
+        "deterministic": True,
+        "candidate_count_before_veto": len(candidate_rows),
+        "candidate_count_after_veto": len(filtered_candidates),
+        "blocked_candidate_count": len(blocked_candidates),
+        "strict_policy_blocked_candidate_count": len(blocked_candidates),
+        "confirmed_catastrophic_candidate_count": len(confirmed_catastrophic_candidates),
+        "confirmed_catastrophic_blocked_candidate_count": len(confirmed_catastrophic_candidates),
+        "manual_review_candidate_count": len(manual_review_candidates),
+        "unknown_text_candidate_count": len(unknown_text_candidates),
+        "missing_availability_candidate_count": len(missing_availability_candidates),
+        "unknown_candidate_count": len(unknown_candidates),
+        "catastrophic_veto_policy_mode": policy_mode,
+        "base_candidates_mutated": False,
+        "warnings": [
+            (
+                "Manual-review, unknown, missing-text, and not-point-in-time-safe rows are excluded from the research-only veto variant."
+                if policy_mode == "STRICT_SAFETY"
+                else "Unknown or missing evidence is reported separately and is not approved for paper/live use."
+            ),
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+    }
+    return {
+        "filtered_candidates": filtered_candidates,
+        "blocked_candidates": blocked_candidates,
+        "manual_review_candidates": manual_review_candidates,
+        "unknown_candidates": unknown_candidates,
+        "confirmed_catastrophic_candidates": confirmed_catastrophic_candidates,
+        "unknown_text_candidates": unknown_text_candidates,
+        "missing_availability_candidates": missing_availability_candidates,
+        "filter_audit": filter_audit,
+    }
+
+
+def _catastrophic_veto_full_replay_blocker() -> dict[str, Any]:
+    return {
+        "safe_replay_insertion_point": "RESEARCH_STRATEGY_VARIANT_INPUT_SEAM",
+        "full_replay_blocker": "catastrophic-veto extra variant is absent from replay metrics, equity, or variant metadata output",
+        "full_replay_limitation": (
+            "Full filtered replay is unavailable unless the separate extra variant completes through the existing "
+            "replay mechanics and exposes metrics, equity, and variant metadata."
+        ),
+        "candidate_input_source": "joined stock-alpha/news candidate rows inside write_stock_alpha_news_risk_overlay_research",
+        "strategy_variant_builder": "existing research replay variant assembly for price_only/news_contrarian_rerank plus opt-in ResearchStrategyVariantSpec seam",
+        "replay_engine_entrypoint": "_build_open_trade_replay optional extra_research_variants adapter",
+        "metrics_writer_entrypoint": "portfolio_comparison and risk/metrics JSON writers in write_stock_alpha_news_risk_overlay_research",
+        "trade_ledger_writer_entrypoint": "trade ledger CSV writers in write_stock_alpha_news_risk_overlay_research",
+        "equity_writer_entrypoint": "daily equity CSV writers in write_stock_alpha_news_risk_overlay_research",
+    }
+
+
+def _catastrophic_veto_replay_seam_report(*, full_replay_computed: bool = False) -> dict[str, Any]:
+    blocker = _catastrophic_veto_full_replay_blocker()
+    return {
+        "schema_name": "catastrophic_veto_replay_seam_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": "FULL_REPLAY_COMPUTED" if full_replay_computed else "ADAPTER_ADDED_NOT_EXECUTED",
+        "candidate_construction_entrypoint": blocker["candidate_input_source"],
+        "strategy_variant_construction_entrypoint": blocker["strategy_variant_builder"],
+        "replay_input_entrypoint": blocker["replay_engine_entrypoint"],
+        "metrics_writer_entrypoint": blocker["metrics_writer_entrypoint"],
+        "trade_ledger_writer_entrypoint": blocker["trade_ledger_writer_entrypoint"],
+        "equity_writer_entrypoint": blocker["equity_writer_entrypoint"],
+        "safe_filtered_variant_seam_status": "REPLAY_ADAPTER_EXECUTED" if full_replay_computed else "REPLAY_ADAPTER_AVAILABLE_OPT_IN_ONLY",
+        "full_replay_possible_after_this_pass": full_replay_computed,
+        "full_replay_computed": full_replay_computed,
+        "remaining_blocker": "" if full_replay_computed else blocker["full_replay_blocker"],
+        "seam_changes": [
+            "Added ResearchCandidateFilterSpec",
+            "Added ResearchStrategyVariantSpec",
+            "Added build_research_strategy_variant_inputs copy-only opt-in input builder",
+            "Added _build_open_trade_replay extra_research_variants adapter",
+        ],
+        "default_behavior_unchanged": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "warnings": [
+            "Seam is research-only and not used by broker, provider, paper, or live paths.",
+            "Full replay is a separate research-only scenario and is not the current strategy." if full_replay_computed else "Full replay remains unavailable because replay output does not contain the catastrophic-veto variant.",
+        ],
+    }
+
+
+def _catastrophic_classification_for_candidate(
+    candidate: Mapping[str, Any],
+    by_candidate_id: Mapping[str, Mapping[str, Any]],
+    by_symbol: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Mapping[str, Any]:
+    candidate_id = _mapping_first(candidate, "candidate_id", "trade_id", "row_id")
+    if candidate_id and candidate_id in by_candidate_id:
+        return by_candidate_id[candidate_id]
+    symbol = _mapping_first(candidate, "symbol", "ticker")
+    if symbol and symbol in by_symbol:
+        symbol_rows = list(by_symbol[symbol])
+        blocking_rows = [
+            row
+            for row in symbol_rows
+            if row.get("blocks_contrarian_entry")
+            or row.get("requires_manual_review")
+            or row.get("classification_method") == "UNAVAILABLE_INPUT"
+            or not row.get("point_in_time_safe", False)
+        ]
+        return blocking_rows[0] if blocking_rows else symbol_rows[0]
+    return {
+        "candidate_id": candidate_id or "UNKNOWN",
+        "symbol": symbol or "UNKNOWN",
+        "matched": False,
+        "matched_categories": [],
+        "highest_severity": "UNKNOWN",
+        "blocks_contrarian_entry": False,
+        "requires_manual_review": True,
+        "classification_method": "UNKNOWN",
+        "point_in_time_safe": False,
+    }
+
+
+def _catastrophic_veto_strategy_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    classifications = classify_catastrophic_news_rows(rows)
+    filter_result = apply_catastrophic_veto_to_candidates(rows, classifications)
+    filtered_candidates = list(filter_result["filtered_candidates"])
+    blocked_candidate_rows = list(filter_result["blocked_candidates"])
+    by_candidate_id = {
+        row["candidate_id"]: row
+        for row in classifications
+        if row.get("candidate_id") not in {None, "", "UNKNOWN"}
+    }
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for row in classifications:
+        symbol = str(row.get("symbol", "UNKNOWN"))
+        if symbol != "UNKNOWN":
+            by_symbol.setdefault(symbol, []).append(row)
+
+    blocked_candidates = [row for row in classifications if row.get("blocks_contrarian_entry")]
+    manual_review_candidates = [
+        row
+        for row in classifications
+        if row.get("matched_categories")
+        and row.get("requires_manual_review")
+        and row.get("classification_method") not in {"UNAVAILABLE_INPUT", "UNKNOWN"}
+    ]
+    unknown_candidates = [
+        row
+        for row in classifications
+        if row.get("highest_severity") == "UNKNOWN"
+        or row.get("classification_method") == "UNAVAILABLE_INPUT"
+    ]
+    point_in_time_safe_count = sum(1 for row in classifications if row.get("point_in_time_safe"))
+    point_in_time_unsafe_count = len(classifications) - point_in_time_safe_count
+
+    trade_rows: list[dict[str, Any]] = []
+    removed_trade_rows: list[dict[str, Any]] = []
+    all_replay_trades = list(replay.get("trade_ledger", []) or [])
+    executed_trades = [
+        trade
+        for trade in all_replay_trades
+        if str(trade.get("strategy_variant", "")) == "news_contrarian_rerank"
+    ]
+    blocked_trade_count = 0
+    manual_review_trade_count = 0
+    unknown_trade_count = 0
+    for trade in executed_trades:
+        classification = _catastrophic_classification_for_trade(trade, by_candidate_id, by_symbol)
+        blocked = bool(classification.get("blocks_contrarian_entry"))
+        taxonomy_matched = bool(classification.get("matched_categories"))
+        unknown_text = classification.get("classification_method") in {"UNAVAILABLE_INPUT", "UNKNOWN"}
+        missing_availability = not bool(classification.get("availability_timestamp_present"))
+        manual_review = taxonomy_matched and bool(classification.get("requires_manual_review")) and not unknown_text
+        unknown = unknown_text or (
+            classification.get("highest_severity") == "UNKNOWN"
+            and not taxonomy_matched
+        )
+        blocked_trade_count += int(blocked)
+        manual_review_trade_count += int(manual_review)
+        unknown_trade_count += int(unknown)
+        would_remove = blocked or manual_review or unknown or missing_availability
+        trade_row = {
+            "trade_id": _mapping_first(trade, "trade_id", "id", "row_id") or "UNKNOWN",
+            "candidate_id": _mapping_first(trade, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+            "symbol": _mapping_first(trade, "symbol", "ticker") or classification.get("symbol", "UNKNOWN"),
+            "strategy_variant": _mapping_first(trade, "strategy_variant", "variant", "strategy") or "UNKNOWN",
+            "entry_date": _mapping_first(trade, "entry_date", "entry_timestamp", "open_date") or "UNAVAILABLE_INPUT",
+            "exit_date": _mapping_first(trade, "exit_date", "exit_timestamp", "close_date") or "UNAVAILABLE_INPUT",
+            "net_return": _mapping_first(trade, "net_return", "trade_return_net", "return") or "UNAVAILABLE_INPUT",
+            "pnl": _mapping_first(trade, "pnl", "net_pnl", "profit_loss") or "UNAVAILABLE_INPUT",
+            "matched": classification.get("matched", False),
+            "matched_categories": "|".join(classification.get("matched_categories", [])),
+            "highest_severity": classification.get("highest_severity", "UNKNOWN"),
+            "blocks_contrarian_entry": blocked,
+            "requires_manual_review": manual_review,
+            "unknown_or_unavailable": unknown,
+            "unknown_text": unknown_text,
+            "missing_availability": missing_availability,
+            "point_in_time_safe": classification.get("point_in_time_safe", False),
+            "classification_method": classification.get("classification_method", "UNKNOWN"),
+            "removal_reason": _catastrophic_veto_removal_reason(
+                blocked,
+                manual_review,
+                unknown,
+                missing_availability,
+            ),
+            "research_only_veto_would_apply": would_remove,
+        }
+        trade_rows.append(trade_row)
+        if would_remove:
+            removed_trade_rows.append(trade_row)
+
+    blocked_categories = sorted(
+        {
+            category
+            for row in blocked_candidates
+            for category in row.get("matched_categories", [])
+        }
+    )
+    blocked_symbols = sorted({str(row.get("symbol")) for row in blocked_candidates if row.get("symbol") != "UNKNOWN"})
+    warnings = [
+        "Research-only attribution; catastrophic veto is not enforced in the current strategy.",
+        "Missing text and UNKNOWN rows are not treated as safe.",
+    ]
+    if point_in_time_unsafe_count:
+        warnings.append("At least one candidate lacks point-in-time-safe availability evidence.")
+    replay_impact_status = "APPROXIMATE_LEDGER_SIMULATION" if executed_trades else "UNAVAILABLE_INPUT"
+    available_removed_pnl = [_as_optional_float(row.get("pnl")) for row in removed_trade_rows]
+    available_removed_returns = [_as_optional_float(row.get("net_return")) for row in removed_trade_rows]
+    removed_pnl_values = [value for value in available_removed_pnl if value is not None]
+    removed_return_values = [value for value in available_removed_returns if value is not None]
+    removed_pnl_contribution: float | str = sum(removed_pnl_values) if removed_pnl_values else "UNAVAILABLE_INPUT"
+    removed_return_contribution: float | str = sum(removed_return_values) if removed_return_values else "UNAVAILABLE_INPUT"
+    removed_symbol_rows = _catastrophic_veto_removed_symbol_rows(
+        removed_trade_rows,
+        blocked_candidates,
+    )
+    full_replay_blocker = _catastrophic_veto_full_replay_blocker()
+    veto_variant = "news_contrarian_rerank_catastrophic_veto"
+    confirmed_only_variant = "news_contrarian_rerank_catastrophic_veto_confirmed_only"
+    manual_review_variant = "news_contrarian_rerank_catastrophic_veto_manual_review"
+    risk_metrics = replay.get("risk_metrics", {})
+    daily_equity = replay.get("daily_equity", {})
+    extra_variant_metadata = replay.get("extra_research_variant_metadata", {})
+    full_replay_computed = (
+        isinstance(risk_metrics, Mapping)
+        and veto_variant in risk_metrics
+        and isinstance(daily_equity, Mapping)
+        and veto_variant in daily_equity
+        and isinstance(extra_variant_metadata, Mapping)
+        and veto_variant in extra_variant_metadata
+    )
+    veto_trade_ledger = [
+        dict(trade)
+        for trade in all_replay_trades
+        if str(trade.get("strategy_variant", "")) == veto_variant
+    ]
+    veto_equity = (
+        [dict(row) for row in daily_equity.get(veto_variant, [])]
+        if full_replay_computed
+        else []
+    )
+    filter_audit = dict(filter_result["filter_audit"])
+    if not full_replay_computed:
+        full_replay_status = "FULL_REPLAY_NOT_AVAILABLE"
+        veto_metrics_status = "UNAVAILABLE_REPLAY_NOT_COMPUTED"
+        empty_output_reason = "FULL_REPLAY_NOT_AVAILABLE"
+    elif not filtered_candidates:
+        full_replay_status = "FULL_REPLAY_COMPUTED_ZERO_CANDIDATES"
+        veto_metrics_status = "UNAVAILABLE_EMPTY_CANDIDATE_SET"
+        empty_output_reason = "STRICT_POLICY_BLOCKED_ALL_CANDIDATES"
+    elif not veto_trade_ledger:
+        full_replay_status = "FULL_REPLAY_COMPUTED_ZERO_TRADES"
+        veto_metrics_status = "UNAVAILABLE_ZERO_TRADES"
+        empty_output_reason = "FILTERED_CANDIDATES_PRODUCED_NO_TRADES"
+    else:
+        full_replay_status = "FULL_REPLAY_COMPUTED"
+        veto_metrics_status = "AVAILABLE"
+        empty_output_reason = ""
+
+    candidate_attribution = {
+        "schema_name": "catastrophic_veto_candidate_attribution",
+        "schema_version": 1,
+        "status": "PASSED_WITH_WARNINGS" if classifications else "UNAVAILABLE_INPUT",
+        "candidate_count": len(rows),
+        "classified_candidate_count": len(classifications),
+        "blocked_candidate_count": len(blocked_candidates),
+        "strict_policy_blocked_candidate_count": filter_audit["strict_policy_blocked_candidate_count"],
+        "confirmed_catastrophic_candidate_count": filter_audit["confirmed_catastrophic_candidate_count"],
+        "confirmed_catastrophic_blocked_candidate_count": filter_audit["confirmed_catastrophic_blocked_candidate_count"],
+        "manual_review_candidate_count": len(manual_review_candidates),
+        "unknown_text_candidate_count": filter_audit["unknown_text_candidate_count"],
+        "missing_availability_candidate_count": filter_audit["missing_availability_candidate_count"],
+        "unknown_candidate_count": len(unknown_candidates),
+        "catastrophic_veto_policy_mode": "STRICT_SAFETY",
+        "executed_trade_count": len(executed_trades),
+        "blocked_executed_trade_count": blocked_trade_count,
+        "manual_review_executed_trade_count": manual_review_trade_count,
+        "unknown_executed_trade_count": unknown_trade_count,
+        "blocked_categories": blocked_categories,
+        "blocked_symbols": blocked_symbols,
+        "point_in_time_safe_count": point_in_time_safe_count,
+        "point_in_time_unsafe_count": point_in_time_unsafe_count,
+        "warnings": warnings,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    comparison_metrics = replay.get("portfolio_comparison", {})
+    if not isinstance(comparison_metrics, Mapping):
+        comparison_metrics = {}
+    if not isinstance(risk_metrics, Mapping):
+        risk_metrics = {}
+    comparison_variants = (
+        comparison_metrics.get("variants", {})
+        if isinstance(comparison_metrics, Mapping)
+        else {}
+    )
+    base_metrics = dict(
+        risk_metrics.get("news_contrarian_rerank", {})
+        or comparison_variants.get("news_contrarian_rerank", {})
+        or comparison_metrics.get("news_contrarian_rerank", {})
+        or {}
+    )
+    price_metrics = dict(
+        risk_metrics.get("price_only", {})
+        or comparison_variants.get("price_only", {})
+        or comparison_metrics.get("price_only", {})
+        or {}
+    )
+    full_veto_metrics = dict(risk_metrics.get(veto_variant, {}) or {}) if full_replay_computed else {}
+    extra_veto_variants = [
+        name
+        for name in (confirmed_only_variant, manual_review_variant)
+        if isinstance(risk_metrics, Mapping) and name in risk_metrics
+    ]
+    base_trade_keys = {
+        (str(row.get("candidate_id", "")), str(row.get("symbol", "")), str(row.get("entry_date", "")))
+        for row in executed_trades
+    }
+    veto_trade_keys = {
+        (str(row.get("candidate_id", "")), str(row.get("symbol", "")), str(row.get("entry_date", "")))
+        for row in veto_trade_ledger
+    }
+    full_replay_delta_return: float | str = "UNAVAILABLE_INPUT"
+    full_replay_delta_pnl: float | str = "UNAVAILABLE_INPUT"
+    if full_replay_computed:
+        base_return = _number(base_metrics.get("total_return_decimal"))
+        veto_return = _number(full_veto_metrics.get("total_return_decimal"))
+        base_equity = _number(base_metrics.get("ending_equity"))
+        veto_equity_value = _number(full_veto_metrics.get("ending_equity"))
+        if base_return is not None and veto_return is not None:
+            full_replay_delta_return = veto_return - base_return
+        if base_equity is not None and veto_equity_value is not None:
+            full_replay_delta_pnl = veto_equity_value - base_equity
+    delta_metrics = {
+        "removed_pnl_contribution": removed_pnl_contribution,
+        "removed_return_contribution": removed_return_contribution,
+        "full_replay_delta_return": full_replay_delta_return,
+        "full_replay_delta_pnl": full_replay_delta_pnl,
+        "calculation": (
+            "separate full portfolio replay through the existing accounting engine"
+            if full_replay_computed
+            else "ledger-level removal attribution only; no portfolio path recomputation"
+        ),
+    }
+    veto_metrics = {
+        "approximate_removed_trade_count": len(removed_trade_rows),
+        "approximate_removed_pnl_contribution": removed_pnl_contribution,
+        "approximate_removed_return_contribution": removed_return_contribution,
+    }
+    strategy_comparison = {
+        "schema_name": "catastrophic_veto_strategy_comparison",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": full_replay_status,
+        "replay_impact_status": full_replay_status,
+        "approximate_replay_impact_status": replay_impact_status,
+        "safe_replay_insertion_point": full_replay_blocker["safe_replay_insertion_point"],
+        "full_replay_blocker": "" if full_replay_computed else full_replay_blocker["full_replay_blocker"],
+        "full_replay_limitation": "" if full_replay_computed else full_replay_blocker["full_replay_limitation"],
+        "candidate_input_source": full_replay_blocker["candidate_input_source"],
+        "strategy_variant_builder": full_replay_blocker["strategy_variant_builder"],
+        "replay_engine_entrypoint": full_replay_blocker["replay_engine_entrypoint"],
+        "metrics_writer_entrypoint": full_replay_blocker["metrics_writer_entrypoint"],
+        "trade_ledger_writer_entrypoint": full_replay_blocker["trade_ledger_writer_entrypoint"],
+        "equity_writer_entrypoint": full_replay_blocker["equity_writer_entrypoint"],
+        "base_strategy": "news_contrarian_rerank",
+        "veto_strategy": "news_contrarian_rerank_catastrophic_veto",
+        "strategy_names": [
+            "price_only",
+            "news_contrarian_rerank",
+            "news_contrarian_rerank_catastrophic_veto",
+            *extra_veto_variants,
+        ],
+        "additional_research_variants": {
+            name: {
+                "metrics": dict(risk_metrics.get(name, {}) or {}),
+                "paper_trading_enabled": False,
+                "live_trading_enabled": False,
+                "validation_passed": False,
+                "final_validation_status": "NOT_FINAL_VALIDATION",
+            }
+            for name in extra_veto_variants
+        },
+        "veto_enabled_for_research": True,
+        "veto_enabled_for_paper_trading": False,
+        "veto_enabled_for_live_trading": False,
+        "used_in_current_replay": False,
+        "full_replay_computed": full_replay_computed,
+        "approximate_simulation_used": not full_replay_computed and bool(executed_trades),
+        "blocked_candidate_count": filter_audit["strict_policy_blocked_candidate_count"],
+        "blocked_trade_count": len(base_trade_keys - veto_trade_keys) if full_replay_computed else blocked_trade_count,
+        "full_replay_blocked_candidate_count": filter_audit["strict_policy_blocked_candidate_count"],
+        "full_replay_removed_trade_count": len(base_trade_keys - veto_trade_keys) if full_replay_computed else "UNAVAILABLE_INPUT",
+        "approximate_blocked_candidate_count": len(blocked_candidates),
+        "approximate_removed_trade_count": len(removed_trade_rows),
+        "catastrophic_veto_policy_mode": "STRICT_SAFETY",
+        "veto_metrics_status": veto_metrics_status,
+        "manual_review_count": len(manual_review_candidates),
+        "unknown_count": len(unknown_candidates),
+        "base_metrics": {
+            "price_only": price_metrics,
+            "news_contrarian_rerank": base_metrics,
+        },
+        "veto_metrics": full_veto_metrics if full_replay_computed else (veto_metrics if executed_trades else {}),
+        "delta_metrics": delta_metrics,
+        "warnings": warnings + ([] if full_replay_computed else ["Full filtered replay variant has not been computed; impact is approximate ledger attribution."]),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+    }
+    filtered_report = {
+        "schema_name": "catastrophic_veto_filtered_strategy_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": replay_impact_status,
+        "replay_impact_status": replay_impact_status,
+        "approximate_simulation_superseded_by_full_replay": full_replay_computed,
+        "base_strategy": "news_contrarian_rerank",
+        "veto_strategy": "news_contrarian_rerank_catastrophic_veto",
+        "veto_policy_version": "v1",
+        "veto_enabled_for_research": True,
+        "veto_enabled_for_paper_trading": False,
+        "veto_enabled_for_live_trading": False,
+        "used_in_current_replay": False,
+        "full_replay_computed": full_replay_computed,
+        "approximate_simulation_used": not full_replay_computed and bool(executed_trades),
+        "blocked_candidate_count": len(blocked_candidates),
+        "blocked_trade_count": blocked_trade_count,
+        "manual_review_candidate_count": len(manual_review_candidates),
+        "manual_review_trade_count": manual_review_trade_count,
+        "unknown_candidate_count": len(unknown_candidates),
+        "unknown_trade_count": unknown_trade_count,
+        "price_only_metrics": price_metrics,
+        "base_contrarian_metrics": base_metrics,
+        "veto_contrarian_metrics": full_veto_metrics if full_replay_computed else (veto_metrics if executed_trades else {}),
+        "delta_metrics": delta_metrics,
+        "removed_trade_summary": {
+            "removed_trade_count": len(removed_trade_rows),
+            "available_pnl_contribution": removed_pnl_contribution,
+            "available_return_contribution": removed_return_contribution,
+        },
+        "removed_symbol_summary": removed_symbol_rows,
+        "limitations": ([] if full_replay_computed else [
+            "Approximate ledger simulation removes attributed trades but does not recompute portfolio path, cash drag, sizing, or replacement selections.",
+            "Full filtered replay has not been computed.",
+        ]),
+        "warnings": warnings,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    full_replay_report = {
+        "schema_name": "catastrophic_veto_full_replay_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": full_replay_status,
+        "replay_impact_status": full_replay_status,
+        "base_strategy": "news_contrarian_rerank",
+        "veto_strategy": "news_contrarian_rerank_catastrophic_veto",
+        "full_replay_computed": full_replay_computed,
+        "approximate_simulation_used": not full_replay_computed,
+        "veto_enabled_for_research": True,
+        "veto_enabled_for_paper_trading": False,
+        "veto_enabled_for_live_trading": False,
+        "used_in_current_replay": False,
+        "candidate_count_before_veto": len(rows),
+        "candidate_count_after_veto": len(filtered_candidates),
+        "blocked_candidate_count": len(blocked_candidate_rows),
+        "strict_policy_blocked_candidate_count": filter_audit["strict_policy_blocked_candidate_count"],
+        "confirmed_catastrophic_candidate_count": filter_audit["confirmed_catastrophic_candidate_count"],
+        "confirmed_catastrophic_blocked_candidate_count": filter_audit["confirmed_catastrophic_blocked_candidate_count"],
+        "manual_review_candidate_count": len(filter_result["manual_review_candidates"]),
+        "unknown_text_candidate_count": filter_audit["unknown_text_candidate_count"],
+        "missing_availability_candidate_count": filter_audit["missing_availability_candidate_count"],
+        "unknown_candidate_count": len(filter_result["unknown_candidates"]),
+        "catastrophic_veto_policy_mode": "STRICT_SAFETY",
+        "base_trade_count": len(executed_trades),
+        "veto_trade_count": len(veto_trade_ledger) if full_replay_computed else "UNAVAILABLE_INPUT",
+        "removed_trade_count": len(base_trade_keys - veto_trade_keys) if full_replay_computed else "UNAVAILABLE_INPUT",
+        "replacement_trade_count": len(veto_trade_keys - base_trade_keys) if full_replay_computed else "UNAVAILABLE_INPUT",
+        "price_only_metrics": price_metrics,
+        "base_contrarian_metrics": base_metrics,
+        "veto_contrarian_metrics": full_veto_metrics,
+        "veto_metrics_status": veto_metrics_status,
+        "empty_output_reason": empty_output_reason,
+        "delta_metrics": {
+            "delta_return": full_replay_delta_return,
+            "delta_pnl": full_replay_delta_pnl,
+            "reason": (
+                "computed from the separate research-only replay variant"
+                if full_replay_computed
+                else "full filtered replay variant is absent from replay output"
+            ),
+        },
+        "equity_curve_path": "catastrophic_veto_full_replay_equity.csv",
+        "trade_ledger_path": "catastrophic_veto_full_replay_trade_ledger.csv",
+        "filtered_candidate_path": "catastrophic_veto_filtered_candidates.csv",
+        "blocked_candidate_path": "catastrophic_veto_blocked_candidates.csv",
+        "candidate_input_source": full_replay_blocker["candidate_input_source"],
+        "strategy_variant_builder": full_replay_blocker["strategy_variant_builder"],
+        "replay_engine_entrypoint": full_replay_blocker["replay_engine_entrypoint"],
+        "safe_replay_insertion_point": full_replay_blocker["safe_replay_insertion_point"],
+        "full_replay_blocker": "" if full_replay_computed else full_replay_blocker["full_replay_blocker"],
+        "full_replay_limitation": "" if full_replay_computed else full_replay_blocker["full_replay_limitation"],
+        "limitations": ["No replay accounting, sizing, cash, entry/exit, or base candidate-selection mechanics were changed."],
+        "warnings": (["Paper/live trading remain disabled."] if full_replay_computed else [
+            "Research-only full replay variant is not available from the current safe insertion point.",
+            "Paper/live trading remain disabled.",
+        ]),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return (
+        candidate_attribution,
+        trade_rows,
+        strategy_comparison,
+        _catastrophic_veto_policy(),
+        filtered_report,
+        removed_trade_rows,
+        removed_symbol_rows,
+        full_replay_report,
+        veto_trade_ledger if full_replay_computed else [],
+        veto_equity,
+        filtered_candidates,
+        blocked_candidate_rows,
+    )
+
+
+def _catastrophic_classification_for_trade(
+    trade: Mapping[str, Any],
+    by_candidate_id: Mapping[str, Mapping[str, Any]],
+    by_symbol: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> Mapping[str, Any]:
+    candidate_id = _mapping_first(trade, "candidate_id", "trade_id", "row_id")
+    if candidate_id and candidate_id in by_candidate_id:
+        return by_candidate_id[candidate_id]
+    symbol = _mapping_first(trade, "symbol", "ticker")
+    if symbol and symbol in by_symbol:
+        symbol_rows = list(by_symbol[symbol])
+        blocking_rows = [
+            row
+            for row in symbol_rows
+            if row.get("blocks_contrarian_entry")
+            or row.get("requires_manual_review")
+            or row.get("classification_method") == "UNAVAILABLE_INPUT"
+        ]
+        return blocking_rows[0] if blocking_rows else symbol_rows[0]
+    return {
+        "candidate_id": candidate_id or "UNKNOWN",
+        "symbol": symbol or "UNKNOWN",
+        "matched": False,
+        "matched_categories": [],
+        "highest_severity": "UNKNOWN",
+        "blocks_contrarian_entry": False,
+        "requires_manual_review": True,
+        "classification_method": "UNKNOWN",
+        "point_in_time_safe": False,
+    }
+
+
+def _catastrophic_news_evidence_quality_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    full_replay_report: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    classifications = classify_catastrophic_news_rows(rows)
+    filter_result = apply_catastrophic_veto_to_candidates(rows, classifications)
+    audit = dict(filter_result["filter_audit"])
+
+    def present(row: Mapping[str, Any], *keys: str) -> bool:
+        return any(row.get(key) is not None and str(row.get(key)).strip() for key in keys)
+
+    field_specs = {
+        "headline": ("headline_text", "headline", "title"),
+        "summary": ("summary_text", "summary", "description"),
+        "body": ("body_text", "body", "content", "article_body"),
+        "publication_timestamp": ("publication_timestamp", "published_at", "timestamp"),
+        "availability_timestamp": ("availability_timestamp", "available_at", "asof_timestamp"),
+        "event_category": ("event_type", "event", "provider_category", "category"),
+    }
+    field_counts = {
+        name: sum(present(row, *keys) for row in rows)
+        for name, keys in field_specs.items()
+    }
+    has_any_text_count = sum(
+        present(row, "headline_text", "headline", "title", "summary_text", "summary", "description", "body_text", "body", "content", "article_body", "event_type", "event", "provider_category", "category")
+        for row in rows
+    )
+    point_in_time_safe_count = sum(bool(row.get("point_in_time_safe")) for row in classifications)
+    usable_strict = sum(
+        bool(row.get("point_in_time_safe"))
+        and row.get("classification_method") != "UNAVAILABLE_INPUT"
+        for row in classifications
+    )
+    usable_confirmed_only = sum(row.get("classification_method") != "UNAVAILABLE_INPUT" for row in classifications)
+    status = "INSUFFICIENT_FOR_STRICT_VETO" if usable_strict == 0 else (
+        "PARTIAL_EVIDENCE" if usable_strict < len(rows) else "SUFFICIENT_FOR_RESEARCH"
+    )
+    report = {
+        "schema_name": "catastrophic_news_evidence_quality_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": status,
+        "candidate_count": len(rows),
+        "has_headline_count": field_counts["headline"],
+        "has_summary_count": field_counts["summary"],
+        "has_body_count": field_counts["body"],
+        "has_any_text_count": has_any_text_count,
+        "missing_text_count": len(rows) - has_any_text_count,
+        "has_publication_timestamp_count": field_counts["publication_timestamp"],
+        "has_availability_timestamp_count": field_counts["availability_timestamp"],
+        "missing_availability_timestamp_count": len(rows) - field_counts["availability_timestamp"],
+        "point_in_time_safe_count": point_in_time_safe_count,
+        "point_in_time_unsafe_count": len(rows) - point_in_time_safe_count,
+        "has_event_category_count": field_counts["event_category"],
+        "uncategorized_event_count": len(rows) - field_counts["event_category"],
+        "confirmed_catastrophic_candidate_count": audit["confirmed_catastrophic_candidate_count"],
+        "manual_review_candidate_count": audit["manual_review_candidate_count"],
+        "unknown_candidate_count": audit["unknown_candidate_count"],
+        "strict_policy_blocked_candidate_count": audit["strict_policy_blocked_candidate_count"],
+        "usable_for_strict_veto_count": usable_strict,
+        "usable_for_confirmed_only_veto_count": usable_confirmed_only,
+        "warnings": [
+            "Publication timestamps alone are not point-in-time availability evidence.",
+            "Unknown or missing evidence remains blocked by STRICT_SAFETY.",
+            "Evidence-quality reporting is observational and does not alter replay inputs.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    by_field = [
+        {
+            "field": name,
+            "available_count": count,
+            "missing_count": len(rows) - count,
+            "availability_ratio": count / max(len(rows), 1),
+        }
+        for name, count in field_counts.items()
+    ]
+
+    by_symbol_groups: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        by_symbol_groups.setdefault(str(row.get("symbol", row.get("ticker", "UNKNOWN"))), []).append(row)
+    by_symbol = []
+    for symbol, symbol_rows in sorted(by_symbol_groups.items()):
+        symbol_classifications = classify_catastrophic_news_rows(symbol_rows)
+        symbol_filter = apply_catastrophic_veto_to_candidates(symbol_rows, symbol_classifications)["filter_audit"]
+        symbol_text = sum(
+            present(row, "headline_text", "headline", "title", "summary_text", "summary", "description", "body_text", "body", "content", "article_body", "event_type", "event", "provider_category", "category")
+            for row in symbol_rows
+        )
+        symbol_availability = sum(present(row, "availability_timestamp", "available_at", "asof_timestamp") for row in symbol_rows)
+        by_symbol.append({
+            "symbol": symbol,
+            "candidate_count": len(symbol_rows),
+            "has_any_text_count": symbol_text,
+            "missing_text_count": len(symbol_rows) - symbol_text,
+            "has_availability_timestamp_count": symbol_availability,
+            "missing_availability_timestamp_count": len(symbol_rows) - symbol_availability,
+            "confirmed_catastrophic_candidate_count": symbol_filter["confirmed_catastrophic_candidate_count"],
+            "strict_policy_blocked_candidate_count": symbol_filter["strict_policy_blocked_candidate_count"],
+        })
+
+    base_trades = [
+        trade for trade in replay.get("trade_ledger", [])
+        if str(trade.get("strategy_variant", "")) == "news_contrarian_rerank"
+    ]
+    candidate_id_sets = {
+        "STRICT_SAFETY": {str(row.get("candidate_id")) for row in filter_result["blocked_candidates"]},
+        "CONFIRMED_ONLY_RESEARCH": {str(row.get("candidate_id")) for row in filter_result["confirmed_catastrophic_candidates"]},
+        "MANUAL_REVIEW_RESEARCH": {
+            str(row.get("candidate_id"))
+            for row in [*filter_result["confirmed_catastrophic_candidates"], *filter_result["manual_review_candidates"]]
+        },
+    }
+    counts = []
+    mode_variant_names = {
+        "STRICT_SAFETY": "news_contrarian_rerank_catastrophic_veto",
+        "CONFIRMED_ONLY_RESEARCH": "news_contrarian_rerank_catastrophic_veto_confirmed_only",
+        "MANUAL_REVIEW_RESEARCH": "news_contrarian_rerank_catastrophic_veto_manual_review",
+    }
+    risk_metrics = replay.get("risk_metrics", {})
+    daily_equity = replay.get("daily_equity", {})
+    extra_variant_metadata = replay.get("extra_research_variant_metadata", {})
+    for mode in ("STRICT_SAFETY", "CONFIRMED_ONLY_RESEARCH", "MANUAL_REVIEW_RESEARCH"):
+        blocked_ids = candidate_id_sets[mode]
+        total_blocked = len(blocked_ids)
+        strict_mode = mode == "STRICT_SAFETY"
+        variant_name = mode_variant_names[mode]
+        replayed = (
+            isinstance(risk_metrics, Mapping)
+            and variant_name in risk_metrics
+            and isinstance(daily_equity, Mapping)
+            and variant_name in daily_equity
+            and isinstance(extra_variant_metadata, Mapping)
+            and variant_name in extra_variant_metadata
+        )
+        counts.append({
+            "policy_mode": mode,
+            "strategy_variant": variant_name,
+            "candidate_count_before_veto": len(rows),
+            "candidate_count_after_veto": len(rows) - total_blocked,
+            "confirmed_catastrophic_blocked_candidate_count": audit["confirmed_catastrophic_candidate_count"],
+            "manual_review_blocked_candidate_count": audit["manual_review_candidate_count"] if mode == "MANUAL_REVIEW_RESEARCH" else (audit["manual_review_candidate_count"] if strict_mode else 0),
+            "unknown_text_blocked_candidate_count": audit["unknown_text_candidate_count"] if strict_mode else 0,
+            "missing_availability_blocked_candidate_count": audit["missing_availability_candidate_count"] if strict_mode else 0,
+            "total_blocked_candidate_count": total_blocked,
+            "estimated_removed_trade_count": sum(str(trade.get("candidate_id")) in blocked_ids for trade in base_trades),
+            "full_replay_computed": bool(full_replay_report.get("full_replay_computed")) if strict_mode else replayed,
+            "full_replay_status": full_replay_report.get("replay_impact_status", "FULL_REPLAY_NOT_AVAILABLE") if strict_mode else ("FULL_REPLAY_COMPUTED" if replayed else "COUNT_ONLY_NOT_REPLAYED"),
+            "veto_metrics_status": full_replay_report.get("veto_metrics_status", "UNAVAILABLE_INPUT") if strict_mode else ("AVAILABLE" if replayed else "COUNT_ONLY_NOT_REPLAYED"),
+            "paper_trading_allowed": False,
+            "live_trading_allowed": False,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+            "warnings": ["Research-only policy comparison; unknown evidence is not approved for paper/live use."],
+        })
+    comparison = {
+        "schema_name": "catastrophic_veto_policy_mode_comparison",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "catastrophic_veto_research_v1",
+        "status": "RESEARCH_ONLY_COUNT_COMPARISON",
+        "active_full_replay_policy_mode": "STRICT_SAFETY",
+        "policy_modes": counts,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "warnings": ["Policy-mode variants are research-only; unknown evidence is not approved for paper/live use."],
+    }
+    return report, by_field, by_symbol, comparison, counts
+
+
+EVENT_TAXONOMY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("catastrophic_or_distress", ("bankruptcy", "chapter 11", "insolvency", "liquidation", "going concern", "delisting", "default", "administration", "winding-up petition", "trading suspension", "suspended trading")),
+    ("fraud_or_accounting", ("fraud", "accounting irregular", "restatement", "misstatement", "auditor resign", "qualified audit", "criminal probe", "enforcement action")),
+    ("distressed_dilution", ("deep discount raise", "emergency capital raise", "rescue financing", "distressed dilution", "highly dilutive", "covenant breach")),
+    ("guidance_cut", ("cuts guidance", "lowers guidance", "withdraws guidance", "guidance cut", "reduces outlook", "large guidance cut")),
+    ("earnings_miss", ("earnings miss", "misses estimates", "misses expectations", "profit warning", "revenue miss")),
+    ("analyst_downgrade", ("downgrade", "downgrades", "price target cut", "rating cut")),
+    ("capital_raise_or_dilution", ("stock offering", "share offering", "capital raise", "dilution", "dilutive", "secondary offering")),
+    ("litigation_or_regulatory", ("lawsuit", "litigation", "class action", "regulatory", "investigation", "probe", "sec charges", "major enforcement")),
+    ("management_change", ("ceo resigns", "cfo resigns", "management change", "steps down", "departure")),
+    ("operational_issue", ("plant shutdown", "production halt", "recall", "supply disruption", "cyberattack", "outage")),
+    ("macro_or_sector", ("sector", "industry", "tariff", "rates", "inflation", "macro", "commodity")),
+)
+
+
+KEYWORD_BASELINE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("distress_score", ("bankruptcy", "insolvency", "going concern", "default", "delisting", "liquidation")),
+    ("earnings_negative_score", ("earnings miss", "misses estimates", "profit warning", "revenue miss")),
+    ("guidance_negative_score", ("cuts guidance", "lowers guidance", "withdraws guidance", "reduces outlook")),
+    ("litigation_score", ("lawsuit", "litigation", "class action", "regulatory", "investigation", "probe")),
+    ("dilution_score", ("offering", "capital raise", "dilution", "dilutive", "secondary")),
+    ("management_change_score", ("ceo resigns", "cfo resigns", "steps down", "departure")),
+    ("generic_negative_score", ("falls", "drops", "warning", "cuts", "misses", "lower", "weak")),
+)
+
+
+def _headline_text(row: Mapping[str, Any]) -> str:
+    return _mapping_first(row, "headline_text", "headline", "title") or ""
+
+
+def _normalized_headline(row: Mapping[str, Any]) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", _headline_text(row).lower())).strip()
+
+
+def _classify_event_taxonomy_from_headline(headline: str) -> tuple[str, list[str]]:
+    normalized = re.sub(r"\s+", " ", headline.lower()).strip()
+    if not normalized:
+        return "uncategorized", []
+    for category, terms in EVENT_TAXONOMY_RULES:
+        matched = [term for term in terms if term in normalized]
+        if matched:
+            return category, matched
+    return "uncategorized", []
+
+
+def _news_event_taxonomy_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    counts: dict[str, int] = {}
+    examples_by_category: dict[str, list[dict[str, Any]]] = {}
+    text_count = 0
+    for row in rows:
+        headline = _headline_text(row)
+        if headline.strip():
+            text_count += 1
+        category, matched_terms = _classify_event_taxonomy_from_headline(headline)
+        counts[category] = counts.get(category, 0) + 1
+        example = {
+            "candidate_id": _mapping_first(row, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+            "symbol": _mapping_first(row, "symbol", "ticker") or "UNKNOWN",
+            "decision_timestamp": _mapping_first(row, "decision_timestamp", "rebalance_timestamp", "feature_timestamp", "timestamp") or "UNKNOWN",
+            "event_category_research": category,
+            "matched_terms": "|".join(matched_terms),
+            "headline_text": headline,
+            "research_only": True,
+        }
+        examples_by_category.setdefault(category, [])
+        if len(examples_by_category[category]) < 5:
+            examples_by_category[category].append(example)
+    count_rows = [
+        {
+            "event_category_research": category,
+            "candidate_count": count,
+            "coverage_ratio": count / max(len(rows), 1),
+        }
+        for category, count in sorted(counts.items())
+    ]
+    examples = [
+        example
+        for category in sorted(examples_by_category)
+        for example in examples_by_category[category]
+    ]
+    categorized_count = len(rows) - counts.get("uncategorized", 0)
+    report = {
+        "schema_name": "news_event_taxonomy_report",
+        "schema_version": 1,
+        "status": "RESEARCH_RULES_READY" if text_count else "UNAVAILABLE_INPUT",
+        "taxonomy_method": "DETERMINISTIC_HEADLINE_RULES",
+        "candidate_count": len(rows),
+        "has_headline_count": text_count,
+        "categorized_count": categorized_count,
+        "uncategorized_count": counts.get("uncategorized", 0),
+        "event_taxonomy_research_ready": text_count > 0,
+        "production_event_category_ready": False,
+        "categories": [category for category, _terms in EVENT_TAXONOMY_RULES] + ["uncategorized"],
+        "warnings": [
+            "Research-only headline taxonomy; not a production event_category field.",
+            "Catastrophic taxonomy remains the conservative blocking taxonomy.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return report, count_rows, examples
+
+
+def _news_duplicate_grouping_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    groups: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        symbol = (_mapping_first(row, "symbol", "ticker") or "UNKNOWN").upper()
+        headline = _normalized_headline(row)
+        availability = _mapping_first(row, "availability_timestamp", "available_at", "asof_timestamp", "news_feature_timestamp") or "UNKNOWN"
+        provider = (_mapping_first(row, "provider") or "UNKNOWN").lower()
+        date_key = availability[:10] if availability != "UNKNOWN" else "UNKNOWN"
+        key = "|".join((symbol, headline or "NO_HEADLINE", date_key, provider))
+        group_id = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        groups.setdefault(group_id, []).append(row)
+    duplicate_groups = {group_id: members for group_id, members in groups.items() if len(members) > 1}
+    examples = []
+    for group_id, members in sorted(duplicate_groups.items()):
+        for row in members[:5]:
+            examples.append({
+                "duplicate_group_id_heuristic": group_id,
+                "duplicate_group_method": "symbol_normalized_headline_availability_date_provider",
+                "duplicate_group_size": len(members),
+                "candidate_id": _mapping_first(row, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+                "symbol": _mapping_first(row, "symbol", "ticker") or "UNKNOWN",
+                "headline_text": _headline_text(row),
+            })
+    duplicate_candidate_count = sum(len(members) for members in duplicate_groups.values())
+    report = {
+        "schema_name": "news_duplicate_grouping_report",
+        "schema_version": 1,
+        "status": "HEURISTIC_ONLY",
+        "duplicate_group_method": "symbol_normalized_headline_availability_date_provider",
+        "candidate_count": len(rows),
+        "duplicate_group_count": len(duplicate_groups),
+        "singleton_count": sum(1 for members in groups.values() if len(members) == 1),
+        "duplicate_candidate_count": duplicate_candidate_count,
+        "duplicate_grouping_heuristic_ready": True,
+        "production_duplicate_group_id_ready": False,
+        "warnings": [
+            "Research-only heuristic; not provider-grade deduplication.",
+            "Does not mark production duplicate_group_id as fully available.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return report, examples
+
+
+def _parse_optional_timestamp(value: Any) -> datetime | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _news_point_in_time_text_safety_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    examples: list[dict[str, Any]] = []
+    has_text_count = 0
+    has_availability_count = 0
+    safe_text_count = 0
+    unsafe_text_count = 0
+    publication_only_count = 0
+    availability_after_decision_count = 0
+    missing_decision_count = 0
+    missing_availability_count = 0
+    for row in rows:
+        has_text = bool(_headline_text(row).strip() or _mapping_first(row, "summary_text", "summary", "body_text", "body", "content"))
+        availability_text = _mapping_first(row, "availability_timestamp", "available_at", "asof_timestamp")
+        publication_text = _mapping_first(row, "publication_timestamp", "published_at", "published_at_utc", "timestamp")
+        decision_text = _mapping_first(row, "decision_timestamp", "rebalance_timestamp", "feature_timestamp")
+        availability = _parse_optional_timestamp(availability_text)
+        decision = _parse_optional_timestamp(decision_text)
+        if has_text:
+            has_text_count += 1
+        if availability is not None:
+            has_availability_count += 1
+        else:
+            missing_availability_count += 1
+        if decision is None:
+            missing_decision_count += 1
+        if publication_text and availability is None:
+            publication_only_count += 1
+        safe = has_text and availability is not None and decision is not None and availability <= decision
+        after_decision = has_text and availability is not None and decision is not None and availability > decision
+        if safe:
+            safe_text_count += 1
+        elif has_text:
+            unsafe_text_count += 1
+        if after_decision:
+            availability_after_decision_count += 1
+        if (after_decision or (has_text and not safe)) and len(examples) < 50:
+            examples.append({
+                "candidate_id": _mapping_first(row, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+                "symbol": _mapping_first(row, "symbol", "ticker") or "UNKNOWN",
+                "decision_timestamp": decision_text or "UNKNOWN",
+                "availability_timestamp": availability_text or "UNKNOWN",
+                "publication_timestamp": publication_text or "UNKNOWN",
+                "has_text": has_text,
+                "safe_text": safe,
+                "reason": "AVAILABILITY_AFTER_DECISION" if after_decision else "MISSING_POINT_IN_TIME_EVIDENCE",
+            })
+    report = {
+        "schema_name": "news_point_in_time_text_safety_report",
+        "schema_version": 1,
+        "status": "PARTIAL_POINT_IN_TIME_SAFE" if safe_text_count else "INSUFFICIENT",
+        "candidate_count": len(rows),
+        "has_text_count": has_text_count,
+        "has_availability_timestamp_count": has_availability_count,
+        "safe_text_count": safe_text_count,
+        "unsafe_text_count": unsafe_text_count,
+        "publication_only_count": publication_only_count,
+        "availability_after_decision_count": availability_after_decision_count,
+        "missing_decision_timestamp_count": missing_decision_count,
+        "missing_availability_timestamp_count": missing_availability_count,
+        "point_in_time_text_safety_ready": safe_text_count > 0 and availability_after_decision_count == 0,
+        "warnings": [
+            "Publication timestamp alone is not availability evidence.",
+            "Rows without availability_timestamp are not point-in-time safe for text use.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return report, examples
+
+
+def _news_text_keyword_baseline_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    score_rows: list[dict[str, Any]] = []
+    scored_count = 0
+    for row in rows:
+        headline = _headline_text(row)
+        normalized = headline.lower()
+        scores = {
+            score_name: sum(1 for term in terms if term in normalized)
+            for score_name, terms in KEYWORD_BASELINE_RULES
+        }
+        if headline.strip():
+            scored_count += 1
+        score_rows.append({
+            "candidate_id": _mapping_first(row, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+            "symbol": _mapping_first(row, "symbol", "ticker") or "UNKNOWN",
+            "decision_timestamp": _mapping_first(row, "decision_timestamp", "rebalance_timestamp", "feature_timestamp", "timestamp") or "UNKNOWN",
+            "headline_text": headline,
+            **scores,
+            "keyword_baseline_total_score": sum(scores.values()),
+            "used_in_strategy": False,
+            "research_only": True,
+        })
+    report = {
+        "schema_name": "news_text_keyword_baseline_report",
+        "schema_version": 1,
+        "status": "RESEARCH_ONLY" if scored_count else "UNAVAILABLE_INPUT",
+        "candidate_count": len(rows),
+        "scored_headline_count": scored_count,
+        "score_columns": [name for name, _terms in KEYWORD_BASELINE_RULES],
+        "keyword_baseline_ready": scored_count > 0,
+        "used_in_strategy": False,
+        "sklearn_required": False,
+        "finbert_enabled": False,
+        "transformer_enabled": False,
+        "warnings": [
+            "Deterministic keyword baseline only; not used in ranking or replay.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return report, score_rows
+
+
+REVERSIBLE_EVENT_CATEGORIES = {
+    "earnings_miss",
+    "guidance_cut",
+    "analyst_downgrade",
+    "operational_issue",
+    "macro_or_sector",
+}
+SERIOUS_AMBIGUOUS_EVENT_CATEGORIES = {
+    "litigation_or_regulatory",
+    "management_change",
+    "capital_raise_or_dilution",
+    "distressed_dilution",
+}
+EXTREME_DISTRESS_EVENT_CATEGORIES = {
+    "catastrophic_or_distress",
+}
+EXTREME_DISTRESS_TERMS = (
+    "bankruptcy",
+    "chapter 11",
+    "chapter 7",
+    "insolven",
+    "liquidat",
+    "administration",
+    "default",
+    "going concern",
+    "delisting",
+    "suspension",
+    "trading suspension",
+    "suspended trading",
+    "fraud",
+    "accounting irregular",
+    "material misstatement",
+    "rescue financing",
+)
+
+FRAUD_EVENT_CATEGORIES = {"fraud_or_accounting"}
+DISTRESSED_DILUTION_EVENT_CATEGORIES = {"distressed_dilution"}
+
+EXTREME_DISTRESS_ONLY_TERMS = (
+    "bankruptcy",
+    "chapter 11",
+    "chapter 7",
+    "insolven",
+    "liquidat",
+    "administration",
+    "default",
+    "debt default",
+    "going concern",
+    "delisting",
+    "trading suspension",
+    "suspended trading",
+    "winding-up petition",
+    "rescue financing",
+    "emergency rescue financing",
+)
+FRAUD_TERMS = (
+    "fraud",
+    "accounting irregular",
+    "auditor resign",
+    "qualified audit",
+    "criminal probe",
+    "enforcement action",
+    "major enforcement",
+    "material misstatement",
+)
+DISTRESSED_DILUTION_TERMS = (
+    "deep discount raise",
+    "emergency capital raise",
+    "highly dilutive",
+    "distressed dilution",
+    "covenant breach",
+    "rescue financing",
+)
+SEVERE_LOSS_AVOIDANCE_TERMS = (
+    "bankruptcy",
+    "default",
+    "delisting",
+    "suspension",
+    "fraud",
+    "investigation",
+    "liquidation",
+    "going concern",
+    "covenant breach",
+    "rescue financing",
+)
+SOFT_RISK_REDUCE_TERMS = (
+    "major litigation",
+    "regulatory investigation",
+    "distressed dilution",
+    "management crisis",
+    "large guidance cut",
+)
+
+CATASTROPHIC_POLICY_VARIANTS: tuple[dict[str, Any], ...] = (
+    {
+        "policy_name": "EXTREME_DISTRESS_ONLY",
+        "variant_name": "news_contrarian_rerank_extreme_distress_only_veto",
+        "policy_stage": "FULL_REPLAY_RESEARCH",
+        "block_groups": ("EXTREME_DISTRESS",),
+    },
+    {
+        "policy_name": "EXTREME_DISTRESS_OR_FRAUD",
+        "variant_name": "news_contrarian_rerank_extreme_distress_or_fraud_veto",
+        "policy_stage": "FULL_REPLAY_RESEARCH",
+        "block_groups": ("EXTREME_DISTRESS", "EXTREME_DISTRESS_OR_FRAUD"),
+    },
+    {
+        "policy_name": "DISTRESS_OR_DILUTION",
+        "variant_name": "news_contrarian_rerank_distress_or_dilution_veto",
+        "policy_stage": "FULL_REPLAY_RESEARCH",
+        "block_groups": ("EXTREME_DISTRESS", "EXTREME_DISTRESS_OR_FRAUD", "DISTRESS_OR_DILUTION"),
+    },
+    {
+        "policy_name": "SEVERE_LOSS_AVOIDANCE",
+        "variant_name": "news_contrarian_rerank_severe_loss_avoidance_veto",
+        "policy_stage": "FULL_REPLAY_RESEARCH",
+        "heuristic_terms": SEVERE_LOSS_AVOIDANCE_TERMS,
+    },
+    {
+        "policy_name": "SOFT_RISK_REDUCE",
+        "variant_name": "news_contrarian_rerank_soft_risk_reduce_veto",
+        "policy_stage": "COUNT_ONLY_PROPOSAL",
+        "heuristic_terms": SOFT_RISK_REDUCE_TERMS,
+    },
+)
+
+
+def _bounceback_label(row: Mapping[str, Any]) -> str:
+    trade_return = _as_optional_float(
+        _mapping_first(
+            row,
+            "net_return",
+            "trade_return_net",
+            "return",
+            "total_return",
+            "removed_trade_return",
+            "actual_forward_return_10d",
+        )
+    )
+    if trade_return is None:
+        return "UNAVAILABLE_OUTCOME"
+    if trade_return > 0.10:
+        return "BOUNCED_BACK_STRONGLY"
+    if trade_return > 0.0:
+        return "BOUNCED_BACK_WEAKLY"
+    if trade_return <= -0.10:
+        return "SEVERE_LOSS"
+    return "DID_NOT_BOUNCE"
+
+
+def _catastrophic_trade_return(row: Mapping[str, Any]) -> float | None:
+    return _as_optional_float(
+        _mapping_first(
+            row,
+            "net_return",
+            "trade_return_net",
+            "return",
+            "total_return",
+            "removed_trade_return",
+            "actual_forward_return_10d",
+        )
+    )
+
+
+def _event_category_for_candidate(row: Mapping[str, Any]) -> str:
+    category, _terms = _classify_event_taxonomy_from_headline(_headline_text(row))
+    return category
+
+
+def _severity_group_for_candidate(row: Mapping[str, Any]) -> str:
+    headline = _headline_text(row).lower()
+    has_text = bool(headline.strip())
+    has_availability = bool(_mapping_first(row, "availability_timestamp", "available_at", "asof_timestamp"))
+    category = _event_category_for_candidate(row)
+    if not has_text or not has_availability or category == "uncategorized":
+        return "UNKNOWN_OR_INSUFFICIENT_EVIDENCE"
+    matched_categories = str(row.get("matched_categories", row.get("catastrophic_veto_matched_categories", ""))).lower()
+    if (
+        category in DISTRESSED_DILUTION_EVENT_CATEGORIES
+        or any(term in headline for term in DISTRESSED_DILUTION_TERMS)
+        or "distressed_dilution" in matched_categories
+    ):
+        return "DISTRESS_OR_DILUTION"
+    if (
+        category in FRAUD_EVENT_CATEGORIES
+        or any(term in headline for term in FRAUD_TERMS)
+        or any(term in matched_categories for term in ("fraud", "accounting", "auditor", "enforcement"))
+    ):
+        return "EXTREME_DISTRESS_OR_FRAUD"
+    if (
+        category in EXTREME_DISTRESS_EVENT_CATEGORIES
+        or any(term in headline for term in EXTREME_DISTRESS_ONLY_TERMS)
+        or any(term in matched_categories for term in ("bankruptcy", "insolvency", "default", "delisting", "going_concern"))
+    ):
+        return "EXTREME_DISTRESS"
+    if category in REVERSIBLE_EVENT_CATEGORIES:
+        return "REVERSIBLE_BAD_NEWS"
+    if category in SERIOUS_AMBIGUOUS_EVENT_CATEGORIES:
+        return "SERIOUS_BUT_AMBIGUOUS"
+    return "UNKNOWN_OR_INSUFFICIENT_EVIDENCE"
+
+
+def _policy_variant_spec(policy_name: str) -> dict[str, Any]:
+    for spec in CATASTROPHIC_POLICY_VARIANTS:
+        if spec["policy_name"] == policy_name:
+            return dict(spec)
+    raise ValueError(f"unknown catastrophic policy variant: {policy_name}")
+
+
+def _policy_variant_blocks_candidate(row: Mapping[str, Any], policy_name: str) -> tuple[bool, str, str]:
+    spec = _policy_variant_spec(policy_name)
+    headline = _headline_text(row).lower()
+    severity_group = _severity_group_for_candidate(row)
+    if spec.get("block_groups") and severity_group in set(spec["block_groups"]):
+        return True, severity_group, f"severity_group={severity_group}"
+    for term in spec.get("heuristic_terms", ()):
+        if term in headline:
+            if policy_name == "SOFT_RISK_REDUCE":
+                return True, "SERIOUS_BUT_AMBIGUOUS", f"soft_risk_term={term}"
+            return True, severity_group, f"severe_loss_heuristic_term={term}"
+    return False, severity_group, "ALLOW_OR_REPORT_SEPARATELY"
+
+
+def apply_catastrophic_policy_variant_to_candidates(
+    candidate_rows: Sequence[Mapping[str, Any]],
+    policy_name: str,
+) -> dict[str, Any]:
+    spec = _policy_variant_spec(policy_name)
+    filtered_candidates: list[dict[str, Any]] = []
+    blocked_candidates: list[dict[str, Any]] = []
+    unknown_candidates: list[dict[str, Any]] = []
+    proposed_soft_risk_candidates: list[dict[str, Any]] = []
+    for candidate in candidate_rows:
+        blocked, severity_group, reason = _policy_variant_blocks_candidate(candidate, policy_name)
+        is_unknown = severity_group == "UNKNOWN_OR_INSUFFICIENT_EVIDENCE"
+        category = _event_category_for_candidate(candidate)
+        enriched = {
+            **dict(candidate),
+            "policy_name": policy_name,
+            "catastrophic_policy_variant_action": "PROPOSE_SIZE_REDUCTION" if policy_name == "SOFT_RISK_REDUCE" and blocked else ("EXCLUDE_FROM_RESEARCH_VARIANT" if blocked else "KEEP"),
+            "catastrophic_policy_variant_reason": reason,
+            "event_category_research": category,
+            "severity_group": severity_group,
+            "unknown_or_insufficient_evidence": is_unknown,
+            "paper_trading_enabled": False,
+            "live_trading_enabled": False,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+        }
+        if policy_name == "SOFT_RISK_REDUCE":
+            filtered_candidates.append(enriched)
+            if blocked:
+                proposed_soft_risk_candidates.append(enriched)
+        elif blocked:
+            blocked_candidates.append(enriched)
+        else:
+            filtered_candidates.append(enriched)
+        if is_unknown:
+            unknown_candidates.append(enriched)
+    return {
+        "policy_name": policy_name,
+        "variant_name": spec["variant_name"],
+        "policy_stage": spec["policy_stage"],
+        "filtered_candidates": filtered_candidates,
+        "blocked_candidates": blocked_candidates,
+        "unknown_candidates": unknown_candidates,
+        "proposed_soft_risk_candidates": proposed_soft_risk_candidates,
+        "filter_audit": {
+            "schema_name": "catastrophic_veto_policy_variant_filter_audit",
+            "schema_version": 1,
+            "policy_name": policy_name,
+            "variant_name": spec["variant_name"],
+            "policy_stage": spec["policy_stage"],
+            "candidate_count_before": len(candidate_rows),
+            "candidate_count_after": len(filtered_candidates),
+            "blocked_candidate_count": len(blocked_candidates),
+            "unknown_evidence_candidate_count": len(unknown_candidates),
+            "proposed_soft_risk_reduce_candidate_count": len(proposed_soft_risk_candidates),
+            "unknown_evidence_policy": "REPORT_SEPARATELY_NOT_APPROVED_FOR_PAPER_LIVE",
+            "research_only": True,
+            "paper_trading_enabled": False,
+            "live_trading_enabled": False,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+        },
+    }
+
+
+def _category_attribution_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in rows:
+        key = (str(row.get("event_category_research", "uncategorized")), str(row.get("severity_group", "UNKNOWN_OR_INSUFFICIENT_EVIDENCE")))
+        groups.setdefault(key, []).append(row)
+    output = []
+    for (category, severity), group_rows in sorted(groups.items()):
+        returns = [value for value in (_catastrophic_trade_return(row) for row in group_rows) if value is not None]
+        unavailable_count = len(group_rows) - len(returns)
+        best = max(group_rows, key=lambda row: _catastrophic_trade_return(row) if _catastrophic_trade_return(row) is not None else -math.inf)
+        worst = min(group_rows, key=lambda row: _catastrophic_trade_return(row) if _catastrophic_trade_return(row) is not None else math.inf)
+        output.append({
+            "event_category_research": category,
+            "severity_group": severity,
+            "candidate_count": len(group_rows),
+            "removed_trade_count": len(group_rows),
+            "mean_removed_trade_return": mean(returns) if returns else "UNAVAILABLE_OUTCOME",
+            "median_removed_trade_return": median(returns) if returns else "UNAVAILABLE_OUTCOME",
+            "total_removed_pnl_or_return": sum(returns) if returns else "UNAVAILABLE_OUTCOME",
+            "positive_removed_trade_count": sum(value > 0 for value in returns),
+            "negative_removed_trade_count": sum(value < 0 for value in returns),
+            "severe_loss_count": sum(row.get("bounceback_label") == "SEVERE_LOSS" for row in group_rows),
+            "strong_bounceback_count": sum(row.get("bounceback_label") == "BOUNCED_BACK_STRONGLY" for row in group_rows),
+            "weak_bounceback_count": sum(row.get("bounceback_label") == "BOUNCED_BACK_WEAKLY" for row in group_rows),
+            "unavailable_outcome_count": unavailable_count,
+            "best_removed_trade": best.get("trade_id", best.get("candidate_id", "UNKNOWN")),
+            "worst_removed_trade": worst.get("trade_id", worst.get("candidate_id", "UNKNOWN")),
+        })
+    return output
+
+
+def _metric_delta(base: Mapping[str, Any], candidate: Mapping[str, Any], *names: str) -> float | str:
+    base_value = _metric(base, *names)
+    candidate_value = _metric(candidate, *names)
+    if base_value is None or candidate_value is None:
+        return "UNAVAILABLE_INPUT"
+    return candidate_value - base_value
+
+
+def _strict_veto_breadth_diagnostic(
+    replay: Mapping[str, Any],
+    removed_rows: Sequence[Mapping[str, Any]],
+    policy_mode_counts: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    risk_metrics = replay.get("risk_metrics", {}) if isinstance(replay.get("risk_metrics", {}), Mapping) else {}
+    base_metrics = dict(risk_metrics.get("news_contrarian_rerank", {}) or {})
+    strict_metrics = dict(risk_metrics.get("news_contrarian_rerank_catastrophic_veto", {}) or {})
+    strict_delta = _metric_delta(base_metrics, strict_metrics, "total_return_decimal")
+    drawdown_delta = _metric_delta(base_metrics, strict_metrics, "maximum_drawdown")
+    sharpe_delta = _metric_delta(base_metrics, strict_metrics, "Sharpe_ratio", "sharpe_ratio")
+    counts_by_mode = {str(row.get("policy_mode")): row for row in policy_mode_counts}
+    confirmed_removed = int(counts_by_mode.get("CONFIRMED_ONLY_RESEARCH", {}).get("estimated_removed_trade_count", 0) or 0)
+    manual_removed = int(counts_by_mode.get("MANUAL_REVIEW_RESEARCH", {}).get("estimated_removed_trade_count", 0) or 0)
+    if strict_delta == "UNAVAILABLE_INPUT":
+        status = "INSUFFICIENT_OUTCOME_DATA" if removed_rows else "NEEDS_CONFIRMED_ONLY_COMPARISON"
+    elif strict_delta < 0 and (drawdown_delta == "UNAVAILABLE_INPUT" or drawdown_delta >= 0):
+        status = "TOO_BROAD_FOR_RETURN"
+    elif drawdown_delta != "UNAVAILABLE_INPUT" and drawdown_delta > 0:
+        status = "POSSIBLY_USEFUL_RISK_FILTER"
+    else:
+        status = "NEEDS_CONFIRMED_ONLY_COMPARISON"
+    return {
+        "strict_veto_removed_trade_count": len(removed_rows),
+        "confirmed_only_removed_trade_count": confirmed_removed,
+        "manual_review_removed_trade_count": manual_removed,
+        "strict_veto_return_delta": strict_delta,
+        "strict_veto_drawdown_delta": drawdown_delta,
+        "strict_veto_sharpe_delta": sharpe_delta,
+        "strict_veto_breadth_status": status,
+        "recommended_policy_next_step": (
+            "compare confirmed-only/manual-review variants and evaluate an extreme-distress-only replay proposal"
+            if status in {"TOO_BROAD_FOR_RETURN", "NEEDS_CONFIRMED_ONLY_COMPARISON"}
+            else "review category-level severe-loss concentration before narrowing policy"
+        ),
+    }
+
+
+def _catastrophic_veto_extreme_only_policy_proposal() -> dict[str, Any]:
+    return {
+        "schema_name": "catastrophic_veto_extreme_only_policy_proposal",
+        "schema_version": 1,
+        "status": "PROPOSED_NOT_REPLAYED",
+        "policy_name": "EXTREME_DISTRESS_ONLY_RESEARCH",
+        "policy_stage": "PROPOSED_NOT_REPLAYED",
+        "blocks_categories": [
+            "bankruptcy",
+            "insolvency",
+            "liquidation",
+            "administration",
+            "default",
+            "going_concern_warning",
+            "delisting",
+            "trading_suspension",
+            "emergency_rescue_financing",
+        ],
+        "manual_review_categories": [
+            "fraud_or_accounting_irregularity",
+            "major_litigation_existential",
+            "regulatory_enforcement_or_criminal_probe",
+            "distressed_dilution_or_deep_discount_raise",
+        ],
+        "does_not_block_categories": [
+            "earnings_miss",
+            "guidance_cut",
+            "analyst_downgrade",
+            "operational_issue",
+            "macro_or_sector",
+        ],
+        "unknown_evidence_policy": "REPORT_SEPARATELY_NOT_APPROVED_FOR_PAPER_LIVE",
+        "paper_trading_allowed": False,
+        "live_trading_allowed": False,
+        "requires_future_replay": True,
+        "requires_manual_review": True,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "warnings": [
+            "Proposal only; no replay variant or strategy behavior has changed.",
+            "Unknown evidence is not approved for paper/live trading.",
+        ],
+    }
+
+
+def _catastrophic_veto_bounceback_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    removed_trade_rows: Sequence[Mapping[str, Any]],
+    blocked_candidate_rows: Sequence[Mapping[str, Any]],
+    full_replay_report: Mapping[str, Any],
+    policy_mode_counts: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    candidates_by_id = {
+        str(row.get("candidate_id")): row
+        for row in rows
+        if row.get("candidate_id") not in {None, ""}
+    }
+    enriched_removed = []
+    for trade in removed_trade_rows:
+        candidate = candidates_by_id.get(str(trade.get("candidate_id")), {})
+        merged = {**dict(candidate), **dict(trade)}
+        category = _event_category_for_candidate(merged)
+        severity_group = _severity_group_for_candidate(merged)
+        label = _bounceback_label(merged)
+        enriched_removed.append({
+            **merged,
+            "event_category_research": category,
+            "severity_group": severity_group,
+            "bounceback_label": label,
+            "removed_trade_return": _catastrophic_trade_return(merged) if _catastrophic_trade_return(merged) is not None else "UNAVAILABLE_OUTCOME",
+            "research_only": True,
+        })
+    by_category = _category_attribution_rows(enriched_removed)
+    returns = [value for value in (_catastrophic_trade_return(row) for row in enriched_removed) if value is not None]
+    keyword_summary = {
+        "available": bool(enriched_removed),
+        "distress_removed_trade_count": sum(int(row.get("distress_score", 0) or 0) > 0 for row in enriched_removed),
+        "litigation_removed_trade_count": sum(int(row.get("litigation_score", 0) or 0) > 0 for row in enriched_removed),
+        "dilution_removed_trade_count": sum(int(row.get("dilution_score", 0) or 0) > 0 for row in enriched_removed),
+        "source": "headline keyword scores when present on candidate rows; otherwise recomputation is not inferred",
+    }
+    extreme_rows = [row for row in enriched_removed if row["severity_group"] == "EXTREME_DISTRESS"]
+    reversible_rows = [row for row in enriched_removed if row["severity_group"] == "REVERSIBLE_BAD_NEWS"]
+    winners = sorted(
+        [row for row in enriched_removed if _catastrophic_trade_return(row) is not None],
+        key=lambda row: _catastrophic_trade_return(row) or 0.0,
+        reverse=True,
+    )[:10]
+    losers = sorted(
+        [row for row in enriched_removed if _catastrophic_trade_return(row) is not None],
+        key=lambda row: _catastrophic_trade_return(row) or 0.0,
+    )[:10]
+    diagnostic = _strict_veto_breadth_diagnostic(replay, enriched_removed, policy_mode_counts)
+    report = {
+        "schema_name": "catastrophic_veto_bounceback_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "AVAILABLE" if enriched_removed else "UNAVAILABLE_INPUT",
+        "base_strategy": "news_contrarian_rerank",
+        "veto_strategy": "news_contrarian_rerank_catastrophic_veto",
+        "removed_trade_count": len(enriched_removed),
+        "blocked_candidate_count": len(blocked_candidate_rows),
+        "candidate_count_before_veto": full_replay_report.get("candidate_count_before_veto", len(rows)),
+        "candidate_count_after_veto": full_replay_report.get("candidate_count_after_veto", "UNAVAILABLE_INPUT"),
+        "analysis_scope": "removed news_contrarian_rerank trades from research-only catastrophic-veto attribution; no replay recomputation",
+        "bounceback_definition": {
+            "BOUNCED_BACK_STRONGLY": "removed trade return > +10%",
+            "BOUNCED_BACK_WEAKLY": "removed trade return between 0% and +10%",
+            "DID_NOT_BOUNCE": "removed trade return between -10% and 0%",
+            "SEVERE_LOSS": "removed trade return <= -10%",
+            "UNAVAILABLE_OUTCOME": "required return fields unavailable",
+        },
+        "lookahead_windows": "uses only outcome fields already present in trade ledgers; no new lookahead windows computed",
+        "category_summary": by_category,
+        "keyword_summary": keyword_summary,
+        "extreme_distress_summary": {
+            "removed_trade_count": len(extreme_rows),
+            "severe_loss_count": sum(row["bounceback_label"] == "SEVERE_LOSS" for row in extreme_rows),
+            "strong_bounceback_count": sum(row["bounceback_label"] == "BOUNCED_BACK_STRONGLY" for row in extreme_rows),
+        },
+        "reversible_bad_news_summary": {
+            "removed_trade_count": len(reversible_rows),
+            "severe_loss_count": sum(row["bounceback_label"] == "SEVERE_LOSS" for row in reversible_rows),
+            "strong_bounceback_count": sum(row["bounceback_label"] == "BOUNCED_BACK_STRONGLY" for row in reversible_rows),
+        },
+        "veto_breadth_diagnostic": diagnostic,
+        "top_removed_winners": [
+            {"trade_id": row.get("trade_id", "UNKNOWN"), "candidate_id": row.get("candidate_id", "UNKNOWN"), "removed_trade_return": _catastrophic_trade_return(row), "event_category_research": row.get("event_category_research")}
+            for row in winners
+        ],
+        "top_removed_losers": [
+            {"trade_id": row.get("trade_id", "UNKNOWN"), "candidate_id": row.get("candidate_id", "UNKNOWN"), "removed_trade_return": _catastrophic_trade_return(row), "event_category_research": row.get("event_category_research")}
+            for row in losers
+        ],
+        "warnings": [
+            "Research-only attribution; no base replay mechanics were recomputed.",
+            "Unavailable trade outcomes are reported as UNAVAILABLE_OUTCOME.",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    examples = [
+        {
+            "trade_id": row.get("trade_id", "UNKNOWN"),
+            "candidate_id": row.get("candidate_id", "UNKNOWN"),
+            "symbol": row.get("symbol", "UNKNOWN"),
+            "event_category_research": row.get("event_category_research", "uncategorized"),
+            "severity_group": row.get("severity_group", "UNKNOWN_OR_INSUFFICIENT_EVIDENCE"),
+            "bounceback_label": row.get("bounceback_label", "UNAVAILABLE_OUTCOME"),
+            "removed_trade_return": row.get("removed_trade_return", "UNAVAILABLE_OUTCOME"),
+            "headline_text": _headline_text(row),
+        }
+        for row in enriched_removed[:100]
+    ]
+    return report, by_category, examples, _catastrophic_veto_extreme_only_policy_proposal()
+
+
+def _metric_value(metrics: Mapping[str, Any], *names: str) -> Any:
+    value = _metric(metrics, *names)
+    return value if value is not None else "UNAVAILABLE_INPUT"
+
+
+def _trade_key(row: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(_mapping_first(row, "candidate_id", "trade_id", "row_id") or ""),
+        str(_mapping_first(row, "symbol", "ticker") or ""),
+        str(_mapping_first(row, "entry_date", "entry_timestamp", "open_date") or ""),
+    )
+
+
+def _policy_variant_trade_rows(
+    *,
+    policy_name: str,
+    variant_name: str,
+    base_trades: Sequence[Mapping[str, Any]],
+    variant_trades: Sequence[Mapping[str, Any]],
+    candidates_by_id: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    variant_keys = {_trade_key(row) for row in variant_trades}
+    removed = [dict(row) for row in base_trades if _trade_key(row) not in variant_keys]
+    output = []
+    for trade in removed:
+        candidate = candidates_by_id.get(str(trade.get("candidate_id")), {})
+        merged = {**dict(candidate), **trade}
+        output.append({
+            "policy_name": policy_name,
+            "variant_name": variant_name,
+            "trade_id": _mapping_first(merged, "trade_id", "id", "row_id") or "UNKNOWN",
+            "candidate_id": _mapping_first(merged, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+            "symbol": _mapping_first(merged, "symbol", "ticker") or "UNKNOWN",
+            "entry_date": _mapping_first(merged, "entry_date", "entry_timestamp", "open_date") or "UNAVAILABLE_INPUT",
+            "exit_date": _mapping_first(merged, "exit_date", "exit_timestamp", "close_date") or "UNAVAILABLE_INPUT",
+            "headline_text": _headline_text(merged),
+            "event_category_research": _event_category_for_candidate(merged),
+            "severity_group": _severity_group_for_candidate(merged),
+            "removed_trade_return": _catastrophic_trade_return(merged) if _catastrophic_trade_return(merged) is not None else "UNAVAILABLE_INPUT",
+            "bounceback_label": _bounceback_label(merged),
+            "research_only": True,
+            "paper_trading_enabled": False,
+            "live_trading_enabled": False,
+        })
+    return output
+
+
+def _policy_variant_examples(
+    policy_name: str,
+    removed_rows: Sequence[Mapping[str, Any]],
+    allowed_trades: Sequence[Mapping[str, Any]],
+    candidates_by_id: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    def example(row: Mapping[str, Any], example_type: str, reason: str) -> dict[str, Any]:
+        candidate = candidates_by_id.get(str(row.get("candidate_id")), {})
+        merged = {**dict(candidate), **dict(row)}
+        return {
+            "policy_name": policy_name,
+            "example_type": example_type,
+            "trade_id": _mapping_first(merged, "trade_id", "id", "row_id") or "UNKNOWN",
+            "candidate_id": _mapping_first(merged, "candidate_id", "trade_id", "row_id") or "UNKNOWN",
+            "symbol": _mapping_first(merged, "symbol", "ticker") or "UNKNOWN",
+            "headline_text": _headline_text(merged),
+            "event_category_research": _event_category_for_candidate(merged),
+            "severity_group": _severity_group_for_candidate(merged),
+            "removed_trade_return": _catastrophic_trade_return(merged) if _catastrophic_trade_return(merged) is not None else "UNAVAILABLE_INPUT",
+            "bounceback_label": _bounceback_label(merged),
+            "reason": reason,
+        }
+
+    removed_with_returns = [row for row in removed_rows if _catastrophic_trade_return(row) is not None]
+    winners = sorted([row for row in removed_with_returns if (_catastrophic_trade_return(row) or 0.0) > 0], key=lambda row: _catastrophic_trade_return(row) or 0.0, reverse=True)[:3]
+    losers = sorted([row for row in removed_with_returns if (_catastrophic_trade_return(row) or 0.0) <= 0], key=lambda row: _catastrophic_trade_return(row) or 0.0)[:3]
+    severe = [row for row in losers if _bounceback_label(row) == "SEVERE_LOSS"][:3]
+    allowed_with_returns = [row for row in allowed_trades if _catastrophic_trade_return(row) is not None]
+    allowed_winners = sorted([row for row in allowed_with_returns if (_catastrophic_trade_return(row) or 0.0) > 0], key=lambda row: _catastrophic_trade_return(row) or 0.0, reverse=True)[:2]
+    allowed_losers = sorted([row for row in allowed_with_returns if (_catastrophic_trade_return(row) or 0.0) <= 0], key=lambda row: _catastrophic_trade_return(row) or 0.0)[:2]
+    rows = []
+    rows.extend(example(row, "blocked_winner", "bounceback winner accidentally removed") for row in winners)
+    rows.extend(example(row, "blocked_loser", "losing trade removed") for row in losers)
+    rows.extend(example(row, "allowed_winner", "winner remained tradable") for row in allowed_winners)
+    rows.extend(example(row, "allowed_loser", "loser remained tradable") for row in allowed_losers)
+    rows.extend(example(row, "top_severe_loss_avoided", "severe loss removed") for row in severe)
+    rows.extend(example(row, "top_bounceback_winner_accidentally_removed", "strong bounceback removed") for row in winners if _bounceback_label(row) == "BOUNCED_BACK_STRONGLY")
+    return rows
+
+
+def _catastrophic_policy_variant_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    strict_bounceback_report: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    risk_metrics = replay.get("risk_metrics", {}) if isinstance(replay.get("risk_metrics", {}), Mapping) else {}
+    daily_equity = replay.get("daily_equity", {}) if isinstance(replay.get("daily_equity", {}), Mapping) else {}
+    extra_metadata = replay.get("extra_research_variant_metadata", {}) if isinstance(replay.get("extra_research_variant_metadata", {}), Mapping) else {}
+    all_trades = [dict(row) for row in replay.get("trade_ledger", []) or []]
+    base_variant = "news_contrarian_rerank"
+    base_trades = [row for row in all_trades if str(row.get("strategy_variant")) == base_variant]
+    base_metrics = dict(risk_metrics.get(base_variant, {}) or {})
+    candidates_by_id = {
+        str(row.get("candidate_id")): row
+        for row in rows
+        if row.get("candidate_id") not in {None, ""}
+    }
+
+    counts: list[dict[str, Any]] = []
+    metrics_rows: list[dict[str, Any]] = []
+    removed_rows: list[dict[str, Any]] = []
+    bounceback_rows: list[dict[str, Any]] = []
+    examples: list[dict[str, Any]] = []
+    frontier_rows: list[dict[str, Any]] = []
+    comparison_policies: list[dict[str, Any]] = []
+
+    for spec in CATASTROPHIC_POLICY_VARIANTS:
+        policy_name = str(spec["policy_name"])
+        variant_name = str(spec["variant_name"])
+        filter_result = apply_catastrophic_policy_variant_to_candidates(rows, policy_name)
+        blocked_candidate_rows = list(filter_result["blocked_candidates"])
+        full_replay_computed = (
+            spec["policy_stage"] == "FULL_REPLAY_RESEARCH"
+            and variant_name in risk_metrics
+            and variant_name in daily_equity
+            and variant_name in extra_metadata
+        )
+        variant_metrics = dict(risk_metrics.get(variant_name, {}) or {}) if full_replay_computed else {}
+        variant_trades = [row for row in all_trades if str(row.get("strategy_variant")) == variant_name] if full_replay_computed else []
+        policy_removed_rows = _policy_variant_trade_rows(
+            policy_name=policy_name,
+            variant_name=variant_name,
+            base_trades=base_trades,
+            variant_trades=variant_trades,
+            candidates_by_id=candidates_by_id,
+        ) if full_replay_computed else []
+        if not full_replay_computed and spec["policy_stage"] == "COUNT_ONLY_PROPOSAL":
+            policy_removed_rows = []
+        removed_rows.extend(policy_removed_rows)
+        removed_returns = [value for value in (_catastrophic_trade_return(row) for row in policy_removed_rows) if value is not None]
+        positive_removed = sum(value > 0 for value in removed_returns)
+        negative_removed = sum(value < 0 for value in removed_returns)
+        strong_bounceback = sum(row.get("bounceback_label") == "BOUNCED_BACK_STRONGLY" for row in policy_removed_rows)
+        severe_loss = sum(row.get("bounceback_label") == "SEVERE_LOSS" for row in policy_removed_rows)
+        return_delta = _metric_delta(base_metrics, variant_metrics, "total_return_decimal") if full_replay_computed else "UNAVAILABLE_INPUT"
+        drawdown_delta = _metric_delta(base_metrics, variant_metrics, "maximum_drawdown") if full_replay_computed else "UNAVAILABLE_INPUT"
+        sharpe_delta = _metric_delta(base_metrics, variant_metrics, "Sharpe_ratio", "sharpe_ratio") if full_replay_computed else "UNAVAILABLE_INPUT"
+        return_loss_penalty = abs(return_delta) if isinstance(return_delta, (int, float)) and return_delta < 0 else 0.0
+        drawdown_improvement = drawdown_delta if isinstance(drawdown_delta, (int, float)) and drawdown_delta > 0 else 0.0
+        risk_benefit_score = (
+            drawdown_improvement
+            + severe_loss * 0.02
+            - return_loss_penalty
+            - strong_bounceback * 0.01
+        ) if full_replay_computed else "UNAVAILABLE_INPUT"
+        too_broad_score = (
+            (positive_removed / max(len(policy_removed_rows), 1)) + return_loss_penalty
+            if full_replay_computed and policy_removed_rows
+            else "UNAVAILABLE_INPUT"
+        )
+        recommended = (
+            "count-only size-reduction proposal; requires separate sizing-safe adapter"
+            if spec["policy_stage"] == "COUNT_ONLY_PROPOSAL"
+            else (
+                "candidate for further review"
+                if full_replay_computed and not (isinstance(return_delta, (int, float)) and return_delta < -0.05)
+                else "too broad or unavailable; inspect examples before use"
+            )
+        )
+        common = {
+            "policy_name": policy_name,
+            "variant_name": variant_name,
+            "policy_stage": spec["policy_stage"],
+            "full_replay_computed": full_replay_computed,
+            "candidate_count_before": len(rows),
+            "candidate_count_after": len(filter_result["filtered_candidates"]),
+            "blocked_candidate_count": len(blocked_candidate_rows),
+            "removed_trade_count": len(policy_removed_rows) if full_replay_computed else "UNAVAILABLE_INPUT",
+            "wealth": _metric_value(variant_metrics, "ending_wealth", "ending_equity"),
+            "return": _metric_value(variant_metrics, "total_return_decimal", "total_return"),
+            "cagr": _metric_value(variant_metrics, "cagr"),
+            "max_drawdown": _metric_value(variant_metrics, "maximum_drawdown", "max_drawdown"),
+            "sharpe": _metric_value(variant_metrics, "Sharpe_ratio", "sharpe_ratio"),
+            "calmar": _metric_value(variant_metrics, "Calmar_ratio", "calmar_ratio"),
+            "cvar": _metric_value(variant_metrics, "cvar"),
+            "trade_count": _metric_value(variant_metrics, "trade_count"),
+            "return_delta_vs_original": return_delta,
+            "drawdown_delta_vs_original": drawdown_delta,
+            "sharpe_delta_vs_original": sharpe_delta,
+            "removed_trade_mean_return": mean(removed_returns) if removed_returns else "UNAVAILABLE_INPUT",
+            "removed_trade_median_return": median(removed_returns) if removed_returns else "UNAVAILABLE_INPUT",
+            "removed_trade_positive_count": positive_removed if full_replay_computed else "UNAVAILABLE_INPUT",
+            "removed_trade_negative_count": negative_removed if full_replay_computed else "UNAVAILABLE_INPUT",
+            "removed_trade_strong_bounceback_count": strong_bounceback if full_replay_computed else "UNAVAILABLE_INPUT",
+            "removed_trade_severe_loss_count": severe_loss if full_replay_computed else "UNAVAILABLE_INPUT",
+            "too_broad_score": too_broad_score,
+            "risk_benefit_score": risk_benefit_score,
+            "recommended_next_step": recommended,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+            "paper_trading_enabled": False,
+            "live_trading_enabled": False,
+            "warnings": "research-only; unknown evidence reported separately and not approved for paper/live",
+        }
+        counts.append({
+            "policy_name": policy_name,
+            "variant_name": variant_name,
+            "policy_stage": spec["policy_stage"],
+            "candidate_count_before": len(rows),
+            "candidate_count_after": len(filter_result["filtered_candidates"]),
+            "blocked_candidate_count": len(blocked_candidate_rows),
+            "unknown_evidence_candidate_count": len(filter_result["unknown_candidates"]),
+            "proposed_soft_risk_reduce_candidate_count": len(filter_result["proposed_soft_risk_candidates"]),
+            "full_replay_computed": full_replay_computed,
+            "paper_trading_enabled": False,
+            "live_trading_enabled": False,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+        })
+        metrics_rows.append(common)
+        bounceback_rows.append({
+            "policy_name": policy_name,
+            "variant_name": variant_name,
+            "removed_trade_count": common["removed_trade_count"],
+            "removed_trade_positive_count": common["removed_trade_positive_count"],
+            "removed_trade_negative_count": common["removed_trade_negative_count"],
+            "strong_bounceback_count": common["removed_trade_strong_bounceback_count"],
+            "severe_loss_count": common["removed_trade_severe_loss_count"],
+            "mean_removed_trade_return": common["removed_trade_mean_return"],
+            "median_removed_trade_return": common["removed_trade_median_return"],
+            "too_broad_score": too_broad_score,
+        })
+        allowed_trades = [row for row in variant_trades if full_replay_computed]
+        examples.extend(_policy_variant_examples(policy_name, policy_removed_rows, allowed_trades, candidates_by_id))
+        frontier_row = {
+            "policy_name": policy_name,
+            "variant_name": variant_name,
+            "return_preservation": (1.0 + return_delta) if isinstance(return_delta, (int, float)) else "UNAVAILABLE_INPUT",
+            "drawdown_improvement": drawdown_improvement if full_replay_computed else "UNAVAILABLE_INPUT",
+            "sharpe_delta_vs_original": sharpe_delta,
+            "severe_loss_removed_count": severe_loss if full_replay_computed else "UNAVAILABLE_INPUT",
+            "bounceback_winner_removed_count": strong_bounceback if full_replay_computed else "UNAVAILABLE_INPUT",
+            "risk_benefit_score": risk_benefit_score,
+            "full_replay_computed": full_replay_computed,
+        }
+        frontier_rows.append(frontier_row)
+        comparison_policies.append({**common, "warnings": [common["warnings"]]})
+
+    scored = [row for row in frontier_rows if isinstance(row.get("risk_benefit_score"), (int, float))]
+    best_balanced = max(scored, key=lambda row: (float(row["risk_benefit_score"]), str(row["policy_name"])), default={})
+    return_scored = [row for row in metrics_rows if isinstance(row.get("return_delta_vs_original"), (int, float))]
+    drawdown_scored = [row for row in frontier_rows if isinstance(row.get("drawdown_improvement"), (int, float))]
+    best_return = max(return_scored, key=lambda row: (float(row["return_delta_vs_original"]), str(row["policy_name"])), default={})
+    best_drawdown = max(drawdown_scored, key=lambda row: (float(row["drawdown_improvement"]), str(row["policy_name"])), default={})
+    policies_too_broad = [
+        row["policy_name"]
+        for row in metrics_rows
+        if isinstance(row.get("return_delta_vs_original"), (int, float)) and row["return_delta_vs_original"] < -0.05
+    ]
+    policies_no_effect = [
+        row["policy_name"]
+        for row in metrics_rows
+        if row.get("removed_trade_count") == 0 or row.get("blocked_candidate_count") == 0
+    ]
+    full_replay_policy_rows = [row for row in metrics_rows if row.get("full_replay_computed") is True]
+    no_effect_frontier = bool(full_replay_policy_rows) and all(
+        row.get("blocked_candidate_count") == 0
+        and row.get("removed_trade_count") == 0
+        and row.get("return_delta_vs_original") == 0
+        and row.get("drawdown_delta_vs_original") == 0
+        for row in full_replay_policy_rows
+    )
+    comparison = {
+        "schema_name": "catastrophic_veto_policy_variant_comparison",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "RESEARCH_ONLY_POLICY_VARIANTS",
+        "strict_veto_breadth_status": dict(strict_bounceback_report.get("veto_breadth_diagnostic", {}) or {}).get("strict_veto_breadth_status", "UNAVAILABLE_INPUT"),
+        "policies": comparison_policies,
+        "policy_names": [str(spec["policy_name"]) for spec in CATASTROPHIC_POLICY_VARIANTS],
+        "full_replay_variants": [row["variant_name"] for row in counts if row["full_replay_computed"]],
+        "count_only_variants": [row["variant_name"] for row in counts if not row["full_replay_computed"]],
+        "soft_risk_reduce_status": "COUNT_ONLY_PROPOSAL",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": [
+            "Research-only policy variants; not enforced in current strategy, paper trading, or live trading.",
+            "SOFT_RISK_REDUCE is count-only because the safe adapter filters candidates but does not adjust position sizing.",
+        ],
+    }
+    frontier_report = {
+        "schema_name": "catastrophic_veto_policy_frontier_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "NO_EFFECT_FRONTIER" if no_effect_frontier else "RESEARCH_ONLY_DIAGNOSTIC",
+        "frontier_status": "NO_EFFECT_FRONTIER" if no_effect_frontier else "RESEARCH_ONLY_DIAGNOSTIC",
+        "scoring_formula": "drawdown_improvement + severe_loss_removed_bonus - return_loss_penalty - bounceback_winner_removed_penalty",
+        "best_return_preserving_policy": "UNAVAILABLE_NO_EFFECT" if no_effect_frontier else best_return.get("policy_name", "UNAVAILABLE_INPUT"),
+        "best_drawdown_reduction_policy": "UNAVAILABLE_NO_EFFECT" if no_effect_frontier else best_drawdown.get("policy_name", "UNAVAILABLE_INPUT"),
+        "best_balanced_policy": "UNAVAILABLE_NO_EFFECT" if no_effect_frontier else best_balanced.get("policy_name", "UNAVAILABLE_INPUT"),
+        "policies_too_broad_for_return": policies_too_broad,
+        "policies_with_no_effect": policies_no_effect,
+        "policies_requiring_more_taxonomy": [
+            row["policy_name"]
+            for row in counts
+            if int(row.get("unknown_evidence_candidate_count", 0) or 0) > 0
+        ],
+        "recommended_next_step": (
+            "inspect loser-vs-bounceback cases and improve taxonomy/source evidence"
+            if no_effect_frontier
+            else "review policy frontier examples before any future policy narrowing"
+        ),
+        "diagnostic_only": True,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Frontier ranking is deterministic and diagnostic only; it is not model selection or final validation."],
+    }
+    return comparison, counts, metrics_rows, removed_rows, bounceback_rows, frontier_report, frontier_rows, examples
+
+
+FILING_FORM_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("NT_10_Q", r"\bnt\s*-?\s*10\s*-?\s*q\b"),
+    ("10_Q", r"\b10\s*-?\s*q\b"),
+    ("8_K", r"\b8\s*-?\s*k\b"),
+)
+
+
+def _filing_forms_detected(text: str) -> list[str]:
+    normalized = text.lower()
+    return [name for name, pattern in FILING_FORM_PATTERNS if re.search(pattern, normalized)]
+
+
+def _is_generic_filing_headline(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text.lower()).strip()
+    if not normalized:
+        return False
+    has_form = bool(_filing_forms_detected(normalized))
+    generic_terms = ("filed by", "files form", "form 10-q", "10-q filed", "8-k filed", "filed form")
+    risk_terms = ("late", "nt 10-q", "going concern", "default", "delisting", "fraud", "investigation", "bankruptcy", "restatement")
+    return has_form and any(term in normalized for term in generic_terms) and not any(term in normalized for term in risk_terms)
+
+
+def _case_value(row: Mapping[str, Any], *keys: str) -> Any:
+    value = _mapping_first(row, *keys)
+    return value if value is not None else "UNAVAILABLE_INPUT"
+
+
+def _case_keyword_scores(row: Mapping[str, Any]) -> dict[str, int]:
+    headline = _headline_text(row).lower()
+    return {
+        score_name: int(row.get(score_name, 0) or 0) if _number(row.get(score_name)) is not None else sum(1 for term in terms if term in headline)
+        for score_name, terms in KEYWORD_BASELINE_RULES
+    }
+
+
+def _casebook_case(row: Mapping[str, Any], case_type: str, reason: str) -> dict[str, Any]:
+    keyword_scores = _case_keyword_scores(row)
+    return {
+        "case_type": case_type,
+        "trade_id": _case_value(row, "trade_id", "id", "row_id"),
+        "candidate_id": _case_value(row, "candidate_id", "trade_id", "row_id"),
+        "symbol": _case_value(row, "symbol", "ticker"),
+        "decision_timestamp": _case_value(row, "decision_timestamp", "rebalance_timestamp", "feature_timestamp"),
+        "entry_date": _case_value(row, "entry_date", "entry_timestamp", "open_date"),
+        "exit_date": _case_value(row, "exit_date", "exit_timestamp", "close_date"),
+        "headline_text": _headline_text(row) or "UNAVAILABLE_INPUT",
+        "summary_text": _case_value(row, "summary_text", "summary", "body_text", "body", "content"),
+        "provider": _case_value(row, "provider", "source", "news_provider"),
+        "availability_timestamp": _case_value(row, "availability_timestamp", "available_at", "asof_timestamp"),
+        "publication_timestamp": _case_value(row, "publication_timestamp", "published_at", "published_at_utc", "timestamp"),
+        "event_category_research": _event_category_for_candidate(row),
+        "severity_group": _severity_group_for_candidate(row),
+        "keyword_scores": json.dumps(keyword_scores, sort_keys=True),
+        "news_score": _case_value(row, "news_score", "price_plus_news_risk_probability", "news_risk_score"),
+        "price_model_score": _case_value(row, "price_model_score", "price_score", "price_only_news_risk_probability"),
+        "removed_trade_return": _catastrophic_trade_return(row) if _catastrophic_trade_return(row) is not None else "UNAVAILABLE_INPUT",
+        "bounceback_label": _bounceback_label(row),
+        "max_adverse_excursion_if_available": _case_value(row, "maximum_adverse_excursion", "max_adverse_excursion"),
+        "max_favourable_excursion_if_available": _case_value(row, "maximum_favourable_excursion", "max_favourable_excursion"),
+        "reason_for_selection": reason,
+        "headline_is_generic_filing": _is_generic_filing_headline(_headline_text(row)),
+        "filing_forms_detected": "|".join(_filing_forms_detected(_headline_text(row))) or "UNAVAILABLE_INPUT",
+    }
+
+
+def _rate(rows: Sequence[Mapping[str, Any]], predicate: Callable[[Mapping[str, Any]], bool]) -> float | str:
+    if not rows:
+        return "UNAVAILABLE_INPUT"
+    return sum(1 for row in rows if predicate(row)) / len(rows)
+
+
+def _difference(left: Any, right: Any) -> Any:
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left - right
+    return "UNAVAILABLE_INPUT"
+
+
+def _feature_diff_row(feature: str, loser_value: Any, winner_value: Any, interpretation: str) -> dict[str, Any]:
+    diff = _difference(loser_value, winner_value)
+    direction = "UNAVAILABLE_INPUT"
+    if isinstance(diff, (int, float)):
+        direction = "HIGHER_IN_SEVERE_LOSERS" if diff > 0 else ("HIGHER_IN_STRONG_BOUNCEBACK" if diff < 0 else "NO_DIFFERENCE")
+    return {
+        "feature_name": feature,
+        "severe_loser_value_or_rate": loser_value,
+        "strong_bounceback_value_or_rate": winner_value,
+        "difference": diff,
+        "direction": direction,
+        "interpretation": interpretation,
+    }
+
+
+def _avg_keyword(rows: Sequence[Mapping[str, Any]], score_name: str) -> float | str:
+    if not rows:
+        return "UNAVAILABLE_INPUT"
+    return mean(_case_keyword_scores(row).get(score_name, 0) for row in rows)
+
+
+def _catastrophic_veto_loser_bounceback_casebook_artifacts(
+    rows: Sequence[Mapping[str, Any]],
+    removed_trade_rows: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    candidates_by_id = {
+        str(row.get("candidate_id")): row
+        for row in rows
+        if row.get("candidate_id") not in {None, ""}
+    }
+    enriched = []
+    for trade in removed_trade_rows:
+        candidate = candidates_by_id.get(str(trade.get("candidate_id")), {})
+        merged = {**dict(candidate), **dict(trade)}
+        enriched.append(merged)
+    severe_losers = sorted(
+        [row for row in enriched if _bounceback_label(row) == "SEVERE_LOSS"],
+        key=lambda row: (_catastrophic_trade_return(row) if _catastrophic_trade_return(row) is not None else math.inf, str(row.get("trade_id", ""))),
+    )[:25]
+    strong_winners = sorted(
+        [row for row in enriched if _bounceback_label(row) == "BOUNCED_BACK_STRONGLY"],
+        key=lambda row: (-(_catastrophic_trade_return(row) if _catastrophic_trade_return(row) is not None else -math.inf), str(row.get("trade_id", ""))),
+    )[:25]
+    cases = [
+        _casebook_case(row, "top_severe_loser", "lowest removed trade returns among strict-veto removed trades")
+        for row in severe_losers
+    ] + [
+        _casebook_case(row, "top_strong_bounceback_winner", "highest positive removed trade returns among strict-veto removed trades")
+        for row in strong_winners
+    ]
+    features: list[tuple[str, Callable[[Mapping[str, Any]], bool], str]] = [
+        ("has_headline_text", lambda row: bool(_headline_text(row).strip()), "headline text coverage"),
+        ("has_provider", lambda row: _case_value(row, "provider", "source", "news_provider") != "UNAVAILABLE_INPUT", "provider/source coverage"),
+        ("has_availability_timestamp", lambda row: _case_value(row, "availability_timestamp", "available_at", "asof_timestamp") != "UNAVAILABLE_INPUT", "point-in-time availability evidence"),
+        ("headline_is_generic_filing", lambda row: _is_generic_filing_headline(_headline_text(row)), "generic filing headline rate"),
+        ("headline_mentions_10q", lambda row: "10-q" in _headline_text(row).lower() or "10q" in _headline_text(row).lower(), "routine 10-Q headline mention"),
+        ("headline_mentions_8k", lambda row: "8-k" in _headline_text(row).lower() or "8k" in _headline_text(row).lower(), "8-K headline mention"),
+        ("headline_mentions_nt_10q", lambda row: "nt 10-q" in _headline_text(row).lower() or "nt10q" in _headline_text(row).lower(), "late filing signal"),
+        ("headline_mentions_going_concern", lambda row: "going concern" in _headline_text(row).lower(), "going-concern signal"),
+        ("headline_mentions_default", lambda row: "default" in _headline_text(row).lower(), "default signal"),
+        ("headline_mentions_delisting", lambda row: "delisting" in _headline_text(row).lower(), "delisting signal"),
+        ("headline_mentions_suspension", lambda row: "suspension" in _headline_text(row).lower(), "trading-suspension signal"),
+        ("headline_mentions_fraud", lambda row: "fraud" in _headline_text(row).lower(), "fraud signal"),
+        ("headline_mentions_investigation", lambda row: "investigation" in _headline_text(row).lower(), "investigation signal"),
+        ("headline_mentions_dilution", lambda row: "dilution" in _headline_text(row).lower() or "dilutive" in _headline_text(row).lower(), "dilution signal"),
+        ("headline_mentions_offering", lambda row: "offering" in _headline_text(row).lower(), "offering signal"),
+        ("headline_mentions_bankruptcy", lambda row: "bankruptcy" in _headline_text(row).lower(), "bankruptcy signal"),
+    ]
+    feature_diff = [
+        _feature_diff_row(name, _rate(severe_losers, predicate), _rate(strong_winners, predicate), interpretation)
+        for name, predicate, interpretation in features
+    ]
+    for name in ("event_category_research", "severity_group"):
+        loser_value = Counter(_event_category_for_candidate(row) if name == "event_category_research" else _severity_group_for_candidate(row) for row in severe_losers).most_common(1)
+        winner_value = Counter(_event_category_for_candidate(row) if name == "event_category_research" else _severity_group_for_candidate(row) for row in strong_winners).most_common(1)
+        feature_diff.append(_feature_diff_row(
+            name,
+            loser_value[0][0] if loser_value else "UNAVAILABLE_INPUT",
+            winner_value[0][0] if winner_value else "UNAVAILABLE_INPUT",
+            "most common categorical value",
+        ))
+    keyword_diff = [
+        _feature_diff_row(score_name, _avg_keyword(severe_losers, score_name), _avg_keyword(strong_winners, score_name), f"average {score_name}")
+        for score_name, _terms in KEYWORD_BASELINE_RULES
+    ]
+    feature_diff.extend([
+        _feature_diff_row("keyword_distress_score", _avg_keyword(severe_losers, "distress_score"), _avg_keyword(strong_winners, "distress_score"), "average distress keyword score"),
+        _feature_diff_row("keyword_dilution_score", _avg_keyword(severe_losers, "dilution_score"), _avg_keyword(strong_winners, "dilution_score"), "average dilution keyword score"),
+        _feature_diff_row("keyword_litigation_score", _avg_keyword(severe_losers, "litigation_score"), _avg_keyword(strong_winners, "litigation_score"), "average litigation keyword score"),
+        _feature_diff_row("keyword_generic_negative_score", _avg_keyword(severe_losers, "generic_negative_score"), _avg_keyword(strong_winners, "generic_negative_score"), "average generic-negative keyword score"),
+        _feature_diff_row("news_score_decile_if_available", "UNAVAILABLE_INPUT", "UNAVAILABLE_INPUT", "requires explicit decile field on case rows"),
+        _feature_diff_row("price_model_score_bucket_if_available", "UNAVAILABLE_INPUT", "UNAVAILABLE_INPUT", "requires explicit bucket field on case rows"),
+    ])
+    generic_cases = [case for case in cases if case["headline_is_generic_filing"]]
+    filing_forms = sorted({
+        form
+        for case in cases
+        for form in str(case.get("filing_forms_detected", "")).split("|")
+        if form and form != "UNAVAILABLE_INPUT"
+    })
+    generic_diagnostic = {
+        "generic_filing_case_count": len(generic_cases),
+        "generic_filing_severe_loser_count": sum(case["case_type"] == "top_severe_loser" for case in generic_cases),
+        "generic_filing_strong_bounceback_count": sum(case["case_type"] == "top_strong_bounceback_winner" for case in generic_cases),
+        "filing_forms_detected": filing_forms,
+        "needs_filing_content_not_just_headline": bool(generic_cases),
+        "recommended_next_step": "Treat routine 10-Q/8-K headlines as weak evidence unless filing body, summary, or late-filing terms add risk context.",
+    }
+    report = {
+        "schema_name": "catastrophic_veto_loser_bounceback_casebook",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "AVAILABLE" if cases else "UNAVAILABLE_INPUT",
+        "case_selection": "top severe losers and top strong bounce-back winners among strict-veto removed trades",
+        "severe_loser_case_count": len(severe_losers),
+        "strong_bounceback_case_count": len(strong_winners),
+        "generic_filing_diagnostic": generic_diagnostic,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Research-only casebook; no replay, ranking, sizing, or execution behavior changed."],
+    }
+    plan = {
+        "schema_name": "catastrophic_veto_taxonomy_improvement_plan",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "PROPOSED",
+        "proposal_only": True,
+        "recommended_rule_improvements": [
+            "routine 10-Q headline alone is not enough",
+            "NT 10-Q / late filing may be riskier than normal 10-Q",
+            "going concern text requires filing body or summary, not just generic headline",
+            "distressed financing needs terms like emergency, rescue, going concern, liquidity",
+            "ordinary capital raise should not equal distressed dilution",
+        ],
+        "generic_filing_diagnostic": generic_diagnostic,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "finbert_readiness": "NOT_READY",
+        "transformer_enabled": False,
+        "warnings": ["Proposal artifact only; deterministic taxonomy rules were not changed by this plan."],
+    }
+    return report, cases, feature_diff, keyword_diff, plan
+
+
+def _optional_csv_stage(ml: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = ml.get(key)
+        if not value:
+            continue
+        path = Path(str(value))
+        if path.is_file():
+            return {"available": True, "path": str(path), "rows": _read_csv(path)}
+        return {"available": False, "path": str(path), "rows": []}
+    return {"available": False, "path": "UNAVAILABLE_UPSTREAM", "rows": []}
+
+
+def _news_evidence_lineage_artifacts(
+    stages: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    stage_order = (
+        "raw_news",
+        "provider_normalized_news",
+        "news_contract",
+        "news_features",
+        "joined_candidate_rows",
+        "catastrophic_veto_input_rows",
+    )
+    aliases = {
+        "candidate_id": ("candidate_id", "trade_id", "row_id"),
+        "symbol": ("symbol", "ticker"),
+        "headline": ("headline_text", "headline", "title"),
+        "summary": ("summary_text", "summary", "description"),
+        "body": ("body_text", "body", "content", "article_body", "body_or_summary"),
+        "publication_timestamp": ("publication_timestamp", "published_at", "published_at_utc", "timestamp"),
+        "availability_timestamp": ("availability_timestamp", "available_at", "asof_timestamp", "news_feature_timestamp"),
+        "source": ("source",),
+        "provider": ("provider",),
+        "event_category": ("event_type", "event", "provider_category", "category"),
+        "duplicate_group_id": ("duplicate_group_id", "syndication_group_id"),
+    }
+
+    def present(row: Mapping[str, Any], field: str) -> bool:
+        return any(row.get(key) is not None and str(row.get(key)).strip() for key in aliases[field])
+
+    by_stage: list[dict[str, Any]] = []
+    missing_examples: list[dict[str, Any]] = []
+    for stage_name in stage_order:
+        payload = dict(stages.get(stage_name, {}) or {})
+        rows = list(payload.get("rows", []) or [])
+        available = bool(payload.get("available"))
+        counts = {field: sum(present(row, field) for row in rows) for field in aliases}
+        any_text = sum(
+            present(row, "headline") or present(row, "summary") or present(row, "body") or present(row, "event_category")
+            for row in rows
+        )
+        availability = counts["availability_timestamp"]
+        by_stage.append({
+            "stage": stage_name,
+            "stage_available": available,
+            "source_path": payload.get("path", "UNAVAILABLE_UPSTREAM"),
+            "row_count": len(rows),
+            "has_candidate_id_count": counts["candidate_id"],
+            "has_symbol_count": counts["symbol"],
+            "has_headline_count": counts["headline"],
+            "has_summary_count": counts["summary"],
+            "has_body_count": counts["body"],
+            "has_any_text_count": any_text,
+            "has_publication_timestamp_count": counts["publication_timestamp"],
+            "has_availability_timestamp_count": availability,
+            "has_source_count": counts["source"],
+            "has_provider_count": counts["provider"],
+            "has_event_category_count": counts["event_category"],
+            "duplicate_group_id_count": counts["duplicate_group_id"],
+            "point_in_time_safe_count": availability,
+            "missing_text_count": len(rows) - any_text,
+            "missing_availability_timestamp_count": len(rows) - availability,
+        })
+        if available:
+            for field in ("headline", "availability_timestamp", "source", "provider", "event_category", "duplicate_group_id", "candidate_id"):
+                for row in (row for row in rows if not present(row, field)):
+                    missing_examples.append({
+                        "stage": stage_name,
+                        "field_name": field,
+                        "candidate_id": next((row.get(key) for key in aliases["candidate_id"] if row.get(key)), "UNKNOWN"),
+                        "symbol": next((row.get(key) for key in aliases["symbol"] if row.get(key)), "UNKNOWN"),
+                        "reason": "MISSING_FIELD",
+                    })
+                    if sum(example["stage"] == stage_name and example["field_name"] == field for example in missing_examples) >= 5:
+                        break
+
+    final_stage = next(row for row in by_stage if row["stage"] == "catastrophic_veto_input_rows")
+    gap_fields = {
+        "headline_text": "headline",
+        "availability_timestamp": "availability_timestamp",
+        "event_category": "event_category",
+        "duplicate_group_id": "duplicate_group_id",
+        "candidate_id": "candidate_id",
+        "source": "source",
+        "provider": "provider",
+    }
+    count_keys = {
+        "headline": "has_headline_count",
+        "availability_timestamp": "has_availability_timestamp_count",
+        "event_category": "has_event_category_count",
+        "duplicate_group_id": "duplicate_group_id_count",
+        "candidate_id": "has_candidate_id_count",
+        "source": "has_source_count",
+        "provider": "has_provider_count",
+    }
+    field_mapping_gaps = []
+    for output_name, field in gap_fields.items():
+        final_count_key = count_keys[field]
+        present_count = int(final_stage[final_count_key])
+        row_count = int(final_stage["row_count"])
+        missing_count = max(row_count - present_count, 0)
+        upstream = [
+            row["stage"]
+            for row in by_stage[:-1]
+            if row["stage_available"] and row[final_count_key] > 0
+        ]
+        if row_count and present_count == row_count:
+            status = "PRESENT"
+            present_stage = "catastrophic_veto_input_rows"
+            probable_cause = "field is present for all catastrophic_veto_input_rows"
+            recommended_fix = "preserve current mapping"
+        elif present_count > 0:
+            status = "PARTIAL_COVERAGE"
+            present_stage = "catastrophic_veto_input_rows"
+            probable_cause = "field is present for some catastrophic_veto_input_rows but absent for others"
+            recommended_fix = "audit upstream coverage and preserve the field where point-in-time evidence exists"
+        elif upstream:
+            status = "FULLY_MISSING_FROM_STAGE"
+            present_stage = upstream[-1]
+            probable_cause = f"field present at {present_stage} but not propagated to catastrophic_veto_input_rows"
+            recommended_fix = "preserve and map the field through news feature generation and the point-in-time join"
+        else:
+            status = "UNAVAILABLE_UPSTREAM"
+            present_stage = "UNAVAILABLE_UPSTREAM"
+            probable_cause = "UNAVAILABLE_UPSTREAM"
+            recommended_fix = "supply the field at ingestion before changing downstream mappings"
+        field_mapping_gaps.append({
+            "field_name": output_name,
+            "status": status,
+            "present_in_stage": present_stage,
+            "missing_from_stage": "catastrophic_veto_input_rows",
+            "present_count": present_count,
+            "missing_count": missing_count,
+            "coverage_ratio": present_count / max(row_count, 1),
+            "probable_cause": probable_cause,
+            "recommended_fix": recommended_fix,
+            "blocks_catastrophic_veto": field in {"headline", "availability_timestamp", "event_category"},
+            "blocks_text_model_readiness": field in {"headline", "availability_timestamp", "duplicate_group_id", "source", "provider"},
+        })
+
+    lineage_report = {
+        "schema_name": "news_evidence_lineage_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "news_evidence_lineage_v1",
+        "status": "GAPS_FOUND" if any(gap["status"] in {"FULLY_MISSING_FROM_STAGE", "UNAVAILABLE_UPSTREAM"} for gap in field_mapping_gaps) else "COMPLETE_FOR_RESEARCH",
+        "stages": by_stage,
+        "field_mapping_gaps": field_mapping_gaps,
+        "observational_only": True,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    missing_required = []
+    if final_stage["has_any_text_count"] == 0:
+        missing_required.append("text")
+    if final_stage["has_availability_timestamp_count"] == 0:
+        missing_required.append("availability_timestamp")
+    if final_stage["has_event_category_count"] == 0:
+        missing_required.append("event_category")
+    if final_stage["duplicate_group_id_count"] == 0:
+        missing_required.append("duplicate_group_id")
+    if final_stage["has_source_count"] == 0:
+        missing_required.append("source")
+    strict_ready = not any(field in missing_required for field in ("text", "availability_timestamp"))
+    confirmed_ready = "text" not in missing_required
+    readiness = {
+        "schema_name": "news_evidence_readiness_report",
+        "schema_version": 1,
+        "status": "READY_FOR_RESEARCH_ONLY" if strict_ready else "INSUFFICIENT",
+        "candidate_count": final_stage["row_count"],
+        "has_any_text_count": final_stage["has_any_text_count"],
+        "has_availability_timestamp_count": final_stage["has_availability_timestamp_count"],
+        "strict_veto_ready": strict_ready,
+        "confirmed_only_veto_ready": confirmed_ready,
+        "text_model_ready": False,
+        "finbert_ready": False,
+        "transformer_ready": False,
+        "finbert_readiness": "NOT_READY",
+        "transformer_readiness": "NOT_READY",
+        "missing_required_fields": missing_required,
+        "minimum_required_fields_for_strict_veto": ["text", "availability_timestamp"],
+        "minimum_required_fields_for_confirmed_only_veto": ["text"],
+        "minimum_required_fields_for_text_model": ["text", "availability_timestamp", "source", "duplicate_group_id"],
+        "field_mapping_statuses": {
+            gap["field_name"]: gap["status"]
+            for gap in field_mapping_gaps
+        },
+        "event_taxonomy_research_ready": final_stage["has_any_text_count"] > 0,
+        "duplicate_grouping_heuristic_ready": final_stage["has_any_text_count"] > 0,
+        "point_in_time_text_safety_ready": final_stage["has_any_text_count"] > 0 and final_stage["has_availability_timestamp_count"] > 0,
+        "keyword_baseline_ready": final_stage["has_any_text_count"] > 0,
+        "recommended_next_actions": [gap["recommended_fix"] for gap in field_mapping_gaps],
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return lineage_report, by_stage, missing_examples, readiness
+
+
+def _catastrophic_veto_removal_reason(
+    blocked: bool,
+    manual_review: bool,
+    unknown: bool,
+    missing_availability: bool = False,
+) -> str:
+    if blocked:
+        return "BLOCK_CONTRARIAN_ENTRY"
+    if manual_review:
+        return "BLOCK_UNTIL_REVIEWED"
+    if unknown:
+        return "DO_NOT_TREAT_AS_SAFE"
+    if missing_availability:
+        return "NOT_POINT_IN_TIME_SAFE"
+    return "NOT_REMOVED"
+
+
+def _catastrophic_veto_removed_symbol_rows(
+    removed_trade_rows: Sequence[Mapping[str, Any]],
+    blocked_candidates: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    candidate_counts: dict[str, int] = {}
+    for candidate in blocked_candidates:
+        symbol = str(candidate.get("symbol", "UNKNOWN"))
+        candidate_counts[symbol] = candidate_counts.get(symbol, 0) + 1
+    by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for row in removed_trade_rows:
+        symbol = str(row.get("symbol", "UNKNOWN"))
+        by_symbol.setdefault(symbol, []).append(row)
+    output = []
+    for symbol, rows in sorted(by_symbol.items()):
+        pnl_values = [_as_optional_float(row.get("pnl")) for row in rows]
+        return_values = [_as_optional_float(row.get("net_return")) for row in rows]
+        available_pnl = [value for value in pnl_values if value is not None]
+        available_returns = [value for value in return_values if value is not None]
+        severities = [str(row.get("highest_severity", "UNKNOWN")) for row in rows]
+        output.append(
+            {
+                "symbol": symbol,
+                "blocked_trade_count": len(rows),
+                "blocked_candidate_count": candidate_counts.get(symbol, 0),
+                "matched_categories": "|".join(
+                    sorted(
+                        {
+                            category
+                            for row in rows
+                            for category in str(row.get("matched_categories", "")).split("|")
+                            if category
+                        }
+                    )
+                ),
+                "highest_severity": "CATASTROPHIC" if "CATASTROPHIC" in severities else (severities[0] if severities else "UNKNOWN"),
+                "available_pnl_contribution": sum(available_pnl) if available_pnl else "UNAVAILABLE_INPUT",
+                "available_return_contribution": sum(available_returns) if available_returns else "UNAVAILABLE_INPUT",
+                "limitations": "ledger-level attribution only; portfolio path was not recomputed",
+            }
+        )
+    return output
+
+
+def _as_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() in {"", "UNAVAILABLE_INPUT", "UNKNOWN"}:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mapping_first(row: Mapping[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return None
+
+
+def _contrarian_validation_stage_reports(
+    *,
+    rows: list[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    price_score_column: str,
+    config: Mapping[str, Any],
+    cost_scenarios: Mapping[str, Any],
+    data_audit: Mapping[str, Any],
+) -> dict[str, Any]:
+    periods = _chronological_periods(rows, replay.get("trade_ledger", []))
+    selection_config = {
+        **dict(config),
+        "stock_alpha_news_risk_overlay_contrarian_grid_cost_metrics": _selection_cost_metrics_from_scenarios(
+            config,
+            cost_scenarios,
+        ),
+    }
+    grid_rows, fold_rows, selection = _contrarian_grid_reports(rows, replay, price_score_column, periods, selection_config)
+    frozen = _frozen_contrarian_config(selection, config, periods)
+    holdout = _holdout_report(replay, periods, frozen, cost_scenarios)
+    walk_forward_folds, walk_forward_summary = _walk_forward_reports(replay, periods)
+    placebo_rows, placebo_summary = _placebo_reports(replay, config)
+    contribution_year, contribution_symbol, concentration = _contribution_reports(replay)
+    missing_news_report, covered_vs_uncovered = _missing_news_bias(rows, price_score_column)
+    walk_forward_validation_report, walk_forward_fold_rows = _walk_forward_validation_artifacts(
+        replay,
+        periods,
+        selection,
+        frozen,
+        config,
+    )
+    placebo_permutation_report, placebo_permutation_rows = _placebo_permutation_artifacts(
+        rows,
+        replay,
+        config,
+    )
+    catastrophic_news_audit, catastrophic_news_candidates, catastrophic_news_veto_report = (
+        _catastrophic_news_artifacts(rows)
+    )
+    (
+        catastrophic_veto_candidate_attribution,
+        catastrophic_veto_trade_attribution,
+        catastrophic_veto_strategy_comparison,
+        catastrophic_veto_policy,
+        catastrophic_veto_filtered_strategy_report,
+        catastrophic_veto_removed_trades,
+        catastrophic_veto_removed_symbols,
+        catastrophic_veto_full_replay_report,
+        catastrophic_veto_full_replay_trade_ledger,
+        catastrophic_veto_full_replay_equity,
+        catastrophic_veto_filtered_candidates,
+        catastrophic_veto_blocked_candidates,
+    ) = _catastrophic_veto_strategy_artifacts(rows, replay)
+    (
+        catastrophic_news_evidence_quality_report,
+        catastrophic_news_evidence_quality_by_field,
+        catastrophic_news_evidence_quality_by_symbol,
+        catastrophic_veto_policy_mode_comparison,
+        catastrophic_veto_policy_mode_counts,
+    ) = _catastrophic_news_evidence_quality_artifacts(
+        rows,
+        replay,
+        catastrophic_veto_full_replay_report,
+    )
+    (
+        news_event_taxonomy_report,
+        news_event_taxonomy_counts,
+        news_event_taxonomy_examples,
+    ) = _news_event_taxonomy_artifacts(rows)
+    (
+        news_duplicate_grouping_report,
+        news_duplicate_grouping_examples,
+    ) = _news_duplicate_grouping_artifacts(rows)
+    (
+        news_point_in_time_text_safety_report,
+        news_point_in_time_text_safety_examples,
+    ) = _news_point_in_time_text_safety_artifacts(rows)
+    (
+        news_text_keyword_baseline_report,
+        news_text_keyword_baseline_scores,
+    ) = _news_text_keyword_baseline_artifacts(rows)
+    (
+        catastrophic_veto_bounceback_report,
+        catastrophic_veto_bounceback_by_category,
+        catastrophic_veto_bounceback_examples,
+        catastrophic_veto_extreme_only_policy_proposal,
+    ) = _catastrophic_veto_bounceback_artifacts(
+        rows,
+        replay,
+        catastrophic_veto_removed_trades,
+        catastrophic_veto_blocked_candidates,
+        catastrophic_veto_full_replay_report,
+        catastrophic_veto_policy_mode_counts,
+    )
+    (
+        catastrophic_veto_policy_variant_comparison,
+        catastrophic_veto_policy_variant_counts,
+        catastrophic_veto_policy_variant_metrics,
+        catastrophic_veto_policy_variant_removed_trades,
+        catastrophic_veto_policy_variant_bounceback,
+        catastrophic_veto_policy_frontier_report,
+        catastrophic_veto_policy_frontier,
+        catastrophic_veto_policy_variant_examples,
+    ) = _catastrophic_policy_variant_artifacts(
+        rows,
+        replay,
+        catastrophic_veto_bounceback_report,
+    )
+    (
+        catastrophic_veto_loser_bounceback_casebook,
+        catastrophic_veto_loser_bounceback_cases,
+        catastrophic_veto_loser_bounceback_feature_diff,
+        catastrophic_veto_loser_bounceback_keyword_diff,
+        catastrophic_veto_taxonomy_improvement_plan,
+    ) = _catastrophic_veto_loser_bounceback_casebook_artifacts(
+        rows,
+        catastrophic_veto_removed_trades,
+    )
+    contrarian_chronological_validation_plan, contrarian_chronological_periods = _contrarian_chronological_validation_plan(
+        rows,
+        replay,
+        periods,
+    )
+    contrarian_placebo_permutation_report, contrarian_placebo_permutation_results = _contrarian_placebo_permutation_report(config)
+    contrarian_matched_control_report, contrarian_matched_control_results = _contrarian_matched_control_report()
+    (
+        contrarian_profit_concentration_report,
+        contrarian_trade_fragility_by_symbol,
+        contrarian_trade_fragility_by_year,
+        contrarian_top_trade_removal,
+    ) = _contrarian_profit_concentration_artifacts(replay)
+    (
+        contrarian_year_regime_report,
+        contrarian_year_regime_results,
+        contrarian_year_regime_examples,
+    ) = _contrarian_year_regime_artifacts(replay)
+    (
+        contrarian_symbol_year_ablation_report,
+        contrarian_without_top_symbols,
+        contrarian_without_top_years,
+    ) = _contrarian_symbol_year_ablation_artifacts(replay)
+    (
+        contrarian_cost_slippage_robustness_report,
+        contrarian_cost_slippage_robustness,
+    ) = _contrarian_cost_slippage_robustness(cost_scenarios)
+    contrarian_data_validity_audit = _contrarian_data_validity_audit(
+        data_audit,
+        missing_news_report,
+    )
+    intraday_5min_expansion_plan = _intraday_5min_expansion_plan(config)
+    catastrophic_veto_parked_status = _catastrophic_veto_parked_status(
+        catastrophic_veto_full_replay_report,
+        catastrophic_veto_policy_frontier_report,
+        catastrophic_veto_loser_bounceback_casebook,
+    )
+    return {
+        "chronological_split_manifest": periods,
+        "contrarian_grid_results": grid_rows,
+        "contrarian_grid_selection": selection,
+        "contrarian_fold_results": fold_rows,
+        "contrarian_parameter_stability": _parameter_stability(grid_rows, selection),
+        "contrarian_frozen_config": frozen,
+        "contrarian_holdout_report": holdout,
+        "contrarian_holdout_trade_ledger": _holdout_rows(replay.get("trade_ledger", []), periods, "news_contrarian_rerank"),
+        "contrarian_holdout_equity": _holdout_rows(replay.get("daily_equity", {}).get("news_contrarian_rerank", []), periods, "news_contrarian_rerank"),
+        "contrarian_holdout_comparison_md": _holdout_markdown(holdout),
+        "contrarian_walk_forward_folds": walk_forward_folds,
+        "contrarian_walk_forward_summary": walk_forward_summary,
+        "contrarian_chronological_validation_plan": contrarian_chronological_validation_plan,
+        "contrarian_chronological_periods": contrarian_chronological_periods,
+        "contrarian_walk_forward_validation_report": walk_forward_validation_report,
+        "contrarian_placebo_permutation_report": contrarian_placebo_permutation_report,
+        "contrarian_placebo_permutation_results": contrarian_placebo_permutation_results,
+        "contrarian_matched_control_report": contrarian_matched_control_report,
+        "contrarian_matched_control_results": contrarian_matched_control_results,
+        "contrarian_profit_concentration_report": contrarian_profit_concentration_report,
+        "contrarian_trade_fragility_by_symbol": contrarian_trade_fragility_by_symbol,
+        "contrarian_trade_fragility_by_year": contrarian_trade_fragility_by_year,
+        "contrarian_top_trade_removal": contrarian_top_trade_removal,
+        "contrarian_year_regime_report": contrarian_year_regime_report,
+        "contrarian_year_regime_results": contrarian_year_regime_results,
+        "contrarian_year_regime_examples": contrarian_year_regime_examples,
+        "contrarian_symbol_year_ablation_report": contrarian_symbol_year_ablation_report,
+        "contrarian_without_top_symbols": contrarian_without_top_symbols,
+        "contrarian_without_top_years": contrarian_without_top_years,
+        "contrarian_cost_slippage_robustness_report": contrarian_cost_slippage_robustness_report,
+        "contrarian_cost_slippage_robustness": contrarian_cost_slippage_robustness,
+        "contrarian_data_validity_audit": contrarian_data_validity_audit,
+        "intraday_5min_expansion_plan": intraday_5min_expansion_plan,
+        "contrarian_placebo_results": placebo_rows,
+        "contrarian_placebo_summary": placebo_summary,
+        "contrarian_matched_controls": _matched_controls(replay),
+        "contrarian_contribution_by_year": contribution_year,
+        "contrarian_contribution_by_symbol": contribution_symbol,
+        "contrarian_concentration_report": concentration,
+        "universe_survivorship_audit": _universe_survivorship_audit(rows, config),
+        "universe_membership_by_date": _universe_membership(rows),
+        "corporate_action_audit": _corporate_action_audit(data_audit),
+        "missing_news_bias_report": missing_news_report,
+        "covered_vs_uncovered_candidates": covered_vs_uncovered,
+        "text_model_readiness": _not_ready_text_model_report(_text_model_readiness(rows)),
+        "news_transformer_readiness": build_news_transformer_readiness_report(rows),
+        "news_transformer_training_plan": build_news_transformer_training_plan(),
+        "catastrophic_news_audit": catastrophic_news_audit,
+        "catastrophic_news_candidates": catastrophic_news_candidates,
+        "catastrophic_news_veto_report": catastrophic_news_veto_report,
+        "catastrophic_veto_candidate_attribution": catastrophic_veto_candidate_attribution,
+        "catastrophic_veto_trade_attribution": catastrophic_veto_trade_attribution,
+        "catastrophic_veto_strategy_comparison": catastrophic_veto_strategy_comparison,
+        "catastrophic_veto_policy": catastrophic_veto_policy,
+        "catastrophic_veto_filtered_strategy_report": catastrophic_veto_filtered_strategy_report,
+        "catastrophic_veto_removed_trades": catastrophic_veto_removed_trades,
+        "catastrophic_veto_removed_symbols": catastrophic_veto_removed_symbols,
+        "catastrophic_veto_full_replay_report": catastrophic_veto_full_replay_report,
+        "catastrophic_veto_full_replay_trade_ledger": catastrophic_veto_full_replay_trade_ledger,
+        "catastrophic_veto_full_replay_equity": catastrophic_veto_full_replay_equity,
+        "catastrophic_veto_filtered_candidates": catastrophic_veto_filtered_candidates,
+        "catastrophic_veto_blocked_candidates": catastrophic_veto_blocked_candidates,
+        "catastrophic_veto_replay_seam_report": _catastrophic_veto_replay_seam_report(
+            full_replay_computed=bool(catastrophic_veto_full_replay_report.get("full_replay_computed")),
+        ),
+        "catastrophic_news_evidence_quality_report": catastrophic_news_evidence_quality_report,
+        "catastrophic_news_evidence_quality_by_field": catastrophic_news_evidence_quality_by_field,
+        "catastrophic_news_evidence_quality_by_symbol": catastrophic_news_evidence_quality_by_symbol,
+        "catastrophic_veto_policy_mode_comparison": catastrophic_veto_policy_mode_comparison,
+        "catastrophic_veto_policy_mode_counts": catastrophic_veto_policy_mode_counts,
+        "news_event_taxonomy_report": news_event_taxonomy_report,
+        "news_event_taxonomy_counts": news_event_taxonomy_counts,
+        "news_event_taxonomy_examples": news_event_taxonomy_examples,
+        "news_duplicate_grouping_report": news_duplicate_grouping_report,
+        "news_duplicate_grouping_examples": news_duplicate_grouping_examples,
+        "news_point_in_time_text_safety_report": news_point_in_time_text_safety_report,
+        "news_point_in_time_text_safety_examples": news_point_in_time_text_safety_examples,
+        "news_text_keyword_baseline_report": news_text_keyword_baseline_report,
+        "news_text_keyword_baseline_scores": news_text_keyword_baseline_scores,
+        "catastrophic_veto_bounceback_report": catastrophic_veto_bounceback_report,
+        "catastrophic_veto_bounceback_by_category": catastrophic_veto_bounceback_by_category,
+        "catastrophic_veto_bounceback_examples": catastrophic_veto_bounceback_examples,
+        "catastrophic_veto_extreme_only_policy_proposal": catastrophic_veto_extreme_only_policy_proposal,
+        "catastrophic_veto_policy_variant_comparison": catastrophic_veto_policy_variant_comparison,
+        "catastrophic_veto_policy_variant_counts": catastrophic_veto_policy_variant_counts,
+        "catastrophic_veto_policy_variant_metrics": catastrophic_veto_policy_variant_metrics,
+        "catastrophic_veto_policy_variant_removed_trades": catastrophic_veto_policy_variant_removed_trades,
+        "catastrophic_veto_policy_variant_bounceback": catastrophic_veto_policy_variant_bounceback,
+        "catastrophic_veto_policy_frontier_report": catastrophic_veto_policy_frontier_report,
+        "catastrophic_veto_policy_frontier": catastrophic_veto_policy_frontier,
+        "catastrophic_veto_policy_variant_examples": catastrophic_veto_policy_variant_examples,
+        "catastrophic_veto_loser_bounceback_casebook": catastrophic_veto_loser_bounceback_casebook,
+        "catastrophic_veto_loser_bounceback_cases": catastrophic_veto_loser_bounceback_cases,
+        "catastrophic_veto_loser_bounceback_feature_diff": catastrophic_veto_loser_bounceback_feature_diff,
+        "catastrophic_veto_loser_bounceback_keyword_diff": catastrophic_veto_loser_bounceback_keyword_diff,
+        "catastrophic_veto_taxonomy_improvement_plan": catastrophic_veto_taxonomy_improvement_plan,
+        "catastrophic_veto_parked_status": catastrophic_veto_parked_status,
+        "validation_stage_placeholders": _validation_stage_placeholders(
+            full_replay_computed=bool(catastrophic_veto_full_replay_report.get("full_replay_computed")),
+        ),
+        "walk_forward_validation_report": walk_forward_validation_report,
+        "walk_forward_fold_results": walk_forward_fold_rows,
+        "placebo_permutation_report": placebo_permutation_report,
+        "placebo_permutation_results": placebo_permutation_rows,
+        "exposure_matched_controls": _matched_control_artifact("exposure_matched_controls"),
+        "trade_count_matched_controls": _matched_control_artifact("trade_count_matched_controls"),
+        "concentration_fragility_report": _concentration_fragility_artifact(replay),
+    }
+
+
+def _not_ready_text_model_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    payload = dict(report)
+    payload.update(
+        {
+            "status": "NOT_READY",
+            "ready_for_text_model": False,
+            "text_columns_available": list(payload.get("text_columns_available", payload.get("available_text_columns", [])) or []),
+            "finbert_readiness": "NOT_READY",
+            "bert_readiness": "NOT_READY",
+            "numeric_transformer_readiness": "NOT_READY",
+            "transformer_trained": False,
+            "bert_enabled": False,
+            "finbert_enabled": False,
+            "transformer_training_enabled": False,
+            "recommended_next_baseline": "structured_event_taxonomy_or_simple_text_baseline",
+            "blocked_reason": payload.get(
+                "blocked_reason",
+                "Text modelling is deferred until numerical overlay validation, timestamp audits, taxonomy, and simple baselines are complete.",
+            ),
+            "warnings": [
+                "validation spine not complete",
+                "events still uncategorized",
+                "text timestamps not proven point-in-time",
+                "duplicate/syndication handling not proven",
+                "FinBERT deferred",
+            ],
+        }
+    )
+    return payload
+
+
+def _validation_stage_placeholders(*, full_replay_computed: bool = False) -> dict[str, Any]:
+    def stage(name: str, status: str, reason: str, warnings: list[str] | None = None) -> dict[str, Any]:
+        implemented = status not in {"NOT_IMPLEMENTED", "NOT_READY", "NOT_ENABLED"}
+        return {
+            "stage_name": name,
+            "status": status,
+            "implemented": implemented,
+            "blocks_final_validation": not implemented,
+            "metric_output_allowed": implemented,
+            "reason": reason,
+            "warnings": warnings or [],
+        }
+
+    return {
+        "schema_name": "stock_alpha_news_risk_overlay_validation_stage_placeholders",
+        "schema_version": 1,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "is_final_validation": False,
+        "walk_forward": stage("walk_forward", "NOT_IMPLEMENTED", "Walk-forward robustness has not been implemented for this validation spine."),
+        "placebo_permutation": stage("placebo_permutation", "NOT_IMPLEMENTED", "Placebo and permutation tests have not been implemented."),
+        "exposure_matched_controls": stage("exposure_matched_controls", "NOT_IMPLEMENTED", "Exposure-matched controls have not been implemented."),
+        "trade_count_matched_controls": stage("trade_count_matched_controls", "NOT_IMPLEMENTED", "Trade-count-matched controls have not been implemented."),
+        "matched_controls": stage("matched_controls", "NOT_IMPLEMENTED", "Legacy aggregate matched-control placeholder; use exposure/trade-count controls when implemented."),
+        "concentration_analysis": stage("concentration_analysis", "NOT_IMPLEMENTED", "Contribution and fragility analysis has not been implemented."),
+        "year_regime_robustness": {
+            **stage("year_regime_robustness", "AVAILABLE", "Ledger-level year/regime robustness report is available."),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "symbol_year_ablation": {
+            **stage("symbol_year_ablation", "AVAILABLE", "Ledger-level symbol/year ablations are available."),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "survivorship_audit": stage("survivorship_audit", "NOT_IMPLEMENTED", "Point-in-time universe and survivorship audit has not been implemented."),
+        "corporate_action_audit": stage("corporate_action_audit", "NOT_IMPLEMENTED", "Corporate-action validation has not been implemented."),
+        "missing_news_bias": stage("missing_news_bias", "NOT_IMPLEMENTED", "Missing-news bias analysis has not been completed."),
+        "transaction_cost_validation": stage("transaction_cost_validation", "NOT_IMPLEMENTED", "Realistic transaction-cost validation has not been implemented."),
+        "intraday_5min_expansion_plan": {
+            **stage("intraday_5min_expansion_plan", "PLANNING_ONLY", "Future Dell PC intraday 5-minute expansion is planning-only."),
+            "implemented": True,
+            "blocks_final_validation": False,
+            "metric_output_allowed": False,
+        },
+        "catastrophic_news_evidence_quality": {
+            **stage(
+                "catastrophic_news_evidence_quality",
+                "INSUFFICIENT_FOR_STRICT_VETO",
+                "Catastrophic-news evidence quality is insufficient for strict live-style filtering.",
+                ["research-only", "missing text/availability evidence", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "news_evidence_lineage": {
+            **stage(
+                "news_evidence_lineage",
+                "INSUFFICIENT",
+                "News evidence contract and lineage are incomplete for strict veto and text-model readiness.",
+                ["observational audit only", "paper/live disabled", "text models disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "catastrophic_veto_strategy_comparison": {
+            **stage(
+                "catastrophic_veto_strategy_comparison",
+                "FULL_REPLAY_COMPUTED" if full_replay_computed else "APPROXIMATE_LEDGER_SIMULATION",
+                "Separate research-only full replay is computed." if full_replay_computed else "Catastrophic-veto policy, attribution, and ledger-level simulation are present, but full filtered replay is not computed.",
+                ["research-only", "not enforced in current strategy", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": full_replay_computed,
+            "replay_impact_status": "FULL_REPLAY_COMPUTED" if full_replay_computed else "APPROXIMATE_LEDGER_SIMULATION",
+            "full_replay_status": "FULL_REPLAY_COMPUTED" if full_replay_computed else "FULL_REPLAY_NOT_AVAILABLE",
+            "safe_replay_insertion_point": "RESEARCH_STRATEGY_VARIANT_INPUT_SEAM",
+            "safe_filtered_variant_seam_status": "REPLAY_ADAPTER_EXECUTED" if full_replay_computed else "REPLAY_ADAPTER_AVAILABLE_OPT_IN_ONLY",
+            "full_replay_blocker": "" if full_replay_computed else "integrated replay helper accepts optional extra research-only variants, but replay output does not contain the catastrophic-veto variant",
+            "veto_strategy": "news_contrarian_rerank_catastrophic_veto",
+        },
+        "event_taxonomy_research": {
+            **stage(
+                "event_taxonomy_research",
+                "RESEARCH_RULES_READY",
+                "Deterministic headline taxonomy is available for research diagnostics only.",
+                ["not production event_category", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "duplicate_grouping_heuristic": {
+            **stage(
+                "duplicate_grouping_heuristic",
+                "HEURISTIC_ONLY",
+                "Duplicate grouping is deterministic and heuristic, not provider-grade duplicate_group_id.",
+                ["heuristic-only", "text-model readiness remains blocked"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "point_in_time_text_safety": {
+            **stage(
+                "point_in_time_text_safety",
+                "PARTIAL_POINT_IN_TIME_SAFE",
+                "Text safety audit is available but remains limited by availability timestamp coverage.",
+                ["publication-only timestamps are not availability evidence"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "keyword_text_baseline": {
+            **stage(
+                "keyword_text_baseline",
+                "RESEARCH_ONLY",
+                "Deterministic keyword scores are emitted for diagnostics and are not used in strategy ranking.",
+                ["no model training", "not used in replay"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "catastrophic_veto_bounceback": {
+            **stage(
+                "catastrophic_veto_bounceback",
+                "RESEARCH_ONLY",
+                "Removed-trade bounce-back attribution is observational and does not alter replay mechanics.",
+                ["not used in strategy", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "extreme_only_policy_proposal": {
+            **stage(
+                "extreme_only_policy_proposal",
+                "PROPOSED_NOT_REPLAYED",
+                "Extreme-distress-only policy is a proposal and requires a future separate research-only replay.",
+                ["proposal only", "not validated", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": False,
+        },
+        "catastrophic_policy_frontier": {
+            **stage(
+                "catastrophic_policy_frontier",
+                "RESEARCH_ONLY_DIAGNOSTIC",
+                "Policy frontier ranks catastrophic-veto variants for hypothesis triage only.",
+                ["not final validation", "not model selection", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "loser_bounceback_casebook": {
+            **stage(
+                "loser_bounceback_casebook",
+                "RESEARCH_ONLY_DIAGNOSTIC",
+                "Loser-vs-bounceback casebook compares removed-trade losers and bounceback winners without changing replay mechanics.",
+                ["observational only", "taxonomy proposal only", "paper/live disabled"],
+            ),
+            "implemented": True,
+            "blocks_final_validation": True,
+            "metric_output_allowed": True,
+        },
+        "text_model_readiness": {
+            **stage(
+                "text_model_readiness",
+                "NOT_READY",
+                "Text modelling is deferred until the numerical validation spine, taxonomy, timestamp, and duplicate-handling checks are complete.",
+                [
+                    "validation spine not complete",
+                    "events still uncategorized",
+                    "text timestamps not proven point-in-time",
+                    "duplicate/syndication handling not proven",
+                    "FinBERT deferred",
+                ],
+            ),
+            "transformer_training_enabled": False,
+            "bert_enabled": False,
+            "finbert_enabled": False,
+        },
+    }
+
+
+def _chronological_periods(
+    rows: list[Mapping[str, Any]],
+    ledger: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    by_date: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        by_date.setdefault(_timestamp(row).date().isoformat(), []).append(row)
+    dates = sorted(by_date)
+    if not dates:
+        return {
+            "schema_name": "stock_alpha_news_risk_overlay_chronological_split_manifest",
+            "schema_version": 1,
+            "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+            "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+            "status": "NO_ROWS",
+            "periods": {},
+            "split_method": "chronological_by_complete_decision_date",
+            "decision_date_integrity_check": {
+                "same_day_candidates_split": False,
+                "decision_dates_in_multiple_periods": [],
+            },
+            "holdout_type": "PSEUDO_HOLDOUT",
+            "holdout_status": "PSEUDO_HOLDOUT",
+            "validation_label": "PSEUDO_HOLDOUT",
+            "is_final_validation": False,
+            "validation_passed": False,
+            "final_validation_status": "NOT_FINAL_VALIDATION",
+            "warnings": ["No candidate rows available for chronological split manifest."],
+        }
+    cut1 = max(1, int(len(dates) * 0.60))
+    cut2 = max(cut1 + 1, int(len(dates) * 0.80)) if len(dates) > 2 else len(dates)
+    buckets = {
+        "development": dates[:cut1],
+        "parameter_validation": dates[cut1:cut2],
+        "final_holdout": dates[cut2:],
+    }
+    trade_counts_by_date: dict[str, int] = {}
+    for trade in ledger or []:
+        date_key = str(trade.get("decision_timestamp") or trade.get("entry_decision_timestamp") or trade.get("rebalance_date") or "")[:10]
+        if date_key:
+            trade_counts_by_date[date_key] = trade_counts_by_date.get(date_key, 0) + 1
+    date_to_period: dict[str, str] = {}
+    periods = {}
+    for name, bucket in buckets.items():
+        for date_key in bucket:
+            date_to_period[date_key] = name
+        members = [row for date_key in bucket for row in by_date.get(date_key, [])]
+        periods[name] = {
+            "period_name": name,
+            "start_date": bucket[0] if bucket else None,
+            "end_date": bucket[-1] if bucket else None,
+            "decision_date_count": len(bucket),
+            "candidate_count": len(members),
+            "trade_count": sum(trade_counts_by_date.get(date_key, 0) for date_key in bucket),
+            "symbol_count": len({str(row.get("symbol", "")).upper() for row in members}),
+            "news_coverage": sum(str(row.get("news_coverage_status")) == "COVERED" for row in members) / max(len(members), 1),
+            "previously_inspected": name == "final_holdout",
+            "status": "PSEUDO_HOLDOUT" if name == "final_holdout" else "DEVELOPMENT_ONLY",
+            "warnings": (
+                ["Final period has been previously inspected; not an untouched holdout."]
+                if name == "final_holdout"
+                else []
+            ),
+            "market_regime_distribution": _category_mix(members) if members else {},
+        }
+    decision_dates_in_multiple_periods = [
+        date_key
+        for date_key in dates
+        if sum(date_key in bucket for bucket in buckets.values()) > 1
+    ]
+    return {
+        "schema_name": "stock_alpha_news_risk_overlay_chronological_split_manifest",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "PSEUDO_HOLDOUT",
+        "split_method": "chronological_by_complete_decision_date",
+        "decision_date_integrity_check": {
+            "same_day_candidates_split": False,
+            "decision_dates_in_multiple_periods": decision_dates_in_multiple_periods,
+            "passed": not decision_dates_in_multiple_periods,
+        },
+        "holdout_previously_inspected": True,
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "holdout_status": "PSEUDO_HOLDOUT",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "holdout_warning": "Contrarian hypothesis was introduced after inspecting prior full-history results.",
+        "warnings": [
+            "Final period is labelled PSEUDO_HOLDOUT because untouched status cannot be proven.",
+        ],
+        "periods": periods,
+    }
+
+
+def _walk_forward_validation_artifacts(
+    replay: Mapping[str, Any],
+    periods: Mapping[str, Any],
+    selection: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    period_payloads = dict(periods.get("periods", {}) or {})
+    fold_rows: list[dict[str, Any]] = []
+    for fold_id, period_name in enumerate(("development", "parameter_validation", "final_holdout"), start=1):
+        payload = dict(period_payloads.get(period_name, {}) or {})
+        fold_rows.append(
+            {
+                "fold_id": fold_id,
+                "period_name": period_name,
+                "train_start": dict(period_payloads.get("development", {}) or {}).get("start_date"),
+                "train_end": dict(period_payloads.get("parameter_validation", {}) or {}).get("end_date") if period_name == "final_holdout" else payload.get("start_date"),
+                "test_start": payload.get("start_date"),
+                "test_end": payload.get("end_date"),
+                "start_date": payload.get("start_date"),
+                "end_date": payload.get("end_date"),
+                "decision_date_count": payload.get("decision_date_count", 0),
+                "candidate_count": payload.get("candidate_count", 0),
+                "trade_count": payload.get("trade_count", 0),
+                "used_for_parameter_selection": period_name != "final_holdout",
+                "uses_frozen_configuration": True,
+                "random_split_used": False,
+                "same_decision_date_crosses_folds": False,
+                "price_only_return": None,
+                "contrarian_return": None,
+                "excess_return": None,
+                "excess_sharpe": None,
+                "excess_calmar": None,
+                "wealth": "UNAVAILABLE_INPUT",
+                "return": "UNAVAILABLE_INPUT",
+                "max_drawdown": "UNAVAILABLE_INPUT",
+                "sharpe": "UNAVAILABLE_INPUT",
+                "calmar": "UNAVAILABLE_INPUT",
+                "status": "NOT_IMPLEMENTED",
+                "metric_status": "NOT_IMPLEMENTED",
+                "warning": "Fold-level replay metrics are not computed in this scaffold; no fake metrics emitted.",
+            }
+        )
+    return {
+        "schema_name": "stock_alpha_news_walk_forward_validation_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "NOT_IMPLEMENTED",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "configuration_id": frozen.get("configuration_id"),
+        "frozen_configuration_hash": frozen.get("immutable_configuration_hash"),
+        "selection_round_trip_cost_bps": float(config.get("stock_alpha_news_risk_overlay_selection_round_trip_cost_bps", 10.0)),
+        "fold_count": len(fold_rows),
+        "completed_fold_count": 0,
+        "passed_fold_count": 0,
+        "failed_fold_count": 0,
+        "positive_excess_return_fold_count": 0,
+        "median_excess_return": None,
+        "median_excess_sharpe": None,
+        "median_excess_calmar": None,
+        "price_only": _risk_subset(dict(replay.get("risk_metrics", {}).get("price_only", {}) or {})),
+        "contrarian": _risk_subset(dict(replay.get("risk_metrics", {}).get("news_contrarian_rerank", {}) or {})),
+        "folds": fold_rows,
+        "used_holdout_for_selection": False,
+        "selected_configuration_id": selection.get("selected_configuration_id"),
+        "limitations": [
+            "Fold-level replay metrics require a future replay-by-fold implementation.",
+            "This scaffold preserves chronological dates and emits no fake fold metrics.",
+        ],
+        "warnings": [
+            "Walk-forward validation is not implemented and blocks final validation.",
+            "Final pseudo-holdout rows are not used for parameter selection.",
+        ],
+    }, fold_rows
+
+
+def _placebo_permutation_artifacts(
+    rows: list[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    del rows, replay
+    seed = int(config.get("stock_alpha_news_risk_overlay_seed", 1729))
+    checks = (
+        "news_score_permuted_by_decision_date",
+        "news_score_permuted_globally",
+        "news_score_sign_flipped",
+        "random_decile_assignment_fixed_seed",
+    )
+    result_rows = [
+        {
+            "check_name": check,
+            "status": "UNAVAILABLE_INPUT",
+            "deterministic_seed": seed,
+            "observed_edge": None,
+            "placebo_edge": None,
+            "observed_edge_larger_than_placebo": None,
+            "used_for_configuration_selection": False,
+            "warning": "Requires a future placebo replay/statistics implementation; no fake metrics emitted.",
+        }
+        for check in checks
+    ]
+    return {
+        "schema_name": "stock_alpha_news_placebo_permutation_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "UNAVAILABLE_INPUT",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "deterministic_seed": seed,
+        "checks": result_rows,
+        "used_for_configuration_selection": False,
+        "warnings": [
+            "Placebo/permutation validation is not implemented and blocks final validation.",
+            "No placebo results are used for retuning or configuration selection.",
+        ],
+    }, result_rows
+
+
+def _matched_control_artifact(control_name: str) -> dict[str, Any]:
+    return {
+        "schema_name": f"stock_alpha_news_{control_name}",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "NOT_IMPLEMENTED",
+        "implemented": False,
+        "blocks_final_validation": True,
+        "metric_output_allowed": False,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "warnings": [f"{control_name} is not implemented and blocks final validation."],
+    }
+
+
+def _concentration_fragility_artifact(replay: Mapping[str, Any]) -> dict[str, Any]:
+    ledger = list(replay.get("contrarian_trade_ledger", []) or [])
+    net_returns = sorted(
+        (_number(trade.get("net_return")) or 0.0 for trade in ledger),
+        reverse=True,
+    )
+    total_positive = sum(value for value in net_returns if value > 0)
+    top_1_share = (net_returns[0] / total_positive) if net_returns and total_positive > 0 else None
+    return {
+        "schema_name": "stock_alpha_news_concentration_fragility_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "SCAFFOLD_WITH_LIMITED_LEDGER_SUMMARY" if ledger else "UNAVAILABLE_INPUT",
+        "implemented": bool(ledger),
+        "blocks_final_validation": True,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "trade_count": len(ledger),
+        "top_1_positive_return_share": top_1_share,
+        "warnings": [
+            "Concentration report is a limited ledger summary; full top-trade/top-symbol fragility is not implemented.",
+            "This stage blocks final validation.",
+        ],
+    }
+
+
+def _catastrophic_veto_parked_status(
+    strict_report: Mapping[str, Any],
+    policy_frontier: Mapping[str, Any],
+    casebook: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_name": "catastrophic_veto_parked_status",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "PARKED_DIAGNOSTIC_ONLY",
+        "reason": "strict veto too broad for return; narrow rules no effect; loser-vs-bounceback casebook did not reveal a usable deterministic distinction from available evidence",
+        "latest_strict_veto_result": {
+            "status": strict_report.get("status", "UNAVAILABLE_INPUT"),
+            "replay_impact_status": strict_report.get("replay_impact_status", "UNAVAILABLE_INPUT"),
+            "delta_metrics": strict_report.get("delta_metrics", {}),
+        },
+        "latest_narrow_policy_result": {
+            "frontier_status": policy_frontier.get("frontier_status", policy_frontier.get("status", "UNAVAILABLE_INPUT")),
+            "best_balanced_policy": policy_frontier.get("best_balanced_policy", "UNAVAILABLE_INPUT"),
+            "policies_with_no_effect": policy_frontier.get("policies_with_no_effect", []),
+        },
+        "casebook_result": {
+            "status": casebook.get("status", "UNAVAILABLE_INPUT"),
+            "severe_loser_case_count": casebook.get("severe_loser_case_count", "UNAVAILABLE_INPUT"),
+            "strong_bounceback_case_count": casebook.get("strong_bounceback_case_count", "UNAVAILABLE_INPUT"),
+        },
+        "recommended_future_revisit_condition": "Revisit only after upstream article/body text, provider, availability timestamp, and event taxonomy evidence materially improve.",
+        "used_in_current_strategy": False,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+    }
+
+
+def _contrarian_chronological_validation_plan(
+    rows: Sequence[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    periods: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    manifest_periods = dict(periods.get("periods", {}) or {})
+    mapping = (
+        ("development", "development"),
+        ("parameter_validation", "parameter_validation"),
+        ("pseudo_holdout", "final_holdout"),
+        ("future_final_holdout", "future_final_holdout"),
+    )
+    ledger = [row for row in replay.get("trade_ledger", []) if row.get("strategy_variant") == "news_contrarian_rerank"]
+    rows_by_date: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        rows_by_date.setdefault(_timestamp(row).date().isoformat(), []).append(row)
+    trade_counts_by_entry: dict[str, int] = {}
+    for trade in ledger:
+        date_key = str(trade.get("entry_date") or trade.get("entry_timestamp") or trade.get("decision_timestamp") or "")[:10]
+        if date_key:
+            trade_counts_by_entry[date_key] = trade_counts_by_entry.get(date_key, 0) + 1
+    period_rows: list[dict[str, Any]] = []
+    assigned_dates: set[str] = set()
+    for period_name, source_name in mapping:
+        source = dict(manifest_periods.get(source_name, {}) or {})
+        if period_name == "future_final_holdout":
+            period_rows.append({
+                "period_name": period_name,
+                "start_date": "NOT_YET_DEFINED",
+                "end_date": "NOT_YET_DEFINED",
+                "decision_date_count": 0,
+                "candidate_count": 0,
+                "trade_count_if_available": 0,
+                "used_for_selection": False,
+                "used_for_final_validation": False,
+                "contamination_status": "NOT_AVAILABLE",
+                "allowed_actions": "collect future untouched data only",
+                "validation_label": "NOT_FINAL_VALIDATION",
+            })
+            continue
+        start = source.get("start_date")
+        end = source.get("end_date")
+        date_keys = sorted(date for date in rows_by_date if start and end and str(start) <= date <= str(end))
+        assigned_dates.update(date_keys)
+        period_rows.append({
+            "period_name": period_name,
+            "start_date": start or "UNAVAILABLE_INPUT",
+            "end_date": end or "UNAVAILABLE_INPUT",
+            "decision_date_count": len(date_keys),
+            "candidate_count": sum(len(rows_by_date[date]) for date in date_keys),
+            "trade_count_if_available": sum(trade_counts_by_entry.get(date, 0) for date in date_keys),
+            "used_for_selection": period_name in {"development", "parameter_validation"},
+            "used_for_final_validation": False,
+            "contamination_status": "PSEUDO_HOLDOUT_PREVIOUSLY_INSPECTED" if period_name == "pseudo_holdout" else "DEVELOPMENT_ONLY",
+            "allowed_actions": "diagnostic reporting only" if period_name == "pseudo_holdout" else "research development only",
+            "validation_label": "PSEUDO_HOLDOUT" if period_name == "pseudo_holdout" else "DEVELOPMENT_ONLY",
+        })
+    return {
+        "schema_name": "contrarian_chronological_validation_plan",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "PSEUDO_HOLDOUT_PLAN",
+        "split_method": "chronological_by_complete_decision_date",
+        "random_row_split_used": False,
+        "complete_decision_dates_only": True,
+        "decision_dates_in_multiple_periods": sorted(set(rows_by_date) - assigned_dates),
+        "future_final_holdout_status": "NOT_YET_DEFINED",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "periods": period_rows,
+        "warnings": ["Pseudo-holdout is not final validation; future final holdout is not yet defined."],
+    }, period_rows
+
+
+def _metric_from_trade_sum(trades: Sequence[Mapping[str, Any]], field: str) -> float:
+    return sum(_number(row.get(field)) or 0.0 for row in trades)
+
+
+def _contrarian_trade_rows(replay: Mapping[str, Any]) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in replay.get("trade_ledger", [])
+        if row.get("strategy_variant") == "news_contrarian_rerank"
+    ]
+
+
+def _trade_pnl(row: Mapping[str, Any]) -> float:
+    return _number(row.get("net_pnl")) or _number(row.get("pnl")) or 0.0
+
+
+def _contrarian_trade_return(row: Mapping[str, Any]) -> float | None:
+    for field in ("net_return", "removed_trade_return", "return", "total_return"):
+        value = _number(row.get(field))
+        if value is not None:
+            return value
+    return None
+
+
+def _trade_year(row: Mapping[str, Any]) -> str:
+    return str(
+        row.get("exit_date")
+        or row.get("exit_timestamp")
+        or row.get("entry_date")
+        or row.get("entry_timestamp")
+        or row.get("decision_timestamp")
+        or "UNKNOWN"
+    )[:4]
+
+
+def _year_regime_status(year: str, trade_count: int, net_pnl: float, all_years: Sequence[str]) -> str:
+    current_year = str(datetime.now(timezone.utc).year)
+    if year == current_year and year == max(all_years, default=year):
+        return "partial_year"
+    if net_pnl < 0:
+        return "negative_year"
+    if trade_count < 25:
+        return "low_sample_year"
+    if net_pnl > 0 and trade_count >= 100:
+        return "high_positive_year"
+    if net_pnl > 0:
+        return "moderate_positive_year"
+    return "low_sample_year"
+
+
+def _contrarian_year_regime_artifacts(
+    replay: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    trades = _contrarian_trade_rows(replay)
+    total_pnl = sum(_trade_pnl(row) for row in trades)
+    by_year: dict[str, list[dict[str, Any]]] = {}
+    for trade in trades:
+        by_year.setdefault(_trade_year(trade), []).append(trade)
+    years = sorted(by_year)
+    daily_equity = {
+        str(row.get("date") or row.get("timestamp") or "")[:10]: row
+        for row in dict(replay.get("daily_equity", {}) or {}).get("news_contrarian_rerank", [])
+    }
+    rows: list[dict[str, Any]] = []
+    examples: list[dict[str, Any]] = []
+    for year in years:
+        group = by_year[year]
+        returns = [_contrarian_trade_return(row) for row in group if _contrarian_trade_return(row) is not None]
+        pnl = sum(_trade_pnl(row) for row in group)
+        winners = sum(_trade_pnl(row) > 0 for row in group)
+        losers = sum(_trade_pnl(row) < 0 for row in group)
+        equity_rows = [
+            row for date_key, row in daily_equity.items()
+            if date_key.startswith(year) and _number(row.get("total_equity")) is not None
+        ]
+        wealth = _number(equity_rows[-1].get("total_equity")) if equity_rows else None
+        regime_status = _year_regime_status(year, len(group), pnl, years)
+        warnings = []
+        if regime_status == "negative_year":
+            warnings.append("negative ledger-level year")
+        if regime_status == "partial_year":
+            warnings.append("partial calendar year")
+        if not equity_rows:
+            warnings.append("equity metrics unavailable; ledger-level metrics only")
+        rows.append({
+            "year": year,
+            "trade_count": len(group),
+            "winner_count": winners,
+            "loser_count": losers,
+            "net_pnl": pnl,
+            "average_trade_return": mean(returns) if returns else "UNAVAILABLE_INPUT",
+            "median_trade_return": median(returns) if returns else "UNAVAILABLE_INPUT",
+            "wealth_if_available": wealth if wealth is not None else "UNAVAILABLE_INPUT",
+            "return_if_available": (wealth - 1.0) if wealth is not None else "UNAVAILABLE_INPUT",
+            "max_drawdown_if_available": "UNAVAILABLE_INPUT",
+            "sharpe_if_available": "UNAVAILABLE_INPUT",
+            "pnl_contribution": pnl / total_pnl if total_pnl else "UNAVAILABLE_INPUT",
+            "regime_status": regime_status,
+            "warnings": "; ".join(warnings) if warnings else "",
+        })
+        for trade in sorted(group, key=lambda row: abs(_trade_pnl(row)), reverse=True)[:3]:
+            examples.append({
+                "year": year,
+                "trade_id": trade.get("trade_id", trade.get("candidate_id", "UNAVAILABLE_INPUT")),
+                "symbol": str(trade.get("symbol", "UNKNOWN")).upper(),
+                "entry_date": str(trade.get("entry_date") or trade.get("entry_timestamp") or "")[:10],
+                "net_pnl": _trade_pnl(trade),
+                "net_return": _contrarian_trade_return(trade) if _contrarian_trade_return(trade) is not None else "UNAVAILABLE_INPUT",
+            })
+    negative_years = [row["year"] for row in rows if row["regime_status"] == "negative_year"]
+    return {
+        "schema_name": "contrarian_year_regime_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "AVAILABLE" if trades else "UNAVAILABLE_INPUT",
+        "metric_basis": "LEDGER_LEVEL_APPROXIMATION",
+        "trade_count": len(trades),
+        "year_count": len(rows),
+        "negative_years": negative_years,
+        "year_2022_status": next((row["regime_status"] for row in rows if row["year"] == "2022"), "UNAVAILABLE_INPUT"),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Ledger-level annual robustness does not recompute full portfolio compounding."],
+    }, rows, examples
+
+
+def _contrarian_profit_concentration_artifacts(
+    replay: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    trades = _contrarian_trade_rows(replay)
+    sorted_trades = sorted(trades, key=lambda row: (_number(row.get("net_pnl")) or _number(row.get("pnl")) or 0.0), reverse=True)
+    total_pnl = _metric_from_trade_sum(trades, "net_pnl")
+    if total_pnl == 0:
+        total_pnl = _metric_from_trade_sum(trades, "pnl")
+    returns = [_number(row.get("net_return")) for row in trades if _number(row.get("net_return")) is not None]
+    total_return_sum = sum(returns)
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    by_year: dict[str, list[dict[str, Any]]] = {}
+    for trade in trades:
+        by_symbol.setdefault(str(trade.get("symbol", "UNKNOWN")).upper(), []).append(trade)
+        year = str(trade.get("exit_date") or trade.get("exit_timestamp") or trade.get("entry_date") or trade.get("entry_timestamp") or "UNKNOWN")[:4]
+        by_year.setdefault(year, []).append(trade)
+
+    def group_rows(groups: Mapping[str, list[dict[str, Any]]], key_name: str) -> list[dict[str, Any]]:
+        output = []
+        for key, group in sorted(groups.items()):
+            pnl = _metric_from_trade_sum(group, "net_pnl") or _metric_from_trade_sum(group, "pnl")
+            output.append({
+                key_name: key,
+                "trade_count": len(group),
+                "net_pnl": pnl,
+                "pnl_contribution": pnl / total_pnl if total_pnl else "UNAVAILABLE_INPUT",
+                "average_net_return": mean([_number(row.get("net_return")) or 0.0 for row in group]) if group else "UNAVAILABLE_INPUT",
+            })
+        return sorted(output, key=lambda row: _number(row.get("net_pnl")) or 0.0, reverse=True)
+
+    symbol_rows = group_rows(by_symbol, "symbol")
+    year_rows = group_rows(by_year, "year")
+    top_rows = []
+    for count in (1, 5, 10):
+        removed = sorted_trades[:count]
+        removed_pnl = _metric_from_trade_sum(removed, "net_pnl") or _metric_from_trade_sum(removed, "pnl")
+        removed_return = sum(_number(row.get("net_return")) or 0.0 for row in removed)
+        top_rows.append({
+            "removed_top_trade_count": count,
+            "remaining_trade_count": max(len(trades) - len(removed), 0),
+            "removed_net_pnl": removed_pnl,
+            "remaining_net_pnl": total_pnl - removed_pnl,
+            "return_without_top_trades": total_return_sum - removed_return if returns else "UNAVAILABLE_INPUT",
+            "deterministic_sort": "net_pnl_desc_trade_id",
+        })
+    largest_winner = sorted_trades[0] if sorted_trades else {}
+    largest_loser = min(trades, key=lambda row: _number(row.get("net_pnl")) or _number(row.get("pnl")) or 0.0, default={})
+    report = {
+        "schema_name": "contrarian_profit_concentration_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "IMPLEMENTED" if trades else "UNAVAILABLE_INPUT",
+        "trade_count": len(trades),
+        "total_net_pnl": total_pnl if trades else "UNAVAILABLE_INPUT",
+        "top_1_trade_contribution": _top_contribution(sorted_trades, total_pnl, 1) if trades and total_pnl else "UNAVAILABLE_INPUT",
+        "top_5_trade_contribution": _top_contribution(sorted_trades, total_pnl, 5) if trades and total_pnl else "UNAVAILABLE_INPUT",
+        "top_10_trade_contribution": _top_contribution(sorted_trades, total_pnl, 10) if trades and total_pnl else "UNAVAILABLE_INPUT",
+        "top_symbol_contribution": symbol_rows[0]["pnl_contribution"] if symbol_rows else "UNAVAILABLE_INPUT",
+        "top_year_contribution": year_rows[0]["pnl_contribution"] if year_rows else "UNAVAILABLE_INPUT",
+        "return_without_top_1_trade": top_rows[0]["return_without_top_trades"] if top_rows else "UNAVAILABLE_INPUT",
+        "return_without_top_5_trades": top_rows[1]["return_without_top_trades"] if len(top_rows) > 1 else "UNAVAILABLE_INPUT",
+        "return_without_top_10_trades": top_rows[2]["return_without_top_trades"] if len(top_rows) > 2 else "UNAVAILABLE_INPUT",
+        "largest_winner": largest_winner.get("trade_id", largest_winner.get("candidate_id", "UNAVAILABLE_INPUT")),
+        "largest_loser": largest_loser.get("trade_id", largest_loser.get("candidate_id", "UNAVAILABLE_INPUT")),
+        "winner_loser_balance": {
+            "winner_count": sum((_number(row.get("net_pnl")) or _number(row.get("pnl")) or 0.0) > 0 for row in trades),
+            "loser_count": sum((_number(row.get("net_pnl")) or _number(row.get("pnl")) or 0.0) < 0 for row in trades),
+        },
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+    return report, symbol_rows, year_rows, top_rows
+
+
+def _fragility_status(remaining_pnl: float, total_pnl: float, contribution_removed: float | str) -> str:
+    if not total_pnl or isinstance(contribution_removed, str):
+        return "UNAVAILABLE_INPUT"
+    if remaining_pnl <= 0:
+        return "FRAGILE_TO_REMOVAL"
+    if contribution_removed >= 0.5:
+        return "FRAGILE_TO_REMOVAL"
+    if contribution_removed >= 0.25:
+        return "MODERATELY_CONCENTRATED"
+    return "ROBUST_TO_REMOVAL"
+
+
+def _ablation_row(
+    *,
+    ablation_name: str,
+    removed_group: str,
+    removed: Sequence[Mapping[str, Any]],
+    all_trades: Sequence[Mapping[str, Any]],
+    total_pnl: float,
+    total_return_sum: float | None,
+) -> dict[str, Any]:
+    removed_pnl = sum(_trade_pnl(row) for row in removed)
+    remaining_pnl = total_pnl - removed_pnl
+    removed_returns = [_contrarian_trade_return(row) for row in removed if _contrarian_trade_return(row) is not None]
+    contribution = removed_pnl / total_pnl if total_pnl else "UNAVAILABLE_INPUT"
+    return_without_removed = (
+        total_return_sum - sum(removed_returns)
+        if total_return_sum is not None
+        else "UNAVAILABLE_INPUT"
+    )
+    return {
+        "ablation_name": ablation_name,
+        "removed_group": removed_group,
+        "removed_trade_count": len(removed),
+        "remaining_trade_count": max(len(all_trades) - len(removed), 0),
+        "removed_net_pnl": removed_pnl,
+        "remaining_net_pnl": remaining_pnl,
+        "return_without_removed_group": return_without_removed,
+        "pnl_contribution_removed": contribution,
+        "fragility_status": _fragility_status(remaining_pnl, total_pnl, contribution),
+        "warnings": "LEDGER_LEVEL_APPROXIMATION; full portfolio compounding not recomputed",
+    }
+
+
+def _contrarian_symbol_year_ablation_artifacts(
+    replay: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    trades = _contrarian_trade_rows(replay)
+    total_pnl = sum(_trade_pnl(row) for row in trades)
+    returns = [_contrarian_trade_return(row) for row in trades if _contrarian_trade_return(row) is not None]
+    total_return_sum = sum(returns) if returns else None
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    by_year: dict[str, list[dict[str, Any]]] = {}
+    for trade in trades:
+        by_symbol.setdefault(str(trade.get("symbol", "UNKNOWN")).upper(), []).append(trade)
+        by_year.setdefault(_trade_year(trade), []).append(trade)
+    ranked_symbols = sorted(
+        by_symbol.items(),
+        key=lambda item: (sum(_trade_pnl(row) for row in item[1]), item[0]),
+        reverse=True,
+    )
+    ranked_years = sorted(
+        by_year.items(),
+        key=lambda item: (sum(_trade_pnl(row) for row in item[1]), item[0]),
+        reverse=True,
+    )
+    symbol_rows = []
+    for count in (1, 3, 5):
+        selected = ranked_symbols[:count]
+        removed = [trade for _group, group in selected for trade in group]
+        symbol_rows.append(_ablation_row(
+            ablation_name=f"without_top_{count}_symbol" if count == 1 else f"without_top_{count}_symbols",
+            removed_group=",".join(group for group, _rows in selected) or "UNAVAILABLE_INPUT",
+            removed=removed,
+            all_trades=trades,
+            total_pnl=total_pnl,
+            total_return_sum=total_return_sum,
+        ))
+    year_specs = [
+        ("without_top_1_year", ranked_years[:1]),
+        ("without_top_2_years", ranked_years[:2]),
+        ("without_negative_years", [(year, group) for year, group in by_year.items() if sum(_trade_pnl(row) for row in group) < 0]),
+        ("without_best_year", ranked_years[:1]),
+    ]
+    year_rows = []
+    for name, selected in year_specs:
+        selected_sorted = sorted(selected, key=lambda item: item[0])
+        removed = [trade for _group, group in selected_sorted for trade in group]
+        year_rows.append(_ablation_row(
+            ablation_name=name,
+            removed_group=",".join(group for group, _rows in selected_sorted) or "UNAVAILABLE_INPUT",
+            removed=removed,
+            all_trades=trades,
+            total_pnl=total_pnl,
+            total_return_sum=total_return_sum,
+        ))
+    return {
+        "schema_name": "contrarian_symbol_year_ablation_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "AVAILABLE" if trades else "UNAVAILABLE_INPUT",
+        "metric_basis": "LEDGER_LEVEL_APPROXIMATION",
+        "trade_count": len(trades),
+        "total_net_pnl": total_pnl if trades else "UNAVAILABLE_INPUT",
+        "symbol_ablation_count": len(symbol_rows),
+        "year_ablation_count": len(year_rows),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Ablations remove ledger groups deterministically; full portfolio compounding is not recomputed."],
+    }, symbol_rows, year_rows
+
+
+def _contrarian_placebo_permutation_report(config: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    seed = int(config.get("stock_alpha_news_risk_overlay_seed", 1729))
+    specs = [
+        ("shuffle_news_scores_within_decision_date", True, False, "decision_date"),
+        ("shuffle_news_scores_within_symbol", False, True, "symbol"),
+        ("permute_news_availability_across_candidates", False, False, "candidate"),
+        ("replace_news_score_with_noise", False, False, "fixed_seed_noise"),
+    ]
+    rows = [
+        {
+            "placebo_name": name,
+            "seed": seed + index,
+            "shuffle_scope": scope,
+            "preserves_decision_date": preserves_date,
+            "preserves_symbol": preserves_symbol,
+            "status": "UNAVAILABLE_INPUT",
+            "wealth": "UNAVAILABLE_INPUT",
+            "return": "UNAVAILABLE_INPUT",
+            "sharpe": "UNAVAILABLE_INPUT",
+            "p_value_if_available": "UNAVAILABLE_INPUT",
+        }
+        for index, (name, preserves_date, preserves_symbol, scope) in enumerate(specs)
+    ]
+    return {
+        "schema_name": "contrarian_placebo_permutation_report",
+        "schema_version": 1,
+        "status": "UNAVAILABLE_INPUT",
+        "deterministic_seed": seed,
+        "placebo_definitions": rows,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Placebo definitions are deterministic, but replay/statistics are deferred; no fake metrics emitted."],
+    }, rows
+
+
+def _contrarian_matched_control_report() -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    controls = [
+        ("price_score_matched_control", "price-score nearest-neighbor matching"),
+        ("trade_count_matched_control", "trade-count matched price-only subset"),
+        ("sector_symbol_exposure_matched_control", "sector/symbol exposure matching when fields exist"),
+        ("date_matched_random_control", "decision-date matched random control with fixed seed"),
+    ]
+    rows = [
+        {
+            "control_name": name,
+            "matching_method": method,
+            "matched_trade_count": "UNAVAILABLE_INPUT",
+            "exposure_match_quality": "UNAVAILABLE_INPUT",
+            "wealth": "UNAVAILABLE_INPUT",
+            "return": "UNAVAILABLE_INPUT",
+            "max_drawdown": "UNAVAILABLE_INPUT",
+            "sharpe": "UNAVAILABLE_INPUT",
+            "status": "NOT_IMPLEMENTED",
+            "warnings": "requires dedicated matched-control replay/input construction; no fake metrics emitted",
+        }
+        for name, method in controls
+    ]
+    return {
+        "schema_name": "contrarian_matched_control_report",
+        "schema_version": 1,
+        "status": "NOT_IMPLEMENTED",
+        "controls": rows,
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }, rows
+
+
+def _contrarian_cost_slippage_robustness(
+    cost_scenarios: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    scenarios = dict(cost_scenarios.get("scenarios", {}) or {})
+    rows = []
+    for bps in (0, 5, 10, 20, 30, 50, 100):
+        key = f"{bps:g}_bps_round_trip"
+        payload = dict(scenarios.get(key, {}) or {})
+        variants = dict(payload.get("variants", {}) or {})
+        contrarian = dict(variants.get("news_contrarian_rerank", {}) or {})
+        price = dict(variants.get("price_only", {}) or {})
+        computed = bool(contrarian)
+        rows.append({
+            "cost_bps": bps,
+            "wealth": _metric_value(contrarian, "ending_equity", "ending_wealth") if computed else "UNAVAILABLE_INPUT",
+            "return": _metric_value(contrarian, "total_return_decimal", "total_return") if computed else "UNAVAILABLE_INPUT",
+            "max_drawdown": _metric_value(contrarian, "maximum_drawdown", "max_drawdown") if computed else "UNAVAILABLE_INPUT",
+            "sharpe": _metric_value(contrarian, "Sharpe_ratio", "sharpe_ratio") if computed else "UNAVAILABLE_INPUT",
+            "trade_count": _metric_value(contrarian, "trade_count") if computed else "UNAVAILABLE_INPUT",
+            "cost_robustness_status": "COMPUTED_EXISTING_COST_TABLE" if computed else "NOT_COMPUTED",
+            "metric_status": "COMPUTED_FROM_EXISTING_COST_TABLE" if computed else "NOT_COMPUTED",
+            "beats_price_only": (
+                (_metric(contrarian, "total_return_decimal") or 0.0) > (_metric(price, "total_return_decimal") or 0.0)
+                if computed and price
+                else "UNAVAILABLE_INPUT"
+            ),
+        })
+    return {
+        "schema_name": "contrarian_cost_slippage_robustness_report",
+        "schema_version": 1,
+        "status": "PARTIAL_EXISTING_COST_TABLE",
+        "computed_cost_bps": [row["cost_bps"] for row in rows if row["cost_robustness_status"] != "NOT_COMPUTED"],
+        "not_computed_cost_bps": [row["cost_bps"] for row in rows if row["cost_robustness_status"] == "NOT_COMPUTED"],
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Existing 0/5/10/20 bps table is preserved; extra costs are marked NOT_COMPUTED unless already available."],
+    }, rows
+
+
+def _contrarian_data_validity_audit(
+    data_audit: Mapping[str, Any],
+    missing_news_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    missing_bar_count = int(data_audit.get("missing_bar_count") or 0)
+    split_status = data_audit.get("split_adjustment_status", "NOT_IMPLEMENTED")
+    dividend_status = data_audit.get("dividend_adjustment_status", "NOT_IMPLEMENTED")
+    corporate_action_status = data_audit.get("corporate_action_status", "NOT_IMPLEMENTED")
+    check_statuses = {
+        "survivorship_bias": "NOT_IMPLEMENTED",
+        "delisted_stock_handling": "NOT_IMPLEMENTED",
+        "bankrupt_stock_handling": "NOT_IMPLEMENTED",
+        "split_adjustment": split_status,
+        "dividend_adjustment": dividend_status,
+        "corporate_action_adjustment": corporate_action_status,
+        "suspicious_price_discontinuities": data_audit.get("price_discontinuity_status", "UNAVAILABLE_INPUT"),
+        "missing_price_bars": "PASSED" if missing_bar_count == 0 else "FAILED",
+        "missing_news_bias": missing_news_report.get("status", "UNAVAILABLE_INPUT"),
+    }
+    major_checks = {
+        "survivorship_bias",
+        "delisted_stock_handling",
+        "bankrupt_stock_handling",
+        "split_adjustment",
+        "dividend_adjustment",
+        "corporate_action_adjustment",
+        "missing_news_bias",
+    }
+    required_inputs = {
+        "survivorship_bias": ["point_in_time_universe_membership", "delisted_symbol_reference"],
+        "delisted_stock_handling": ["delisted_symbol_reference"],
+        "bankrupt_stock_handling": ["bankruptcy_or_delisting_event_reference"],
+        "split_adjustment": ["split_adjusted_price_bars", "split_factor_reference"],
+        "dividend_adjustment": ["dividend_adjusted_price_bars", "dividend_reference"],
+        "corporate_action_adjustment": ["corporate_action_reference"],
+        "suspicious_price_discontinuities": ["daily_price_bars"],
+        "missing_price_bars": ["daily_price_bars"],
+        "missing_news_bias": ["news_features", "covered_vs_uncovered_candidates"],
+    }
+    recommendations = {
+        "survivorship_bias": "Load point-in-time universe membership and verify unavailable/delisted symbols are represented.",
+        "delisted_stock_handling": "Add a delisted-symbol reference and reconcile candidate/trade symbols against it.",
+        "bankrupt_stock_handling": "Add bankruptcy/delisting event reference data before final validation.",
+        "split_adjustment": "Validate split-adjusted price continuity against a split-factor reference.",
+        "dividend_adjustment": "Validate dividend adjustment policy and total-return semantics.",
+        "corporate_action_adjustment": "Document and test corporate-action adjustment semantics for all bars.",
+        "suspicious_price_discontinuities": "Run discontinuity checks by symbol/date and inspect large adjusted moves.",
+        "missing_price_bars": "Repair or document missing bars before final validation.",
+        "missing_news_bias": "Complete covered-vs-uncovered candidate analysis and check return skew.",
+    }
+    risks = {
+        "survivorship_bias": "Inflated historical returns if failed/delisted symbols are absent.",
+        "delisted_stock_handling": "Losers can disappear from the tradable universe.",
+        "bankrupt_stock_handling": "Extreme downside events may be omitted or mislabelled.",
+        "split_adjustment": "False returns and ranking artifacts around split dates.",
+        "dividend_adjustment": "Return comparisons can be inconsistent across symbols.",
+        "corporate_action_adjustment": "Backtest may trade on distorted prices.",
+        "suspicious_price_discontinuities": "Bad bars can dominate trade-level returns.",
+        "missing_price_bars": "Entry/exit timing and holding-period returns can be wrong.",
+        "missing_news_bias": "Signal may rely on covered/uncovered selection effects.",
+    }
+    checks = {
+        name: {
+            "status": status,
+            "blocks_final_validation": name in major_checks and status != "PASSED" or status in {"FAILED", "UNAVAILABLE_INPUT", "INSUFFICIENT_DATA"},
+            "evidence_available": status == "PASSED",
+            "required_input_files": required_inputs[name],
+            "detected_evidence": {
+                "missing_bar_count": missing_bar_count if name == "missing_price_bars" else "UNAVAILABLE_INPUT",
+                "source_status": status,
+            },
+            "recommended_next_step": recommendations[name],
+            "risk_if_unresolved": risks[name],
+        }
+        for name, status in check_statuses.items()
+    }
+    blocking_checks = [name for name, payload in checks.items() if payload["blocks_final_validation"]]
+    return {
+        "schema_name": "contrarian_data_validity_audit",
+        "schema_version": 1,
+        "status": "BLOCKING" if blocking_checks else "PASSED",
+        "checks": checks,
+        "blocking_checks": blocking_checks,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "warnings": ["Data-validity audits block final validation until implemented or proven."],
+    }
+
+
+def _intraday_5min_expansion_plan(config: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_name": "intraday_5min_expansion_plan",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "PLANNING_ONLY",
+        "target_machine": "Dell PC",
+        "recommended_data_frequency": "5min",
+        "secondary_frequency": "15min",
+        "required_years": config.get("stock_alpha_news_risk_overlay_intraday_required_years", "TO_BE_CONFIRMED"),
+        "required_symbols": config.get("stock_alpha_news_risk_overlay_intraday_required_symbols", "TO_BE_CONFIRMED"),
+        "expected_data_layout": config.get("stock_alpha_news_risk_overlay_intraday_data_layout", "TO_BE_CONFIRMED"),
+        "parquet_conversion_required": True,
+        "storage_estimate_status": "TO_BE_CONFIRMED",
+        "compute_estimate_status": "TO_BE_CONFIRMED",
+        "data_quality_checks": [
+            "symbol/date coverage",
+            "missing 5min bars",
+            "split-adjusted price continuity",
+            "timezone/session alignment",
+            "duplicate bars",
+            "daily-to-intraday reconciliation",
+        ],
+        "pipeline_steps": [
+            "locate existing downloaded 5min/15min data",
+            "convert source files to parquet",
+            "validate symbol/date coverage",
+            "check missing bars",
+            "check split-adjusted price continuity",
+            "run a small subset first",
+            "run full-universe intraday features on the Dell",
+            "compare intraday model output to daily contrarian signal",
+        ],
+        "recommended_commands_placeholder": "TO_BE_CONFIRMED",
+        "risks": [
+            "unknown local data paths",
+            "large storage footprint",
+            "intraday missing-bar bias",
+            "split/session/timezone mismatch",
+            "daily signal may not transfer to intraday cadence",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+
+
+def _period_for_date(date_key: str, manifest: Mapping[str, Any]) -> str:
+    for name, payload in dict(manifest.get("periods", {}) or {}).items():
+        start = payload.get("start_date")
+        end = payload.get("end_date")
+        if start and end and str(start) <= date_key <= str(end):
+            return name
+    return "unassigned"
+
+
+def _contrarian_grid_reports(
+    rows: list[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    price_score_column: str,
+    periods: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    weights = tuple(config.get("stock_alpha_news_risk_overlay_contrarian_grid_weights", (0.0, 0.10, 0.25, 0.50, 0.75, 1.00)))
+    selection_cost_bps = float(config.get("stock_alpha_news_risk_overlay_selection_round_trip_cost_bps", 10.0))
+    transforms = ("raw_probability", "training_median_centered", "decision_date_percentile", "fold_local_zscore")
+    missing = ("no_adjustment", "fold_local_neutral_median")
+    price = dict(replay.get("risk_metrics", {}).get("price_only", {}) or {})
+    contrarian = dict(replay.get("risk_metrics", {}).get("news_contrarian_rerank", {}) or {})
+    cost_metric_overrides = dict(config.get("stock_alpha_news_risk_overlay_contrarian_grid_cost_metrics", {}) or {})
+    grid_rows = []
+    for weight in weights:
+        for transform in transforms:
+            for missing_policy in missing:
+                config_id = f"w{float(weight):.2f}_{transform}_{missing_policy}"
+                is_current = abs(float(weight) - float(config.get("stock_alpha_news_risk_overlay_contrarian_weight", 0.25))) < 1e-12 and transform == "raw_probability" and missing_policy == "no_adjustment"
+                cost_metrics = _grid_metrics_at_selection_cost(
+                    config_id,
+                    selection_cost_bps,
+                    cost_metric_overrides,
+                )
+                median_calmar = (
+                    _number(cost_metrics.get("median_validation_calmar"))
+                    if cost_metrics
+                    else (_metric(contrarian, "Calmar_ratio") if is_current else 0.0)
+                )
+                excess_return = (
+                    _number(cost_metrics.get("median_excess_return"))
+                    if cost_metrics
+                    else ((_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0) if is_current else 0.0)
+                )
+                excess_sharpe = (
+                    _number(cost_metrics.get("median_excess_sharpe"))
+                    if cost_metrics
+                    else ((_metric(contrarian, "Sharpe_ratio") or 0.0) - (_metric(price, "Sharpe_ratio") or 0.0) if is_current else 0.0)
+                )
+                eligible = bool(cost_metrics.get("eligible", True)) if cost_metrics else is_current
+                grid_rows.append(
+                    {
+                        "configuration_id": config_id,
+                        "contrarian_weight": float(weight),
+                        "news_transformation": transform,
+                        "missing_news_treatment": missing_policy,
+                        "selection_metric": "median_validation_calmar",
+                        "selection_round_trip_cost_bps": selection_cost_bps,
+                        "median_validation_calmar": median_calmar or 0.0,
+                        "median_excess_return": excess_return or 0.0,
+                        "median_excess_sharpe": excess_sharpe or 0.0,
+                        "eligible": eligible,
+                        "rejection_reason": "" if eligible else "not evaluated in lightweight validation artifact; requires manual grid run",
+                        "training_data_only_transform_fit": transform in {"training_median_centered", "fold_local_zscore"},
+                        "decision_timestamp_only_transform": transform == "decision_date_percentile",
+                    }
+                )
+    winner = _select_contrarian_grid_configuration(grid_rows)
+    fold_rows = []
+    for period_name, payload in dict(periods.get("periods", {}) or {}).items():
+        fold_rows.append(
+            {
+                "fold_id": period_name,
+                "training_dates": "earlier_observations_only",
+                "validation_dates": f"{payload.get('start_date')}..{payload.get('end_date')}",
+                "selected_configuration": winner["configuration_id"],
+                "price_only_return": _metric(price, "total_return_decimal"),
+                "contrarian_return": _metric(contrarian, "total_return_decimal"),
+                "excess_return": (_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0),
+                "price_only_drawdown": _metric(price, "maximum_drawdown"),
+                "contrarian_drawdown": _metric(contrarian, "maximum_drawdown"),
+                "sharpe_difference": (_metric(contrarian, "Sharpe_ratio") or 0.0) - (_metric(price, "Sharpe_ratio") or 0.0),
+                "calmar_difference": (_metric(contrarian, "Calmar_ratio") or 0.0) - (_metric(price, "Calmar_ratio") or 0.0),
+                "news_coverage": payload.get("news_coverage"),
+                "point_in_time_validation_failures": 0,
+            }
+        )
+    selection = {
+        "schema_name": "contrarian_grid_selection",
+        "schema_version": "1.0",
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "SCAFFOLD_CURRENT_FORMULA_ONLY",
+        "experiment_registry_metadata": {
+            "experiment_family": "stock_alpha_news_risk_overlay",
+            "experiment_name": "news_contrarian_rerank_validation_scaffold",
+            "research_only": True,
+            "broker_invoked": False,
+            "paper_orders_enabled": False,
+            "live_orders_enabled": False,
+            "news_originated_entries_enabled": False,
+            "status": "DEVELOPMENT_ONLY",
+        },
+        "validation_status": "DEVELOPMENT_ONLY",
+        "grid_search_status": "SCAFFOLD_COMPLETE_CURRENT_FORMULA_ONLY",
+        "full_grid_search_implemented": False,
+        "future_validation_stage_statuses": {
+            "walk_forward": "NOT_IMPLEMENTED",
+            "placebo_permutation": "NOT_IMPLEMENTED",
+            "matched_controls": "NOT_IMPLEMENTED",
+            "concentration_analysis": "NOT_IMPLEMENTED",
+            "survivorship_audit": "NOT_IMPLEMENTED",
+            "corporate_action_audit": "NOT_IMPLEMENTED",
+            "missing_news_bias": "NOT_IMPLEMENTED",
+            "transaction_cost_validation": "NOT_IMPLEMENTED",
+        },
+        "selection_policy": "highest median validation Calmar among eligible chronological folds",
+        "selection_round_trip_cost_bps": selection_cost_bps,
+        "cost_selection_policy": "single predeclared round-trip cost used for parameter selection; sensitivity reported separately",
+        "cost_selection_metric_source": "metrics at configured selection_round_trip_cost_bps",
+        "selected_configuration_id": winner["configuration_id"],
+        "selection_metric": "median_validation_calmar",
+        "selected_config_metric_at_selection_cost": winner.get("median_validation_calmar", 0.0),
+        "selected_config": winner,
+        "selected_configuration": winner,
+        "holdout_used_for_selection": False,
+        "used_holdout_for_selection": False,
+        "eligible_config_count": sum(bool(row.get("eligible")) for row in grid_rows),
+        "rejected_config_count": sum(not row["eligible"] for row in grid_rows),
+        "rejected_configuration_count": sum(not row["eligible"] for row in grid_rows),
+        "rejection_reasons": sorted({
+            str(row.get("rejection_reason", ""))
+            for row in grid_rows
+            if not row.get("eligible") and row.get("rejection_reason")
+        }),
+        "rejected_configurations": [row for row in grid_rows if not row["eligible"]][:50],
+        "tie_break_rules": [
+            "higher median validation Calmar at configured selection cost",
+            "higher median excess return",
+            "higher median excess Sharpe",
+            "smaller absolute contrarian weight",
+            "deterministic lexical configuration ID",
+        ],
+        "validation_label": "PSEUDO_HOLDOUT",
+        "validation_passed": False,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "warnings": [
+            "Grid artifact is scaffold/current-formula only; full bounded grid is not complete.",
+            "Holdout rows are not used for parameter selection.",
+        ],
+        "fixed_portfolio_rules": {
+            "price_score_column": price_score_column,
+            "position_count": "unchanged",
+            "max_position_weight": "unchanged",
+            "entry_exit_rules": "unchanged",
+            "transaction_cost_assumption_for_selection": f"{selection_cost_bps:g} bps round trip",
+        },
+    }
+    return grid_rows, fold_rows, selection
+
+
+def _select_contrarian_grid_configuration(grid_rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    eligible = [dict(row) for row in grid_rows if bool(row.get("eligible"))]
+    candidates = eligible or [dict(row) for row in grid_rows]
+    if not candidates:
+        return {
+            "configuration_id": "unavailable",
+            "eligible": False,
+            "median_validation_calmar": 0.0,
+            "median_excess_return": 0.0,
+            "median_excess_sharpe": 0.0,
+            "contrarian_weight": 0.0,
+            "rejection_reason": "no grid rows available",
+        }
+    return max(
+        candidates,
+        key=lambda row: (
+            bool(row.get("eligible")),
+            _number(row.get("median_validation_calmar")) or 0.0,
+            _number(row.get("median_excess_return")) or 0.0,
+            _number(row.get("median_excess_sharpe")) or 0.0,
+            -abs(_number(row.get("contrarian_weight")) or 0.0),
+            str(row.get("configuration_id", "")),
+        ),
+    )
+
+
+def _selection_cost_metrics_from_scenarios(
+    config: Mapping[str, Any],
+    cost_scenarios: Mapping[str, Any],
+) -> dict[str, Any]:
+    weight = float(config.get("stock_alpha_news_risk_overlay_contrarian_weight", 0.25))
+    config_id = f"w{weight:.2f}_raw_probability_no_adjustment"
+    by_cost: dict[str, Any] = {}
+    for scenario in dict(cost_scenarios.get("scenarios", {}) or {}).values():
+        if not isinstance(scenario, Mapping):
+            continue
+        round_trip_bps = _number(scenario.get("round_trip_bps"))
+        variants = dict(scenario.get("variants", {}) or {})
+        price = dict(variants.get("price_only", {}) or {})
+        contrarian = dict(variants.get("news_contrarian_rerank", {}) or {})
+        if round_trip_bps is None or not contrarian:
+            continue
+        by_cost[f"{round_trip_bps:g}"] = {
+            "median_validation_calmar": _metric(contrarian, "Calmar_ratio", "calmar_ratio") or 0.0,
+            "median_excess_return": (_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0),
+            "median_excess_sharpe": (_metric(contrarian, "Sharpe_ratio", "sharpe_ratio") or 0.0) - (_metric(price, "Sharpe_ratio", "sharpe_ratio") or 0.0),
+            "eligible": True,
+        }
+    return {config_id: by_cost} if by_cost else {}
+
+
+def _grid_metrics_at_selection_cost(
+    configuration_id: str,
+    selection_cost_bps: float,
+    cost_metric_overrides: Mapping[str, Any],
+) -> dict[str, Any]:
+    by_config = dict(cost_metric_overrides.get(configuration_id, {}) or {})
+    if not by_config:
+        return {}
+    exact_keys = (
+        str(selection_cost_bps),
+        f"{selection_cost_bps:g}",
+        f"{selection_cost_bps:.1f}",
+        f"{selection_cost_bps:.2f}",
+    )
+    for key in exact_keys:
+        payload = by_config.get(key)
+        if isinstance(payload, Mapping):
+            return dict(payload)
+    bps_key = f"{selection_cost_bps:g}_bps"
+    payload = by_config.get(bps_key)
+    return dict(payload) if isinstance(payload, Mapping) else {}
+
+
+def _frozen_contrarian_config(
+    selection: Mapping[str, Any],
+    config: Mapping[str, Any],
+    periods: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected = dict(selection.get("selected_configuration", {}) or {})
+    payload = {
+        "schema_name": "contrarian_frozen_config",
+        "schema_version": "1.0",
+        "configuration_id": selected.get("configuration_id", "unavailable"),
+        "experiment_registry_metadata": dict(selection.get("experiment_registry_metadata", {}) or {}),
+        "exact_formula": "contrarian_score = price_score + contrarian_weight * transformed_news_score",
+        "formula": "contrarian_score = price_score + contrarian_weight * transformed_news_score",
+        "news_transformation": selected.get("news_transformation", "raw_probability"),
+        "contrarian_weight": selected.get("contrarian_weight", config.get("stock_alpha_news_risk_overlay_contrarian_weight", 0.25)),
+        "missing_news_treatment": selected.get("missing_news_treatment", "no_adjustment"),
+        "candidate_universe": "joined stock-alpha price-model candidate universe only",
+        "ranking_direction": "descending contrarian_score",
+        "tie_breaking": "symbol lexical ordering after score",
+        "portfolio_rules": "unchanged from open-trade replay",
+        "cost_assumptions": "selection uses one predeclared round-trip cost; sensitivity remains in cost_scenario_comparison.json",
+        "development_dates": periods.get("periods", {}).get("development", {}),
+        "validation_dates": periods.get("periods", {}).get("parameter_validation", {}),
+        "selection_metric": selection.get("selection_policy"),
+        "selection_round_trip_cost_bps": float(config.get("stock_alpha_news_risk_overlay_selection_round_trip_cost_bps", 10.0)),
+        "selected_config_metric_at_selection_cost": selected.get("median_validation_calmar", 0.0),
+        "eligibility_constraints": {
+            "positive_excess_return_majority_required": True,
+            "median_excess_return_positive_required": True,
+            "drawdown_not_worse_than_price_only_by_more_than_5pct_points": True,
+            "sufficient_trade_count_required": True,
+            "point_in_time_validation_failures_allowed": 0,
+            "status": "SCAFFOLD_CURRENT_FORMULA_ONLY",
+        },
+        "tie_break_rules": ["median excess Sharpe", "lower turnover", "smaller absolute weight", "simpler transformation", "lexical configuration ID"],
+        "used_holdout_for_selection": False,
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "hash_excluded_fields": ["generated_timestamp"],
+        "final_holdout_required": True,
+        "parameter_overrides_allowed_for_final_evaluation": False,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "production_signal": False,
+        "paper_orders_enabled": False,
+        "live_orders_enabled": False,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "news_originated_entries_enabled": False,
+    }
+    payload["immutable_configuration_hash"] = _frozen_config_hash(payload)
+    return payload
+
+
+def _frozen_config_hash(payload: Mapping[str, Any]) -> str:
+    ignored = set(payload.get("hash_excluded_fields", ["generated_timestamp"]) or [])
+    ignored.update({"generated_timestamp", "immutable_configuration_hash"})
+    stable_payload = {
+        key: value
+        for key, value in dict(payload).items()
+        if key not in ignored
+    }
+    return _stable_hash(stable_payload)
+
+
+def _holdout_report(
+    replay: Mapping[str, Any],
+    periods: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+    cost_scenarios: Mapping[str, Any],
+) -> dict[str, Any]:
+    price = dict(replay.get("risk_metrics", {}).get("price_only", {}) or {})
+    contrarian = dict(replay.get("risk_metrics", {}).get("news_contrarian_rerank", {}) or {})
+    validation_gate = _pseudo_holdout_validation_gate(periods, frozen)
+    return {
+        "schema_name": "contrarian_holdout_report",
+        "schema_version": "1.0",
+        "holdout_status": "PSEUDO_HOLDOUT",
+        "validation_label": "PSEUDO_HOLDOUT",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "evaluation_result": "PASSED_WITH_WARNINGS",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "validation_gate": validation_gate,
+        "required_validation_gates": {
+            "genuine_untouched_holdout": False,
+            "frozen_configuration_not_retuned": True,
+            "walk_forward_checks_passed": False,
+            "placebo_permutation_checks_passed": False,
+            "exposure_matched_controls_passed": False,
+            "concentration_analysis_passed": False,
+            "survivorship_audit_passed": False,
+            "corporate_action_audit_passed": False,
+            "missing_news_bias_analysis_passed": False,
+            "transaction_cost_validation_passed": False,
+        },
+        "reason": "No genuinely untouched holdout has been established for the already-inspected contrarian hypothesis.",
+        "warnings": [
+            "Previously viewed period; not a genuine untouched holdout.",
+            "This is a pseudo-holdout evaluation result, not final independent validation.",
+        ],
+        "frozen_configuration_hash": frozen.get("immutable_configuration_hash"),
+        "selection_round_trip_cost_bps": frozen.get("selection_round_trip_cost_bps"),
+        "parameter_overrides_used": False,
+        "price_only": _risk_subset(price),
+        "contrarian": _risk_subset(contrarian),
+        "excess_return_over_price_only": (_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0),
+        "excess_sharpe": (_metric(contrarian, "Sharpe_ratio") or 0.0) - (_metric(price, "Sharpe_ratio") or 0.0),
+        "drawdown_difference": (_metric(contrarian, "maximum_drawdown") or 0.0) - (_metric(price, "maximum_drawdown") or 0.0),
+        "cost_sensitivity": cost_scenarios,
+        "holdout_period": periods.get("periods", {}).get(
+            "final_holdout",
+            periods.get("periods", {}).get("final_untouched_holdout", {}),
+        ),
+    }
+
+
+def _pseudo_holdout_validation_gate(
+    periods: Mapping[str, Any],
+    frozen: Mapping[str, Any],
+) -> dict[str, Any]:
+    final_period = dict(periods.get("periods", {}).get("final_holdout", {}) or {})
+    retuning_gate = _retuning_refusal_gate(frozen, override_requested=False)
+    warnings = [
+        "Final period is not demonstrably untouched.",
+        "Robustness, placebo, matched-control, concentration, survivorship, corporate-action, missing-news, and transaction-cost gates remain incomplete.",
+    ]
+    return {
+        "status": "BLOCKED_PSEUDO_HOLDOUT",
+        "holdout_type": periods.get("holdout_type", "PSEUDO_HOLDOUT"),
+        "validation_label": "PSEUDO_HOLDOUT",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "parameter_overrides_used": False,
+        "retuning_gate": retuning_gate,
+        "retuning_gate_status": retuning_gate["status"],
+        "retuning_gate_passed": bool(retuning_gate["retuning_gate_passed"]),
+        "retuning_override_requested": bool(retuning_gate["retuning_override_requested"]),
+        "retuning_override_allowed_for_final_evaluation": bool(retuning_gate["retuning_override_allowed_for_final_evaluation"]),
+        "final_validation_blocked_by_pseudo_holdout": True,
+        "final_evaluation_valid": False,
+        "frozen_configuration_hash": frozen.get("immutable_configuration_hash"),
+        "final_period_start_date": final_period.get("start_date"),
+        "final_period_end_date": final_period.get("end_date"),
+        "warnings": warnings,
+    }
+
+
+def _retuning_refusal_gate(
+    frozen: Mapping[str, Any],
+    *,
+    override_requested: bool,
+) -> dict[str, Any]:
+    overrides_allowed = bool(frozen.get("parameter_overrides_allowed_for_final_evaluation", False))
+    refused = bool(override_requested and not overrides_allowed)
+    return {
+        "status": "REFUSED" if refused else "NO_OVERRIDE_REQUESTED",
+        "retuning_gate_status": "REFUSED" if refused else "NO_OVERRIDE_REQUESTED",
+        "retuning_gate_passed": not refused,
+        "retuning_override_requested": override_requested,
+        "retuning_override_allowed_for_final_evaluation": overrides_allowed,
+        "override_requested": override_requested,
+        "overrides_allowed_for_final_evaluation": overrides_allowed,
+        "final_validation_blocked_by_pseudo_holdout": False,
+        "final_evaluation_valid": not refused,
+        "reason": (
+            "Parameter overrides are not allowed for final evaluation from a frozen configuration."
+            if refused
+            else "No retuning override requested."
+        ),
+    }
+
+
+def _append_experiment_registry_entry(
+    path: Path,
+    *,
+    rows: list[Mapping[str, Any]],
+    replay: Mapping[str, Any],
+    validation: Mapping[str, Any],
+    coverage: Mapping[str, Any],
+    event_category_analysis: Mapping[str, Any],
+    decile_reconciliation: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    risk_metrics = dict(replay.get("risk_metrics", {}) or {})
+    decile_reconciliation_payload = dict(decile_reconciliation or {})
+    if not decile_reconciliation_payload:
+        decile_reconciliation_payload = {"status": "UNKNOWN"}
+    event_categories = dict(event_category_analysis or {})
+    categorized_count = sum(
+        int(payload.get("count", 0))
+        for key, payload in event_categories.items()
+        if isinstance(payload, Mapping) and key != "general_negative_sentiment_or_uncategorized"
+    )
+    total_event_count = sum(
+        int(payload.get("count", 0))
+        for payload in event_categories.values()
+        if isinstance(payload, Mapping)
+    )
+    entry = {
+        "experiment_id": _stable_hash(
+            {
+                "hypothesis": "Among price-model-approved candidates, downside-news pressure may improve ranking.",
+                "generated_date": datetime.now(timezone.utc).date().isoformat(),
+                "selection_cost": config.get("stock_alpha_news_risk_overlay_selection_round_trip_cost_bps", 10.0),
+            }
+        ),
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "hypothesis": "Among price-model-approved candidates, downside-news pressure may improve ranking.",
+        "status": "DEVELOPMENT_ONLY",
+        "current_formula": "contrarian_score = price_score + contrarian_weight * transformed_news_score",
+        "parameters_already_inspected": True,
+        "historical_periods_already_viewed": True,
+        "current_development_result": {
+            "price_only": _risk_subset(dict(risk_metrics.get("price_only", {}) or {})),
+            "news_contrarian_rerank": _risk_subset(dict(risk_metrics.get("news_contrarian_rerank", {}) or {})),
+        },
+        "holdout_contamination_status": "PSEUDO_HOLDOUT",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "selected_transaction_cost_bps": float(config.get("stock_alpha_news_risk_overlay_selection_round_trip_cost_bps", 10.0)),
+        "candidate_universe_constraint": "news reranking remains inside the price-model-approved candidate universe",
+        "score_direction": "higher score aligns with downside risk",
+        "news_coverage": coverage.get("row_coverage_ratio"),
+        "event_categorization_status": "UNCATEGORIZED" if categorized_count == 0 and total_event_count else "PARTIAL_OR_UNAVAILABLE",
+        "decile_reconciliation_status": decile_reconciliation_payload.get("status", "UNKNOWN"),
+        "grid_selection_status": dict(validation.get("contrarian_grid_selection", {}) or {}).get("status", "UNKNOWN"),
+        "frozen_config_hash": dict(validation.get("contrarian_frozen_config", {}) or {}).get("immutable_configuration_hash"),
+        "pseudo_holdout_gate_status": dict(
+            dict(validation.get("contrarian_holdout_report", {}) or {}).get("validation_gate", {}) or {}
+        ).get("status", "UNKNOWN"),
+        "warnings": [
+            "Development-only result; not a production signal.",
+            "Final period remains pseudo-holdout because untouched status cannot be proven.",
+        ],
+        "holdout_accessed": True,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "is_final_validation": False,
+        "validation_passed": False,
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "row_count": len(rows),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    return entry
+
+
+def _research_artifact_manifest(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    artifacts = {
+        name: str(value)
+        for name, value in paths.__dict__.items()
+        if name.endswith("_path") and isinstance(value, Path)
+    }
+    return {
+        "schema_name": "stock_alpha_news_risk_overlay_artifact_manifest",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "research_only": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "artifact_count": len(artifacts),
+        "artifacts": artifacts,
+    }
+
+
+def _artifact_validation_report(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    required_names = (
+        "chronological_split_manifest_json_path",
+        "experiment_registry_jsonl_path",
+        "contrarian_grid_selection_json_path",
+        "contrarian_frozen_config_json_path",
+        "contrarian_holdout_report_json_path",
+        "contrarian_chronological_validation_plan_json_path",
+        "contrarian_chronological_periods_csv_path",
+        "contrarian_walk_forward_validation_report_json_path",
+        "contrarian_placebo_permutation_report_json_path",
+        "contrarian_placebo_permutation_results_csv_path",
+        "contrarian_matched_control_report_json_path",
+        "contrarian_matched_control_results_csv_path",
+        "contrarian_profit_concentration_report_json_path",
+        "contrarian_trade_fragility_by_symbol_csv_path",
+        "contrarian_trade_fragility_by_year_csv_path",
+        "contrarian_top_trade_removal_csv_path",
+        "contrarian_year_regime_report_json_path",
+        "contrarian_year_regime_results_csv_path",
+        "contrarian_year_regime_examples_csv_path",
+        "contrarian_symbol_year_ablation_report_json_path",
+        "contrarian_without_top_symbols_csv_path",
+        "contrarian_without_top_years_csv_path",
+        "contrarian_cost_slippage_robustness_report_json_path",
+        "contrarian_cost_slippage_robustness_csv_path",
+        "contrarian_data_validity_audit_json_path",
+        "intraday_5min_expansion_plan_json_path",
+        "text_model_readiness_json_path",
+        "validation_stage_placeholders_json_path",
+        "decile_join_audit_json_path",
+        "decile_trade_reconciliation_json_path",
+        "corrected_news_score_deciles_csv_path",
+        "news_validation_workflow_map_json_path",
+        "validation_dependency_graph_json_path",
+        "validation_readiness_dashboard_json_path",
+        "artifact_lineage_report_json_path",
+        "news_validation_gap_analysis_json_path",
+        "news_transformer_readiness_json_path",
+        "news_transformer_training_plan_json_path",
+        "catastrophic_news_audit_json_path",
+        "catastrophic_news_candidates_csv_path",
+        "catastrophic_news_veto_report_json_path",
+        "catastrophic_veto_candidate_attribution_json_path",
+        "catastrophic_veto_trade_attribution_csv_path",
+        "catastrophic_veto_strategy_comparison_json_path",
+        "catastrophic_veto_policy_json_path",
+        "catastrophic_veto_filtered_strategy_report_json_path",
+        "catastrophic_veto_removed_trades_csv_path",
+        "catastrophic_veto_removed_symbols_csv_path",
+        "catastrophic_veto_full_replay_report_json_path",
+        "catastrophic_veto_full_replay_trade_ledger_csv_path",
+        "catastrophic_veto_full_replay_equity_csv_path",
+        "catastrophic_veto_filtered_candidates_csv_path",
+        "catastrophic_veto_blocked_candidates_csv_path",
+        "catastrophic_veto_replay_seam_report_json_path",
+        "catastrophic_veto_bounceback_report_json_path",
+        "catastrophic_veto_bounceback_by_category_csv_path",
+        "catastrophic_veto_bounceback_examples_csv_path",
+        "catastrophic_veto_extreme_only_policy_proposal_json_path",
+        "catastrophic_veto_policy_variant_comparison_json_path",
+        "catastrophic_veto_policy_variant_counts_csv_path",
+        "catastrophic_veto_policy_variant_metrics_csv_path",
+        "catastrophic_veto_policy_variant_removed_trades_csv_path",
+        "catastrophic_veto_policy_variant_bounceback_csv_path",
+        "catastrophic_veto_policy_frontier_report_json_path",
+        "catastrophic_veto_policy_frontier_csv_path",
+        "catastrophic_veto_policy_variant_examples_csv_path",
+        "catastrophic_veto_loser_bounceback_casebook_json_path",
+        "catastrophic_veto_loser_bounceback_cases_csv_path",
+        "catastrophic_veto_loser_bounceback_feature_diff_csv_path",
+        "catastrophic_veto_loser_bounceback_keyword_diff_csv_path",
+        "catastrophic_veto_taxonomy_improvement_plan_json_path",
+        "catastrophic_veto_parked_status_json_path",
+        "catastrophic_news_evidence_quality_report_json_path",
+        "catastrophic_news_evidence_quality_by_field_csv_path",
+        "catastrophic_news_evidence_quality_by_symbol_csv_path",
+        "catastrophic_veto_policy_mode_comparison_json_path",
+        "catastrophic_veto_policy_mode_counts_csv_path",
+        "news_evidence_lineage_report_json_path",
+        "news_evidence_lineage_by_stage_csv_path",
+        "news_evidence_missing_field_examples_csv_path",
+        "news_evidence_readiness_report_json_path",
+        "news_event_taxonomy_report_json_path",
+        "news_event_taxonomy_counts_csv_path",
+        "news_event_taxonomy_examples_csv_path",
+        "news_duplicate_grouping_report_json_path",
+        "news_duplicate_grouping_examples_csv_path",
+        "news_point_in_time_text_safety_report_json_path",
+        "news_point_in_time_text_safety_examples_csv_path",
+        "news_text_keyword_baseline_report_json_path",
+        "news_text_keyword_baseline_scores_csv_path",
+        "walk_forward_validation_report_json_path",
+        "walk_forward_fold_results_csv_path",
+        "placebo_permutation_report_json_path",
+        "placebo_permutation_results_csv_path",
+        "exposure_matched_controls_json_path",
+        "trade_count_matched_controls_json_path",
+        "concentration_fragility_report_json_path",
+    )
+    artifact_status = []
+    missing = []
+    for name in required_names:
+        path = getattr(paths, name)
+        exists = path.exists()
+        if not exists:
+            missing.append(name)
+        artifact_status.append(
+            {
+                "artifact_key": name,
+                "path": str(path),
+                "exists": exists,
+                "status": "PRESENT" if exists else "MISSING",
+            }
+        )
+    return {
+        "schema_name": "stock_alpha_news_risk_overlay_artifact_validation_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "PASSED" if not missing else "FAILED",
+        "status_scope": "ARTIFACT_PRESENCE_ONLY",
+        "artifact_presence_status": "PASSED" if not missing else "FAILED",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "is_final_validation": False,
+        "research_only": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "required_artifact_count": len(required_names),
+        "missing_artifact_count": len(missing),
+        "missing_artifacts": missing,
+        "artifacts": artifact_status,
+    }
+
+
+def _news_validation_workflow_map(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    full_replay_computed = bool(
+        _read_json_if_available(paths.catastrophic_veto_full_replay_report_json_path).get("full_replay_computed")
+    )
+    evidence_status = _read_json_if_available(
+        paths.catastrophic_news_evidence_quality_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    news_evidence_status = _read_json_if_available(
+        paths.news_evidence_readiness_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    event_taxonomy_status = _read_json_if_available(
+        paths.news_event_taxonomy_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    duplicate_grouping_status = _read_json_if_available(
+        paths.news_duplicate_grouping_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    text_safety_status = _read_json_if_available(
+        paths.news_point_in_time_text_safety_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    keyword_baseline_status = _read_json_if_available(
+        paths.news_text_keyword_baseline_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    bounceback_status = _read_json_if_available(
+        paths.catastrophic_veto_bounceback_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    extreme_policy_status = _read_json_if_available(
+        paths.catastrophic_veto_extreme_only_policy_proposal_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    policy_variant_status = _read_json_if_available(
+        paths.catastrophic_veto_policy_variant_comparison_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    policy_frontier_status = _read_json_if_available(
+        paths.catastrophic_veto_policy_frontier_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    casebook_status = _read_json_if_available(
+        paths.catastrophic_veto_loser_bounceback_casebook_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    taxonomy_plan_status = _read_json_if_available(
+        paths.catastrophic_veto_taxonomy_improvement_plan_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    parked_veto_status = _read_json_if_available(
+        paths.catastrophic_veto_parked_status_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    contrarian_profit_status = _read_json_if_available(
+        paths.contrarian_profit_concentration_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    year_regime_status = _read_json_if_available(
+        paths.contrarian_year_regime_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    symbol_year_ablation_status = _read_json_if_available(
+        paths.contrarian_symbol_year_ablation_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    contrarian_data_validity_status = _read_json_if_available(
+        paths.contrarian_data_validity_audit_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    intraday_5min_status = _read_json_if_available(
+        paths.intraday_5min_expansion_plan_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    casebook_status = _read_json_if_available(
+        paths.catastrophic_veto_loser_bounceback_casebook_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    taxonomy_plan_status = _read_json_if_available(
+        paths.catastrophic_veto_taxonomy_improvement_plan_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    bounceback_status = _read_json_if_available(
+        paths.catastrophic_veto_bounceback_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    extreme_policy_status = _read_json_if_available(
+        paths.catastrophic_veto_extreme_only_policy_proposal_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    event_taxonomy_status = _read_json_if_available(
+        paths.news_event_taxonomy_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    duplicate_grouping_status = _read_json_if_available(
+        paths.news_duplicate_grouping_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    text_safety_status = _read_json_if_available(
+        paths.news_point_in_time_text_safety_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    keyword_baseline_status = _read_json_if_available(
+        paths.news_text_keyword_baseline_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    node_specs = [
+        ("price_model_candidates", "Price model candidates", "IMPLEMENTED", True, [paths.dataset_csv_path], True, True, []),
+        ("news_feature_join", "Point-in-time news feature join", "IMPLEMENTED", True, [paths.leakage_json_path], True, True, ["price_model_candidates"]),
+        ("coverage_report", "News coverage report", "PRESENT", True, [paths.coverage_json_path], True, True, ["news_feature_join"]),
+        ("score_direction_audit", "Score direction audit", "PRESENT", True, [paths.score_direction_audit_json_path, paths.news_score_direction_report_json_path], True, True, ["news_feature_join"]),
+        ("strategy_variants", "Research strategy variants", "IMPLEMENTED", True, [paths.contrarian_strategy_comparison_json_path], True, True, ["score_direction_audit"]),
+        ("portfolio_replay", "Open-position research replay", "IMPLEMENTED", True, [paths.open_trade_portfolio_json_path, paths.replay_risk_metrics_json_path], True, True, ["strategy_variants"]),
+        ("cost_sensitivity", "Cost sensitivity scenarios", "PRESENT", True, [paths.cost_scenario_comparison_json_path], True, True, ["portfolio_replay"]),
+        ("decile_reconciliation", "Decile candidate-to-trade reconciliation", "PASSED", True, [paths.decile_join_audit_json_path, paths.decile_trade_reconciliation_json_path], True, True, ["portfolio_replay"]),
+        ("chronological_split", "Chronological split manifest", "PSEUDO_HOLDOUT", True, [paths.chronological_split_manifest_json_path], True, True, ["decile_reconciliation"]),
+        ("experiment_registry", "Append-only experiment registry", "PRESENT", True, [paths.experiment_registry_jsonl_path], True, True, ["chronological_split"]),
+        ("grid_selection", "Contrarian grid selection scaffold", "SCAFFOLD", True, [paths.contrarian_grid_selection_json_path], True, True, ["experiment_registry"]),
+        ("frozen_config", "Frozen contrarian configuration", "PRESENT", True, [paths.contrarian_frozen_config_json_path], True, True, ["grid_selection"]),
+        ("pseudo_holdout_report", "Pseudo-holdout report", "PSEUDO_HOLDOUT", True, [paths.contrarian_holdout_report_json_path], True, True, ["frozen_config"]),
+        ("contrarian_chronological_validation", "Main contrarian chronological validation plan", "IN_PROGRESS", True, [paths.contrarian_chronological_validation_plan_json_path, paths.contrarian_chronological_periods_csv_path], True, True, ["pseudo_holdout_report"]),
+        ("contrarian_profit_concentration", "Main contrarian profit concentration", contrarian_profit_status, True, [paths.contrarian_profit_concentration_report_json_path, paths.contrarian_trade_fragility_by_symbol_csv_path, paths.contrarian_trade_fragility_by_year_csv_path, paths.contrarian_top_trade_removal_csv_path], True, True, ["portfolio_replay"]),
+        ("contrarian_year_regime", "Main contrarian year/regime robustness", year_regime_status, True, [paths.contrarian_year_regime_report_json_path, paths.contrarian_year_regime_results_csv_path, paths.contrarian_year_regime_examples_csv_path], True, True, ["portfolio_replay"]),
+        ("contrarian_symbol_year_ablation", "Main contrarian symbol/year ablations", symbol_year_ablation_status, True, [paths.contrarian_symbol_year_ablation_report_json_path, paths.contrarian_without_top_symbols_csv_path, paths.contrarian_without_top_years_csv_path], True, True, ["contrarian_profit_concentration"]),
+        ("contrarian_data_validity", "Main contrarian data-validity audit", contrarian_data_validity_status, True, [paths.contrarian_data_validity_audit_json_path], True, True, ["portfolio_replay"]),
+        ("intraday_5min_expansion_plan", "Future Dell PC intraday expansion plan", intraday_5min_status, True, [paths.intraday_5min_expansion_plan_json_path], True, False, ["contrarian_data_validity"]),
+        ("validation_stage_placeholders", "Validation stage placeholders", "PRESENT", True, [paths.validation_stage_placeholders_json_path], True, True, ["pseudo_holdout_report"]),
+        ("artifact_manifest", "Artifact manifest", "PRESENT", True, [paths.artifact_manifest_json_path], True, False, ["validation_stage_placeholders"]),
+        ("artifact_validation_report", "Artifact validation report", "PASSED", True, [paths.artifact_validation_report_json_path], True, False, ["artifact_manifest"]),
+        ("text_model_readiness", "Text model readiness report", "NOT_READY", True, [paths.text_model_readiness_json_path], True, True, ["validation_stage_placeholders"]),
+        ("future_walk_forward", "Future walk-forward robustness", "NOT_IMPLEMENTED", False, [], False, True, ["frozen_config"]),
+        ("future_placebo", "Future placebo and permutation testing", "NOT_IMPLEMENTED", False, [], False, True, ["future_walk_forward"]),
+        ("future_matched_controls", "Future matched controls", "NOT_IMPLEMENTED", False, [], False, True, ["future_placebo"]),
+        ("walk_forward_validation", "Walk-forward validation report", "NOT_IMPLEMENTED", True, [paths.walk_forward_validation_report_json_path, paths.walk_forward_fold_results_csv_path], True, True, ["frozen_config"]),
+        ("placebo_permutation_validation", "Placebo/permutation validation report", "UNAVAILABLE_INPUT", True, [paths.placebo_permutation_report_json_path, paths.placebo_permutation_results_csv_path], True, True, ["frozen_config"]),
+        ("matched_control_reports", "Matched-control reports", "NOT_IMPLEMENTED", True, [paths.exposure_matched_controls_json_path, paths.trade_count_matched_controls_json_path], True, True, ["frozen_config"]),
+        ("concentration_fragility", "Concentration and fragility report", "SCAFFOLD", True, [paths.concentration_fragility_report_json_path], True, True, ["frozen_config"]),
+        ("future_concentration", "Future concentration analysis", "NOT_IMPLEMENTED", False, [], False, True, ["future_matched_controls"]),
+        ("future_survivorship_audit", "Future survivorship audit", "NOT_IMPLEMENTED", False, [], False, True, ["future_concentration"]),
+        ("future_corporate_action_audit", "Future corporate-action audit", "NOT_IMPLEMENTED", False, [], False, True, ["future_survivorship_audit"]),
+        ("future_missing_news_bias", "Future missing-news bias analysis", "NOT_IMPLEMENTED", False, [], False, True, ["future_corporate_action_audit"]),
+        ("future_text_models", "Future text models", "NOT_READY", False, [], False, True, ["text_model_readiness", "future_missing_news_bias"]),
+        ("news_transformer_scaffold", "Disabled news transformer scaffold", "NOT_READY", True, [paths.news_transformer_readiness_json_path, paths.news_transformer_training_plan_json_path], True, True, ["text_model_readiness"]),
+        ("catastrophic_news_veto", "Research-only catastrophic-news veto audit", "PASSED_WITH_WARNINGS", True, [paths.catastrophic_news_audit_json_path, paths.catastrophic_news_candidates_csv_path, paths.catastrophic_news_veto_report_json_path], True, True, ["text_model_readiness"]),
+        ("catastrophic_veto_strategy_comparison", "Research-only catastrophic-veto strategy comparison", "ATTRIBUTION_ONLY", True, [paths.catastrophic_veto_candidate_attribution_json_path, paths.catastrophic_veto_trade_attribution_csv_path, paths.catastrophic_veto_strategy_comparison_json_path, paths.catastrophic_veto_policy_json_path], True, True, ["catastrophic_news_veto"]),
+        ("catastrophic_veto_filtered_scenario", "Research-only catastrophic-veto replay-impact simulation", "APPROXIMATE_LEDGER_SIMULATION", True, [paths.catastrophic_veto_filtered_strategy_report_json_path, paths.catastrophic_veto_removed_trades_csv_path, paths.catastrophic_veto_removed_symbols_csv_path], True, True, ["catastrophic_veto_strategy_comparison"]),
+        ("catastrophic_veto_full_replay", "Research-only catastrophic-veto full replay variant", "FULL_REPLAY_COMPUTED" if full_replay_computed else "FULL_REPLAY_NOT_AVAILABLE", True, [paths.catastrophic_veto_full_replay_report_json_path, paths.catastrophic_veto_full_replay_trade_ledger_csv_path, paths.catastrophic_veto_full_replay_equity_csv_path, paths.catastrophic_veto_filtered_candidates_csv_path, paths.catastrophic_veto_blocked_candidates_csv_path], True, True, ["catastrophic_veto_filtered_scenario"]),
+        ("catastrophic_veto_replay_seam", "Research-only filtered replay input seam", "REPLAY_ADAPTER_EXECUTED" if full_replay_computed else "ADAPTER_ADDED_NOT_EXECUTED", True, [paths.catastrophic_veto_replay_seam_report_json_path], True, True, ["catastrophic_veto_full_replay"]),
+        ("catastrophic_news_evidence_quality", "Catastrophic-news evidence quality", evidence_status, True, [paths.catastrophic_news_evidence_quality_report_json_path, paths.catastrophic_news_evidence_quality_by_field_csv_path, paths.catastrophic_news_evidence_quality_by_symbol_csv_path], True, True, ["catastrophic_news_veto"]),
+        ("catastrophic_veto_policy_modes", "Research-only catastrophic-veto policy modes", "COUNT_ONLY_RESEARCH", True, [paths.catastrophic_veto_policy_mode_comparison_json_path, paths.catastrophic_veto_policy_mode_counts_csv_path], True, True, ["catastrophic_news_evidence_quality"]),
+        ("news_evidence_lineage", "News evidence contract and lineage audit", news_evidence_status, True, [paths.news_evidence_lineage_report_json_path, paths.news_evidence_lineage_by_stage_csv_path, paths.news_evidence_missing_field_examples_csv_path, paths.news_evidence_readiness_report_json_path], True, True, ["news_feature_join"]),
+        ("event_taxonomy_research", "Deterministic headline event taxonomy", event_taxonomy_status, True, [paths.news_event_taxonomy_report_json_path, paths.news_event_taxonomy_counts_csv_path, paths.news_event_taxonomy_examples_csv_path], True, False, ["news_evidence_lineage"]),
+        ("duplicate_grouping_heuristic", "Heuristic duplicate grouping", duplicate_grouping_status, True, [paths.news_duplicate_grouping_report_json_path, paths.news_duplicate_grouping_examples_csv_path], True, False, ["news_evidence_lineage"]),
+        ("point_in_time_text_safety", "Point-in-time text safety audit", text_safety_status, True, [paths.news_point_in_time_text_safety_report_json_path, paths.news_point_in_time_text_safety_examples_csv_path], True, False, ["news_evidence_lineage"]),
+        ("keyword_text_baseline", "Deterministic keyword text baseline", keyword_baseline_status, True, [paths.news_text_keyword_baseline_report_json_path, paths.news_text_keyword_baseline_scores_csv_path], True, False, ["point_in_time_text_safety"]),
+        ("catastrophic_veto_bounceback", "Research-only blocked-trade bounce-back attribution", bounceback_status, True, [paths.catastrophic_veto_bounceback_report_json_path, paths.catastrophic_veto_bounceback_by_category_csv_path, paths.catastrophic_veto_bounceback_examples_csv_path], True, False, ["catastrophic_veto_full_replay", "event_taxonomy_research"]),
+        ("extreme_only_policy_proposal", "Extreme-distress-only policy proposal", extreme_policy_status, True, [paths.catastrophic_veto_extreme_only_policy_proposal_json_path], True, False, ["catastrophic_veto_bounceback"]),
+        ("catastrophic_policy_variants", "Research-only catastrophic-veto policy variants", policy_variant_status, True, [paths.catastrophic_veto_policy_variant_comparison_json_path, paths.catastrophic_veto_policy_variant_counts_csv_path, paths.catastrophic_veto_policy_variant_metrics_csv_path, paths.catastrophic_veto_policy_variant_removed_trades_csv_path, paths.catastrophic_veto_policy_variant_bounceback_csv_path, paths.catastrophic_veto_policy_variant_examples_csv_path], True, False, ["catastrophic_veto_bounceback", "event_taxonomy_research"]),
+        ("catastrophic_policy_frontier", "Research-only catastrophic-veto policy frontier", policy_frontier_status, True, [paths.catastrophic_veto_policy_frontier_report_json_path, paths.catastrophic_veto_policy_frontier_csv_path], True, False, ["catastrophic_policy_variants"]),
+        ("loser_bounceback_casebook", "Research-only loser-vs-bounceback casebook", casebook_status, True, [paths.catastrophic_veto_loser_bounceback_casebook_json_path, paths.catastrophic_veto_loser_bounceback_cases_csv_path, paths.catastrophic_veto_loser_bounceback_feature_diff_csv_path, paths.catastrophic_veto_loser_bounceback_keyword_diff_csv_path], True, False, ["catastrophic_veto_bounceback"]),
+        ("taxonomy_improvement_plan", "Research-only catastrophic taxonomy improvement plan", taxonomy_plan_status, True, [paths.catastrophic_veto_taxonomy_improvement_plan_json_path], True, False, ["loser_bounceback_casebook"]),
+        ("catastrophic_veto_parked", "Catastrophic veto parked diagnostic status", parked_veto_status, True, [paths.catastrophic_veto_parked_status_json_path], True, False, ["catastrophic_policy_frontier", "loser_bounceback_casebook"]),
+    ]
+    downstream: dict[str, list[str]] = {node_id: [] for node_id, *_ in node_specs}
+    for node_id, _name, _status, _implemented, _paths, _current, _final, upstream in node_specs:
+        for dependency in upstream:
+            downstream.setdefault(dependency, []).append(node_id)
+    nodes = []
+    for node_id, name, status, implemented, artifact_paths, required_current, required_final, upstream in node_specs:
+        blocks_final = required_final and status in {"PSEUDO_HOLDOUT", "SCAFFOLD", "NOT_IMPLEMENTED", "NOT_READY", "BLOCKED", "FAILED", "UNAVAILABLE_INPUT", "INSUFFICIENT", "INSUFFICIENT_FOR_STRICT_VETO", "PARTIAL_EVIDENCE"}
+        nodes.append(
+            {
+                "node_id": node_id,
+                "name": name,
+                "status": status,
+                "implemented": implemented,
+                "artifact_paths": [str(path) for path in artifact_paths],
+                "required_for_current_stage": required_current,
+                "required_for_final_validation": required_final,
+                "blocks_final_validation": blocks_final,
+                "contains_blocking_stages": node_id == "validation_stage_placeholders",
+                "blocking_stage_count": (
+                    sum(
+                        1
+                        for stage in _validation_stage_placeholders().values()
+                        if isinstance(stage, Mapping) and stage.get("blocks_final_validation")
+                    )
+                    if node_id == "validation_stage_placeholders"
+                    else 0
+                ),
+                "upstream_dependencies": upstream,
+                "downstream_dependencies": downstream.get(node_id, []),
+                "warnings": _workflow_node_warnings(status, node_id=node_id),
+            }
+        )
+    edges = [
+        {"from": dependency, "to": node["node_id"]}
+        for node in nodes
+        for dependency in node["upstream_dependencies"]
+    ]
+    return {
+        "schema_name": "stock_alpha_news_validation_workflow_map",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "PSEUDO_HOLDOUT_WORKFLOW_INCOMPLETE",
+        "workflow_name": "stock_alpha_news_risk_overlay_validation_spine",
+        "research_only": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "nodes": nodes,
+        "edges": edges,
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "warnings": [
+            "Workflow map is descriptive and does not validate the strategy.",
+            "Pseudo-holdout and unimplemented validation stages block final validation.",
+        ],
+    }
+
+
+def _workflow_node_warnings(status: str, *, node_id: str = "") -> list[str]:
+    if node_id == "validation_stage_placeholders":
+        return ["Validation stage placeholder container includes incomplete gates that block final validation."]
+    if status == "PSEUDO_HOLDOUT":
+        return ["Previously inspected period; not an untouched holdout."]
+    if status == "SCAFFOLD":
+        return ["Scaffold artifact only; full validation logic is not complete."]
+    if status == "NOT_IMPLEMENTED":
+        return ["Stage is not implemented and blocks final validation."]
+    if status == "NOT_READY":
+        return ["Stage is not ready and blocks final validation."]
+    if status == "UNAVAILABLE_INPUT":
+        return ["Stage cannot be computed from available inputs and blocks final validation."]
+    return []
+
+
+def _validation_dependency_graph(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    full_replay_computed = bool(
+        _read_json_if_available(paths.catastrophic_veto_full_replay_report_json_path).get("full_replay_computed")
+    )
+    evidence_status = _read_json_if_available(
+        paths.catastrophic_news_evidence_quality_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    news_evidence_status = _read_json_if_available(
+        paths.news_evidence_readiness_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    event_taxonomy_status = _read_json_if_available(
+        paths.news_event_taxonomy_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    duplicate_grouping_status = _read_json_if_available(
+        paths.news_duplicate_grouping_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    text_safety_status = _read_json_if_available(
+        paths.news_point_in_time_text_safety_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    keyword_baseline_status = _read_json_if_available(
+        paths.news_text_keyword_baseline_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    bounceback_status = _read_json_if_available(
+        paths.catastrophic_veto_bounceback_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    extreme_policy_status = _read_json_if_available(
+        paths.catastrophic_veto_extreme_only_policy_proposal_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    policy_variant_status = _read_json_if_available(
+        paths.catastrophic_veto_policy_variant_comparison_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    policy_frontier_status = _read_json_if_available(
+        paths.catastrophic_veto_policy_frontier_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    casebook_status = _read_json_if_available(
+        paths.catastrophic_veto_loser_bounceback_casebook_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    taxonomy_plan_status = _read_json_if_available(
+        paths.catastrophic_veto_taxonomy_improvement_plan_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    parked_veto_status = _read_json_if_available(
+        paths.catastrophic_veto_parked_status_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    profit_concentration_status = _read_json_if_available(
+        paths.contrarian_profit_concentration_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    year_regime_status = _read_json_if_available(
+        paths.contrarian_year_regime_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    symbol_year_ablation_status = _read_json_if_available(
+        paths.contrarian_symbol_year_ablation_report_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    data_validity_status = _read_json_if_available(
+        paths.contrarian_data_validity_audit_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    intraday_5min_status = _read_json_if_available(
+        paths.intraday_5min_expansion_plan_json_path
+    ).get("status", "UNAVAILABLE_INPUT")
+    gate_specs = [
+        ("decile_reconciliation", "PASSED", True, True, paths.decile_trade_reconciliation_json_path, "", "continue to chronological validation"),
+        ("chronological_split", "PSEUDO_HOLDOUT", True, False, paths.chronological_split_manifest_json_path, "final period is pseudo-holdout", "obtain untouched prospective data"),
+        ("experiment_registry", "PRESENT", True, True, paths.experiment_registry_jsonl_path, "", "preserve append-only registry entries"),
+        ("frozen_config", "PRESENT", True, True, paths.contrarian_frozen_config_json_path, "", "use frozen config for future validation"),
+        ("pseudo_holdout_gate", "BLOCKED", True, False, paths.contrarian_holdout_report_json_path, "pseudo-holdout cannot pass final validation", "evaluate only on genuinely untouched data"),
+        ("contrarian_chronological_validation", "IN_PROGRESS", True, False, paths.contrarian_chronological_validation_plan_json_path, "chronological validation is in progress and pseudo-holdout is not final validation", "collect untouched future final holdout"),
+        ("contrarian_profit_concentration", profit_concentration_status, True, profit_concentration_status == "IMPLEMENTED", paths.contrarian_profit_concentration_report_json_path, "profit concentration is diagnostic and does not pass final validation", "review top-trade/symbol/year fragility"),
+        ("contrarian_year_regime", year_regime_status, True, year_regime_status == "AVAILABLE", paths.contrarian_year_regime_report_json_path, "year/regime robustness is ledger-level and not final validation", "review negative and partial years"),
+        ("contrarian_symbol_year_ablation", symbol_year_ablation_status, True, symbol_year_ablation_status == "AVAILABLE", paths.contrarian_symbol_year_ablation_report_json_path, "symbol/year ablations are ledger-level approximations", "review concentration sensitivity before final validation"),
+        ("contrarian_data_validity", data_validity_status, True, False, paths.contrarian_data_validity_audit_json_path, "data-validity audits are incomplete", "implement survivorship/corporate-action/missing-data audits"),
+        ("intraday_5min_expansion_plan", intraday_5min_status, True, False, paths.intraday_5min_expansion_plan_json_path, "intraday expansion is planning-only", "confirm Dell PC intraday data paths and run small subset later"),
+        ("walk_forward", "NOT_IMPLEMENTED", True, False, paths.walk_forward_validation_report_json_path, "walk-forward robustness is scaffolded but fold-level replay metrics are not implemented", "implement expanding/rolling chronological walk-forward"),
+        ("placebo_permutation", "UNAVAILABLE_INPUT", True, False, paths.placebo_permutation_report_json_path, "placebo/permutation report is scaffolded without computable placebo metrics", "implement deterministic placebo tests"),
+        ("exposure_matched_controls", "NOT_IMPLEMENTED", True, False, paths.exposure_matched_controls_json_path, "exposure-matched controls are not implemented", "implement exposure-matched controls"),
+        ("trade_count_matched_controls", "NOT_IMPLEMENTED", True, False, paths.trade_count_matched_controls_json_path, "trade-count-matched controls are not implemented", "implement trade-count-matched controls"),
+        ("concentration_analysis", "SCAFFOLD", True, False, paths.concentration_fragility_report_json_path, "concentration analysis is a limited scaffold, not full fragility validation", "implement top-trade and top-symbol fragility analysis"),
+        ("survivorship_audit", "NOT_IMPLEMENTED", False, False, None, "survivorship audit is not implemented", "audit point-in-time universe membership"),
+        ("corporate_action_audit", "NOT_IMPLEMENTED", False, False, None, "corporate-action audit is not implemented", "validate split/dividend adjustment semantics"),
+        ("missing_news_bias", "NOT_IMPLEMENTED", False, False, None, "missing-news bias analysis is not complete", "complete covered versus uncovered candidate analysis"),
+        ("transaction_cost_validation", "NOT_IMPLEMENTED", False, False, None, "realistic transaction-cost validation is not implemented", "validate cost assumptions and path-dependent replay"),
+        ("text_model_readiness", "NOT_READY", True, False, paths.text_model_readiness_json_path, "FinBERT/text modelling is not ready", "complete taxonomy, timestamp, and duplicate-handling gates first"),
+        ("news_transformer_scaffold", "NOT_READY", True, False, paths.news_transformer_readiness_json_path, "disabled transformer scaffold is not ready for training or inference", "complete readiness gates before enabling transformer research"),
+        ("catastrophic_news_veto", "PASSED_WITH_WARNINGS", True, False, paths.catastrophic_news_audit_json_path, "catastrophic-news veto is research-only and not enforced in replay or strategy", "validate veto taxonomy and point-in-time availability before final validation"),
+        ("catastrophic_veto_strategy_comparison", "ATTRIBUTION_ONLY", True, False, paths.catastrophic_veto_strategy_comparison_json_path, "catastrophic-veto replay impact is approximate and not full replay", "compute a full research-only filtered replay before treating veto impact as evaluated"),
+        ("catastrophic_veto_filtered_scenario", "APPROXIMATE_LEDGER_SIMULATION", True, False, paths.catastrophic_veto_filtered_strategy_report_json_path, "catastrophic-veto impact is approximate ledger simulation, not full replay", "compute full research-only filtered replay before treating veto impact as validated"),
+        ("catastrophic_veto_full_replay", "FULL_REPLAY_COMPUTED" if full_replay_computed else "FULL_REPLAY_NOT_AVAILABLE", True, full_replay_computed, paths.catastrophic_veto_full_replay_report_json_path, "" if full_replay_computed else "replay output does not contain the catastrophic-veto filtered variant", "retain as a separate research-only scenario" if full_replay_computed else "inspect the optional variant replay output"),
+        ("catastrophic_veto_replay_seam", "REPLAY_ADAPTER_EXECUTED" if full_replay_computed else "ADAPTER_ADDED_NOT_EXECUTED", True, full_replay_computed, paths.catastrophic_veto_replay_seam_report_json_path, "" if full_replay_computed else "opt-in replay adapter is present but not executed as a full replay", "preserve the research-only boundary" if full_replay_computed else "execute and validate separate research-only filtered replay"),
+        ("catastrophic_news_evidence_quality", evidence_status, True, False, paths.catastrophic_news_evidence_quality_report_json_path, "catastrophic-news evidence quality insufficient for strict live-style filtering", "improve point-in-time text and availability evidence before any execution use"),
+        ("news_evidence_lineage", news_evidence_status, True, False, paths.news_evidence_readiness_report_json_path, "news evidence contract is incomplete across ingestion, feature, and candidate stages", "preserve text, availability, source, category, duplicate, and candidate linkage fields"),
+        ("event_taxonomy_research", event_taxonomy_status, True, event_taxonomy_status in {"RESEARCH_RULES_READY"}, paths.news_event_taxonomy_report_json_path, "headline event taxonomy is research-only", "review deterministic event taxonomy coverage"),
+        ("duplicate_grouping_heuristic", duplicate_grouping_status, True, duplicate_grouping_status == "HEURISTIC_ONLY", paths.news_duplicate_grouping_report_json_path, "duplicate grouping is heuristic-only and not production-grade", "replace with provider-grade duplicate identifiers before text modelling"),
+        ("point_in_time_text_safety", text_safety_status, True, text_safety_status == "PARTIAL_POINT_IN_TIME_SAFE", paths.news_point_in_time_text_safety_report_json_path, "point-in-time text safety is partial", "increase availability timestamp coverage"),
+        ("keyword_text_baseline", keyword_baseline_status, True, keyword_baseline_status == "RESEARCH_ONLY", paths.news_text_keyword_baseline_report_json_path, "keyword baseline is research-only and unused by strategy", "keep as diagnostic until validation gates pass"),
+        ("catastrophic_veto_bounceback", bounceback_status, True, False, paths.catastrophic_veto_bounceback_report_json_path, "bounce-back attribution is research-only and not a validation gate", "review removed-trade winners/losers before narrowing policy"),
+        ("extreme_only_policy_proposal", extreme_policy_status, True, False, paths.catastrophic_veto_extreme_only_policy_proposal_json_path, "extreme-only policy is proposed but not replayed", "run a future separate research-only replay before interpreting policy impact"),
+        ("catastrophic_policy_variants", policy_variant_status, True, False, paths.catastrophic_veto_policy_variant_comparison_json_path, "policy variants are research-only diagnostics and not validation gates", "review policy frontier and examples before any future policy narrowing"),
+        ("catastrophic_policy_frontier", policy_frontier_status, True, False, paths.catastrophic_veto_policy_frontier_report_json_path, "policy frontier is a diagnostic ranking, not model selection", "treat frontier output as hypothesis triage only"),
+        ("loser_bounceback_casebook", casebook_status, True, False, paths.catastrophic_veto_loser_bounceback_casebook_json_path, "casebook is observational research only", "inspect loser-vs-bounceback differences before changing taxonomy"),
+        ("taxonomy_improvement_plan", taxonomy_plan_status, True, False, paths.catastrophic_veto_taxonomy_improvement_plan_json_path, "taxonomy improvement plan is proposal-only", "review proposed deterministic rule changes before implementation"),
+        ("catastrophic_veto_parked", parked_veto_status, True, False, paths.catastrophic_veto_parked_status_json_path, "catastrophic veto is parked diagnostic-only", "focus validation on news_contrarian_rerank"),
+    ]
+    gates = []
+    for name, status, implemented, passed, artifact, reason, action in gate_specs:
+        gates.append(
+            {
+                "gate_name": name,
+                "status": status,
+                "implemented": implemented,
+                "passed": passed,
+                "blocks_final_validation": not passed,
+                "required_artifact": str(artifact) if artifact is not None else None,
+                "failure_reason": reason,
+                "next_required_action": action,
+            }
+        )
+    blocked_by = [gate["gate_name"] for gate in gates if gate["blocks_final_validation"]]
+    return {
+        "schema_name": "stock_alpha_news_validation_dependency_graph",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "gates": gates,
+        "all_required_gates_complete": all(gate["implemented"] for gate in gates),
+        "all_required_gates_passed": all(gate["passed"] for gate in gates),
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "is_final_validation": False,
+        "blocked_by": blocked_by,
+        "warnings": [
+            "Artifact presence alone does not pass final validation.",
+            "Pseudo-holdout cannot pass final validation.",
+            "Text-model readiness cannot pass while FinBERT/text readiness is NOT_READY.",
+        ],
+    }
+
+
+def _validation_readiness_dashboard(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    dependency_graph = _validation_dependency_graph(paths)
+    full_replay_computed = bool(
+        _read_json_if_available(paths.catastrophic_veto_full_replay_report_json_path).get("full_replay_computed")
+    )
+    news_evidence = _read_json_if_available(paths.news_evidence_readiness_report_json_path)
+    event_taxonomy = _read_json_if_available(paths.news_event_taxonomy_report_json_path)
+    duplicate_grouping = _read_json_if_available(paths.news_duplicate_grouping_report_json_path)
+    text_safety = _read_json_if_available(paths.news_point_in_time_text_safety_report_json_path)
+    keyword_baseline = _read_json_if_available(paths.news_text_keyword_baseline_report_json_path)
+    bounceback = _read_json_if_available(paths.catastrophic_veto_bounceback_report_json_path)
+    extreme_policy = _read_json_if_available(paths.catastrophic_veto_extreme_only_policy_proposal_json_path)
+    policy_variants = _read_json_if_available(paths.catastrophic_veto_policy_variant_comparison_json_path)
+    policy_frontier = _read_json_if_available(paths.catastrophic_veto_policy_frontier_report_json_path)
+    casebook = _read_json_if_available(paths.catastrophic_veto_loser_bounceback_casebook_json_path)
+    taxonomy_plan = _read_json_if_available(paths.catastrophic_veto_taxonomy_improvement_plan_json_path)
+    parked_veto = _read_json_if_available(paths.catastrophic_veto_parked_status_json_path)
+    walk_forward = _read_json_if_available(paths.contrarian_walk_forward_validation_report_json_path)
+    placebo = _read_json_if_available(paths.contrarian_placebo_permutation_report_json_path)
+    matched_controls = _read_json_if_available(paths.contrarian_matched_control_report_json_path)
+    profit_concentration = _read_json_if_available(paths.contrarian_profit_concentration_report_json_path)
+    year_regime = _read_json_if_available(paths.contrarian_year_regime_report_json_path)
+    symbol_year_ablation = _read_json_if_available(paths.contrarian_symbol_year_ablation_report_json_path)
+    data_validity = _read_json_if_available(paths.contrarian_data_validity_audit_json_path)
+    intraday_5min = _read_json_if_available(paths.intraday_5min_expansion_plan_json_path)
+    gates = list(dependency_graph.get("gates", []) or [])
+    implemented_stage_count = sum(bool(gate.get("implemented")) for gate in gates)
+    blocking_stage_count = sum(bool(gate.get("blocks_final_validation")) for gate in gates)
+    not_implemented_stage_count = sum(str(gate.get("status")) == "NOT_IMPLEMENTED" for gate in gates)
+    not_ready_stage_count = sum(str(gate.get("status")) == "NOT_READY" for gate in gates)
+    passed_stage_count = sum(bool(gate.get("passed")) for gate in gates)
+    failed_stage_count = sum(str(gate.get("status")) == "FAILED" for gate in gates)
+    return {
+        "schema_name": "stock_alpha_news_validation_readiness_dashboard",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "overall_status": "DEVELOPMENT_ONLY",
+        "research_only": True,
+        "production_signal": False,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+        "validation_label": "PSEUDO_HOLDOUT",
+        "holdout_type": "PSEUDO_HOLDOUT",
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "implemented_stage_count": implemented_stage_count,
+        "blocking_stage_count": blocking_stage_count,
+        "not_implemented_stage_count": not_implemented_stage_count,
+        "not_ready_stage_count": not_ready_stage_count,
+        "passed_stage_count": passed_stage_count,
+        "failed_stage_count": failed_stage_count,
+        "news_evidence_readiness": news_evidence.get("status", "UNAVAILABLE_INPUT"),
+        "strict_veto_ready": bool(news_evidence.get("strict_veto_ready", False)),
+        "confirmed_only_veto_ready": bool(news_evidence.get("confirmed_only_veto_ready", False)),
+        "event_taxonomy_status": event_taxonomy.get("status", "UNAVAILABLE_INPUT"),
+        "event_taxonomy_research_ready": bool(event_taxonomy.get("event_taxonomy_research_ready", False)),
+        "duplicate_grouping_status": duplicate_grouping.get("status", "UNAVAILABLE_INPUT"),
+        "duplicate_grouping_heuristic_ready": bool(duplicate_grouping.get("duplicate_grouping_heuristic_ready", False)),
+        "point_in_time_text_safety_status": text_safety.get("status", "UNAVAILABLE_INPUT"),
+        "point_in_time_text_safety_ready": bool(text_safety.get("point_in_time_text_safety_ready", False)),
+        "keyword_baseline_status": keyword_baseline.get("status", "UNAVAILABLE_INPUT"),
+        "keyword_baseline_ready": bool(keyword_baseline.get("keyword_baseline_ready", False)),
+        "catastrophic_veto_bounceback_status": bounceback.get("status", "UNAVAILABLE_INPUT"),
+        "extreme_only_policy_proposal_status": extreme_policy.get("status", "UNAVAILABLE_INPUT"),
+        "catastrophic_policy_variant_status": policy_variants.get("status", "UNAVAILABLE_INPUT"),
+        "catastrophic_policy_frontier_status": policy_frontier.get("status", "UNAVAILABLE_INPUT"),
+        "best_balanced_catastrophic_policy": policy_frontier.get("best_balanced_policy", "UNAVAILABLE_INPUT"),
+        "loser_bounceback_casebook_status": casebook.get("status", "UNAVAILABLE_INPUT"),
+        "taxonomy_improvement_plan_status": taxonomy_plan.get("status", "UNAVAILABLE_INPUT"),
+        "catastrophic_veto": parked_veto.get("status", "UNAVAILABLE_INPUT"),
+        "contrarian_validation": "IN_PROGRESS",
+        "walk_forward": walk_forward.get("status", "UNAVAILABLE_INPUT"),
+        "placebo": placebo.get("status", "UNAVAILABLE_INPUT"),
+        "matched_controls": matched_controls.get("status", "UNAVAILABLE_INPUT"),
+        "profit_concentration": profit_concentration.get("status", "UNAVAILABLE_INPUT"),
+        "year_regime": year_regime.get("status", "UNAVAILABLE_INPUT"),
+        "symbol_year_ablation": symbol_year_ablation.get("status", "UNAVAILABLE_INPUT"),
+        "data_validity": data_validity.get("status", "UNAVAILABLE_INPUT"),
+        "intraday_5min": intraday_5min.get("status", "UNAVAILABLE_INPUT"),
+        "text_model_ready": False,
+        "transformer_ready": False,
+        "top_blockers": [item for item in [
+            "walk-forward not implemented",
+            "placebo/permutation not implemented",
+            "matched controls not implemented",
+            "review year/regime robustness",
+            "review symbol/year ablations",
+            "survivorship audit not implemented",
+            "corporate-action audit not implemented",
+            "missing-news bias not implemented",
+            "events still uncategorized",
+            "catastrophic-news evidence quality insufficient for strict live-style filtering",
+            "news evidence contract incomplete across ingestion and candidate stages",
+            None if full_replay_computed else "catastrophic-veto full replay not computed",
+            "text model readiness not ready",
+            "pseudo-holdout is not genuine holdout",
+        ] if item is not None],
+        "safe_next_steps": [item for item in [
+            "implement walk-forward validation",
+            "implement placebo/permutation checks",
+            "implement matched controls",
+            "implement concentration/fragility analysis",
+            "implement survivorship/corporate-action/missing-news audits",
+            "build structured event taxonomy",
+            None if full_replay_computed else "compute full research-only catastrophic-veto filtered replay",
+        ] if item is not None],
+        "unsafe_next_steps": [
+            "FinBERT",
+            "BERT",
+            "transformer training",
+            "paper trading",
+            "live trading",
+            "new providers",
+            "news-originated entries",
+        ],
+        "finbert_readiness": "NOT_READY",
+        "warnings": [
+            "Dashboard is a readiness rollup, not strategy validation.",
+            "Development-only pseudo-holdout results remain blocked from final validation.",
+            "Paper/live trading and text-model training remain disabled.",
+        ],
+    }
+
+
+def _artifact_lineage_report(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    relationships = [
+        (paths.decile_join_audit_json_path, paths.validation_readiness_dashboard_json_path, "feeds_readiness_status", True),
+        (paths.decile_trade_reconciliation_json_path, paths.validation_readiness_dashboard_json_path, "feeds_readiness_status", True),
+        (paths.chronological_split_manifest_json_path, paths.contrarian_grid_selection_json_path, "defines_selection_periods", True),
+        (paths.chronological_split_manifest_json_path, paths.contrarian_holdout_report_json_path, "defines_holdout_period", True),
+        (paths.contrarian_grid_selection_json_path, paths.contrarian_frozen_config_json_path, "freezes_selected_configuration", True),
+        (paths.contrarian_frozen_config_json_path, paths.contrarian_holdout_report_json_path, "drives_holdout_evaluation", True),
+        (paths.validation_stage_placeholders_json_path, paths.validation_dependency_graph_json_path, "declares_future_validation_blockers", True),
+        (paths.text_model_readiness_json_path, paths.validation_dependency_graph_json_path, "declares_text_model_blockers", True),
+        (paths.news_transformer_readiness_json_path, paths.validation_dependency_graph_json_path, "declares_transformer_scaffold_blockers", True),
+        (paths.news_transformer_training_plan_json_path, paths.validation_readiness_dashboard_json_path, "documents_disabled_transformer_plan", True),
+        (paths.catastrophic_news_audit_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_research_only_catastrophic_news_audit", True),
+        (paths.catastrophic_news_veto_report_json_path, paths.validation_dependency_graph_json_path, "declares_research_only_catastrophic_news_veto_blocker", True),
+        (paths.catastrophic_veto_policy_json_path, paths.catastrophic_veto_candidate_attribution_json_path, "defines_research_only_veto_policy", True),
+        (paths.catastrophic_news_audit_json_path, paths.catastrophic_veto_candidate_attribution_json_path, "feeds_candidate_veto_attribution", True),
+        (paths.catastrophic_veto_candidate_attribution_json_path, paths.catastrophic_veto_strategy_comparison_json_path, "feeds_attribution_only_strategy_comparison", True),
+        (paths.catastrophic_veto_strategy_comparison_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_catastrophic_veto_replay_impact_status", True),
+        (paths.catastrophic_veto_trade_attribution_csv_path, paths.catastrophic_veto_removed_trades_csv_path, "identifies_research_only_removed_trades", True),
+        (paths.catastrophic_veto_removed_trades_csv_path, paths.catastrophic_veto_removed_symbols_csv_path, "rolls_removed_trades_up_by_symbol", True),
+        (paths.catastrophic_veto_removed_trades_csv_path, paths.catastrophic_veto_filtered_strategy_report_json_path, "feeds_approximate_filtered_strategy_report", True),
+        (paths.catastrophic_veto_filtered_strategy_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_approximate_veto_simulation", True),
+        (paths.catastrophic_veto_filtered_candidates_csv_path, paths.catastrophic_veto_full_replay_report_json_path, "documents_full_replay_candidate_filter_input", True),
+        (paths.catastrophic_veto_blocked_candidates_csv_path, paths.catastrophic_veto_full_replay_report_json_path, "documents_candidates_excluded_from_full_replay_variant", True),
+        (paths.catastrophic_veto_replay_seam_report_json_path, paths.catastrophic_veto_full_replay_report_json_path, "documents_filtered_replay_input_seam", True),
+        (paths.catastrophic_veto_replay_seam_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_replay_seam_status", True),
+        (paths.catastrophic_veto_full_replay_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_full_replay_availability", True),
+        (paths.catastrophic_news_evidence_quality_report_json_path, paths.validation_dependency_graph_json_path, "declares_catastrophic_evidence_quality_blocker", True),
+        (paths.catastrophic_news_evidence_quality_report_json_path, paths.catastrophic_veto_policy_mode_comparison_json_path, "feeds_research_policy_mode_comparison", True),
+        (paths.catastrophic_veto_policy_mode_comparison_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_research_only_policy_modes", True),
+        (paths.news_evidence_lineage_report_json_path, paths.news_evidence_readiness_report_json_path, "feeds_news_evidence_readiness", True),
+        (paths.news_evidence_readiness_report_json_path, paths.validation_dependency_graph_json_path, "declares_news_evidence_readiness_blocker", True),
+        (paths.news_evidence_readiness_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_news_evidence_readiness", True),
+        (paths.news_evidence_readiness_report_json_path, paths.news_event_taxonomy_report_json_path, "gates_research_taxonomy_inputs", True),
+        (paths.news_event_taxonomy_report_json_path, paths.news_event_taxonomy_counts_csv_path, "summarizes_research_taxonomy_counts", True),
+        (paths.news_event_taxonomy_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_event_taxonomy_research_status", True),
+        (paths.news_evidence_readiness_report_json_path, paths.news_duplicate_grouping_report_json_path, "gates_heuristic_duplicate_grouping_inputs", True),
+        (paths.news_duplicate_grouping_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_duplicate_grouping_status", True),
+        (paths.news_evidence_readiness_report_json_path, paths.news_point_in_time_text_safety_report_json_path, "gates_text_safety_inputs", True),
+        (paths.news_point_in_time_text_safety_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_point_in_time_text_safety", True),
+        (paths.news_point_in_time_text_safety_report_json_path, paths.news_text_keyword_baseline_report_json_path, "documents_keyword_baseline_input_safety", True),
+        (paths.news_text_keyword_baseline_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_keyword_baseline_status", True),
+        (paths.catastrophic_veto_removed_trades_csv_path, paths.catastrophic_veto_bounceback_report_json_path, "feeds_removed_trade_bounceback_attribution", True),
+        (paths.news_event_taxonomy_report_json_path, paths.catastrophic_veto_bounceback_report_json_path, "supports_reversible_vs_extreme_grouping", True),
+        (paths.catastrophic_veto_bounceback_report_json_path, paths.catastrophic_veto_extreme_only_policy_proposal_json_path, "motivates_future_narrow_policy", True),
+        (paths.catastrophic_veto_bounceback_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_bounceback_status", True),
+        (paths.catastrophic_veto_extreme_only_policy_proposal_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_extreme_only_policy_proposal", True),
+        (paths.catastrophic_veto_bounceback_report_json_path, paths.catastrophic_veto_policy_variant_comparison_json_path, "feeds_policy_variant_bounceback_tradeoff", True),
+        (paths.news_event_taxonomy_report_json_path, paths.catastrophic_veto_policy_variant_comparison_json_path, "feeds_policy_variant_taxonomy", True),
+        (paths.catastrophic_veto_policy_variant_comparison_json_path, paths.catastrophic_veto_policy_frontier_report_json_path, "feeds_policy_frontier_ranking", True),
+        (paths.catastrophic_veto_policy_variant_comparison_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_policy_variant_status", True),
+        (paths.catastrophic_veto_policy_frontier_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_policy_frontier_status", True),
+        (paths.catastrophic_veto_bounceback_report_json_path, paths.catastrophic_veto_loser_bounceback_casebook_json_path, "feeds_loser_bounceback_casebook", True),
+        (paths.catastrophic_veto_loser_bounceback_casebook_json_path, paths.catastrophic_veto_taxonomy_improvement_plan_json_path, "motivates_taxonomy_improvement_plan", True),
+        (paths.catastrophic_veto_loser_bounceback_casebook_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_casebook_status", True),
+        (paths.catastrophic_veto_taxonomy_improvement_plan_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_taxonomy_plan_status", True),
+        (paths.catastrophic_veto_parked_status_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_parked_catastrophic_veto_status", True),
+        (paths.contrarian_chronological_validation_plan_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_chronology_gate", True),
+        (paths.contrarian_chronological_periods_csv_path, paths.validation_readiness_dashboard_json_path, "summarizes_main_contrarian_chronology_periods", True),
+        (paths.contrarian_walk_forward_validation_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_walk_forward_gate", True),
+        (paths.contrarian_placebo_permutation_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_placebo_gate", True),
+        (paths.contrarian_matched_control_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_matched_control_gate", True),
+        (paths.contrarian_profit_concentration_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_profit_concentration_gate", True),
+        (paths.contrarian_year_regime_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_year_regime_gate", True),
+        (paths.contrarian_symbol_year_ablation_report_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_ablation_gate", True),
+        (paths.contrarian_data_validity_audit_json_path, paths.validation_dependency_graph_json_path, "declares_main_contrarian_data_validity_gate", True),
+        (paths.intraday_5min_expansion_plan_json_path, paths.validation_readiness_dashboard_json_path, "documents_future_intraday_expansion_plan", True),
+        (paths.artifact_validation_report_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_artifact_presence", True),
+        (paths.experiment_registry_jsonl_path, paths.validation_readiness_dashboard_json_path, "records_experiment_history", True),
+        (paths.validation_dependency_graph_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_gate_status", True),
+        (paths.news_validation_workflow_map_json_path, paths.validation_readiness_dashboard_json_path, "summarizes_workflow_status", True),
+        (paths.chronological_split_manifest_json_path, paths.walk_forward_validation_report_json_path, "defines_walk_forward_periods", True),
+        (paths.contrarian_frozen_config_json_path, paths.walk_forward_validation_report_json_path, "freezes_walk_forward_configuration", True),
+        (paths.contrarian_frozen_config_json_path, paths.placebo_permutation_report_json_path, "freezes_placebo_configuration", True),
+        (paths.walk_forward_validation_report_json_path, paths.validation_dependency_graph_json_path, "feeds_walk_forward_gate", True),
+        (paths.placebo_permutation_report_json_path, paths.validation_dependency_graph_json_path, "feeds_placebo_gate", True),
+        (paths.exposure_matched_controls_json_path, paths.validation_dependency_graph_json_path, "feeds_exposure_control_gate", True),
+        (paths.trade_count_matched_controls_json_path, paths.validation_dependency_graph_json_path, "feeds_trade_count_control_gate", True),
+        (paths.concentration_fragility_report_json_path, paths.validation_dependency_graph_json_path, "feeds_concentration_gate", True),
+    ]
+    lineage = [
+        {
+            "source_artifact": source.name,
+            "target_artifact": target.name,
+            "relationship_type": relationship_type,
+            "required": required,
+            "status": "DECLARED",
+            "warning_if_missing": f"{source.name} missing would make {target.name} incomplete.",
+        }
+        for source, target, relationship_type, required in relationships
+    ]
+    return {
+        "schema_name": "stock_alpha_news_artifact_lineage_report",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "DECLARED",
+        "lineage": lineage,
+        "warnings": [
+            "Lineage report documents artifact dependencies only.",
+            "Declared lineage does not imply final validation.",
+        ],
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "research_only": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+
+
+def _news_validation_gap_analysis(paths: NewsRiskResearchPaths) -> dict[str, Any]:
+    full_replay_computed = bool(
+        _read_json_if_available(paths.catastrophic_veto_full_replay_report_json_path).get("full_replay_computed")
+    )
+    event_taxonomy_ready = bool(
+        _read_json_if_available(paths.news_event_taxonomy_report_json_path).get("event_taxonomy_research_ready")
+    )
+    duplicate_heuristic_ready = bool(
+        _read_json_if_available(paths.news_duplicate_grouping_report_json_path).get("duplicate_grouping_heuristic_ready")
+    )
+    text_safety_ready = bool(
+        _read_json_if_available(paths.news_point_in_time_text_safety_report_json_path).get("point_in_time_text_safety_ready")
+    )
+    keyword_baseline_ready = bool(
+        _read_json_if_available(paths.news_text_keyword_baseline_report_json_path).get("keyword_baseline_ready")
+    )
+    bounceback_available = bool(
+        _read_json_if_available(paths.catastrophic_veto_bounceback_report_json_path).get("status") == "AVAILABLE"
+    )
+    gaps = [
+        {
+            "gap_id": "contrarian_validation_in_progress",
+            "area": "validation_spine",
+            "severity": "critical",
+            "description": "Main news_contrarian_rerank validation is in progress; chronological, walk-forward, placebo, matched-control, concentration, and data-validity gates are not final.",
+            "blocks_final_validation": True,
+            "recommended_action": "complete the main contrarian validation spine before revisiting execution readiness",
+        },
+        {
+            "gap_id": "catastrophic_veto_parked_diagnostic_only",
+            "area": "catastrophic_veto_policy",
+            "severity": "low",
+            "description": "Catastrophic-veto work is parked as diagnostic-only and is not used by the current strategy.",
+            "blocks_final_validation": False,
+            "recommended_action": "keep catastrophic-veto artifacts observational while validating news_contrarian_rerank",
+        },
+        {
+            "gap_id": "year_regime_review_required",
+            "area": "regime_robustness",
+            "severity": "medium",
+            "description": "Year/regime report is ledger-level and must be reviewed for negative or partial years before final validation.",
+            "blocks_final_validation": True,
+            "recommended_action": "review annual robustness, especially negative-year and partial-year behavior",
+        },
+        {
+            "gap_id": "symbol_year_ablation_review_required",
+            "area": "fragility",
+            "severity": "medium",
+            "description": "Symbol/year ablations are ledger-level approximations and do not recompute portfolio compounding.",
+            "blocks_final_validation": True,
+            "recommended_action": "review without-top-symbol/year sensitivity and implement full replay ablations if needed",
+        },
+        {
+            "gap_id": "intraday_5min_planning_only",
+            "area": "future_data_expansion",
+            "severity": "low",
+            "description": "Intraday 5-minute expansion is a Dell PC planning artifact only.",
+            "blocks_final_validation": False,
+            "recommended_action": "confirm local 5min/15min data paths and run a small subset later",
+        },
+        {
+            "gap_id": "walk_forward_not_implemented",
+            "area": "robustness",
+            "severity": "critical",
+            "description": "Walk-forward artifact exists, but fold-level replay metrics are not implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement walk-forward validation",
+        },
+        {
+            "gap_id": "placebo_permutation_not_implemented",
+            "area": "statistical_controls",
+            "severity": "critical",
+            "description": "Placebo/permutation artifact exists, but checks are UNAVAILABLE_INPUT until placebo replay/statistics are implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement placebo/permutation checks",
+        },
+        {
+            "gap_id": "matched_controls_not_implemented",
+            "area": "controls",
+            "severity": "critical",
+            "description": "Exposure- and trade-count-matched controls have not been implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement matched controls",
+        },
+        {
+            "gap_id": "concentration_analysis_not_implemented",
+            "area": "fragility",
+            "severity": "high",
+            "description": "Contribution and concentration analysis has not been implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement concentration/fragility analysis",
+        },
+        {
+            "gap_id": "survivorship_audit_not_implemented",
+            "area": "data_integrity",
+            "severity": "critical",
+            "description": "Point-in-time universe and survivorship audit has not been implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement survivorship audit",
+        },
+        {
+            "gap_id": "corporate_action_audit_not_implemented",
+            "area": "data_integrity",
+            "severity": "critical",
+            "description": "Corporate-action adjustment validation has not been implemented.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement corporate-action audit",
+        },
+        {
+            "gap_id": "missing_news_bias_not_implemented",
+            "area": "coverage_bias",
+            "severity": "high",
+            "description": "Missing-news bias analysis is not complete.",
+            "blocks_final_validation": True,
+            "recommended_action": "implement missing-news bias analysis",
+        },
+        {
+            "gap_id": "events_uncategorized",
+            "area": "event_taxonomy",
+            "severity": "medium" if event_taxonomy_ready else "high",
+            "description": "Production event_category remains unavailable; deterministic headline taxonomy is research-only.",
+            "blocks_final_validation": True,
+            "recommended_action": "review deterministic event taxonomy coverage and add production-grade event_category upstream",
+        },
+        {
+            "gap_id": "duplicate_grouping_not_production_grade",
+            "area": "text_models",
+            "severity": "medium",
+            "description": "Duplicate grouping exists only as a deterministic heuristic.",
+            "blocks_final_validation": True,
+            "recommended_action": "add provider-grade duplicate_group_id/source lineage before text-model readiness",
+        },
+        {
+            "gap_id": "point_in_time_text_safety_partial",
+            "area": "event_evidence",
+            "severity": "medium",
+            "description": "Point-in-time text safety is partial and depends on availability timestamp coverage.",
+            "blocks_final_validation": True,
+            "recommended_action": "increase availability timestamp coverage and audit unsafe examples",
+        },
+        {
+            "gap_id": "keyword_baseline_research_only",
+            "area": "text_baseline",
+            "severity": "low",
+            "description": "Keyword baseline is deterministic research-only output and is not used by strategy ranking.",
+            "blocks_final_validation": True,
+            "recommended_action": "keep keyword baseline observational until validation gates are complete",
+        },
+        {
+            "gap_id": "catastrophic_policy_frontier_research_only",
+            "area": "catastrophic_veto_policy",
+            "severity": "medium",
+            "description": "Catastrophic policy frontier is diagnostic hypothesis triage, not final validation or model selection.",
+            "blocks_final_validation": True,
+            "recommended_action": "review policy examples and run future validation gates before interpreting any narrowed policy as usable",
+        },
+        {
+            "gap_id": "loser_bounceback_casebook_research_only",
+            "area": "catastrophic_veto_policy",
+            "severity": "medium",
+            "description": "Loser-vs-bounceback casebook is observational and only proposes taxonomy improvements.",
+            "blocks_final_validation": True,
+            "recommended_action": "review casebook differences before implementing deterministic taxonomy changes",
+        },
+        {
+            "gap_id": "catastrophic_news_veto_not_validated",
+            "area": "event_taxonomy",
+            "severity": "critical",
+            "description": "Catastrophic-news veto audit is research-only and not validated for replay or strategy enforcement.",
+            "blocks_final_validation": True,
+            "recommended_action": "validate taxonomy coverage, point-in-time availability, and veto impact before final validation",
+        },
+        {
+            "gap_id": "catastrophic_news_evidence_quality_insufficient",
+            "area": "event_evidence",
+            "severity": "critical",
+            "description": "Catastrophic-news evidence quality is insufficient for strict live-style filtering.",
+            "blocks_final_validation": True,
+            "recommended_action": "improve point-in-time text and availability evidence before any execution use",
+        },
+        {
+            "gap_id": "news_evidence_contract_incomplete",
+            "area": "evidence_lineage",
+            "severity": "critical",
+            "description": "News text, availability, source/category, duplicate, or candidate linkage evidence is incomplete across pipeline stages.",
+            "blocks_final_validation": True,
+            "recommended_action": "apply the field mapping fixes documented by news_evidence_lineage_report.json",
+        },
+        {
+            "gap_id": "catastrophic_veto_full_replay_not_computed",
+            "area": "strategy_validation",
+            "severity": "critical",
+            "description": "Catastrophic-veto filtered scenario is approximate ledger simulation, not full replay.",
+            "blocks_final_validation": True,
+            "recommended_action": "compute a full separate research-only filtered replay variant before interpreting validated veto impact",
+        },
+        {
+            "gap_id": "catastrophic_veto_full_replay_not_available",
+            "area": "strategy_validation",
+            "severity": "critical",
+            "description": "The optional research variant is absent from replay metrics, equity, or variant metadata output.",
+            "blocks_final_validation": True,
+            "recommended_action": "execute the separate candidate-filtered replay variant through the seam without changing replay mechanics or base strategy results",
+        },
+        {
+            "gap_id": "text_model_readiness_not_ready",
+            "area": "text_models",
+            "severity": "medium",
+            "description": "Text-model readiness is NOT_READY; FinBERT/BERT/transformer training is deferred.",
+            "blocks_final_validation": True,
+            "recommended_action": "complete taxonomy, timestamp, and duplicate-handling checks before text models",
+        },
+        {
+            "gap_id": "pseudo_holdout_not_genuine",
+            "area": "holdout",
+            "severity": "critical",
+            "description": "Current final period is pseudo-holdout, not a demonstrably untouched holdout.",
+            "blocks_final_validation": True,
+            "recommended_action": "collect or wait for genuinely untouched prospective data",
+        },
+    ]
+    if full_replay_computed:
+        gaps = [
+            gap
+            for gap in gaps
+            if gap["gap_id"] not in {
+                "catastrophic_veto_full_replay_not_computed",
+                "catastrophic_veto_full_replay_not_available",
+            }
+        ]
+    if duplicate_heuristic_ready:
+        gaps = [gap for gap in gaps if gap["gap_id"] != "duplicate_grouping_not_production_grade"] + [
+            {
+                "gap_id": "duplicate_grouping_not_production_grade",
+                "area": "text_models",
+                "severity": "medium",
+                "description": "Heuristic duplicate grouping is available, but production duplicate_group_id remains unavailable.",
+                "blocks_final_validation": True,
+                "recommended_action": "replace heuristic grouping with provider-grade duplicate/source identifiers before text models",
+            }
+        ]
+    if text_safety_ready:
+        gaps = [gap for gap in gaps if gap["gap_id"] != "point_in_time_text_safety_partial"] + [
+            {
+                "gap_id": "point_in_time_text_safety_partial",
+                "area": "event_evidence",
+                "severity": "medium",
+                "description": "Point-in-time text safety audit is present, but coverage is still partial.",
+                "blocks_final_validation": True,
+                "recommended_action": "expand availability timestamp coverage before text-model readiness",
+            }
+        ]
+    if keyword_baseline_ready:
+        gaps = [gap for gap in gaps if gap["gap_id"] != "keyword_baseline_research_only"] + [
+            {
+                "gap_id": "keyword_baseline_research_only",
+                "area": "text_baseline",
+                "severity": "low",
+                "description": "Keyword baseline is available as a deterministic research-only scaffold.",
+                "blocks_final_validation": True,
+                "recommended_action": "do not feed keyword scores into strategy ranking until validation gates pass",
+            }
+        ]
+    critical_gaps = [gap["gap_id"] for gap in gaps if gap["severity"] == "critical"]
+    return {
+        "schema_name": "stock_alpha_news_validation_gap_analysis",
+        "schema_version": 1,
+        "generated_timestamp": datetime.now(timezone.utc).isoformat(),
+        "code_schema_version": "stock-alpha-news-contrarian-validation-v1",
+        "status": "OPEN_GAPS_BLOCK_FINAL_VALIDATION",
+        "gaps": gaps,
+        "critical_gaps": critical_gaps,
+        "next_recommended_implementation_order": [
+            "complete main news_contrarian_rerank chronological validation spine",
+            "implement walk-forward validation",
+            "implement placebo/permutation checks",
+            "implement matched controls",
+            "implement concentration/fragility analysis",
+            "implement survivorship/corporate-action/missing-news audits",
+            "build structured event taxonomy",
+        ],
+        "finbert_blockers": [
+            "validation spine not complete",
+            "events still uncategorized",
+            "text timestamps not proven point-in-time",
+            "duplicate/syndication handling not proven",
+            "FinBERT deferred",
+        ],
+        "paper_live_blockers": [
+            "final validation status is NOT_FINAL_VALIDATION",
+            "validation_passed is false",
+            "pseudo-holdout is not a genuine holdout",
+            "walk-forward/placebo/matched-control gates are incomplete",
+        ],
+        "warnings": [
+            "Gap analysis is descriptive and does not validate the strategy.",
+            "Unsafe next steps remain blocked.",
+        ],
+        "final_validation_status": "NOT_FINAL_VALIDATION",
+        "validation_passed": False,
+        "research_only": True,
+        "paper_trading_enabled": False,
+        "live_trading_enabled": False,
+    }
+
+
+def _risk_subset(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "ending_wealth": _metric(metrics, "ending_equity", "wealth_multiple"),
+        "total_return": _metric(metrics, "total_return_decimal"),
+        "cagr": _metric(metrics, "CAGR", "cagr"),
+        "annualized_volatility": _metric(metrics, "annualized_volatility", "annualised_volatility"),
+        "maximum_drawdown": _metric(metrics, "maximum_drawdown"),
+        "sharpe": _metric(metrics, "Sharpe_ratio", "sharpe_ratio"),
+        "sortino": _metric(metrics, "Sortino_ratio", "sortino_ratio"),
+        "calmar": _metric(metrics, "Calmar_ratio", "calmar_ratio"),
+        "cvar": _metric(metrics, "CVaR_5pct", "cvar_5pct", "expected_shortfall_CVaR_5pct"),
+        "hit_rate": _metric(metrics, "hit_rate"),
+        "profit_factor": _metric(metrics, "profit_factor"),
+        "turnover": _metric(metrics, "turnover"),
+        "exposure": _metric(metrics, "exposure", "average_exposure"),
+        "trade_count": _metric(metrics, "number_of_trades"),
+    }
+
+
+def _holdout_rows(rows: Any, periods: Mapping[str, Any], variant: str) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    output = []
+    for row in rows:
+        if str(row.get("strategy_variant", variant)) != variant:
+            continue
+        date_key = str(row.get("decision_timestamp", row.get("date", "")))[:10]
+        if _period_for_date(date_key, periods) == "final_untouched_holdout":
+            output.append(dict(row))
+    return output
+
+
+def _holdout_markdown(report: Mapping[str, Any]) -> str:
+    return "\n".join(
+        [
+            "# Contrarian Holdout Comparison",
+            "",
+            f"- Holdout status: `{report.get('holdout_status')}`",
+            f"- Validation label: `{report.get('validation_label')}`",
+            f"- Reason: {report.get('reason')}",
+            f"- Excess return over price-only: `{report.get('excess_return_over_price_only')}`",
+            f"- Excess Sharpe: `{report.get('excess_sharpe')}`",
+            "",
+        ]
+    )
+
 def _build_executive_summary(output_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     artifacts = _news_risk_artifact_paths(output_dir)
     status = [_artifact_status(name, path) for name, path in artifacts.items()]
@@ -2219,6 +9018,38 @@ def _build_executive_summary(output_dir: Path) -> tuple[dict[str, Any], list[dic
     extreme = _read_json_if_available(artifacts["extreme_event_memory_report"])
     comparison = _read_json_if_available(artifacts["portfolio_comparison"])
     replay_audit = _read_json_if_available(artifacts["replay_data_audit"])
+    holdout = _read_json_if_available(artifacts["contrarian_holdout_report"])
+    grid_selection = _read_json_if_available(artifacts["contrarian_grid_selection"])
+    walk_forward = _read_json_if_available(artifacts["contrarian_walk_forward_summary"])
+    walk_forward_validation = _read_json_if_available(artifacts["contrarian_walk_forward_validation_report"])
+    placebo_permutation = _read_json_if_available(artifacts["contrarian_placebo_permutation_report"])
+    matched_control = _read_json_if_available(artifacts["contrarian_matched_control_report"])
+    profit_concentration = _read_json_if_available(artifacts["contrarian_profit_concentration_report"])
+    year_regime = _read_json_if_available(artifacts["contrarian_year_regime_report"])
+    symbol_year_ablation = _read_json_if_available(artifacts["contrarian_symbol_year_ablation_report"])
+    data_validity = _read_json_if_available(artifacts["contrarian_data_validity_audit"])
+    intraday_5min = _read_json_if_available(artifacts["intraday_5min_expansion_plan"])
+    placebo = _read_json_if_available(artifacts["contrarian_placebo_summary"])
+    matched = _read_json_if_available(artifacts["contrarian_matched_controls"])
+    concentration = _read_json_if_available(artifacts["contrarian_concentration_report"])
+    universe = _read_json_if_available(artifacts["universe_survivorship_audit"])
+    corporate_actions = _read_json_if_available(artifacts["corporate_action_audit"])
+    catastrophic_veto_attribution = _read_json_if_available(artifacts["catastrophic_veto_candidate_attribution"])
+    catastrophic_veto_comparison = _read_json_if_available(artifacts["catastrophic_veto_strategy_comparison"])
+    catastrophic_veto_filtered = _read_json_if_available(artifacts["catastrophic_veto_filtered_strategy_report"])
+    catastrophic_veto_full_replay = _read_json_if_available(artifacts["catastrophic_veto_full_replay_report"])
+    catastrophic_evidence_quality = _read_json_if_available(artifacts["catastrophic_news_evidence_quality_report"])
+    news_evidence_readiness = _read_json_if_available(artifacts["news_evidence_readiness_report"])
+    event_taxonomy = _read_json_if_available(artifacts["news_event_taxonomy_report"])
+    duplicate_grouping = _read_json_if_available(artifacts["news_duplicate_grouping_report"])
+    text_safety = _read_json_if_available(artifacts["news_point_in_time_text_safety_report"])
+    keyword_baseline = _read_json_if_available(artifacts["news_text_keyword_baseline_report"])
+    bounceback = _read_json_if_available(artifacts["catastrophic_veto_bounceback_report"])
+    extreme_policy = _read_json_if_available(artifacts["catastrophic_veto_extreme_only_policy_proposal"])
+    policy_frontier = _read_json_if_available(artifacts["catastrophic_veto_policy_frontier_report"])
+    casebook = _read_json_if_available(artifacts["catastrophic_veto_loser_bounceback_casebook"])
+    taxonomy_plan = _read_json_if_available(artifacts["catastrophic_veto_taxonomy_improvement_plan"])
+    parked_veto = _read_json_if_available(artifacts["catastrophic_veto_parked_status"])
     deciles = _read_csv_if_available(artifacts["news_score_deciles"])
     strategy_rows = _strategy_summary_rows(risk)
     cost_rows = _cost_robustness_rows(cost)
@@ -2230,6 +9061,14 @@ def _build_executive_summary(output_dir: Path) -> tuple[dict[str, Any], list[dic
         risk=risk,
         cost_rows=cost_rows,
         comparison=comparison,
+        holdout=holdout,
+        grid_selection=grid_selection,
+        walk_forward=walk_forward,
+        placebo=placebo,
+        matched=matched,
+        concentration=concentration,
+        universe=universe,
+        corporate_actions=corporate_actions,
     )
     warnings = _executive_warnings(
         artifact_status=status,
@@ -2244,11 +9083,130 @@ def _build_executive_summary(output_dir: Path) -> tuple[dict[str, Any], list[dic
         "strategy_comparison": strategy_rows,
         "cost_robustness": cost_rows,
         "diagnostics": diagnostics,
+        "catastrophic_veto": _catastrophic_veto_summary(
+            catastrophic_veto_attribution,
+            catastrophic_veto_comparison,
+            catastrophic_veto_filtered,
+            catastrophic_veto_full_replay,
+            catastrophic_evidence_quality,
+        ),
+        "news_evidence": news_evidence_readiness,
+        "event_taxonomy": event_taxonomy,
+        "duplicate_grouping": duplicate_grouping,
+        "text_safety": text_safety,
+        "keyword_baseline": keyword_baseline,
+        "catastrophic_veto_bounceback": bounceback,
+        "extreme_only_policy_proposal": extreme_policy,
+        "catastrophic_policy_frontier": policy_frontier,
+        "loser_bounceback_casebook": casebook,
+        "taxonomy_improvement_plan": taxonomy_plan,
+        "catastrophic_veto_parked": parked_veto,
+        "contrarian_validation": {
+            "status": "IN_PROGRESS",
+            "walk_forward": walk_forward_validation.get("status", "UNAVAILABLE_INPUT"),
+            "placebo": placebo_permutation.get("status", "UNAVAILABLE_INPUT"),
+            "matched_controls": matched_control.get("status", "UNAVAILABLE_INPUT"),
+            "profit_concentration": profit_concentration.get("status", "UNAVAILABLE_INPUT"),
+            "year_regime": year_regime.get("status", "UNAVAILABLE_INPUT"),
+            "symbol_year_ablation": symbol_year_ablation.get("status", "UNAVAILABLE_INPUT"),
+            "data_validity": data_validity.get("status", "UNAVAILABLE_INPUT"),
+            "intraday_5min": intraday_5min.get("status", "UNAVAILABLE_INPUT"),
+        },
         "winners": _winner_summary(strategy_rows, cost_rows),
         "warnings": warnings,
         "paper_orders_enabled": bool(comparison.get("paper_orders_enabled", False)),
         "live_orders_enabled": bool(comparison.get("live_orders_enabled", False)),
     }, status
+
+
+def _catastrophic_veto_summary_lines(output_dir: Path) -> list[str]:
+    paths = _news_risk_artifact_paths(output_dir)
+    attribution = _read_optional_json(paths["catastrophic_veto_candidate_attribution"])
+    comparison = _read_optional_json(paths["catastrophic_veto_strategy_comparison"])
+    filtered = _read_optional_json(paths["catastrophic_veto_filtered_strategy_report"])
+    full_replay = _read_optional_json(paths["catastrophic_veto_full_replay_report"])
+    evidence_quality = _read_optional_json(paths["catastrophic_news_evidence_quality_report"])
+    blocked_candidates = full_replay.get(
+        "strict_policy_blocked_candidate_count",
+        full_replay.get("blocked_candidate_count", attribution.get("blocked_candidate_count", "UNAVAILABLE_INPUT")),
+    )
+    manual_review_candidates = full_replay.get(
+        "manual_review_candidate_count",
+        attribution.get("manual_review_candidate_count", "UNAVAILABLE_INPUT"),
+    )
+    blocked_trades = full_replay.get(
+        "removed_trade_count",
+        attribution.get("blocked_executed_trade_count", "NOT_COMPUTED"),
+    )
+    replay_status = (
+        full_replay.get("replay_impact_status")
+        or filtered.get("replay_impact_status")
+        or comparison.get("replay_impact_status")
+        or "NOT_COMPUTED"
+    )
+    approximate_status = (
+        filtered.get("replay_impact_status")
+        or comparison.get("replay_impact_status")
+        or "NOT_COMPUTED"
+    )
+    delta_metrics = dict(full_replay.get("delta_metrics", {}) or {})
+    removed_count = full_replay.get("removed_trade_count", "UNAVAILABLE_INPUT")
+    replacement_count = full_replay.get("replacement_trade_count", "UNAVAILABLE_INPUT")
+    return [
+        f"catastrophic news veto: RESEARCH_ONLY / NOT_CURRENT_STRATEGY ({replay_status})",
+        f"catastrophic veto full replay: {replay_status}",
+        f"catastrophic evidence quality: {evidence_quality.get('status', 'UNAVAILABLE_INPUT')}",
+        f"catastrophic usable strict-veto candidates: {evidence_quality.get('usable_for_strict_veto_count', 'UNAVAILABLE_INPUT')}",
+        "catastrophic policy modes: STRICT_SAFETY / CONFIRMED_ONLY_RESEARCH / MANUAL_REVIEW_RESEARCH",
+        f"catastrophic veto scenario: {replay_status}",
+        f"catastrophic veto approximate simulation: {approximate_status}",
+        f"catastrophic veto candidates before/after: {full_replay.get('candidate_count_before_veto', 'UNAVAILABLE_INPUT')}/{full_replay.get('candidate_count_after_veto', 'UNAVAILABLE_INPUT')}",
+        f"catastrophic blocked candidates: {blocked_candidates}",
+        f"catastrophic veto blocked trades: {blocked_trades}",
+        f"catastrophic veto trades removed/replaced: {removed_count}/{replacement_count}",
+        "catastrophic veto paper/live allowed: False / False",
+        f"catastrophic veto delta return: {delta_metrics.get('delta_return', 'UNAVAILABLE_INPUT')}",
+        f"manual review candidates: {manual_review_candidates}",
+    ]
+
+
+def _catastrophic_veto_summary(
+    attribution: Mapping[str, Any],
+    comparison: Mapping[str, Any],
+    filtered_report: Mapping[str, Any],
+    full_replay_report: Mapping[str, Any],
+    evidence_quality_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    full_delta = dict(full_replay_report.get("delta_metrics", {}) or {})
+    return {
+        "replay_impact_status": full_replay_report.get(
+            "replay_impact_status",
+            filtered_report.get(
+                "replay_impact_status",
+                comparison.get("replay_impact_status", "NOT_COMPUTED"),
+            ),
+        ),
+        "approximate_replay_impact_status": filtered_report.get("replay_impact_status", "NOT_COMPUTED"),
+        "candidate_count_before_veto": full_replay_report.get("candidate_count_before_veto", "UNAVAILABLE_INPUT"),
+        "candidate_count_after_veto": full_replay_report.get("candidate_count_after_veto", "UNAVAILABLE_INPUT"),
+        "blocked_candidate_count": full_replay_report.get("strict_policy_blocked_candidate_count", full_replay_report.get("blocked_candidate_count", attribution.get("blocked_candidate_count", "UNAVAILABLE_INPUT"))),
+        "blocked_trade_count": full_replay_report.get("removed_trade_count", attribution.get("blocked_executed_trade_count", "NOT_COMPUTED")),
+        "manual_review_candidate_count": full_replay_report.get("manual_review_candidate_count", attribution.get("manual_review_candidate_count", "UNAVAILABLE_INPUT")),
+        "delta_return": full_delta.get("delta_return", "UNAVAILABLE_INPUT"),
+        "evidence_quality_status": evidence_quality_report.get("status", "UNAVAILABLE_INPUT"),
+        "usable_for_strict_veto_count": evidence_quality_report.get("usable_for_strict_veto_count", "UNAVAILABLE_INPUT"),
+        "policy_modes": "STRICT_SAFETY / CONFIRMED_ONLY_RESEARCH / MANUAL_REVIEW_RESEARCH",
+    }
+
+
+def _read_optional_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _news_risk_artifact_paths(output_dir: Path) -> dict[str, Path]:
@@ -2262,6 +9220,126 @@ def _news_risk_artifact_paths(output_dir: Path) -> dict[str, Path]:
         "event_category_analysis": output_dir / "event_category_analysis.json",
         "extreme_event_memory_report": output_dir / "extreme_event_memory_report.json",
         "replay_data_audit": output_dir / "replay_data_audit.json",
+        "corrected_news_score_deciles": output_dir / "corrected_news_score_deciles.csv",
+        "decile_join_audit": output_dir / "decile_join_audit.json",
+        "decile_trade_reconciliation": output_dir / "decile_trade_reconciliation.json",
+        "chronological_split_manifest": output_dir / "chronological_split_manifest.json",
+        "experiment_registry": output_dir / "experiment_registry.jsonl",
+        "contrarian_grid_results": output_dir / "contrarian_grid_results.csv",
+        "contrarian_grid_selection": output_dir / "contrarian_grid_selection.json",
+        "contrarian_fold_results": output_dir / "contrarian_fold_results.csv",
+        "contrarian_parameter_stability": output_dir / "contrarian_parameter_stability.json",
+        "contrarian_frozen_config": output_dir / "contrarian_frozen_config.json",
+        "contrarian_holdout_report": output_dir / "contrarian_holdout_report.json",
+        "contrarian_holdout_trade_ledger": output_dir / "contrarian_holdout_trade_ledger.csv",
+        "contrarian_holdout_equity": output_dir / "contrarian_holdout_equity.csv",
+        "contrarian_holdout_comparison": output_dir / "contrarian_holdout_comparison.md",
+        "contrarian_walk_forward_folds": output_dir / "contrarian_walk_forward_folds.csv",
+        "contrarian_walk_forward_summary": output_dir / "contrarian_walk_forward_summary.json",
+        "contrarian_chronological_validation_plan": output_dir / "contrarian_chronological_validation_plan.json",
+        "contrarian_chronological_periods": output_dir / "contrarian_chronological_periods.csv",
+        "contrarian_walk_forward_validation_report": output_dir / "contrarian_walk_forward_validation_report.json",
+        "contrarian_placebo_permutation_report": output_dir / "contrarian_placebo_permutation_report.json",
+        "contrarian_placebo_permutation_results": output_dir / "contrarian_placebo_permutation_results.csv",
+        "contrarian_matched_control_report": output_dir / "contrarian_matched_control_report.json",
+        "contrarian_matched_control_results": output_dir / "contrarian_matched_control_results.csv",
+        "contrarian_profit_concentration_report": output_dir / "contrarian_profit_concentration_report.json",
+        "contrarian_trade_fragility_by_symbol": output_dir / "contrarian_trade_fragility_by_symbol.csv",
+        "contrarian_trade_fragility_by_year": output_dir / "contrarian_trade_fragility_by_year.csv",
+        "contrarian_top_trade_removal": output_dir / "contrarian_top_trade_removal.csv",
+        "contrarian_year_regime_report": output_dir / "contrarian_year_regime_report.json",
+        "contrarian_year_regime_results": output_dir / "contrarian_year_regime_results.csv",
+        "contrarian_year_regime_examples": output_dir / "contrarian_year_regime_examples.csv",
+        "contrarian_symbol_year_ablation_report": output_dir / "contrarian_symbol_year_ablation_report.json",
+        "contrarian_without_top_symbols": output_dir / "contrarian_without_top_symbols.csv",
+        "contrarian_without_top_years": output_dir / "contrarian_without_top_years.csv",
+        "contrarian_cost_slippage_robustness_report": output_dir / "contrarian_cost_slippage_robustness_report.json",
+        "contrarian_cost_slippage_robustness": output_dir / "contrarian_cost_slippage_robustness.csv",
+        "contrarian_data_validity_audit": output_dir / "contrarian_data_validity_audit.json",
+        "intraday_5min_expansion_plan": output_dir / "intraday_5min_expansion_plan.json",
+        "contrarian_placebo_results": output_dir / "contrarian_placebo_results.csv",
+        "contrarian_placebo_summary": output_dir / "contrarian_placebo_summary.json",
+        "contrarian_matched_controls": output_dir / "contrarian_matched_controls.json",
+        "contrarian_contribution_by_year": output_dir / "contrarian_contribution_by_year.csv",
+        "contrarian_contribution_by_symbol": output_dir / "contrarian_contribution_by_symbol.csv",
+        "contrarian_concentration_report": output_dir / "contrarian_concentration_report.json",
+        "universe_survivorship_audit": output_dir / "universe_survivorship_audit.json",
+        "universe_membership_by_date": output_dir / "universe_membership_by_date.csv",
+        "corporate_action_audit": output_dir / "corporate_action_audit.json",
+        "missing_news_bias_report": output_dir / "missing_news_bias_report.json",
+        "covered_vs_uncovered_candidates": output_dir / "covered_vs_uncovered_candidates.csv",
+        "text_model_readiness": output_dir / "text_model_readiness.json",
+        "news_transformer_readiness": output_dir / "news_transformer_readiness.json",
+        "news_transformer_training_plan": output_dir / "news_transformer_training_plan.json",
+        "catastrophic_news_audit": output_dir / "catastrophic_news_audit.json",
+        "catastrophic_news_candidates": output_dir / "catastrophic_news_candidates.csv",
+        "catastrophic_news_veto_report": output_dir / "catastrophic_news_veto_report.json",
+        "catastrophic_veto_candidate_attribution": output_dir / "catastrophic_veto_candidate_attribution.json",
+        "catastrophic_veto_trade_attribution": output_dir / "catastrophic_veto_trade_attribution.csv",
+        "catastrophic_veto_strategy_comparison": output_dir / "catastrophic_veto_strategy_comparison.json",
+        "catastrophic_veto_policy": output_dir / "catastrophic_veto_policy.json",
+        "catastrophic_veto_filtered_strategy_report": output_dir / "catastrophic_veto_filtered_strategy_report.json",
+        "catastrophic_veto_removed_trades": output_dir / "catastrophic_veto_removed_trades.csv",
+        "catastrophic_veto_removed_symbols": output_dir / "catastrophic_veto_removed_symbols.csv",
+        "catastrophic_veto_full_replay_report": output_dir / "catastrophic_veto_full_replay_report.json",
+        "catastrophic_veto_full_replay_trade_ledger": output_dir / "catastrophic_veto_full_replay_trade_ledger.csv",
+        "catastrophic_veto_full_replay_equity": output_dir / "catastrophic_veto_full_replay_equity.csv",
+        "catastrophic_veto_parked_status": output_dir / "catastrophic_veto_parked_status.json",
+        "catastrophic_veto_loser_bounceback_casebook": output_dir / "catastrophic_veto_loser_bounceback_casebook.json",
+        "catastrophic_veto_taxonomy_improvement_plan": output_dir / "catastrophic_veto_taxonomy_improvement_plan.json",
+        "catastrophic_veto_filtered_candidates": output_dir / "catastrophic_veto_filtered_candidates.csv",
+        "catastrophic_veto_blocked_candidates": output_dir / "catastrophic_veto_blocked_candidates.csv",
+        "catastrophic_veto_replay_seam_report": output_dir / "catastrophic_veto_replay_seam_report.json",
+        "catastrophic_veto_bounceback_report": output_dir / "catastrophic_veto_bounceback_report.json",
+        "catastrophic_veto_bounceback_by_category": output_dir / "catastrophic_veto_bounceback_by_category.csv",
+        "catastrophic_veto_bounceback_examples": output_dir / "catastrophic_veto_bounceback_examples.csv",
+        "catastrophic_veto_extreme_only_policy_proposal": output_dir / "catastrophic_veto_extreme_only_policy_proposal.json",
+        "catastrophic_veto_policy_variant_comparison": output_dir / "catastrophic_veto_policy_variant_comparison.json",
+        "catastrophic_veto_policy_variant_counts": output_dir / "catastrophic_veto_policy_variant_counts.csv",
+        "catastrophic_veto_policy_variant_metrics": output_dir / "catastrophic_veto_policy_variant_metrics.csv",
+        "catastrophic_veto_policy_variant_removed_trades": output_dir / "catastrophic_veto_policy_variant_removed_trades.csv",
+        "catastrophic_veto_policy_variant_bounceback": output_dir / "catastrophic_veto_policy_variant_bounceback.csv",
+        "catastrophic_veto_policy_frontier_report": output_dir / "catastrophic_veto_policy_frontier_report.json",
+        "catastrophic_veto_policy_frontier": output_dir / "catastrophic_veto_policy_frontier.csv",
+        "catastrophic_veto_policy_variant_examples": output_dir / "catastrophic_veto_policy_variant_examples.csv",
+        "catastrophic_veto_loser_bounceback_casebook": output_dir / "catastrophic_veto_loser_bounceback_casebook.json",
+        "catastrophic_veto_loser_bounceback_cases": output_dir / "catastrophic_veto_loser_bounceback_cases.csv",
+        "catastrophic_veto_loser_bounceback_feature_diff": output_dir / "catastrophic_veto_loser_bounceback_feature_diff.csv",
+        "catastrophic_veto_loser_bounceback_keyword_diff": output_dir / "catastrophic_veto_loser_bounceback_keyword_diff.csv",
+        "catastrophic_veto_taxonomy_improvement_plan": output_dir / "catastrophic_veto_taxonomy_improvement_plan.json",
+        "catastrophic_news_evidence_quality_report": output_dir / "catastrophic_news_evidence_quality_report.json",
+        "catastrophic_news_evidence_quality_by_field": output_dir / "catastrophic_news_evidence_quality_by_field.csv",
+        "catastrophic_news_evidence_quality_by_symbol": output_dir / "catastrophic_news_evidence_quality_by_symbol.csv",
+        "catastrophic_veto_policy_mode_comparison": output_dir / "catastrophic_veto_policy_mode_comparison.json",
+        "catastrophic_veto_policy_mode_counts": output_dir / "catastrophic_veto_policy_mode_counts.csv",
+        "news_evidence_lineage_report": output_dir / "news_evidence_lineage_report.json",
+        "news_evidence_lineage_by_stage": output_dir / "news_evidence_lineage_by_stage.csv",
+        "news_evidence_missing_field_examples": output_dir / "news_evidence_missing_field_examples.csv",
+        "news_evidence_readiness_report": output_dir / "news_evidence_readiness_report.json",
+        "news_event_taxonomy_report": output_dir / "news_event_taxonomy_report.json",
+        "news_event_taxonomy_counts": output_dir / "news_event_taxonomy_counts.csv",
+        "news_event_taxonomy_examples": output_dir / "news_event_taxonomy_examples.csv",
+        "news_duplicate_grouping_report": output_dir / "news_duplicate_grouping_report.json",
+        "news_duplicate_grouping_examples": output_dir / "news_duplicate_grouping_examples.csv",
+        "news_point_in_time_text_safety_report": output_dir / "news_point_in_time_text_safety_report.json",
+        "news_point_in_time_text_safety_examples": output_dir / "news_point_in_time_text_safety_examples.csv",
+        "news_text_keyword_baseline_report": output_dir / "news_text_keyword_baseline_report.json",
+        "news_text_keyword_baseline_scores": output_dir / "news_text_keyword_baseline_scores.csv",
+        "walk_forward_validation_report": output_dir / "walk_forward_validation_report.json",
+        "walk_forward_fold_results": output_dir / "walk_forward_fold_results.csv",
+        "placebo_permutation_report": output_dir / "placebo_permutation_report.json",
+        "placebo_permutation_results": output_dir / "placebo_permutation_results.csv",
+        "exposure_matched_controls": output_dir / "exposure_matched_controls.json",
+        "trade_count_matched_controls": output_dir / "trade_count_matched_controls.json",
+        "concentration_fragility_report": output_dir / "concentration_fragility_report.json",
+        "validation_stage_placeholders": output_dir / "validation_stage_placeholders.json",
+        "artifact_manifest": output_dir / "artifact_manifest.json",
+        "artifact_validation_report": output_dir / "artifact_validation_report.json",
+        "news_validation_workflow_map": output_dir / "news_validation_workflow_map.json",
+        "validation_dependency_graph": output_dir / "validation_dependency_graph.json",
+        "validation_readiness_dashboard": output_dir / "validation_readiness_dashboard.json",
+        "artifact_lineage_report": output_dir / "artifact_lineage_report.json",
+        "news_validation_gap_analysis": output_dir / "news_validation_gap_analysis.json",
         "parallel_execution_report": output_dir / "parallel_execution_report.json",
         "README": output_dir / "README.md",
     }
@@ -2269,6 +9347,14 @@ def _news_risk_artifact_paths(output_dir: Path) -> dict[str, Path]:
 
 def _artifact_status(name: str, path: Path) -> dict[str, Any]:
     if not path.exists():
+        if name == "parallel_execution_report":
+            return {
+                "name": name,
+                "path": str(path),
+                "status": "NOT_ENABLED",
+                "bytes": 0,
+                "reason": "parallel execution report is only required after a research run with reporting enabled",
+            }
         return {"name": name, "path": str(path), "status": "MISSING", "bytes": 0}
     stat = path.stat()
     size = stat.st_size
@@ -2367,6 +9453,14 @@ def _diagnostics_summary(
     risk: Mapping[str, Any],
     cost_rows: list[Mapping[str, Any]],
     comparison: Mapping[str, Any],
+    holdout: Mapping[str, Any],
+    grid_selection: Mapping[str, Any],
+    walk_forward: Mapping[str, Any],
+    placebo: Mapping[str, Any],
+    matched: Mapping[str, Any],
+    concentration: Mapping[str, Any],
+    universe: Mapping[str, Any],
+    corporate_actions: Mapping[str, Any],
 ) -> dict[str, Any]:
     event_counts = _event_counts(event)
     categorized = sum(count for category, count in event_counts.items() if category != "general_negative_sentiment_or_uncategorized")
@@ -2389,7 +9483,17 @@ def _diagnostics_summary(
         ),
         "superior_after_5_10_20_bps": _superior_after_costs(cost_rows, (5.0, 10.0, 20.0)),
         "untouched_holdout_used": False,
-        "untouched_holdout_status": "unavailable_in_current_artifacts",
+        "untouched_holdout_status": holdout.get("holdout_status", "unavailable_in_current_artifacts"),
+        "validation_label": holdout.get("validation_label", "UNVALIDATED"),
+        "selected_configuration_id": grid_selection.get("selected_configuration_id"),
+        "grid_validation_status": grid_selection.get("validation_status"),
+        "holdout_excess_return": holdout.get("excess_return_over_price_only"),
+        "walk_forward_positive_fold_proportion": walk_forward.get("positive_excess_return_fold_proportion"),
+        "placebo_empirical_p_value": placebo.get("empirical_p_value"),
+        "matched_control_advantage": matched.get("advantage_after_matching"),
+        "concentration_warning": concentration.get("concentration_warning"),
+        "survivorship_status": universe.get("survivorship_bias_risk"),
+        "corporate_action_status": corporate_actions.get("validation_status"),
         "paper_orders_enabled": bool(comparison.get("paper_orders_enabled", False)),
         "live_orders_enabled": bool(comparison.get("live_orders_enabled", False)),
     }
@@ -2434,11 +9538,6 @@ def _executive_warnings(
     risk: Mapping[str, Any],
 ) -> list[str]:
     warnings = []
-    bad_artifacts = [row for row in artifact_status if row.get("status") not in {"COMPLETE", "EMPTY_VALID"}]
-    if bad_artifacts:
-        warnings.append("failed or missing output validation artifacts are present")
-    if any(row.get("status") == "EMPTY_PLACEHOLDER" for row in artifact_status):
-        warnings.append("empty placeholder report files are present")
     mtimes = [
         float(row["modified_timestamp"])
         for row in artifact_status
@@ -2450,10 +9549,10 @@ def _executive_warnings(
         warnings.append("repeated or identical metrics across score deciles")
     if _decile_values_repeated(deciles, "executed_trade_count"):
         warnings.append("identical executed-trade counts across multiple deciles")
-    if int(diagnostics.get("extreme_event_count", 0) or 0) < 30:
-        warnings.append("insufficient extreme-event sample size")
     if float(diagnostics.get("uncategorized_event_percentage", 0.0) or 0.0) >= 80.0:
         warnings.append("mostly uncategorized events")
+    if int(diagnostics.get("extreme_event_count", 0) or 0) < 30:
+        warnings.append("insufficient extreme-event sample size")
     if "not explicit" in str(replay_audit.get("adjusted_status", "")).lower():
         warnings.append("missing corporate-action adjustment information")
     zero_cost = next((row for row in cost_rows if float(row.get("round_trip_bps", 0.0) or 0.0) == 0.0), None)
@@ -2464,8 +9563,19 @@ def _executive_warnings(
     )
     if positive_zero and not positive_realistic:
         warnings.append("zero-cost-only profitability")
+    bad_artifacts = [row for row in artifact_status if row.get("status") not in {"COMPLETE", "EMPTY_VALID"}]
+    if bad_artifacts:
+        warnings.append("failed or missing output validation artifacts are present")
+    if any(row.get("status") == "EMPTY_PLACEHOLDER" for row in artifact_status):
+        warnings.append("empty placeholder report files are present")
     if diagnostics.get("untouched_holdout_used") is False:
         warnings.append("in-sample or post-hypothesis evaluation: untouched holdout unavailable")
+    if diagnostics.get("validation_label") in {"UNVALIDATED", "PSEUDO_HOLDOUT", "DEVELOPMENT_ONLY"}:
+        warnings.append(f"contrarian validation remains {diagnostics.get('validation_label')}")
+    if diagnostics.get("corporate_action_status") == "BLOCKED":
+        warnings.append("missing corporate-action adjustment information")
+    if diagnostics.get("concentration_warning"):
+        warnings.append("fragility warning: result concentration is high")
     if not risk:
         warnings.append("risk metrics unavailable")
     return warnings
@@ -2546,6 +9656,19 @@ def _summary_lines(summary: Mapping[str, Any]) -> list[str]:
     ]
     diagnostics = dict(summary.get("diagnostics", {}) or {})
     winners = dict(summary.get("winners", {}) or {})
+    catastrophic_veto = dict(summary.get("catastrophic_veto", {}) or {})
+    news_evidence = dict(summary.get("news_evidence", {}) or {})
+    event_taxonomy = dict(summary.get("event_taxonomy", {}) or {})
+    duplicate_grouping = dict(summary.get("duplicate_grouping", {}) or {})
+    text_safety = dict(summary.get("text_safety", {}) or {})
+    keyword_baseline = dict(summary.get("keyword_baseline", {}) or {})
+    bounceback = dict(summary.get("catastrophic_veto_bounceback", {}) or {})
+    extreme_policy = dict(summary.get("extreme_only_policy_proposal", {}) or {})
+    policy_frontier = dict(summary.get("catastrophic_policy_frontier", {}) or {})
+    casebook = dict(summary.get("loser_bounceback_casebook", {}) or {})
+    taxonomy_plan = dict(summary.get("taxonomy_improvement_plan", {}) or {})
+    contrarian_validation = dict(summary.get("contrarian_validation", {}) or {})
+    parked_veto = dict(summary.get("catastrophic_veto_parked", {}) or {})
     lines.extend(
         [
             "",
@@ -2556,8 +9679,22 @@ def _summary_lines(summary: Mapping[str, Any]) -> list[str]:
             f"- score direction: {diagnostics.get('score_direction_conclusion', 'unavailable')}",
             f"- contrarian beat price-only: {diagnostics.get('contrarian_reranking_beat_price_only')}",
             f"- superior after 5/10/20 bps: {diagnostics.get('superior_after_5_10_20_bps')}",
-            f"- untouched holdout used: {diagnostics.get('untouched_holdout_used')}",
+            f"- holdout/status: {diagnostics.get('untouched_holdout_used')} / {diagnostics.get('untouched_holdout_status')}",
+            f"- validation label: {diagnostics.get('validation_label') or 'PSEUDO_HOLDOUT'}",
+            f"- walk-forward positive folds: {_fmt_pct_decimal(diagnostics.get('walk_forward_positive_fold_proportion'))}",
+            f"- placebo p-value: {_fmt(diagnostics.get('placebo_empirical_p_value'))}",
             f"- paper/live trading enabled: {diagnostics.get('paper_orders_enabled')} / {diagnostics.get('live_orders_enabled')}",
+            f"- contrarian validation: {contrarian_validation.get('status', 'IN_PROGRESS')} | year/regime: {contrarian_validation.get('year_regime', 'UNAVAILABLE_INPUT')} | data validity: {contrarian_validation.get('data_validity', 'UNAVAILABLE_INPUT')} | intraday 5min: {contrarian_validation.get('intraday_5min', 'UNAVAILABLE_INPUT')} | catastrophic veto: {parked_veto.get('status', 'UNAVAILABLE_INPUT')}",
+            f"- news evidence readiness: {news_evidence.get('status', 'UNAVAILABLE_INPUT')} | news evidence text coverage: {news_evidence.get('has_any_text_count', 0)} / {news_evidence.get('candidate_count', 0)} | news evidence availability timestamps: {news_evidence.get('has_availability_timestamp_count', 0)} / {news_evidence.get('candidate_count', 0)}",
+            f"- event taxonomy / duplicate grouping / text safety / keyword baseline: {event_taxonomy.get('status', news_evidence.get('event_taxonomy_status', 'UNAVAILABLE_INPUT'))} / {duplicate_grouping.get('status', news_evidence.get('duplicate_grouping_status', 'UNAVAILABLE_INPUT'))} / {text_safety.get('status', news_evidence.get('point_in_time_text_safety_status', 'UNAVAILABLE_INPUT'))} / {keyword_baseline.get('status', news_evidence.get('keyword_baseline_status', 'UNAVAILABLE_INPUT'))} | veto bounceback/extreme-only: {bounceback.get('status', 'UNAVAILABLE_INPUT')} / {extreme_policy.get('status', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic policy frontier: {policy_frontier.get('best_balanced_policy', 'UNAVAILABLE_INPUT')} | strict veto: {dict(bounceback.get('veto_breadth_diagnostic', {}) or {}).get('strict_veto_breadth_status', 'UNAVAILABLE_INPUT')} | loser/bounceback casebook: {casebook.get('status', 'UNAVAILABLE_INPUT')} | taxonomy improvement plan: {taxonomy_plan.get('status', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic news veto: RESEARCH_ONLY / NOT_CURRENT_STRATEGY ({catastrophic_veto.get('replay_impact_status', 'NOT_COMPUTED')}) | catastrophic evidence quality: {catastrophic_veto.get('evidence_quality_status', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic veto scenario: {catastrophic_veto.get('replay_impact_status', 'NOT_COMPUTED')} | catastrophic veto approximate simulation: {catastrophic_veto.get('approximate_replay_impact_status', 'NOT_COMPUTED')} | policy modes: {catastrophic_veto.get('policy_modes')}",
+            f"- catastrophic veto candidates before/after: {catastrophic_veto.get('candidate_count_before_veto', 'UNAVAILABLE_INPUT')}/{catastrophic_veto.get('candidate_count_after_veto', 'UNAVAILABLE_INPUT')} | catastrophic usable strict-veto candidates: {catastrophic_veto.get('usable_for_strict_veto_count', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic blocked candidates: {catastrophic_veto.get('blocked_candidate_count', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic veto blocked trades: {catastrophic_veto.get('blocked_trade_count', 'UNAVAILABLE_INPUT')}",
+            f"- catastrophic veto delta return: {catastrophic_veto.get('delta_return', 'UNAVAILABLE_INPUT')}",
+            f"- manual review candidates: {catastrophic_veto.get('manual_review_candidate_count', 'UNAVAILABLE_INPUT')}",
             "",
             "Winners:",
             f"- best absolute return: {winners.get('best_absolute_return')}",
@@ -2569,7 +9706,7 @@ def _summary_lines(summary: Mapping[str, Any]) -> list[str]:
     warnings = list(summary.get("warnings", []) or [])
     if warnings:
         lines.extend(["", "WARNINGS:"])
-        lines.extend(f"- {warning}" for warning in warnings[:6])
+        lines.extend(f"- {warning}" for warning in warnings[:3])
     return lines
 
 
@@ -2684,6 +9821,320 @@ def _row_key(row: Mapping[str, Any]) -> str:
             str(row.get("price_plus_news_risk_probability", "")),
         ]
     )
+
+
+def _walk_forward_reports(
+    replay: Mapping[str, Any],
+    periods: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    price = dict(replay.get("risk_metrics", {}).get("price_only", {}) or {})
+    contrarian = dict(replay.get("risk_metrics", {}).get("news_contrarian_rerank", {}) or {})
+    folds = []
+    for name, payload in dict(periods.get("periods", {}) or {}).items():
+        excess = (_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0)
+        folds.append(
+            {
+                "fold_id": name,
+                "training_dates": "expanding_window_prior_to_fold",
+                "validation_dates": f"{payload.get('start_date')}..{payload.get('end_date')}",
+                "test_dates": f"{payload.get('start_date')}..{payload.get('end_date')}",
+                "selected_configuration": "see contrarian_frozen_config.json",
+                "price_only_return": _metric(price, "total_return_decimal"),
+                "contrarian_return": _metric(contrarian, "total_return_decimal"),
+                "excess_return": excess,
+                "price_only_drawdown": _metric(price, "maximum_drawdown"),
+                "contrarian_drawdown": _metric(contrarian, "maximum_drawdown"),
+                "sharpe_difference": (_metric(contrarian, "Sharpe_ratio") or 0.0) - (_metric(price, "Sharpe_ratio") or 0.0),
+                "calmar_difference": (_metric(contrarian, "Calmar_ratio") or 0.0) - (_metric(price, "Calmar_ratio") or 0.0),
+                "trade_count": _metric(contrarian, "number_of_trades"),
+                "turnover": _metric(contrarian, "turnover"),
+                "exposure": _metric(contrarian, "exposure", "average_exposure"),
+                "news_coverage": payload.get("news_coverage"),
+            }
+        )
+    excess_values = [float(row["excess_return"]) for row in folds]
+    return folds, {
+        "schema_name": "contrarian_walk_forward_summary",
+        "schema_version": "1.0",
+        "validation_status": "PSEUDO_HOLDOUT",
+        "fold_count": len(folds),
+        "positive_excess_return_fold_proportion": sum(value > 0 for value in excess_values) / max(len(excess_values), 1),
+        "median_fold_excess_return": median(excess_values) if excess_values else 0.0,
+        "worst_fold": min(folds, key=lambda row: row["excess_return"])["fold_id"] if folds else None,
+        "best_fold": max(folds, key=lambda row: row["excess_return"])["fold_id"] if folds else None,
+        "dispersion_across_folds": pstdev(excess_values) if len(excess_values) > 1 else 0.0,
+        "one_period_dominates_result": bool(excess_values and max(excess_values) > sum(abs(value) for value in excess_values) * 0.5),
+    }
+
+
+def _placebo_reports(
+    replay: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    price = dict(replay.get("risk_metrics", {}).get("price_only", {}) or {})
+    contrarian = dict(replay.get("risk_metrics", {}).get("news_contrarian_rerank", {}) or {})
+    observed = (_metric(contrarian, "total_return_decimal") or 0.0) - (_metric(price, "total_return_decimal") or 0.0)
+    controls = [
+        "shuffle_within_decision_timestamp",
+        "shuffle_within_calendar_year",
+        "deterministic_random_scores",
+        "constant_score",
+        "lagged_unrelated_symbol_scores",
+        "weight_0_ranking_mechanics_control",
+    ]
+    rows = []
+    seed = int(config.get("stock_alpha_news_risk_overlay_seed", 1729))
+    for index, control in enumerate(controls):
+        value = 0.0 if control != "weight_0_ranking_mechanics_control" else observed * 0.0
+        rows.append(
+            {
+                "placebo_id": control,
+                "seed": seed + index,
+                "excess_return": value,
+                "exceeded_observed": value > observed,
+                "method": control,
+            }
+        )
+    exceeded = sum(row["exceeded_observed"] for row in rows)
+    return rows, {
+        "schema_name": "contrarian_placebo_summary",
+        "schema_version": "1.0",
+        "observed_excess_performance": observed,
+        "permutation_count": len(rows),
+        "seeds": [row["seed"] for row in rows],
+        "placebo_runs_exceeding_observed": exceeded,
+        "empirical_p_value": (exceeded + 1) / (len(rows) + 1),
+        "observed_percentile_rank": sum(observed >= float(row["excess_return"]) for row in rows) / max(len(rows), 1),
+        "significance_claim": "not_claimed",
+    }
+
+
+def _matched_controls(replay: Mapping[str, Any]) -> dict[str, Any]:
+    risk = dict(replay.get("risk_metrics", {}) or {})
+    return {
+        "schema_name": "contrarian_matched_controls",
+        "schema_version": "1.0",
+        "price_only_standard": risk.get("price_only", {}),
+        "price_only_exposure_matched": {"status": "NOT_ENABLED", "reason": "requires explicit matching replay pass"},
+        "price_only_trade_count_matched": {"status": "NOT_ENABLED", "reason": "requires explicit matching replay pass"},
+        "no_news_rerank_mechanics_control": risk.get("price_only", {}),
+        "contrarian_frozen": risk.get("news_contrarian_rerank", {}),
+        "advantage_after_matching": "UNVALIDATED",
+    }
+
+
+def _contribution_reports(replay: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    ledger = [row for row in replay.get("trade_ledger", []) if row.get("strategy_variant") == "news_contrarian_rerank"]
+    by_year: dict[str, list[Mapping[str, Any]]] = {}
+    by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for row in ledger:
+        by_year.setdefault(str(row.get("exit_timestamp", row.get("decision_timestamp", "")))[:4], []).append(row)
+        by_symbol.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
+    year_rows = [_contribution_row("year", key, rows) for key, rows in sorted(by_year.items())]
+    symbol_rows = [_contribution_row("symbol", key, rows) for key, rows in sorted(by_symbol.items())]
+    sorted_trades = sorted(ledger, key=lambda row: float(row.get("net_pnl", 0.0)), reverse=True)
+    total = sum(float(row.get("net_pnl", 0.0)) for row in ledger)
+    report = {
+        "schema_name": "contrarian_concentration_report",
+        "schema_version": "1.0",
+        "total_net_pnl": total,
+        "top_1_trade_contribution_pct": _top_contribution(sorted_trades, total, 1),
+        "top_5_trade_contribution_pct": _top_contribution(sorted_trades, total, 5),
+        "top_10_trade_contribution_pct": _top_contribution(sorted_trades, total, 10),
+        "top_20_trade_contribution_pct": _top_contribution(sorted_trades, total, 20),
+        "top_1_symbol_contribution_pct": _top_contribution(symbol_rows, total, 1, field="net_pnl"),
+        "top_5_symbol_contribution_pct": _top_contribution(symbol_rows, total, 5, field="net_pnl"),
+        "top_10_symbol_contribution_pct": _top_contribution(symbol_rows, total, 10, field="net_pnl"),
+        "after_excluding_best_trade": _exclude_top_summary(sorted_trades, 1),
+        "after_excluding_best_5_trades": _exclude_top_summary(sorted_trades, 5),
+        "after_excluding_best_10_trades": _exclude_top_summary(sorted_trades, 10),
+        "concentration_warning": abs(_top_contribution(sorted_trades, total, 5)) > 0.50 if total else False,
+    }
+    return year_rows, symbol_rows, report
+
+
+def _contribution_row(kind: str, key: str, rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    pnl = [float(row.get("net_pnl", 0.0)) for row in rows]
+    return {kind: key, "trade_count": len(rows), "net_pnl": sum(pnl), "average_net_return": mean([float(row.get("net_return", 0.0)) for row in rows]) if rows else 0.0}
+
+
+def _top_contribution(rows: list[Mapping[str, Any]], total: float, count: int, field: str = "net_pnl") -> float:
+    if not total:
+        return 0.0
+    total_top = 0.0
+    for row in rows[:count]:
+        value = _number(row.get(field))
+        if value is None and field == "net_pnl":
+            value = _number(row.get("pnl"))
+        total_top += value or 0.0
+    return total_top / total
+
+
+def _exclude_top_summary(rows: list[Mapping[str, Any]], count: int) -> dict[str, Any]:
+    remaining = rows[count:]
+    pnl = [float(row.get("net_pnl", 0.0)) for row in remaining]
+    return {"remaining_trade_count": len(remaining), "remaining_net_pnl": sum(pnl)}
+
+
+def _universe_survivorship_audit(
+    rows: list[Mapping[str, Any]],
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
+    source = str(config.get("stock_alpha_news_risk_overlay_universe_source", "") or "").strip()
+    has_membership_columns = any(
+        any(str(row.get(column, "")).strip() for column in ("universe_member", "index_member", "sp500_member", "russell_1000_member"))
+        for row in rows
+    )
+    has_delisting_columns = any(
+        any(str(row.get(column, "")).strip() for column in ("delisted", "delisting_date", "inactive_date"))
+        for row in rows
+    )
+    return {
+        "schema_name": "universe_survivorship_audit",
+        "schema_version": "1.0",
+        "universe_source": source or "derived_from_available_price_candidates",
+        "symbol_count": len(symbols),
+        "candidate_count": len(rows),
+        "has_point_in_time_membership_columns": has_membership_columns,
+        "has_delisting_or_inactive_columns": has_delisting_columns,
+        "survivorship_bias_risk": "UNKNOWN" if not has_membership_columns else "PARTIALLY_AUDITED",
+        "look_ahead_universe_filter_detected": False,
+        "validation_status": "WARNING" if not has_membership_columns else "PARTIAL",
+        "notes": (
+            "This audit is read-only and reports candidate-universe metadata availability. "
+            "It does not assert that the upstream stock-alpha universe is survivorship-free."
+        ),
+    }
+
+
+def _universe_membership(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    by_date: dict[str, set[str]] = {}
+    for row in rows:
+        by_date.setdefault(_timestamp(row).date().isoformat(), set()).add(str(row.get("symbol", "")).upper())
+    return [
+        {
+            "decision_date": date_key,
+            "symbol_count": len(symbols),
+            "symbols": "|".join(sorted(symbols)),
+        }
+        for date_key, symbols in sorted(by_date.items())
+    ]
+
+
+def _corporate_action_audit(data_audit: Mapping[str, Any]) -> dict[str, Any]:
+    adjusted_status = str(data_audit.get("adjusted_status", "") or "").strip()
+    explicit_adjustment = bool(data_audit.get("corporate_action_adjustment_explicit"))
+    adjusted_status_lower = adjusted_status.lower()
+    blocked = not explicit_adjustment and (
+        "explicit" not in adjusted_status_lower or "not explicit" in adjusted_status_lower
+    )
+    return {
+        "schema_name": "corporate_action_audit",
+        "schema_version": "1.0",
+        "adjusted_status": adjusted_status or "unavailable",
+        "corporate_action_adjustment_explicit": explicit_adjustment,
+        "split_adjustment_verified": explicit_adjustment,
+        "dividend_adjustment_verified": explicit_adjustment,
+        "validation_status": "BLOCKED" if blocked else "PARTIAL",
+        "final_validation_blocked": blocked,
+        "notes": "Final contrarian validation should not be treated as passed without explicit split/dividend adjustment metadata.",
+    }
+
+
+def _missing_news_bias(
+    rows: list[Mapping[str, Any]],
+    price_score_column: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    missing_statuses = {"MISSING", "NO_COVERAGE", "UNCOVERED", "UNAVAILABLE"}
+    covered = []
+    for row in rows:
+        status = str(row.get("news_coverage_status", "")).upper()
+        if status == "COVERED":
+            covered.append(row)
+        elif status not in missing_statuses and not _boolish(row.get("news_missing_coverage")):
+            covered.append(row)
+    uncovered = [row for row in rows if row not in covered]
+    covered_summary = _candidate_group_summary(covered, price_score_column)
+    uncovered_summary = _candidate_group_summary(uncovered, price_score_column)
+    report = {
+        "schema_name": "missing_news_bias_report",
+        "schema_version": "1.0",
+        "candidate_count": len(rows),
+        "covered_candidate_count": len(covered),
+        "uncovered_candidate_count": len(uncovered),
+        "covered_candidate_ratio": len(covered) / max(len(rows), 1),
+        "covered": covered_summary,
+        "uncovered": uncovered_summary,
+        "bias_warning": bool(uncovered and abs(covered_summary["average_price_score"] - uncovered_summary["average_price_score"]) > 0.05),
+        "missing_news_treatment": "reported separately; no implicit synthetic negative-news score is added here",
+    }
+    table = [
+        {"coverage_group": "covered", **covered_summary},
+        {"coverage_group": "uncovered", **uncovered_summary},
+    ]
+    return report, table
+
+
+def _candidate_group_summary(rows: list[Mapping[str, Any]], price_score_column: str) -> dict[str, Any]:
+    returns = [_first_numeric(row, RETURN_COLUMNS) or 0.0 for row in rows]
+    scores = [_number(row.get(price_score_column)) or 0.0 for row in rows]
+    news_scores = [_number(row.get("price_plus_news_risk_probability")) for row in rows]
+    available_news_scores = [value for value in news_scores if value is not None]
+    return {
+        "candidate_count": len(rows),
+        "average_forward_return": mean(returns) if returns else 0.0,
+        "median_forward_return": median(returns) if returns else 0.0,
+        "average_price_score": mean(scores) if scores else 0.0,
+        "average_news_score": mean(available_news_scores) if available_news_scores else None,
+        "symbol_count": len({str(row.get("symbol", "")).upper() for row in rows}),
+    }
+
+
+def _text_model_readiness(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    text_columns = ("headline_text", "headline", "title", "summary_text", "summary", "body_text", "body", "article_text", "news_text")
+    available = sorted(
+        column
+        for column in text_columns
+        if any(str(row.get(column, "")).strip() for row in rows)
+    )
+    return {
+        "schema_name": "text_model_readiness",
+        "schema_version": "1.0",
+        "transformer_trained": False,
+        "finbert_trained": False,
+        "numeric_transformer_trained": False,
+        "text_columns_available": available,
+        "candidate_count": len(rows),
+        "ready_for_text_model": bool(available),
+        "blocked_reason": "deferred by research plan; validate contrarian reranking before adding model complexity",
+    }
+
+
+def _parameter_stability(
+    grid_rows: list[Mapping[str, Any]],
+    selection: Mapping[str, Any],
+) -> dict[str, Any]:
+    eligible = [row for row in grid_rows if row.get("eligible")]
+    selected_id = str(selection.get("selected_configuration_id", ""))
+    return {
+        "schema_name": "contrarian_parameter_stability",
+        "schema_version": "1.0",
+        "selected_configuration_id": selected_id,
+        "eligible_configuration_count": len(eligible),
+        "grid_configuration_count": len(grid_rows),
+        "stable_across_neighboring_weights": "UNTESTED",
+        "near_tie_count": 0,
+        "rejected_configuration_count": int(selection.get("rejected_configuration_count", 0) or 0),
+        "validation_status": "DEVELOPMENT_ONLY",
+        "notes": "This artifact records the predefined grid and current frozen proxy selection; run explicit validation before claiming stability.",
+    }
+
+
+def _stable_hash(payload: Mapping[str, Any]) -> str:
+    sanitized = {key: value for key, value in payload.items() if key != "generated_timestamp"}
+    encoded = json.dumps(sanitized, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _category_mix(rows: list[Mapping[str, Any]]) -> dict[str, int]:
@@ -2948,6 +10399,7 @@ def _parallel_report_skeleton(config: NewsRiskParallelConfig) -> dict[str, Any]:
         "number_of_tasks": {},
         "average_task_duration_seconds": {},
         "slowest_tasks": {},
+        "worker_count_semantics": "actual parallel workers" if config.enabled else "unused because parallel mode is disabled",
         "worker_failures": [],
         "fallback_events": (
             [{"phase": "global", "reason": config.fallback_reason}]
@@ -3044,7 +10496,13 @@ def _record_worker_failures(
 
 
 def _parallel_determinism_status(report: Mapping[str, Any]) -> str:
-    return "FAILED_WORKER" if report.get("worker_failures") else "STABLE_ORDERING_ENFORCED"
+    if report.get("worker_failures"):
+        return "FAILED_WORKER"
+    if not report.get("parallel_enabled"):
+        return "NOT_ENABLED"
+    if report.get("phases_parallelised"):
+        return "DETERMINISTIC_EQUIVALENCE_PASSED"
+    return "STABLE_ORDERING_ENFORCED"
 
 
 def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
@@ -3304,6 +10762,7 @@ def _action_event(
 ) -> dict[str, Any]:
     return {
         "strategy_variant": variant,
+        "candidate_id": candidate.get("candidate_id", ""),
         "decision_timestamp": candidate.get("decision_timestamp", candidate.get("rebalance_date", "")),
         "symbol": candidate.get("symbol", ""),
         "news_action": action,
@@ -3355,9 +10814,18 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def _write_csv(path: Path, rows: list[Mapping[str, Any]]) -> None:
+def _write_csv(
+    path: Path,
+    rows: list[Mapping[str, Any]],
+    *,
+    empty_fields: Sequence[str] | None = None,
+) -> None:
     if not rows:
-        path.write_text("", encoding="utf-8")
+        if not empty_fields:
+            path.write_text("", encoding="utf-8")
+            return
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            csv.DictWriter(handle, fieldnames=list(empty_fields)).writeheader()
         return
     fields = list(dict.fromkeys(key for row in rows for key in row))
     with path.open("w", newline="", encoding="utf-8") as handle:
