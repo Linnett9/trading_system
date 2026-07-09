@@ -1,0 +1,29 @@
+ml:
+  stock_alpha_news_historical_backfill:
+    action: collect
+    dry_run: false
+    work_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_historical_backfill_alpaca_benzinga_tiny_mock_smoke/dev
+    provider: alpaca_benzinga
+    start_date: "2024-01-01"
+    end_date: "2024-01-31"
+    partition_frequency: monthly
+    symbols: [AAPL, MSFT]
+    symbol_batch_size: 2
+    max_symbols: 2
+    max_partitions_per_run: 2
+    provider_request_limit: 20
+    max_rows_per_partition: 100
+    request_timeout_seconds: 5
+    rate_limit_sleep_seconds: 0.0
+    provider_config:
+      enabled: true
+      api_key_env: ALPACA_API_KEY_ID
+      secret_key_env: ALPACA_SECRET_KEY
+      page_size: 10
+      max_pages_per_batch: 3
+      max_retries: 0
+      retry_sleep_seconds: 0.0
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false

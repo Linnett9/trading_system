@@ -119,6 +119,8 @@ class DualMomentumBacktesterInitMixin:
         relative_strength_weight: float = 0.25,
         volatility_penalty_weight: float = 0.05,
         ranking_volatility_lookback: int = 63,
+        score_provider=None,
+        rebalance_dates: set | list | None = None,
     ):
         self.starting_equity = starting_equity
         self.experiment_name = experiment_name
@@ -301,4 +303,12 @@ class DualMomentumBacktesterInitMixin:
         self.relative_strength_weight = relative_strength_weight
         self.volatility_penalty_weight = volatility_penalty_weight
         self.ranking_volatility_lookback = ranking_volatility_lookback
-
+        self.score_provider = score_provider
+        self.rebalance_dates = (
+            {
+                item.date() if hasattr(item, "date") else item
+                for item in rebalance_dates
+            }
+            if rebalance_dates
+            else None
+        )

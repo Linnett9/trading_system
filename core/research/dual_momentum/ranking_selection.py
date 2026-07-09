@@ -1,4 +1,4 @@
-
+from core.research.dual_momentum.score_providers import ScoreCandidate
 
 
 class DualMomentumRankingSelectionMixin:
@@ -37,6 +37,7 @@ class DualMomentumRankingSelectionMixin:
         apply_short_term_weakness_filter=True,
     ):
         ranked = []
+        candidates = []
         periods = momentum_periods or self.momentum_periods
         blocked_symbols = blocked_symbols or set()
 
@@ -110,7 +111,28 @@ class DualMomentumRankingSelectionMixin:
                 timestamp=timestamp,
             )
 
+            if self.score_provider is not None:
+                candidates.append(
+                    ScoreCandidate(
+                        symbol=symbol,
+                        timestamp=timestamp,
+                        momentum_score=score,
+                    )
+                )
+                continue
+
             if score is not None and score > 0:
                 ranked.append((symbol, score))
+
+        if self.score_provider is not None:
+            provider_scores = self.score_provider.score_candidates(
+                timestamp,
+                candidates,
+            )
+            ranked = [
+                (symbol, score)
+                for symbol, score in provider_scores.items()
+                if score is not None and score > 0
+            ]
 
         return sorted(ranked, key=lambda item: item[1], reverse=True)

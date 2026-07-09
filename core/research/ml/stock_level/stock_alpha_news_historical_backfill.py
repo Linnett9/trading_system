@@ -1,0 +1,619 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Mapping
+
+from core.research.framework.data import CsvRowRepository
+from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.stock_level.stock_alpha_news_contract import REQUIRED_NEWS_CONTRACT_COLUMNS
+from core.research.ml.stock_level.stock_alpha_news_free_source_collect import (
+    PROVENANCE_COLUMNS,
+    build_stock_alpha_news_free_source_collect,
+)
+
+
+SCHEMA_VERSION = "alpaca_benzinga_historical_backfill_v1"
+MANIFEST_FILENAME = "stock_alpha_news_historical_backfill_manifest.json"
+SUMMARY_FILENAME = "stock_alpha_news_historical_backfill_summary.json"
+SUMMARY_MARKDOWN_FILENAME = "stock_alpha_news_historical_backfill_summary.md"
+ASSEMBLY_FILENAME = "stock_alpha_news_historical_corpus_assembly.csv"
+ASSEMBLY_JSON_FILENAME = "stock_alpha_news_historical_corpus_assembly.json"
+ASSEMBLY_MARKDOWN_FILENAME = "stock_alpha_news_historical_corpus_assembly.md"
+
+
+@dataclass(frozen=True)
+class StockAlphaNewsHistoricalBackfillPaths:
+    manifest_path: Path
+    summary_json_path: Path
+    summary_markdown_path: Path
+    assembly_csv_path: Path | None = None
+    assembly_json_path: Path | None = None
+    assembly_markdown_path: Path | None = None
+
+
+def write_stock_alpha_news_historical_backfill(
+    config: Mapping[str, Any],
+    *,
+    sources: Mapping[str, Any] | None = None,
+) -> StockAlphaNewsHistoricalBackfillPaths:
+    settings = _settings(config)
+    action = str(settings.get("action", "collect")).strip().lower()
+    if action == "assemble":
+        return write_stock_alpha_news_historical_corpus_assembly(config)
+    payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
+    paths = _paths(settings)
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.manifest_path, payload["manifest"])
+    writer.write_json(paths.summary_json_path, payload["summary"])
+    writer.write_markdown(paths.summary_markdown_path, _summary_markdown(payload["summary"]))
+    return paths
+
+
+def write_stock_alpha_news_historical_corpus_assembly(
+    config: Mapping[str, Any],
+) -> StockAlphaNewsHistoricalBackfillPaths:
+    settings = _settings(config)
+    paths = _paths(settings)
+    payload, rows = build_stock_alpha_news_historical_corpus_assembly(config)
+    writer = ResearchArtifactWriter()
+    if rows:
+        writer.write_csv(
+            paths.assembly_csv_path,
+            rows,
+            fieldnames=_fieldnames(rows),
+            extrasaction="ignore",
+        )
+    writer.write_json(paths.assembly_json_path, payload)
+    writer.write_markdown(paths.assembly_markdown_path, _assembly_markdown(payload))
+    return paths
+
+
+def build_stock_alpha_news_historical_backfill(
+    config: Mapping[str, Any],
+    *,
+    sources: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    settings = _settings(config)
+    paths = _paths(settings)
+    partitions = generate_historical_news_partitions(config)
+    manifest = _load_manifest(paths.manifest_path)
+    manifest_records = {str(row.get("partition_id")): dict(row) for row in manifest.get("partitions", [])}
+    planned = [_initial_manifest_record(partition) for partition in partitions]
+    for record in planned:
+        manifest_records.setdefault(record["partition_id"], record)
+    max_partitions = max(0, int(settings.get("max_partitions_per_run", 0) or 0))
+    dry_run = bool(settings.get("dry_run", False))
+    processed = 0
+    skipped_complete = 0
+    failed = 0
+    partial = 0
+    completed = 0
+    for partition in partitions:
+        record = manifest_records[partition["partition_id"]]
+        if record.get("status") == "complete" and _artifact_valid(record):
+            skipped_complete += 1
+            continue
+        if max_partitions and processed >= max_partitions:
+            break
+        if dry_run:
+            record.update({"status": "pending", "last_error": ""})
+            continue
+        processed += 1
+        _run_partition(config, settings, partition, record, sources=sources)
+        _atomic_write_json(paths.manifest_path, {
+            "schema_version": SCHEMA_VERSION,
+            "generated_at_utc": _now_utc(),
+            "action": "collect",
+            "dry_run": dry_run,
+            "partition_count": len(partitions),
+            "partitions": [manifest_records[item["partition_id"]] for item in partitions],
+        })
+        if record["status"] == "complete":
+            completed += 1
+        elif record["status"] == "partial":
+            partial += 1
+        elif record["status"] == "failed":
+            failed += 1
+    ordered_records = [manifest_records[partition["partition_id"]] for partition in partitions]
+    output_manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at_utc": _now_utc(),
+        "action": "collect",
+        "dry_run": dry_run,
+        "partition_count": len(ordered_records),
+        "partitions": ordered_records,
+    }
+    summary = _backfill_summary(
+        output_manifest,
+        processed=processed,
+        skipped_complete=skipped_complete,
+        completed=completed,
+        partial=partial,
+        failed=failed,
+        paths=paths,
+    )
+    return {"manifest": output_manifest, "summary": summary}
+
+
+def build_stock_alpha_news_historical_corpus_assembly(
+    config: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    settings = _settings(config)
+    paths = _paths(settings)
+    manifest = _load_manifest(paths.manifest_path)
+    incomplete = [
+        row for row in manifest.get("partitions", [])
+        if row.get("status") != "complete"
+    ]
+    if incomplete and bool(settings.get("assembly_require_all_complete", True)):
+        return _assembly_payload(manifest, [], incomplete, paths), []
+    rows: list[dict[str, Any]] = []
+    for record in manifest.get("partitions", []):
+        if record.get("status") != "complete":
+            continue
+        artifact = Path(str(record.get("output_artifact", "")))
+        rows.extend(CsvRowRepository().read(artifact))
+    deduplicated = _deduplicate_rows(rows)
+    return _assembly_payload(manifest, deduplicated, incomplete, paths), deduplicated
+
+
+def generate_historical_news_partitions(config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    settings = _settings(config)
+    provider = str(settings.get("provider", "alpaca_benzinga")).strip()
+    months = _monthly_windows(str(settings["start_date"]), str(settings["end_date"]))
+    symbols = _resolved_symbols(config)
+    batch_size = max(1, int(settings.get("symbol_batch_size", settings.get("symbols_per_batch", 25)) or 25))
+    batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
+    partitions: list[dict[str, Any]] = []
+    for month_start, month_end in months:
+        for batch_index, batch_symbols in enumerate(batches, start=1):
+            identity = {
+                "schema_version": SCHEMA_VERSION,
+                "provider": provider,
+                "start_date": month_start,
+                "end_date": month_end,
+                "symbol_batch_id": f"symbol_batch_{batch_index:03d}",
+                "symbols": batch_symbols,
+            }
+            digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
+            partition_id = f"{provider}_{month_start[:7]}_symbol_batch_{batch_index:03d}_{digest}"
+            partitions.append({
+                **identity,
+                "partition_id": partition_id,
+                "identity_hash": digest,
+            })
+    return partitions
+
+
+def _run_partition(
+    config: Mapping[str, Any],
+    settings: Mapping[str, Any],
+    partition: Mapping[str, Any],
+    record: dict[str, Any],
+    *,
+    sources: Mapping[str, Any] | None,
+) -> None:
+    record["status"] = "running"
+    record["attempt_count"] = int(record.get("attempt_count", 0) or 0) + 1
+    record["started_at"] = _now_utc()
+    record["completed_at"] = ""
+    record["last_error"] = ""
+    partition_config = _partition_collect_config(config, settings, partition)
+    try:
+        payload, rows = build_stock_alpha_news_free_source_collect(partition_config, sources=sources)
+        diagnostic = _provider_diagnostic(payload, str(partition["provider"]))
+        _update_record_from_payload(record, payload, diagnostic, rows)
+        provider_failure = _provider_failure_reason(payload, str(partition["provider"]))
+        if provider_failure:
+            record["status"] = "failed"
+            record["last_error"] = provider_failure
+            return
+        if bool(diagnostic.get(f"{partition['provider']}_stopped_with_more_results_available", False)):
+            record["status"] = "partial"
+            record["last_error"] = "partition stopped with more results available"
+            return
+        artifact = _partition_artifact_path(settings, partition)
+        if rows:
+            _atomic_write_csv(artifact, rows)
+            record["output_artifact"] = str(artifact)
+            record["output_row_count"] = len(rows)
+            record["checksum"] = _sha256_file(artifact)
+        else:
+            record["output_artifact"] = ""
+            record["output_row_count"] = 0
+            record["checksum"] = ""
+        record["status"] = "complete"
+    except Exception as exc:
+        record["status"] = "failed"
+        record["last_error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        record["completed_at"] = _now_utc()
+
+
+def _partition_collect_config(
+    config: Mapping[str, Any],
+    settings: Mapping[str, Any],
+    partition: Mapping[str, Any],
+) -> dict[str, Any]:
+    provider = str(partition["provider"])
+    provider_config = dict(settings.get("provider_config", {}) or {})
+    provider_config.setdefault("enabled", True)
+    provider_config.setdefault("api_key_env", "ALPACA_API_KEY_ID")
+    provider_config.setdefault("secret_key_env", "ALPACA_SECRET_KEY")
+    collect = {
+        "enabled": True,
+        "dry_run": True,
+        "allow_overwrite": False,
+        "merge_existing": False,
+        "backup_existing": False,
+        "start_date": partition["start_date"],
+        "end_date": partition["end_date"],
+        "symbols": list(partition["symbols"]),
+        "symbols_per_batch": len(partition["symbols"]),
+        "max_articles_per_provider": int(settings.get("provider_request_limit", 250)),
+        "provider_request_limit": int(settings.get("provider_request_limit", 250)),
+        "max_rows_per_provider": int(settings.get("max_rows_per_partition", 10_000)),
+        "max_symbols_per_run": len(partition["symbols"]),
+        "request_timeout_seconds": int(settings.get("request_timeout_seconds", 20)),
+        "rate_limit_sleep_seconds": float(settings.get("rate_limit_sleep_seconds", 0.0)),
+        "providers": {provider: provider_config},
+    }
+    return {
+        **dict(config),
+        "ml": {
+            **dict(config.get("ml", {}) or {}),
+            "stock_alpha_news_collect_report_dir": str(Path(settings["work_dir"]) / "partition_reports" / partition["partition_id"]),
+            "stock_alpha_news_collect_output_path": str(_partition_artifact_path(settings, partition)),
+            "stock_alpha_news_collect": collect,
+            "stock_alpha_news_enable_transformer": False,
+        },
+    }
+
+
+def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
+    ml = dict(config.get("ml", {}) or {})
+    settings = dict(ml.get("stock_alpha_news_historical_backfill", {}) or {})
+    if not settings:
+        raise ValueError("missing ml.stock_alpha_news_historical_backfill")
+    return settings
+
+
+def _paths(settings: Mapping[str, Any]) -> StockAlphaNewsHistoricalBackfillPaths:
+    work_dir = Path(str(settings.get("work_dir", "")))
+    if not work_dir:
+        raise ValueError("missing ml.stock_alpha_news_historical_backfill.work_dir")
+    return StockAlphaNewsHistoricalBackfillPaths(
+        manifest_path=work_dir / MANIFEST_FILENAME,
+        summary_json_path=work_dir / SUMMARY_FILENAME,
+        summary_markdown_path=work_dir / SUMMARY_MARKDOWN_FILENAME,
+        assembly_csv_path=work_dir / ASSEMBLY_FILENAME,
+        assembly_json_path=work_dir / ASSEMBLY_JSON_FILENAME,
+        assembly_markdown_path=work_dir / ASSEMBLY_MARKDOWN_FILENAME,
+    )
+
+
+def _resolved_symbols(config: Mapping[str, Any]) -> list[str]:
+    settings = _settings(config)
+    symbols = _symbols(settings.get("symbols", []))
+    if not symbols and bool(settings.get("use_canonical_universe", False)):
+        stock_path = Path(str(dict(config.get("ml", {}) or {}).get("stock_alpha_stock_rows_path", "")))
+        rows = CsvRowRepository().read(stock_path) if stock_path.is_file() else []
+        symbols = _symbols(row.get("symbol", "") for row in rows)
+    only = set(_symbols(settings.get("only_symbols", [])))
+    if only:
+        symbols = [symbol for symbol in symbols if symbol in only]
+    max_symbols = int(settings.get("max_symbols", 0) or 0)
+    if max_symbols > 0:
+        symbols = symbols[:max_symbols]
+    if not symbols:
+        raise ValueError("historical backfill resolved zero symbols")
+    return symbols
+
+
+def _monthly_windows(start_date: str, end_date: str) -> list[tuple[str, str]]:
+    start = date.fromisoformat(start_date[:10])
+    end = date.fromisoformat(end_date[:10])
+    if start > end:
+        raise ValueError("historical backfill start_date must be <= end_date")
+    windows: list[tuple[str, str]] = []
+    current = start.replace(day=1)
+    while current <= end:
+        next_month = _next_month(current)
+        month_start = max(start, current)
+        month_end = min(end, next_month - timedelta(days=1))
+        windows.append((month_start.isoformat(), month_end.isoformat()))
+        current = next_month
+    return windows
+
+
+def _next_month(value: date) -> date:
+    if value.month == 12:
+        return date(value.year + 1, 1, 1)
+    return date(value.year, value.month + 1, 1)
+
+
+def _initial_manifest_record(partition: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "partition_id": partition["partition_id"],
+        "identity_hash": partition["identity_hash"],
+        "schema_version": SCHEMA_VERSION,
+        "provider": partition["provider"],
+        "symbol_batch_id": partition["symbol_batch_id"],
+        "symbols": list(partition["symbols"]),
+        "start_date": partition["start_date"],
+        "end_date": partition["end_date"],
+        "status": "pending",
+        "attempt_count": 0,
+        "started_at": "",
+        "completed_at": "",
+        "last_error": "",
+        "pages_requested": 0,
+        "pages_completed": 0,
+        "provider_records_returned": 0,
+        "unique_provider_articles": 0,
+        "article_symbol_rows": 0,
+        "multi_symbol_expansion_rows": 0,
+        "out_of_window_rejected_count": 0,
+        "earliest_accepted_published_at": "",
+        "latest_accepted_published_at": "",
+        "output_artifact": "",
+        "output_row_count": 0,
+        "checksum": "",
+    }
+
+
+def _load_manifest(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"schema_version": SCHEMA_VERSION, "partitions": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _artifact_valid(record: Mapping[str, Any]) -> bool:
+    artifact = Path(str(record.get("output_artifact", "")))
+    if int(record.get("output_row_count", 0) or 0) == 0:
+        return True
+    if not artifact.is_file():
+        return False
+    checksum = str(record.get("checksum", ""))
+    return not checksum or _sha256_file(artifact) == checksum
+
+
+def _provider_diagnostic(payload: Mapping[str, Any], provider: str) -> dict[str, Any]:
+    for diagnostic in payload.get("provider_batch_diagnostics", []) or []:
+        if str(diagnostic.get("provider", "")) == provider:
+            return dict(diagnostic)
+    return {}
+
+
+def _provider_failure_reason(payload: Mapping[str, Any], provider: str) -> str:
+    failures = dict(payload.get("providers_failed", {}) or {})
+    if provider in failures:
+        return str(failures[provider])
+    if provider in set(payload.get("providers_rate_limited", []) or []):
+        return "rate_limited"
+    if provider in set(payload.get("providers_entitlement_failed", []) or []):
+        return "entitlement_error"
+    return ""
+
+
+def _update_record_from_payload(
+    record: dict[str, Any],
+    payload: Mapping[str, Any],
+    diagnostic: Mapping[str, Any],
+    rows: list[dict[str, Any]],
+) -> None:
+    provider = str(record["provider"])
+    published = sorted(str(row.get("published_at_utc", "")) for row in rows if row.get("published_at_utc"))
+    record.update({
+        "pages_requested": int(diagnostic.get(f"{provider}_pages_requested", 0) or 0),
+        "pages_completed": int(diagnostic.get(f"{provider}_pages_completed", 0) or 0),
+        "termination_reason": str(diagnostic.get(f"{provider}_termination_reason", "")),
+        "stopped_with_more_results_available": bool(diagnostic.get(f"{provider}_stopped_with_more_results_available", False)),
+        "provider_records_returned": int(diagnostic.get(f"{provider}_provider_records_returned", 0) or 0),
+        "unique_provider_articles": int(diagnostic.get(f"{provider}_unique_provider_articles", 0) or 0),
+        "article_symbol_rows": len(rows),
+        "multi_symbol_expansion_rows": int(diagnostic.get(f"{provider}_multi_symbol_expansion_row_count", 0) or 0),
+        "out_of_window_rejected_count": int(payload.get("out_of_window_rejected_count", 0) or 0),
+        "earliest_accepted_published_at": published[0] if published else "",
+        "latest_accepted_published_at": published[-1] if published else "",
+    })
+
+
+def _partition_artifact_path(settings: Mapping[str, Any], partition: Mapping[str, Any]) -> Path:
+    return (
+        Path(str(settings["work_dir"]))
+        / "partitions"
+        / str(partition["provider"])
+        / str(partition["start_date"])[:7]
+        / f"{partition['partition_id']}.csv"
+    )
+
+
+def _atomic_write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = _fieldnames(rows)
+    tmp = path.with_name(f".{path.name}.tmp")
+    ResearchArtifactWriter().write_csv(tmp, rows, fieldnames=fieldnames, extrasaction="ignore")
+    os.replace(tmp, path)
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _fieldnames(rows: list[Mapping[str, Any]]) -> list[str]:
+    ordered = [*REQUIRED_NEWS_CONTRACT_COLUMNS, *PROVENANCE_COLUMNS]
+    extras: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in ordered and key not in extras:
+                extras.append(str(key))
+    return [*ordered, *extras]
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _symbols(values: Any) -> list[str]:
+    return [
+        str(value).strip().upper()
+        for value in values or []
+        if str(value).strip()
+    ]
+
+
+def _deduplicate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for row in rows:
+        key = (
+            str(row.get("provider", "")).strip(),
+            str(row.get("provider_article_id", "")).strip(),
+            str(row.get("symbol", "")).strip().upper(),
+            str(row.get("published_at_utc", "")).strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(row)
+    return result
+
+
+def _backfill_summary(
+    manifest: Mapping[str, Any],
+    *,
+    processed: int,
+    skipped_complete: int,
+    completed: int,
+    partial: int,
+    failed: int,
+    paths: StockAlphaNewsHistoricalBackfillPaths,
+) -> dict[str, Any]:
+    statuses = Counter(str(row.get("status", "")) for row in manifest.get("partitions", []))
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "action": "collect",
+        "manifest_path": str(paths.manifest_path),
+        "partition_count": len(manifest.get("partitions", [])),
+        "status_counts": dict(sorted(statuses.items())),
+        "processed_this_run": processed,
+        "skipped_complete": skipped_complete,
+        "completed_this_run": completed,
+        "partial_this_run": partial,
+        "failed_this_run": failed,
+        "features_generated": False,
+        "model_training_invoked": False,
+        "trading_impact": "none",
+        "production_validated": False,
+    }
+
+
+def _assembly_payload(
+    manifest: Mapping[str, Any],
+    rows: list[dict[str, Any]],
+    incomplete: list[Mapping[str, Any]],
+    paths: StockAlphaNewsHistoricalBackfillPaths,
+) -> dict[str, Any]:
+    symbols = sorted({str(row.get("symbol", "")).strip().upper() for row in rows if str(row.get("symbol", "")).strip()})
+    published = sorted(str(row.get("published_at_utc", "")) for row in rows if row.get("published_at_utc"))
+    year_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        published_at = str(row.get("published_at_utc", ""))
+        if len(published_at) >= 4:
+            year_rows[published_at[:4]].append(row)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "action": "assemble",
+        "manifest_path": str(paths.manifest_path),
+        "assembly_csv_path": str(paths.assembly_csv_path),
+        "complete_partition_count": sum(1 for row in manifest.get("partitions", []) if row.get("status") == "complete"),
+        "incomplete_partition_count": len(incomplete),
+        "incomplete_partitions": [row.get("partition_id") for row in incomplete],
+        "row_count": len(rows),
+        "unique_provider_article_count": len({(row.get("provider"), row.get("provider_article_id")) for row in rows}),
+        "symbol_count": len(symbols),
+        "symbols": symbols,
+        "min_published_at_utc": published[0] if published else "",
+        "max_published_at_utc": published[-1] if published else "",
+        "text_availability_by_year": {
+            year: _text_availability(year_values)
+            for year, year_values in sorted(year_rows.items())
+        },
+        "source_distribution": dict(sorted(Counter(str(row.get("source", "")).strip() for row in rows).items())),
+        "publisher_availability_rate": _availability(rows, "publisher"),
+        "author_availability_rate": _availability(rows, "author"),
+        "raw_source_availability_rate": _availability(rows, "raw_source"),
+        "contract_ingest_invoked": False,
+        "features_generated": False,
+        "model_training_invoked": False,
+        "trading_impact": "none",
+        "production_validated": False,
+    }
+
+
+def _text_availability(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "headline_availability_rate": _availability(rows, "headline"),
+        "summary_availability_rate": _availability(rows, "summary"),
+        "body_or_full_text_availability_rate": _availability(rows, "body_or_full_text"),
+        "article_symbol_rows": len(rows),
+        "unique_article_count": len({str(row.get("provider_article_id", "")).strip() for row in rows if row.get("provider_article_id")}),
+    }
+
+
+def _availability(rows: list[dict[str, Any]], field: str) -> float:
+    return (
+        sum(1 for row in rows if str(row.get(field, "")).strip()) / len(rows)
+        if rows else 0.0
+    )
+
+
+def _summary_markdown(payload: Mapping[str, Any]) -> str:
+    return "\n".join([
+        "# Stock-Alpha Historical News Backfill",
+        "",
+        f"- Action: {payload['action']}",
+        f"- Manifest: {payload['manifest_path']}",
+        f"- Partitions: {payload['partition_count']}",
+        f"- Status counts: {payload['status_counts']}",
+        f"- Processed this run: {payload['processed_this_run']}",
+        f"- Skipped complete: {payload['skipped_complete']}",
+        f"- Completed this run: {payload['completed_this_run']}",
+        f"- Partial this run: {payload['partial_this_run']}",
+        f"- Failed this run: {payload['failed_this_run']}",
+        "- Model training invoked: false",
+        "- Trading impact: none",
+    ])
+
+
+def _assembly_markdown(payload: Mapping[str, Any]) -> str:
+    return "\n".join([
+        "# Stock-Alpha Historical News Corpus Assembly",
+        "",
+        f"- Rows: {payload['row_count']}",
+        f"- Complete partitions: {payload['complete_partition_count']}",
+        f"- Incomplete partitions: {payload['incomplete_partition_count']}",
+        f"- Symbols: {payload['symbol_count']}",
+        f"- Published range: {payload['min_published_at_utc']} to {payload['max_published_at_utc']}",
+        f"- Text availability by year: {payload['text_availability_by_year']}",
+        "- Contract ingest invoked: false",
+        "- Model training invoked: false",
+        "- Trading impact: none",
+    ])
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

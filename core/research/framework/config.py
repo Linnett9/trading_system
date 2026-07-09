@@ -131,9 +131,23 @@ class StockLevelResearchConfig:
             run_size=run_size,
             dev_max_dates=int(ml.get("stock_alpha_dev_max_dates", 80)),
             dev_max_symbols=int(ml.get("stock_alpha_dev_max_symbols", 120)),
-            dev_recent_dates_only=bool(ml.get("stock_alpha_dev_recent_dates_only", True)),
-            dev_symbol_sample_method=str(ml.get("stock_alpha_dev_symbol_sample_method", "sorted")).lower(),
-            dev_required_symbols=tuple(str(symbol).upper() for symbol in ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])),
+            dev_recent_dates_only=bool(
+                ml.get("stock_alpha_dev_recent_dates_only", True)
+            ),
+            dev_required_symbols=tuple(
+                str(symbol).strip().upper()
+                for symbol in ml.get(
+                    "stock_alpha_dev_required_symbols",
+                    [ml.get("stock_ranker_spy_symbol", "SPY")],
+                )
+                if str(symbol).strip()
+            ),
+            dev_symbol_sample_method=str(
+                ml.get(
+                    "stock_alpha_dev_symbol_sample_method",
+                    "sorted",
+                )
+            ).strip().lower(),
             resume_existing_outputs=bool(ml.get("stock_alpha_resume_existing_outputs", True)),
             force_refresh=bool(ml.get("stock_alpha_force_refresh", False)),
             target_comparison_n_jobs=int(ml.get("stock_target_comparison_n_jobs", stock_alpha_default_workers)),
@@ -183,8 +197,14 @@ class StockLevelResearchConfig:
             )
         if self.run_size not in {"dev", "benchmark", "full"}:
             raise ValueError("ml.stock_alpha_run_size must be dev, benchmark, or full")
-        if self.dev_symbol_sample_method not in {"sorted", "deterministic_hash"}:
-            raise ValueError("ml.stock_alpha_dev_symbol_sample_method must be sorted or deterministic_hash")
+        if self.dev_symbol_sample_method not in {
+            "sorted",
+            "deterministic_hash",
+        }:
+            raise ValueError(
+                "ml.stock_alpha_dev_symbol_sample_method must be "
+                "sorted or deterministic_hash"
+            )
         if self.ranker_model_set not in {"fast", "standard", "validated_standard", "full"}:
             raise ValueError("ml.stock_ranker_model_set must be fast, standard, validated_standard, or full")
         if self.target_comparison_model_set not in {"ultrafast", "fast", "standard", "validated_standard", "full"}:

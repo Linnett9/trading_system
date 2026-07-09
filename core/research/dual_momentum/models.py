@@ -21,6 +21,9 @@ class DualMomentumSelection:
     target_weights: dict[str, float] | None = None
     chop_filter_active: bool = False
     cooldown_symbols: list[str] | None = None
+    candidate_count: int = 0
+    selected_count_before_hysteresis: int = 0
+    final_holding_count: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,11 @@ class DualMomentumSelection:
             "target_weights": self.target_weights or {},
             "chop_filter_active": self.chop_filter_active,
             "cooldown_symbols": self.cooldown_symbols or [],
+            "candidate_count": self.candidate_count,
+            "selected_count_before_hysteresis": (
+                self.selected_count_before_hysteresis
+            ),
+            "final_holding_count": self.final_holding_count,
         }
 
 

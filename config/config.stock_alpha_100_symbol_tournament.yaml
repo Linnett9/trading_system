@@ -1,0 +1,23 @@
+ml:
+  stock_alpha_run_size: benchmark
+  stock_ranker_model_set: validated_standard
+  stock_target_comparison_model_set: fast
+  stock_ranker_sequence_length: 13
+  stock_ranker_model_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  stock_alpha_overnight_run_portfolio_replay: false
+  stock_portfolio_policy_sweep_enabled: false
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_100_symbol_tournament
+  stock_level_base_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_sources/us_liquid_100/stock_level_prediction_artifacts.csv
+  stooq_parquet_dir: data/processed
+  stock_alpha_resume_existing_outputs: true
+  stock_alpha_force_refresh: false
+  stock_alpha_stages:
+    stock_artifact: true
+    portfolio_policy_sweep: false
+  stock_level_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_100_symbol_tournament/benchmark/stock_level_prediction_artifacts_enriched.csv
+research:
+  dual_momentum:
+    universe_path: data/reference/universes/us_liquid_100.yaml

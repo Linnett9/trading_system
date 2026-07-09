@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import time
+from collections import Counter
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
@@ -12,10 +15,13 @@ from xml.etree import ElementTree
 
 
 HttpGet = Callable[[str, int], Any]
+AlpacaHttpGet = Callable[[str, int, Mapping[str, str]], Any]
 SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+ALPACA_NEWS_URL = "https://data.alpaca.markets/v1beta1/news"
 
 PROVIDER_METADATA = {
     "alpha_vantage": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
+    "alpaca_benzinga": {"statuses": ["usable_now", "needs_key", "historical_editorial_news"], "api_key_required": True},
     "finnhub": {"statuses": ["usable_now", "needs_key"], "api_key_required": True},
     "gdelt": {"statuses": ["experimental_no_key", "rate_limited_or_retry_later"], "api_key_required": False},
     "sec_edgar": {"statuses": ["official_filings_source", "experimental_no_key"], "api_key_required": False},
@@ -50,6 +56,22 @@ def standard_library_text_get(url: str, timeout: int) -> str:
     request = Request(url, headers={"User-Agent": "stock-alpha-research/1.0 research-contact@example.invalid"})
     with urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded configured research endpoints
         return response.read().decode("utf-8", errors="replace")
+
+
+def standard_library_alpaca_json_get(
+    url: str,
+    timeout: int,
+    headers: Mapping[str, str],
+) -> Any:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "stock-alpha-research/1.0 research-contact@example.invalid",
+            **dict(headers),
+        },
+    )
+    with urlopen(request, timeout=timeout) as response:  # noqa: S310 - bounded configured research endpoints
+        return json.loads(response.read().decode("utf-8"))
 
 
 class NewsSource:
@@ -165,6 +187,280 @@ class AlphaVantageNewsSource(NewsSource):
             if error_message:
                 raise ValueError(error_message)
         return [self._normalized(symbol=symbol, provider_id=item.get("url"), url=item.get("url"), published=item.get("time_published"), source=item.get("source"), headline=item.get("title"), body=item.get("summary"), sentiment=item.get("overall_sentiment_score", ""), event_type="", language="en") for item in payload.get("feed", [])]
+
+
+class AlpacaBenzingaNewsSource(NewsSource):
+    name = "alpaca_benzinga"
+
+    def __init__(
+        self,
+        http_get: AlpacaHttpGet = standard_library_alpaca_json_get,
+        *,
+        secret_key_env: str = "ALPACA_SECRET_KEY",
+        page_token: str = "",
+        page_size: int = 0,
+        max_pages_per_batch: int = 0,
+        max_retries: int = 1,
+        retry_sleep_seconds: float = 0.0,
+    ) -> None:
+        self._alpaca_http_get = http_get
+        self._secret_key_env = secret_key_env
+        self._page_token = page_token
+        self._page_size = max(0, int(page_size or 0))
+        self._max_pages_per_batch = max(0, int(max_pages_per_batch or 0))
+        self._max_retries = max(0, int(max_retries or 0))
+        self._retry_sleep_seconds = max(0.0, float(retry_sleep_seconds or 0.0))
+        self.last_batch_diagnostic: dict[str, Any] = {}
+        super().__init__(standard_library_json_get)
+
+    def with_provider_config(self, provider_config: Mapping[str, Any]) -> "AlpacaBenzingaNewsSource":
+        return AlpacaBenzingaNewsSource(
+            self._alpaca_http_get,
+            secret_key_env=str(
+                provider_config.get("secret_key_env")
+                or provider_config.get("api_secret_env")
+                or self._secret_key_env
+            ).strip() or self._secret_key_env,
+            page_token=str(provider_config.get("page_token", self._page_token) or "").strip(),
+            page_size=int(
+                provider_config.get("page_size")
+                or provider_config.get("request_page_size")
+                or self._page_size
+                or 0
+            ),
+            max_pages_per_batch=int(provider_config.get("max_pages_per_batch", self._max_pages_per_batch) or 0),
+            max_retries=int(provider_config.get("max_retries", self._max_retries) or 0),
+            retry_sleep_seconds=float(provider_config.get("retry_sleep_seconds", self._retry_sleep_seconds) or 0.0),
+        )
+
+    def collect(
+        self,
+        *,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        limit: int,
+        timeout: int,
+        api_key: str = "",
+    ) -> list[dict[str, Any]]:
+        secret_key = os.environ.get(self._secret_key_env, "")
+        if not secret_key:
+            raise ValueError(f"missing Alpaca secret key environment variable: {self._secret_key_env}")
+        headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": secret_key,
+        }
+        requested_symbols = [symbol.upper() for symbol in symbols if str(symbol).strip()]
+        rows: list[dict[str, Any]] = []
+        rejected: Counter[str] = Counter()
+        response_rows = 0
+        page_count = 0
+        pages_completed = 0
+        page_token = self._page_token
+        next_page_token = ""
+        request_urls: list[str] = []
+        multi_symbol_articles = 0
+        source_distribution: Counter[str] = Counter()
+        retry_count = 0
+        provider_record_ids: list[str] = []
+        provider_record_headlines: dict[str, str] = {}
+        termination_reason = ""
+        while len(rows) < limit:
+            if self._max_pages_per_batch and page_count >= self._max_pages_per_batch:
+                termination_reason = "max_pages"
+                break
+            remaining_rows = limit - len(rows)
+            configured_page_size = self._page_size or remaining_rows
+            page_limit = max(1, min(50, configured_page_size, remaining_rows))
+            url = self._url(
+                requested_symbols,
+                start_date,
+                end_date,
+                page_limit,
+                page_token,
+            )
+            request_urls.append(url)
+            payload, retries = self._request_payload(url, timeout, headers)
+            retry_count += retries
+            page_count += 1
+            pages_completed += 1
+            if not isinstance(payload, Mapping):
+                raise ValueError("unexpected Alpaca news response shape")
+            articles = payload.get("news", [])
+            if articles is None:
+                articles = []
+            if not isinstance(articles, list):
+                raise ValueError("unexpected Alpaca news articles shape")
+            if not articles:
+                next_page_token = str(payload.get("next_page_token") or "")
+                termination_reason = "empty_page"
+                break
+            for item in articles:
+                response_rows += 1
+                if not isinstance(item, Mapping):
+                    rejected["malformed_record"] += 1
+                    continue
+                provider_record_id = str(item.get("id") or item.get("news_id") or "").strip()
+                if provider_record_id:
+                    provider_record_ids.append(provider_record_id)
+                    provider_record_headlines[provider_record_id] = str(
+                        item.get("headline") or item.get("title") or ""
+                    ).strip()
+                article_rows, reason = self._rows_for_article(
+                    item,
+                    requested_symbols=requested_symbols,
+                )
+                if reason:
+                    rejected[reason] += 1
+                    continue
+                if len(_article_symbols(item, requested_symbols)) > 1:
+                    multi_symbol_articles += 1
+                for row in article_rows:
+                    source_distribution[str(row.get("source", ""))] += 1
+                    rows.append(row)
+                    if len(rows) >= limit:
+                        break
+                if len(rows) >= limit:
+                    break
+            next_page_token = str(payload.get("next_page_token") or "")
+            if len(rows) >= limit:
+                termination_reason = "max_rows_per_batch"
+                break
+            if not next_page_token:
+                termination_reason = "end_of_results"
+                break
+            page_token = next_page_token
+        if not termination_reason:
+            termination_reason = "request_limit" if len(rows) >= limit else "end_of_results"
+        self.last_batch_diagnostic = _alpaca_batch_diagnostic(
+            rows=rows,
+            requested_symbols=requested_symbols,
+            request_urls=request_urls,
+            page_count=page_count,
+            pages_completed=pages_completed,
+            response_rows=response_rows,
+            rejected=rejected,
+            next_page_token=next_page_token,
+            multi_symbol_articles=multi_symbol_articles,
+            source_distribution=source_distribution,
+            secret_key_env=self._secret_key_env,
+            page_token_start=self._page_token,
+            stopped_by_page_limit=bool(self._max_pages_per_batch and page_count >= self._max_pages_per_batch and next_page_token),
+            retry_count=retry_count,
+            max_retries=self._max_retries,
+            termination_reason=termination_reason,
+            provider_record_ids=provider_record_ids,
+            provider_record_headlines=provider_record_headlines,
+            page_size=self._page_size,
+        )
+        return rows[:limit]
+
+    def _request_payload(
+        self,
+        url: str,
+        timeout: int,
+        headers: Mapping[str, str],
+    ) -> tuple[Any, int]:
+        attempts = 0
+        retries = 0
+        while True:
+            try:
+                return self._alpaca_http_get(url, timeout, headers), retries
+            except Exception as exc:
+                if getattr(exc, "code", None) == 429 or attempts >= self._max_retries:
+                    raise
+                attempts += 1
+                retries += 1
+                if self._retry_sleep_seconds > 0.0:
+                    time.sleep(self._retry_sleep_seconds)
+
+    def _url(
+        self,
+        symbols: list[str],
+        start: str,
+        end: str,
+        limit: int,
+        page_token: str,
+    ) -> str:
+        params: dict[str, Any] = {
+            "symbols": ",".join(symbols),
+            "limit": limit,
+            "sort": "asc",
+        }
+        if start:
+            params["start"] = _alpaca_time(start, end_of_day=False)
+        if end:
+            params["end"] = _alpaca_time(end, end_of_day=True)
+        if page_token:
+            params["page_token"] = page_token
+        return ALPACA_NEWS_URL + "?" + urlencode(params)
+
+    def _rows_for_article(
+        self,
+        item: Mapping[str, Any],
+        *,
+        requested_symbols: list[str],
+    ) -> tuple[list[dict[str, Any]], str]:
+        article_id = str(item.get("id") or item.get("news_id") or "").strip()
+        published = _utc(item.get("created_at") or item.get("published_at") or item.get("published_utc") or item.get("date"))
+        headline = str(item.get("headline") or item.get("title") or "").strip()
+        if not article_id:
+            return [], "missing_provider_article_id"
+        if not published:
+            return [], "missing_publication_timestamp"
+        symbols = _article_symbols(item, requested_symbols)
+        if not symbols:
+            return [], "no_requested_symbol_match"
+        updated = _utc(item.get("updated_at") or item.get("updated_utc") or "")
+        url = str(item.get("url") or item.get("article_url") or item.get("source_url") or "").strip()
+        publisher = _alpaca_publisher(item)
+        author = _alpaca_author(item)
+        raw_source = _alpaca_raw_source(item)
+        summary = str(item.get("summary") or item.get("description") or "").strip()
+        body = str(item.get("content") or item.get("body") or item.get("full_text") or "").strip()
+        text_value = body or summary
+        text_kind = "body_or_full_text" if body else ("summary" if summary else "")
+        rows = []
+        for symbol in symbols:
+            row = self._normalized(
+                symbol=symbol,
+                provider_id=f"{article_id}:{symbol}",
+                url=url,
+                published=published,
+                source=publisher,
+                headline=headline,
+                body=text_value,
+                sentiment="",
+                relevance="",
+                novelty="",
+                event_type="editorial_news",
+                language="en",
+            )
+            row.update(
+                {
+                    "provider_article_id": article_id,
+                    "provider_original_article_id": article_id,
+                    "provider_symbols": ",".join(symbols),
+                    "updated_at_utc": updated,
+                    "source_type": "editorial_news",
+                    "delivery_provider": self.name,
+                    "original_source": publisher,
+                    "publisher": publisher,
+                    "author": author,
+                    "raw_source": raw_source,
+                    "summary": summary,
+                    "body_or_full_text": body,
+                    "body_or_summary_kind": text_kind,
+                    "collected_at_utc": row["ingested_at"],
+                    "historical_availability_note": (
+                        "ingested_at is local backfill collection time; "
+                        "do not treat it as original article availability time"
+                    ),
+                }
+            )
+            row["article_id"] = f"{self.name}:{article_id}:{symbol}"
+            rows.append(row)
+        return rows, ""
 
 
 class MassiveStockNewsSource(NewsSource):
@@ -601,6 +897,7 @@ def default_news_sources(http_get: HttpGet = standard_library_json_get) -> Mappi
         for source in (
             GdeltNewsSource(http_get),
             AlphaVantageNewsSource(http_get),
+            AlpacaBenzingaNewsSource(),
             MassiveStockNewsSource(http_get),
             CompanyPressReleaseRssSource(rss_http_get),
             FinnhubNewsSource(http_get),
@@ -908,6 +1205,157 @@ def _alpha_vantage_news_time(value: str, *, end_of_day: bool) -> str:
     date_part = text[:10].replace("-", "")
     suffix = "T2359" if end_of_day else "T0000"
     return f"{date_part}{suffix}"
+
+
+def _alpaca_time(value: str, *, end_of_day: bool) -> str:
+    text = str(value or "").strip()
+    if "T" in text:
+        parsed = _utc(text)
+        return parsed or text
+    suffix = "T23:59:59Z" if end_of_day else "T00:00:00Z"
+    return f"{text[:10]}{suffix}"
+
+
+def _article_symbols(item: Mapping[str, Any], requested_symbols: list[str]) -> list[str]:
+    raw_symbols = item.get("symbols") or item.get("tickers") or []
+    if isinstance(raw_symbols, str):
+        raw_symbols = [raw_symbols]
+    available = {
+        str(symbol).strip().upper()
+        for symbol in raw_symbols or []
+        if str(symbol).strip()
+    }
+    requested = {symbol.upper() for symbol in requested_symbols}
+    if not available:
+        return sorted(requested)
+    return sorted(available & requested)
+
+
+def _alpaca_publisher(item: Mapping[str, Any]) -> str:
+    source = item.get("source")
+    if isinstance(source, Mapping):
+        value = str(source.get("name") or source.get("source") or "").strip()
+        return value
+    value = str(source or "").strip()
+    if value.lower() == "benzinga":
+        return value
+    if value:
+        return ""
+    return "Benzinga"
+
+
+def _alpaca_author(item: Mapping[str, Any]) -> str:
+    author = item.get("author")
+    if isinstance(author, Mapping):
+        return str(author.get("name") or author.get("author") or "").strip()
+    value = str(author or "").strip()
+    if value:
+        return value
+    source = item.get("source")
+    raw_source = "" if isinstance(source, Mapping) else str(source or "").strip()
+    if raw_source and raw_source.lower() != "benzinga":
+        return raw_source
+    return ""
+
+
+def _alpaca_raw_source(item: Mapping[str, Any]) -> str:
+    source = item.get("source")
+    if isinstance(source, Mapping):
+        return json.dumps(source, sort_keys=True)
+    return str(source or "").strip()
+
+
+def _alpaca_batch_diagnostic(
+    *,
+    rows: list[dict[str, Any]],
+    requested_symbols: list[str],
+    request_urls: list[str],
+    page_count: int,
+    pages_completed: int,
+    response_rows: int,
+    rejected: Mapping[str, int],
+    next_page_token: str,
+    multi_symbol_articles: int,
+    source_distribution: Mapping[str, int],
+    secret_key_env: str,
+    page_token_start: str,
+    stopped_by_page_limit: bool,
+    retry_count: int = 0,
+    max_retries: int = 0,
+    termination_reason: str = "",
+    provider_record_ids: list[str] | None = None,
+    provider_record_headlines: Mapping[str, str] | None = None,
+    page_size: int = 0,
+) -> dict[str, Any]:
+    published = sorted(str(row.get("published_at_utc", "")) for row in rows if row.get("published_at_utc"))
+    headlines = [str(row.get("headline", "")).strip().lower() for row in rows if str(row.get("headline", "")).strip()]
+    summaries = [row for row in rows if str(row.get("body_or_summary", "")).strip()]
+    updated = [row for row in rows if str(row.get("updated_at_utc", "")).strip()]
+    symbols = [str(row.get("symbol", "")).strip().upper() for row in rows if str(row.get("symbol", "")).strip()]
+    provider_ids = [str(row.get("provider_article_id", "")).strip() for row in rows if str(row.get("provider_article_id", "")).strip()]
+    record_ids = [value for value in (provider_record_ids or []) if value]
+    article_symbols: dict[str, set[str]] = {}
+    for row in rows:
+        provider_id = str(row.get("provider_article_id", "")).strip()
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if provider_id and symbol:
+            article_symbols.setdefault(provider_id, set()).add(symbol)
+    multi_symbol_expansion_rows = sum(max(0, len(values) - 1) for values in article_symbols.values())
+    headline_ids: dict[str, set[str]] = {}
+    for provider_id, headline in (provider_record_headlines or {}).items():
+        normalized_headline = str(headline or "").strip().lower()
+        if normalized_headline and provider_id:
+            headline_ids.setdefault(normalized_headline, set()).add(str(provider_id))
+    same_headline_different_ids = sum(1 for values in headline_ids.values() if len(values) > 1)
+    exact_duplicate_provider_records = len(record_ids) - len(set(record_ids))
+    next_token_present = bool(next_page_token)
+    return {
+        "alpaca_benzinga_requested_symbols": requested_symbols,
+        "alpaca_benzinga_request_urls": request_urls,
+        "alpaca_benzinga_page_size": page_size,
+        "alpaca_benzinga_termination_reason": termination_reason,
+        "alpaca_benzinga_pages_requested": page_count,
+        "alpaca_benzinga_pages_completed": pages_completed,
+        "alpaca_benzinga_next_page_token_present_at_stop": next_token_present,
+        "alpaca_benzinga_stopped_with_more_results_available": next_token_present and termination_reason not in {"end_of_results", "empty_page"},
+        "alpaca_benzinga_records_returned": response_rows,
+        "alpaca_benzinga_provider_records_returned": response_rows,
+        "alpaca_benzinga_records_accepted": len(rows),
+        "alpaca_benzinga_records_rejected": sum(int(value) for value in rejected.values()),
+        "alpaca_benzinga_rejected_reasons": dict(sorted(rejected.items())),
+        "alpaca_benzinga_unique_provider_articles": len(set(record_ids or provider_ids)),
+        "alpaca_benzinga_unique_provider_article_ids": len(set(provider_ids)),
+        "alpaca_benzinga_article_symbol_rows": len(rows),
+        "alpaca_benzinga_multi_symbol_expansion_row_count": multi_symbol_expansion_rows,
+        "alpaca_benzinga_same_provider_article_id_multi_symbol_row_count": multi_symbol_expansion_rows,
+        "alpaca_benzinga_exact_duplicate_provider_record_count": exact_duplicate_provider_records,
+        "alpaca_benzinga_duplicate_provider_article_id_count": exact_duplicate_provider_records,
+        "alpaca_benzinga_same_headline_different_provider_article_id_count": same_headline_different_ids,
+        "alpaca_benzinga_unique_symbols": len(set(symbols)),
+        "alpaca_benzinga_article_counts_by_symbol": dict(sorted(Counter(symbols).items())),
+        "alpaca_benzinga_earliest_published_at_utc": published[0] if published else "",
+        "alpaca_benzinga_latest_published_at_utc": published[-1] if published else "",
+        "alpaca_benzinga_headline_availability_rate": len(headlines) / len(rows) if rows else 0.0,
+        "alpaca_benzinga_summary_availability_rate": len(summaries) / len(rows) if rows else 0.0,
+        "alpaca_benzinga_content_availability_rate": len(summaries) / len(rows) if rows else 0.0,
+        "alpaca_benzinga_updated_timestamp_rate": len(updated) / len(rows) if rows else 0.0,
+        "alpaca_benzinga_multi_symbol_article_count": multi_symbol_articles,
+        "alpaca_benzinga_multi_symbol_article_rate": multi_symbol_articles / response_rows if response_rows else 0.0,
+        "alpaca_benzinga_source_distribution": dict(sorted(source_distribution.items())),
+        "alpaca_benzinga_exact_normalized_headline_duplicate_count": same_headline_different_ids,
+        "alpaca_benzinga_next_page_token": next_page_token,
+        "alpaca_benzinga_page_token_start": page_token_start,
+        "alpaca_benzinga_stopped_by_page_limit": stopped_by_page_limit,
+        "alpaca_benzinga_secret_key_env": secret_key_env,
+        "alpaca_benzinga_retry_count": retry_count,
+        "alpaca_benzinga_max_retries": max_retries,
+        "pit_semantics": {
+            "published_at_utc": "provider article publication timestamp",
+            "updated_at_utc": "provider article update timestamp when supplied",
+            "ingested_at": "local backfill collection time",
+            "availability": "historical provider availability is not proven by this adapter",
+        },
+    }
 
 
 def _utc(value: Any) -> str:

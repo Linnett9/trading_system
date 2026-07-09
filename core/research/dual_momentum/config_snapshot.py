@@ -169,4 +169,19 @@ class DualMomentumConfigSnapshotMixin:
             "relative_strength_weight": self.relative_strength_weight,
             "volatility_penalty_weight": self.volatility_penalty_weight,
             "ranking_volatility_lookback": self.ranking_volatility_lookback,
+            "score_provider": (
+                self.score_provider.name
+                if self.score_provider is not None
+                else "dual_momentum"
+            ),
+            "score_provider_diagnostics": (
+                self.score_provider.diagnostics()
+                if self.score_provider is not None
+                else {}
+            ),
+            "rebalance_date_count": (
+                len(self.rebalance_dates)
+                if self.rebalance_dates is not None
+                else None
+            ),
         }
