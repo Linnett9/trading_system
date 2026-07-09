@@ -165,6 +165,19 @@ ml:
   stock_portfolio_policy_sweep_max_configs_dev: 40
   stock_portfolio_policy_sweep_max_configs_benchmark: 250
   stock_portfolio_policy_sweep_max_configs_full: 1000
+  stock_ml_dual_momentum_comparison:
+    artifact_path: "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/enriched/stock_level_model_oos_predictions.csv"
+    output_dir: "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/dual_momentum_score_comparison"
+    mode: "matched_operational_universe"
+    date_column: "rebalance_date"
+    symbol_column: "symbol"
+    fold_column: "fold_id"
+    target_column: "actual_forward_return_10d"
+    elastic_net_signal_column: "stock_level_predicted_forward_return_10d_elastic_net"
+    random_forest_signal_column: "stock_level_predicted_forward_return_10d_random_forest"
+    local_data_provider: "market_parquet"
+    market_parquet_dir: "data/processed"
+    timeframe: "1Day"
   stock_alpha_experiment_report_enabled: true
   stock_alpha_experiment_report_max_age_hours: 24
   stock_alpha_experiment_report_require_all_outputs: false

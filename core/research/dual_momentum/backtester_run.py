@@ -128,6 +128,8 @@ class DualMomentumBacktesterRunMixin:
                     and self.risk_regime_mode == "scaled"
                     and self.risk_off_risk_exposure > 0
                 )
+                candidate_count = 0
+                selected_count_before_hysteresis = 0
 
                 if risk_assets_allowed:
                     ranked = self._rank_symbols(
@@ -135,7 +137,9 @@ class DualMomentumBacktesterRunMixin:
                         prices_by_symbol,
                         blocked_symbols=set(cooldowns),
                     )
+                    candidate_count = len(ranked)
                     selected = self._select_symbols(ranked)
+                    selected_count_before_hysteresis = len(selected)
                     selected = self._apply_rank_hysteresis(
                         selected,
                         ranked,
@@ -153,7 +157,9 @@ class DualMomentumBacktesterRunMixin:
                         prices_by_symbol,
                         blocked_symbols=set(cooldowns),
                     )
+                    candidate_count = len(ranked)
                     selected = self._select_symbols(ranked)
+                    selected_count_before_hysteresis = len(selected)
                     selected = self._apply_rank_hysteresis(
                         selected,
                         ranked,
@@ -167,7 +173,9 @@ class DualMomentumBacktesterRunMixin:
                         prices_by_symbol,
                         blocked_symbols=set(cooldowns),
                     )
+                    candidate_count = len(ranked)
                     selected = self._select_symbols(ranked)
+                    selected_count_before_hysteresis = len(selected)
                     selected = self._apply_rank_hysteresis(
                         selected,
                         ranked,
@@ -184,9 +192,11 @@ class DualMomentumBacktesterRunMixin:
                         apply_quality_filter=False,
                         apply_relative_strength_filter=False,
                     )
+                    candidate_count = len(ranked)
                     selected = [
                         symbol for symbol, _ in ranked[:self.risk_off_top_n]
                     ]
+                    selected_count_before_hysteresis = len(selected)
                     regime_exposure = 1.0
                     regime_label = "defensive"
                 else:
@@ -249,6 +259,11 @@ class DualMomentumBacktesterRunMixin:
                         target_weights=target_weights,
                         chop_filter_active=chop_filter_active,
                         cooldown_symbols=sorted(cooldowns),
+                        candidate_count=candidate_count,
+                        selected_count_before_hysteresis=(
+                            selected_count_before_hysteresis
+                        ),
+                        final_holding_count=len(selected),
                     )
                 )
                 (

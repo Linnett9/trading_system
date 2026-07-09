@@ -31,6 +31,7 @@ _EXPORTS = {
     "run_ml_stock_alpha_experiment_report": ("application.services.ml_commands_stock", "run_ml_stock_alpha_experiment_report"),
     "run_ml_stock_alpha_news_collect_free_sources": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_collect_free_sources"),
     "run_ml_stock_alpha_news_collection_plan": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_collection_plan"),
+    "run_ml_stock_alpha_news_historical_backfill": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_historical_backfill"),
     "run_ml_stock_alpha_news_daily_confirmation": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_daily_confirmation"),
     "run_ml_stock_alpha_news_contract_ingest": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_contract_ingest"),
     "run_ml_stock_alpha_news_coverage_audit": ("application.services.ml_commands_stock", "run_ml_stock_alpha_news_coverage_audit"),

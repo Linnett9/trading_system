@@ -46,6 +46,16 @@ class DualMomentumDataMixin:
         return portfolio_utils.timestamp_index(timestamps, timestamp)
 
     def _should_rebalance(self, timestamp, last_rebalance_key):
+        if self.rebalance_dates is not None:
+            timestamp_date = (
+                timestamp.date() if hasattr(timestamp, "date") else timestamp
+            )
+            return (
+                timestamp_date in self.rebalance_dates
+                and portfolio_utils.rebalance_key(timestamp, "daily")
+                != last_rebalance_key
+            )
+
         return portfolio_utils.should_rebalance(
             timestamp,
             last_rebalance_key,
@@ -53,6 +63,9 @@ class DualMomentumDataMixin:
         )
 
     def _rebalance_key(self, timestamp):
+        if self.rebalance_dates is not None:
+            return portfolio_utils.rebalance_key(timestamp, "daily")
+
         return portfolio_utils.rebalance_key(
             timestamp,
             self.rebalance_frequency,

@@ -39,6 +39,8 @@ class StockLevelResearchConfig:
     dev_max_dates: int
     dev_max_symbols: int
     dev_recent_dates_only: bool
+    dev_required_symbols: tuple[str, ...]
+    dev_symbol_sample_method: str
     resume_existing_outputs: bool
     force_refresh: bool
     ranker_model_set: str
@@ -128,7 +130,23 @@ class StockLevelResearchConfig:
             run_size=run_size,
             dev_max_dates=int(ml.get("stock_alpha_dev_max_dates", 80)),
             dev_max_symbols=int(ml.get("stock_alpha_dev_max_symbols", 120)),
-            dev_recent_dates_only=bool(ml.get("stock_alpha_dev_recent_dates_only", True)),
+            dev_recent_dates_only=bool(
+                ml.get("stock_alpha_dev_recent_dates_only", True)
+            ),
+            dev_required_symbols=tuple(
+                str(symbol).strip().upper()
+                for symbol in ml.get(
+                    "stock_alpha_dev_required_symbols",
+                    [ml.get("stock_ranker_spy_symbol", "SPY")],
+                )
+                if str(symbol).strip()
+            ),
+            dev_symbol_sample_method=str(
+                ml.get(
+                    "stock_alpha_dev_symbol_sample_method",
+                    "sorted",
+                )
+            ).strip().lower(),
             resume_existing_outputs=bool(ml.get("stock_alpha_resume_existing_outputs", True)),
             force_refresh=bool(ml.get("stock_alpha_force_refresh", False)),
             ranker_model_set=str(ml.get("stock_ranker_model_set", default_model_set(run_size))).lower(),
@@ -180,5 +198,13 @@ class StockLevelResearchConfig:
             )
         if self.run_size not in {"dev", "benchmark", "full"}:
             raise ValueError("ml.stock_alpha_run_size must be dev, benchmark, or full")
+        if self.dev_symbol_sample_method not in {
+            "sorted",
+            "deterministic_hash",
+        }:
+            raise ValueError(
+                "ml.stock_alpha_dev_symbol_sample_method must be "
+                "sorted or deterministic_hash"
+            )
         if not 0.0 < self.portfolio_max_position_weight <= 1.0:
             raise ValueError("ml.stock_portfolio_replay_max_position_weight must be in (0, 1]")
