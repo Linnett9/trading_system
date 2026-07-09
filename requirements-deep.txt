@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Optional deep-learning research dependencies.
+# Verified in the active Dell Python environment:
+#   torch 2.13.0+cpu
+#   CUDA available: false
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu

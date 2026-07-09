@@ -1,0 +1,15 @@
+ml:
+  stock_bar_cadence_replay_enabled: true
+  stock_bar_cadence_replay_timeframe: 1Day
+  stock_bar_cadence_feature_bank_path: cache/ml/features/stock_features_1Day.parquet
+  stock_bar_cadence_symbols: null
+  stock_bar_cadence_target_horizon_bars: 5
+  stock_bar_cadence_model: ridge
+  stock_bar_cadence_refit_frequency_bars: 20
+  stock_bar_cadence_min_train_rows: 2000
+  stock_bar_cadence_replay_top_n_values: [10, 25, 50]
+  stock_bar_cadence_replay_cost_bps_values: [5, 10, 25]
+  stock_bar_cadence_replay_slippage_bps_values: [5, 10]
+  stock_bar_cadence_replay_policy_workers: 2
+  stock_bar_cadence_replay_n_jobs: 1
+  stock_bar_cadence_output_root: reports/ml/stock_bar_cadence/cost_grid_template

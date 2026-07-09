@@ -88,6 +88,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-level-portfolio-policy-sweep":
         _commands("ml_commands").run_ml_stock_level_portfolio_policy_sweep(config)
         return
+    if args.mode == "ml-stock-bar-cadence-research":
+        _commands("ml_commands").run_ml_stock_bar_cadence_research(config)
+        return
     if args.mode == "ml-stock-alpha-experiment-report":
         _commands("ml_commands").run_ml_stock_alpha_experiment_report(config)
         return

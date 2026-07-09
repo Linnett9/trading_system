@@ -1,0 +1,17 @@
+ml:
+  stock_bar_cadence_replay_enabled: true
+  stock_bar_cadence_replay_timeframe: 1h
+  stock_bar_cadence_feature_bank_path: cache/ml/features/stock_features_1h.parquet
+  stock_bar_cadence_symbols: null
+  stock_bar_cadence_start: null
+  stock_bar_cadence_end: null
+  stock_bar_cadence_target_horizon_bars: 6
+  stock_bar_cadence_model: ridge
+  stock_bar_cadence_refit_frequency_bars: 48
+  stock_bar_cadence_min_train_rows: 5000
+  stock_bar_cadence_replay_top_n: 25
+  stock_bar_cadence_replay_max_position_weight: 0.05
+  stock_bar_cadence_replay_cost_bps: 10
+  stock_bar_cadence_replay_slippage_bps: 5
+  stock_bar_cadence_replay_n_jobs: 1
+  stock_bar_cadence_output_root: reports/ml/stock_bar_cadence/hourly_full_dell

@@ -57,6 +57,7 @@ def parse_args():
             "ml-stock-level-target-comparison",
             "ml-stock-level-portfolio-replay",
             "ml-stock-level-portfolio-policy-sweep",
+            "ml-stock-bar-cadence-research",
             "ml-stock-alpha-experiment-report",
             "ml-stock-alpha-candidate-report",
             "ml-stock-alpha-deep-diagnostics",

@@ -74,6 +74,20 @@ def run_ml_stock_level_portfolio_policy_sweep(config):
     print(f"Equity curves: {result.equity_curves_path}")
     print(f"Top holdings: {result.top_holdings_path}")
 
+def run_ml_stock_bar_cadence_research(config):
+    from core.research.ml.stock_level.bar_cadence_research_experiment import (
+        write_bar_cadence_research_experiment,
+    )
+
+    result = write_bar_cadence_research_experiment(config)
+    print("\nSTOCK BAR-CADENCE RESEARCH")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Predictions CSV: {result.predictions_path}")
+    print(f"Summary JSON: {result.summary_json_path}")
+    print(f"Summary Markdown: {result.summary_markdown_path}")
+    print(f"Equity curve: {result.equity_curve_path}")
+    print(f"Decisions: {result.decisions_path}")
+
 def run_ml_stock_alpha_experiment_report(config):
     from core.research.ml.stock_level.stock_alpha_experiment_report import (
         write_stock_alpha_experiment_report,
