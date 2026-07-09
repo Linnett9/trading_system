@@ -97,6 +97,107 @@ def test_historical_backfill_resolves_canonical_universe_and_batches(tmp_path):
     assert [partition["symbols"] for partition in partitions] == [["AAPL", "NVDA"]]
 
 
+def test_historical_backfill_canonical_universe_deduplicates_prediction_rows_in_order(tmp_path):
+    stock_rows = tmp_path / "prediction_rows.csv"
+    ResearchArtifactWriter().write_csv(
+        stock_rows,
+        [
+            {"symbol": " msft "},
+            {"symbol": "AAPL"},
+            {"symbol": "MSFT"},
+            {"symbol": ""},
+            {"symbol": "aapl"},
+            {"symbol": "NVDA"},
+        ],
+        fieldnames=["symbol"],
+    )
+    config = _config(tmp_path, symbols=[], batch_size=2)
+    config["ml"]["stock_alpha_stock_rows_path"] = str(stock_rows)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["use_canonical_universe"] = True
+
+    partitions = generate_historical_news_partitions(config)
+
+    assert [partition["symbols"] for partition in partitions] == [["MSFT", "AAPL"], ["NVDA"]]
+
+
+def test_historical_backfill_duplicate_symbol_rows_do_not_create_extra_partitions(tmp_path):
+    stock_rows = tmp_path / "prediction_rows.csv"
+    ResearchArtifactWriter().write_csv(
+        stock_rows,
+        [{"symbol": "AAPL"}, {"symbol": "AAPL"}, {"symbol": "MSFT"}, {"symbol": "MSFT"}],
+        fieldnames=["symbol"],
+    )
+    config = _config(tmp_path, symbols=[], batch_size=1)
+    config["ml"]["stock_alpha_stock_rows_path"] = str(stock_rows)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["use_canonical_universe"] = True
+
+    partitions = generate_historical_news_partitions(config)
+
+    assert len(partitions) == 2
+    assert [partition["symbols"] for partition in partitions] == [["AAPL"], ["MSFT"]]
+
+
+def test_historical_backfill_excludes_blank_canonical_symbols(tmp_path):
+    stock_rows = tmp_path / "prediction_rows.csv"
+    ResearchArtifactWriter().write_csv(
+        stock_rows,
+        [{"symbol": ""}, {"symbol": "   "}, {"symbol": "AAPL"}],
+        fieldnames=["symbol"],
+    )
+    config = _config(tmp_path, symbols=[], batch_size=25)
+    config["ml"]["stock_alpha_stock_rows_path"] = str(stock_rows)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["use_canonical_universe"] = True
+
+    partitions = generate_historical_news_partitions(config)
+
+    assert len(partitions) == 1
+    assert partitions[0]["symbols"] == ["AAPL"]
+
+
+def test_historical_backfill_200_unique_symbols_127_months_gives_1016_partitions(tmp_path):
+    symbols = [f"SYM{index:03d}" for index in range(200)]
+    config = _config(
+        tmp_path,
+        start="2016-01-01",
+        end="2026-07-08",
+        symbols=symbols,
+        batch_size=25,
+    )
+
+    partitions = generate_historical_news_partitions(config)
+
+    assert len(partitions) == 1_016
+    assert partitions[0]["start_date"] == "2016-01-01"
+    assert partitions[-1]["end_date"] == "2026-07-08"
+    assert all(len(partition["symbols"]) == 25 for partition in partitions)
+
+
+def test_historical_backfill_summary_reports_symbol_universe_diagnostics(tmp_path):
+    stock_rows = tmp_path / "prediction_rows.csv"
+    ResearchArtifactWriter().write_csv(
+        stock_rows,
+        [{"symbol": "AAPL"}, {"symbol": "MSFT"}, {"symbol": "AAPL"}, {"symbol": ""}],
+        fieldnames=["symbol"],
+    )
+    config = _config(tmp_path, symbols=[], batch_size=1)
+    config["ml"]["stock_alpha_stock_rows_path"] = str(stock_rows)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["use_canonical_universe"] = True
+    settings["dry_run"] = True
+
+    payload = build_stock_alpha_news_historical_backfill(config, sources={"alpaca_benzinga": FakeNewsSource()})
+    summary = payload["summary"]
+
+    assert summary["raw_symbol_row_count"] == 4
+    assert summary["unique_symbol_count"] == 2
+    assert summary["duplicate_symbol_row_count"] == 1
+    assert summary["expected_base_partition_count"] == 2
+    assert summary["partition_count"] == 2
+
+
 def test_historical_backfill_completes_partition_and_writes_manifest_and_artifact(tmp_path):
     config = _config(tmp_path)
     source = FakeNewsSource(rows=[_row("1", "AAPL"), _row("1", "MSFT")])
@@ -687,6 +788,22 @@ def test_known_positive_historical_backfill_configs_are_isolated_and_research_on
     assert "known_positive_pilot" in work_dir
     assert "stock_alpha_news_historical_backfill_alpaca_benzinga_pilot/dev" not in work_dir
     assert "stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev" not in work_dir
+    partitions = generate_historical_news_partitions(collect)
+    assert len(partitions) == 1
+    assert partitions[0]["symbols"] == ["AAPL", "MSFT", "AMZN"]
+
+
+def test_full_historical_backfill_template_uses_unique_canonical_symbols():
+    config = load_config(
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template.yaml",
+        overlay_project_config=True,
+    )
+
+    partitions = generate_historical_news_partitions(config)
+    symbols = {symbol for partition in partitions for symbol in partition["symbols"]}
+
+    assert len(symbols) == 200
+    assert len(partitions) == 1_016
 
 
 def test_known_positive_historical_backfill_uses_collector_safe_request_limit(tmp_path):

@@ -41,6 +41,15 @@ class StockAlphaNewsHistoricalBackfillPaths:
     assembly_markdown_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class SymbolUniverseResolution:
+    symbols: list[str]
+    raw_symbol_row_count: int
+    unique_symbol_count: int
+    duplicate_symbol_row_count: int
+    expected_base_partition_count: int
+
+
 def write_stock_alpha_news_historical_backfill(
     config: Mapping[str, Any],
     *,
@@ -92,6 +101,7 @@ def build_stock_alpha_news_historical_backfill(
     settings = _settings(config)
     paths = _paths(settings)
     partitions = generate_historical_news_partitions(config)
+    symbol_resolution = _symbol_universe_resolution(config)
     manifest = _load_manifest(paths.manifest_path)
     manifest_records = {str(row.get("partition_id")): dict(row) for row in manifest.get("partitions", [])}
     for existing in manifest.get("partitions", []) or []:
@@ -166,6 +176,7 @@ def build_stock_alpha_news_historical_backfill(
         partial=partial,
         failed=failed,
         paths=paths,
+        symbol_resolution=symbol_resolution,
     )
     return {"manifest": output_manifest, "summary": summary}
 
@@ -196,7 +207,7 @@ def generate_historical_news_partitions(config: Mapping[str, Any]) -> list[dict[
     settings = _settings(config)
     provider = str(settings.get("provider", "alpaca_benzinga")).strip()
     months = _monthly_windows(str(settings["start_date"]), str(settings["end_date"]))
-    symbols = _resolved_symbols(config)
+    symbols = _symbol_universe_resolution(config).symbols
     batch_size = max(1, int(settings.get("symbol_batch_size", settings.get("symbols_per_batch", 25)) or 25))
     batches = [symbols[index : index + batch_size] for index in range(0, len(symbols), batch_size)]
     partitions: list[dict[str, Any]] = []
@@ -425,12 +436,21 @@ def _paths(settings: Mapping[str, Any]) -> StockAlphaNewsHistoricalBackfillPaths
 
 
 def _resolved_symbols(config: Mapping[str, Any]) -> list[str]:
+    return _symbol_universe_resolution(config).symbols
+
+
+def _symbol_universe_resolution(config: Mapping[str, Any]) -> SymbolUniverseResolution:
     settings = _settings(config)
-    symbols = _symbols(settings.get("symbols", []))
-    if not symbols and bool(settings.get("use_canonical_universe", False)):
+    raw_values = list(settings.get("symbols", []) or [])
+    if not raw_values and bool(settings.get("use_canonical_universe", False)):
         stock_path = Path(str(dict(config.get("ml", {}) or {}).get("stock_alpha_stock_rows_path", "")))
         rows = CsvRowRepository().read(stock_path) if stock_path.is_file() else []
-        symbols = _symbols(row.get("symbol", "") for row in rows)
+        raw_values = [row.get("symbol", "") for row in rows]
+    raw_symbol_row_count = len(raw_values)
+    source_symbols = _normalized_symbols(raw_values)
+    source_unique_symbols = _unique_preserving_order(source_symbols)
+    duplicate_symbol_row_count = len(source_symbols) - len(source_unique_symbols)
+    symbols = list(source_unique_symbols)
     only = set(_symbols(settings.get("only_symbols", [])))
     if only:
         symbols = [symbol for symbol in symbols if symbol in only]
@@ -439,7 +459,16 @@ def _resolved_symbols(config: Mapping[str, Any]) -> list[str]:
         symbols = symbols[:max_symbols]
     if not symbols:
         raise ValueError("historical backfill resolved zero symbols")
-    return symbols
+    months = _monthly_windows(str(settings["start_date"]), str(settings["end_date"]))
+    batch_size = max(1, int(settings.get("symbol_batch_size", settings.get("symbols_per_batch", 25)) or 25))
+    batch_count = (len(symbols) + batch_size - 1) // batch_size
+    return SymbolUniverseResolution(
+        symbols=symbols,
+        raw_symbol_row_count=raw_symbol_row_count,
+        unique_symbol_count=len(symbols),
+        duplicate_symbol_row_count=duplicate_symbol_row_count,
+        expected_base_partition_count=len(months) * batch_count,
+    )
 
 
 def _monthly_windows(start_date: str, end_date: str) -> list[tuple[str, str]]:
@@ -806,12 +835,28 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _symbols(values: Any) -> list[str]:
+def _normalized_symbols(values: Any) -> list[str]:
     return [
         str(value).strip().upper()
         for value in values or []
         if str(value).strip()
     ]
+
+
+def _unique_preserving_order(values: Any) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value).strip().upper()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        unique.append(text)
+    return unique
+
+
+def _symbols(values: Any) -> list[str]:
+    return _unique_preserving_order(_normalized_symbols(values))
 
 
 def _deduplicate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -840,6 +885,7 @@ def _backfill_summary(
     partial: int,
     failed: int,
     paths: StockAlphaNewsHistoricalBackfillPaths,
+    symbol_resolution: SymbolUniverseResolution,
 ) -> dict[str, Any]:
     statuses = Counter(str(row.get("status", "")) for row in manifest.get("partitions", []))
     return {
@@ -847,6 +893,10 @@ def _backfill_summary(
         "action": "collect",
         "manifest_path": str(paths.manifest_path),
         "partition_count": len(manifest.get("partitions", [])),
+        "raw_symbol_row_count": symbol_resolution.raw_symbol_row_count,
+        "unique_symbol_count": symbol_resolution.unique_symbol_count,
+        "duplicate_symbol_row_count": symbol_resolution.duplicate_symbol_row_count,
+        "expected_base_partition_count": symbol_resolution.expected_base_partition_count,
         "status_counts": dict(sorted(statuses.items())),
         "processed_this_run": processed,
         "skipped_complete": skipped_complete,
@@ -943,6 +993,10 @@ def _summary_markdown(payload: Mapping[str, Any]) -> str:
         f"- Action: {payload['action']}",
         f"- Manifest: {payload['manifest_path']}",
         f"- Partitions: {payload['partition_count']}",
+        f"- Raw symbol rows: {payload['raw_symbol_row_count']}",
+        f"- Unique symbols: {payload['unique_symbol_count']}",
+        f"- Duplicate symbol rows: {payload['duplicate_symbol_row_count']}",
+        f"- Expected base partitions: {payload['expected_base_partition_count']}",
         f"- Status counts: {payload['status_counts']}",
         f"- Processed this run: {payload['processed_this_run']}",
         f"- Skipped complete: {payload['skipped_complete']}",
