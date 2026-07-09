@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Any, Mapping
+
 from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_alpha_news_features_from_config
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
@@ -19,6 +22,25 @@ from core.research.ml.stock_level.news_risk_overlay_research import (
 )
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
+
+
+def _stock_alpha_news_historical_backfill_action(config: Mapping[str, Any]) -> str:
+    settings = dict(
+        dict(config.get("ml", {}) or {}).get("stock_alpha_news_historical_backfill", {}) or {}
+    )
+    return str(settings.get("action", "collect")).strip().lower() or "collect"
+
+
+def _stock_alpha_news_historical_backfill_payload_path(
+    config: Mapping[str, Any],
+    result: Any,
+) -> Path | None:
+    action = _stock_alpha_news_historical_backfill_action(config)
+    if action in {"collect", "backfill"}:
+        return result.summary_json_path
+    if action == "assemble":
+        return result.assembly_json_path
+    raise ValueError(f"unsupported historical backfill action: {action}")
 
 
 def run_ml_stock_level_alpha_benchmark(config):
@@ -239,7 +261,12 @@ def run_ml_stock_alpha_news_historical_backfill(config):
         print(f"blocking_issue={exc}")
         raise SystemExit(1) from None
     import json
-    payload_path = result.assembly_json_path or result.summary_json_path
+    action = _stock_alpha_news_historical_backfill_action(config)
+    payload_path = _stock_alpha_news_historical_backfill_payload_path(config, result)
+    if payload_path is None or not payload_path.is_file():
+        raise FileNotFoundError(
+            f"historical backfill action '{action}' expected artifact was not written: {payload_path}"
+        )
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     print(f"action={payload.get('action')}")
     if "status_counts" in payload:

@@ -1,0 +1,14 @@
+ml:
+  stock_alpha_news_historical_backfill:
+    action: assemble
+    dry_run: false
+    work_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_historical_backfill_alpaca_benzinga_known_positive_pilot/dev
+    provider: alpaca_benzinga
+    start_date: "2016-01-03"
+    end_date: "2016-01-07"
+    partition_frequency: monthly
+    assembly_require_all_complete: true
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false

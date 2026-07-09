@@ -27,6 +27,10 @@ ASSEMBLY_JSON_FILENAME = "stock_alpha_news_historical_corpus_assembly.json"
 ASSEMBLY_MARKDOWN_FILENAME = "stock_alpha_news_historical_corpus_assembly.md"
 
 
+class HistoricalBackfillManifestIntegrityError(ValueError):
+    """Raised when a complete partition manifest record cannot be safely assembled."""
+
+
 @dataclass(frozen=True)
 class StockAlphaNewsHistoricalBackfillPaths:
     manifest_path: Path
@@ -46,6 +50,8 @@ def write_stock_alpha_news_historical_backfill(
     action = str(settings.get("action", "collect")).strip().lower()
     if action == "assemble":
         return write_stock_alpha_news_historical_corpus_assembly(config)
+    if action not in {"collect", "backfill"}:
+        raise ValueError(f"unsupported historical backfill action: {action}")
     payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
     paths = _paths(settings)
     writer = ResearchArtifactWriter()
@@ -62,6 +68,7 @@ def write_stock_alpha_news_historical_corpus_assembly(
     paths = _paths(settings)
     payload, rows = build_stock_alpha_news_historical_corpus_assembly(config)
     writer = ResearchArtifactWriter()
+    assembly_checksum = ""
     if rows:
         writer.write_csv(
             paths.assembly_csv_path,
@@ -69,6 +76,9 @@ def write_stock_alpha_news_historical_corpus_assembly(
             fieldnames=_fieldnames(rows),
             extrasaction="ignore",
         )
+        assembly_checksum = _sha256_file(paths.assembly_csv_path)
+    payload["assembly_checksum"] = assembly_checksum
+    payload["checksum"] = assembly_checksum
     writer.write_json(paths.assembly_json_path, payload)
     writer.write_markdown(paths.assembly_markdown_path, _assembly_markdown(payload))
     return paths
@@ -84,6 +94,11 @@ def build_stock_alpha_news_historical_backfill(
     partitions = generate_historical_news_partitions(config)
     manifest = _load_manifest(paths.manifest_path)
     manifest_records = {str(row.get("partition_id")): dict(row) for row in manifest.get("partitions", [])}
+    for existing in manifest.get("partitions", []) or []:
+        if str(existing.get("parent_partition_id", "")).strip():
+            partition = _partition_from_manifest_record(existing)
+            if partition["partition_id"] not in {item["partition_id"] for item in partitions}:
+                partitions.append(partition)
     planned = [_initial_manifest_record(partition) for partition in partitions]
     for record in planned:
         manifest_records.setdefault(record["partition_id"], record)
@@ -96,7 +111,7 @@ def build_stock_alpha_news_historical_backfill(
     completed = 0
     for partition in partitions:
         record = manifest_records[partition["partition_id"]]
-        if record.get("status") == "complete" and _artifact_valid(record):
+        if record.get("status") == "complete" and _complete_record_valid(record):
             skipped_complete += 1
             continue
         if max_partitions and processed >= max_partitions:
@@ -106,6 +121,20 @@ def build_stock_alpha_news_historical_backfill(
             continue
         processed += 1
         _run_partition(config, settings, partition, record, sources=sources)
+        if record["status"] == "partial":
+            for child in _child_partitions_for_dense_partition(partition, settings):
+                if child["partition_id"] in manifest_records:
+                    continue
+                child_record = _initial_manifest_record(child)
+                child_record["parent_partition_id"] = partition["partition_id"]
+                child_record["parent_split_reason"] = "stopped_with_more_results_available"
+                manifest_records[child["partition_id"]] = child_record
+                partitions.append(child)
+            record["child_partition_ids"] = [
+                child["partition_id"]
+                for child in _child_partitions_for_dense_partition(partition, settings)
+            ]
+            record["continuation_strategy"] = "adaptive_date_split" if record["child_partition_ids"] else "manual_review"
         _atomic_write_json(paths.manifest_path, {
             "schema_version": SCHEMA_VERSION,
             "generated_at_utc": _now_utc(),
@@ -157,10 +186,10 @@ def build_stock_alpha_news_historical_corpus_assembly(
     for record in manifest.get("partitions", []):
         if record.get("status") != "complete":
             continue
-        artifact = Path(str(record.get("output_artifact", "")))
-        rows.extend(CsvRowRepository().read(artifact))
-    deduplicated = _deduplicate_rows(rows)
-    return _assembly_payload(manifest, deduplicated, incomplete, paths), deduplicated
+        rows.extend(_read_complete_partition_rows(record))
+    valid_rows, invalid_rows = _valid_contract_rows(rows)
+    deduplicated = _deduplicate_rows(valid_rows)
+    return _assembly_payload(manifest, deduplicated, incomplete, paths, invalid_row_count=invalid_rows), deduplicated
 
 
 def generate_historical_news_partitions(config: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -173,14 +202,14 @@ def generate_historical_news_partitions(config: Mapping[str, Any]) -> list[dict[
     partitions: list[dict[str, Any]] = []
     for month_start, month_end in months:
         for batch_index, batch_symbols in enumerate(batches, start=1):
-            identity = {
-                "schema_version": SCHEMA_VERSION,
-                "provider": provider,
-                "start_date": month_start,
-                "end_date": month_end,
-                "symbol_batch_id": f"symbol_batch_{batch_index:03d}",
-                "symbols": batch_symbols,
-            }
+            identity = _partition_identity(
+                provider=provider,
+                start_date=month_start,
+                end_date=month_end,
+                symbol_batch_id=f"symbol_batch_{batch_index:03d}",
+                symbols=batch_symbols,
+                settings=settings,
+            )
             digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
             partition_id = f"{provider}_{month_start[:7]}_symbol_batch_{batch_index:03d}_{digest}"
             partitions.append({
@@ -189,6 +218,88 @@ def generate_historical_news_partitions(config: Mapping[str, Any]) -> list[dict[
                 "identity_hash": digest,
             })
     return partitions
+
+
+def _partition_identity(
+    *,
+    provider: str,
+    start_date: str,
+    end_date: str,
+    symbol_batch_id: str,
+    symbols: list[str],
+    settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "provider": provider,
+        "provider_config_hash": _provider_config_hash(settings),
+        "start_date": start_date,
+        "end_date": end_date,
+        "symbol_batch_id": symbol_batch_id,
+        "symbols": symbols,
+    }
+
+
+def _provider_config_hash(settings: Mapping[str, Any]) -> str:
+    relevant = {
+        "provider_config": dict(settings.get("provider_config", {}) or {}),
+        "provider_request_limit": int(settings.get("provider_request_limit", 250)),
+        "max_rows_per_partition": int(settings.get("max_rows_per_partition", 10_000)),
+    }
+    return hashlib.sha256(json.dumps(relevant, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _partition_from_manifest_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": str(record.get("schema_version", SCHEMA_VERSION)),
+        "provider": str(record.get("provider", "")),
+        "provider_config_hash": str(record.get("provider_config_hash", "")),
+        "start_date": str(record.get("start_date", "")),
+        "end_date": str(record.get("end_date", "")),
+        "symbol_batch_id": str(record.get("symbol_batch_id", "")),
+        "symbols": list(record.get("symbols", []) or []),
+        "partition_id": str(record.get("partition_id", "")),
+        "identity_hash": str(record.get("identity_hash", "")),
+        "parent_partition_id": str(record.get("parent_partition_id", "")),
+    }
+
+
+def _child_partitions_for_dense_partition(
+    partition: Mapping[str, Any],
+    settings: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    start = date.fromisoformat(str(partition["start_date"])[:10])
+    end = date.fromisoformat(str(partition["end_date"])[:10])
+    if start >= end:
+        return []
+    midpoint = start + timedelta(days=(end - start).days // 2)
+    windows = [
+        (start, midpoint),
+        (midpoint + timedelta(days=1), end),
+    ]
+    children: list[dict[str, Any]] = []
+    for split_index, (child_start, child_end) in enumerate(windows, start=1):
+        if child_start > child_end:
+            continue
+        identity = _partition_identity(
+            provider=str(partition["provider"]),
+            start_date=child_start.isoformat(),
+            end_date=child_end.isoformat(),
+            symbol_batch_id=f"{partition['symbol_batch_id']}_split_{split_index:02d}",
+            symbols=list(partition.get("symbols", []) or []),
+            settings=settings,
+        )
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
+        children.append({
+            **identity,
+            "partition_id": (
+                f"{identity['provider']}_{identity['start_date'][:7]}_"
+                f"{identity['symbol_batch_id']}_{digest}"
+            ),
+            "identity_hash": digest,
+            "parent_partition_id": partition["partition_id"],
+        })
+    return children
 
 
 def _run_partition(
@@ -213,22 +324,37 @@ def _run_partition(
         if provider_failure:
             record["status"] = "failed"
             record["last_error"] = provider_failure
+            _write_partition_audit(settings, partition, record, payload, diagnostic)
+            return
+        completion_blocker = _provider_completion_blocker(
+            payload,
+            diagnostic,
+            str(partition["provider"]),
+        )
+        if completion_blocker:
+            record["status"] = "failed"
+            record["last_error"] = completion_blocker
+            _write_partition_audit(settings, partition, record, payload, diagnostic)
             return
         if bool(diagnostic.get(f"{partition['provider']}_stopped_with_more_results_available", False)):
             record["status"] = "partial"
             record["last_error"] = "partition stopped with more results available"
+            _write_partition_audit(settings, partition, record, payload, diagnostic)
             return
         artifact = _partition_artifact_path(settings, partition)
         if rows:
             _atomic_write_csv(artifact, rows)
             record["output_artifact"] = str(artifact)
             record["output_row_count"] = len(rows)
+            record["artifact_size"] = artifact.stat().st_size
             record["checksum"] = _sha256_file(artifact)
         else:
             record["output_artifact"] = ""
             record["output_row_count"] = 0
+            record["artifact_size"] = 0
             record["checksum"] = ""
         record["status"] = "complete"
+        _write_partition_audit(settings, partition, record, payload, diagnostic)
     except Exception as exc:
         record["status"] = "failed"
         record["last_error"] = f"{type(exc).__name__}: {exc}"
@@ -344,6 +470,8 @@ def _initial_manifest_record(partition: Mapping[str, Any]) -> dict[str, Any]:
         "identity_hash": partition["identity_hash"],
         "schema_version": SCHEMA_VERSION,
         "provider": partition["provider"],
+        "provider_config_hash": partition.get("provider_config_hash", ""),
+        "parent_partition_id": partition.get("parent_partition_id", ""),
         "symbol_batch_id": partition["symbol_batch_id"],
         "symbols": list(partition["symbols"]),
         "start_date": partition["start_date"],
@@ -360,10 +488,25 @@ def _initial_manifest_record(partition: Mapping[str, Any]) -> dict[str, Any]:
         "article_symbol_rows": 0,
         "multi_symbol_expansion_rows": 0,
         "out_of_window_rejected_count": 0,
+        "out_of_window_before_start_count": 0,
+        "out_of_window_after_end_count": 0,
         "earliest_accepted_published_at": "",
         "latest_accepted_published_at": "",
+        "termination_reason": "",
+        "stopped_with_more_results_available": False,
+        "provider_requested": False,
+        "provider_attempted": False,
+        "provider_skipped_missing_key": False,
+        "provider_failed": False,
+        "provider_rate_limited": False,
+        "provider_entitlement_failed": False,
+        "provider_returned_zero_rows": False,
+        "provider_zero_row_reason": "",
+        "provider_batch_count": 0,
         "output_artifact": "",
+        "audit_artifact": "",
         "output_row_count": 0,
+        "artifact_size": 0,
         "checksum": "",
     }
 
@@ -384,6 +527,87 @@ def _artifact_valid(record: Mapping[str, Any]) -> bool:
     return not checksum or _sha256_file(artifact) == checksum
 
 
+def _complete_record_valid(record: Mapping[str, Any]) -> bool:
+    if not _artifact_valid(record):
+        return False
+    provider = str(record.get("provider", "")).strip()
+    if provider == "alpaca_benzinga":
+        return _alpaca_benzinga_completion_evidence_valid(record)
+    return True
+
+
+def _alpaca_benzinga_completion_evidence_valid(record: Mapping[str, Any]) -> bool:
+    if bool(record.get("provider_skipped_missing_key", False)):
+        return False
+    if bool(record.get("provider_failed", False)):
+        return False
+    if bool(record.get("provider_rate_limited", False)):
+        return False
+    if bool(record.get("provider_entitlement_failed", False)):
+        return False
+    if not bool(record.get("provider_requested", False)):
+        return False
+    if not bool(record.get("provider_attempted", False)):
+        return False
+    if int(record.get("provider_batch_count", 0) or 0) < 1:
+        return False
+    if int(record.get("pages_requested", 0) or 0) < 1:
+        return False
+    if not str(record.get("termination_reason", "")).strip():
+        return False
+    return True
+
+
+def _read_complete_partition_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+    partition_id = str(record.get("partition_id", "<missing>"))
+    if bool(record.get("stopped_with_more_results_available", False)):
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} has stopped_with_more_results_available=true"
+        )
+    output_row_count = int(record.get("output_row_count", 0) or 0)
+    artifact_value = record.get("output_artifact")
+    artifact_text = "" if artifact_value is None else str(artifact_value).strip()
+    if output_row_count == 0 and not artifact_text:
+        return []
+    if not artifact_text:
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} has blank output_artifact"
+        )
+    artifact = Path(artifact_text)
+    if artifact.name == "." or artifact_text in {".", "./"}:
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} has invalid output_artifact: {artifact_text}"
+        )
+    if artifact.suffix.lower() != ".csv":
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} output_artifact is not a CSV path: {artifact}"
+        )
+    if not artifact.exists():
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} output_artifact does not exist: {artifact}"
+        )
+    if not artifact.is_file():
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} output_artifact is not a regular file: {artifact}"
+        )
+    checksum = str(record.get("checksum", "")).strip()
+    if output_row_count > 0 and not checksum:
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} has blank checksum"
+        )
+    if checksum and _sha256_file(artifact) != checksum:
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} checksum mismatch for output_artifact: {artifact}"
+        )
+    rows = CsvRowRepository().read(artifact)
+    if len(rows) != output_row_count:
+        raise HistoricalBackfillManifestIntegrityError(
+            f"complete partition {partition_id} output_row_count={output_row_count} "
+            f"does not match artifact row count={len(rows)}"
+        )
+    return rows
+
+
 def _provider_diagnostic(payload: Mapping[str, Any], provider: str) -> dict[str, Any]:
     for diagnostic in payload.get("provider_batch_diagnostics", []) or []:
         if str(diagnostic.get("provider", "")) == provider:
@@ -402,6 +626,53 @@ def _provider_failure_reason(payload: Mapping[str, Any], provider: str) -> str:
     return ""
 
 
+def _provider_completion_blocker(
+    payload: Mapping[str, Any],
+    diagnostic: Mapping[str, Any],
+    provider: str,
+) -> str:
+    requested = set(payload.get("providers_requested", []) or [])
+    attempted = set(payload.get("providers_attempted", []) or [])
+    skipped = set(payload.get("providers_skipped_missing_key", []) or [])
+    failures = dict(payload.get("providers_failed", {}) or {})
+    rate_limited = set(payload.get("providers_rate_limited", []) or [])
+    entitlement_failed = set(payload.get("providers_entitlement_failed", []) or [])
+    batch_counts = dict(payload.get("provider_batch_counts", {}) or {})
+    if provider not in requested:
+        return "provider_not_requested"
+    if provider in skipped:
+        return "provider_skipped_missing_key"
+    if provider in failures:
+        return str(failures[provider])
+    if provider in rate_limited:
+        return "rate_limited"
+    if provider in entitlement_failed:
+        return "entitlement_error"
+    if provider not in attempted:
+        return "provider_not_attempted"
+    if int(batch_counts.get(provider, 0) or 0) < 1:
+        return "provider_zero_batches"
+    if provider == "alpaca_benzinga":
+        pages_requested = int(diagnostic.get(f"{provider}_pages_requested", 0) or 0)
+        termination_reason = str(diagnostic.get(f"{provider}_termination_reason", "")).strip()
+        if pages_requested < 1:
+            return "provider_attempted_without_pages"
+        if not termination_reason:
+            return "provider_attempted_without_termination_reason"
+    return ""
+
+
+def _body_full_text_availability(rows: list[dict[str, Any]]) -> float:
+    return _field_availability(rows, "body_or_full_text")
+
+
+def _field_availability(rows: list[dict[str, Any]], field: str) -> float:
+    return (
+        sum(1 for row in rows if str(row.get(field, "")).strip()) / len(rows)
+        if rows else 0.0
+    )
+
+
 def _update_record_from_payload(
     record: dict[str, Any],
     payload: Mapping[str, Any],
@@ -410,6 +681,15 @@ def _update_record_from_payload(
 ) -> None:
     provider = str(record["provider"])
     published = sorted(str(row.get("published_at_utc", "")) for row in rows if row.get("published_at_utc"))
+    requested = set(payload.get("providers_requested", []) or [])
+    attempted = set(payload.get("providers_attempted", []) or [])
+    skipped = set(payload.get("providers_skipped_missing_key", []) or [])
+    failures = dict(payload.get("providers_failed", {}) or {})
+    rate_limited = set(payload.get("providers_rate_limited", []) or [])
+    entitlement_failed = set(payload.get("providers_entitlement_failed", []) or [])
+    returned_zero = set(payload.get("providers_returned_zero_rows", []) or [])
+    zero_reasons = dict(payload.get("provider_zero_row_reasons", {}) or {})
+    batch_counts = dict(payload.get("provider_batch_counts", {}) or {})
     record.update({
         "pages_requested": int(diagnostic.get(f"{provider}_pages_requested", 0) or 0),
         "pages_completed": int(diagnostic.get(f"{provider}_pages_completed", 0) or 0),
@@ -420,8 +700,26 @@ def _update_record_from_payload(
         "article_symbol_rows": len(rows),
         "multi_symbol_expansion_rows": int(diagnostic.get(f"{provider}_multi_symbol_expansion_row_count", 0) or 0),
         "out_of_window_rejected_count": int(payload.get("out_of_window_rejected_count", 0) or 0),
+        "out_of_window_before_start_count": int(payload.get("out_of_window_before_start_count", 0) or 0),
+        "out_of_window_after_end_count": int(payload.get("out_of_window_after_end_count", 0) or 0),
+        "exact_duplicate_provider_record_count": int(diagnostic.get(f"{provider}_exact_duplicate_provider_record_count", 0) or 0),
+        "headline_availability_rate": float(diagnostic.get(f"{provider}_headline_availability_rate", 0.0) or 0.0),
+        "summary_availability_rate": float(diagnostic.get(f"{provider}_summary_availability_rate", 0.0) or 0.0),
+        "body_or_full_text_availability_rate": _body_full_text_availability(rows),
+        "source_availability_rate": _field_availability(rows, "source"),
+        "publisher_availability_rate": _field_availability(rows, "publisher"),
+        "author_availability_rate": _field_availability(rows, "author"),
         "earliest_accepted_published_at": published[0] if published else "",
         "latest_accepted_published_at": published[-1] if published else "",
+        "provider_requested": provider in requested,
+        "provider_attempted": provider in attempted,
+        "provider_skipped_missing_key": provider in skipped,
+        "provider_failed": provider in failures,
+        "provider_rate_limited": provider in rate_limited,
+        "provider_entitlement_failed": provider in entitlement_failed,
+        "provider_returned_zero_rows": provider in returned_zero,
+        "provider_zero_row_reason": str(zero_reasons.get(provider, "")),
+        "provider_batch_count": int(batch_counts.get(provider, 0) or 0),
     })
 
 
@@ -430,9 +728,50 @@ def _partition_artifact_path(settings: Mapping[str, Any], partition: Mapping[str
         Path(str(settings["work_dir"]))
         / "partitions"
         / str(partition["provider"])
-        / str(partition["start_date"])[:7]
+        / f"year={str(partition['start_date'])[:4]}"
+        / f"month={str(partition['start_date'])[5:7]}"
+        / f"symbol_batch={str(partition['symbol_batch_id']).replace('symbol_batch_', '')}"
         / f"{partition['partition_id']}.csv"
     )
+
+
+def _partition_audit_path(settings: Mapping[str, Any], partition: Mapping[str, Any]) -> Path:
+    return _partition_artifact_path(settings, partition).with_suffix(".audit.json")
+
+
+def _write_partition_audit(
+    settings: Mapping[str, Any],
+    partition: Mapping[str, Any],
+    record: dict[str, Any],
+    payload: Mapping[str, Any],
+    diagnostic: Mapping[str, Any],
+) -> None:
+    audit_path = _partition_audit_path(settings, partition)
+    record["audit_artifact"] = str(audit_path)
+    _atomic_write_json(audit_path, _partition_audit(record, payload, diagnostic))
+
+
+def _partition_audit(
+    record: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    diagnostic: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "partition": dict(record),
+        "diagnostic": dict(diagnostic),
+        "provider_execution": {
+            "providers_requested": list(payload.get("providers_requested", []) or []),
+            "providers_attempted": list(payload.get("providers_attempted", []) or []),
+            "providers_skipped_missing_key": list(payload.get("providers_skipped_missing_key", []) or []),
+            "providers_returned_zero_rows": list(payload.get("providers_returned_zero_rows", []) or []),
+            "provider_zero_row_reasons": dict(payload.get("provider_zero_row_reasons", {}) or {}),
+            "provider_batch_counts": dict(payload.get("provider_batch_counts", {}) or {}),
+        },
+        "providers_failed": dict(payload.get("providers_failed", {}) or {}),
+        "providers_rate_limited": list(payload.get("providers_rate_limited", []) or []),
+        "providers_entitlement_failed": list(payload.get("providers_entitlement_failed", []) or []),
+    }
 
 
 def _atomic_write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -526,6 +865,8 @@ def _assembly_payload(
     rows: list[dict[str, Any]],
     incomplete: list[Mapping[str, Any]],
     paths: StockAlphaNewsHistoricalBackfillPaths,
+    *,
+    invalid_row_count: int = 0,
 ) -> dict[str, Any]:
     symbols = sorted({str(row.get("symbol", "")).strip().upper() for row in rows if str(row.get("symbol", "")).strip()})
     published = sorted(str(row.get("published_at_utc", "")) for row in rows if row.get("published_at_utc"))
@@ -539,10 +880,13 @@ def _assembly_payload(
         "action": "assemble",
         "manifest_path": str(paths.manifest_path),
         "assembly_csv_path": str(paths.assembly_csv_path),
+        "assembly_checksum": "",
+        "checksum": "",
         "complete_partition_count": sum(1 for row in manifest.get("partitions", []) if row.get("status") == "complete"),
         "incomplete_partition_count": len(incomplete),
         "incomplete_partitions": [row.get("partition_id") for row in incomplete],
         "row_count": len(rows),
+        "invalid_required_field_row_count": invalid_row_count,
         "unique_provider_article_count": len({(row.get("provider"), row.get("provider_article_id")) for row in rows}),
         "symbol_count": len(symbols),
         "symbols": symbols,
@@ -572,6 +916,17 @@ def _text_availability(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "article_symbol_rows": len(rows),
         "unique_article_count": len({str(row.get("provider_article_id", "")).strip() for row in rows if row.get("provider_article_id")}),
     }
+
+
+def _valid_contract_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    valid: list[dict[str, Any]] = []
+    invalid = 0
+    for row in rows:
+        if all(field in row for field in REQUIRED_NEWS_CONTRACT_COLUMNS):
+            valid.append(row)
+        else:
+            invalid += 1
+    return valid, invalid
 
 
 def _availability(rows: list[dict[str, Any]], field: str) -> float:
