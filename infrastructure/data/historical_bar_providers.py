@@ -20,6 +20,7 @@ from infrastructure.data.market_sessions import session_type
 NORMALIZER_VERSION = "historical_bar_provider_v1"
 ALPACA_API_KEY_ALIASES = ("ALPACA_API_KEY", "APCA_API_KEY_ID")
 ALPACA_SECRET_KEY_ALIASES = ("ALPACA_SECRET_KEY", "ALPACA_SECRET", "APCA_API_SECRET_KEY")
+_ATOMIC_WRITE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -385,9 +386,7 @@ class BackfillChunkStateStore:
         if not any(row.get("chunk_id") == chunk_id for row in completed):
             completed.append({"chunk_id": chunk_id, **dict(metadata)})
         state["completed_chunks"] = completed
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-        tmp.replace(self.path)
+        _atomic_write_text(self.path, json.dumps(state, indent=2, default=str))
 
     def is_completed(self, chunk_id: str) -> bool:
         return any(row.get("chunk_id") == chunk_id for row in self.load().get("completed_chunks", []))
@@ -405,9 +404,18 @@ class CollectionManifest:
         "validation_failure",
     }
 
-    def __init__(self, path: str | Path) -> None:
+    PRESERVED_INITIALIZE_STATUSES = VALID_STATUSES - {"planned"}
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        writer: Callable[[Path, str], None] | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._writer = writer or _atomic_write_text
+        self._lock = threading.Lock()
 
     def load(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -417,17 +425,67 @@ class CollectionManifest:
     def update(self, chunk_id: str, status: str, metadata: Mapping[str, Any] | None = None) -> None:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"unsupported chunk status: {status}")
-        state = self.load()
-        chunks = dict(state.get("chunks", {}))
-        chunks[chunk_id] = {
-            **dict(chunks.get(chunk_id, {})),
-            **dict(metadata or {}),
-            "chunk_id": chunk_id,
-            "status": status,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        state["chunks"] = chunks
-        _atomic_write_text(self.path, json.dumps(state, indent=2, default=str))
+        with self._lock:
+            state = self.load()
+            chunks = dict(state.get("chunks", {}))
+            chunks[chunk_id] = {
+                **dict(chunks.get(chunk_id, {})),
+                **dict(metadata or {}),
+                "chunk_id": chunk_id,
+                "status": status,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            state["chunks"] = _ordered_chunks(chunks)
+            self._writer(self.path, json.dumps(state, indent=2, default=str))
+
+    def initialize_plan(
+        self,
+        requests: Sequence[HistoricalBarRequest],
+        *,
+        dry_run: bool,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            state = self.load()
+            chunks = dict(state.get("chunks", {}))
+            existing = len(chunks)
+            added = 0
+            updated_planned = 0
+            preserved = 0
+            now = datetime.now(timezone.utc).isoformat()
+            planned_metadata = dict(metadata or {})
+            planned_metadata["dry_run"] = dry_run
+            for request in requests:
+                chunk_id = request.raw_chunk_id or _chunk_id(request)
+                current = dict(chunks.get(chunk_id, {}))
+                status = current.get("status")
+                if status in self.PRESERVED_INITIALIZE_STATUSES:
+                    preserved += 1
+                    continue
+                planned = {
+                    **current,
+                    **planned_metadata,
+                    "chunk_id": chunk_id,
+                    "status": "planned",
+                    "updated_at": current.get("updated_at") or now,
+                }
+                if not current:
+                    added += 1
+                elif planned != current:
+                    updated_planned += 1
+                chunks[chunk_id] = planned
+            state["chunks"] = _ordered_chunks(chunks)
+            changed = added > 0 or updated_planned > 0 or len(chunks) != existing
+            if changed:
+                self._writer(self.path, json.dumps(state, indent=2, default=str))
+            return {
+                "existing_chunk_count": existing,
+                "final_chunk_count": len(chunks),
+                "added_planned_count": added,
+                "updated_planned_count": updated_planned,
+                "preserved_existing_state_count": preserved,
+                "write_performed": changed,
+            }
 
     def status(self, chunk_id: str) -> str | None:
         return self.load().get("chunks", {}).get(chunk_id, {}).get("status")
@@ -697,10 +755,48 @@ def _chunk_id(request: HistoricalBarRequest) -> str:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    payload = text.encode("utf-8")
+    max_attempts = 5
+    base_sleep_seconds = 0.025
+    last_error: PermissionError | None = None
+    with _ATOMIC_WRITE_LOCK:
+        for attempt in range(max_attempts):
+            tmp = path.parent / (
+                f".{path.name}.{os.getpid()}.{threading.get_ident()}."
+                f"{time.time_ns()}.{attempt}.tmp"
+            )
+            try:
+                with open(tmp, "xb") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, path)
+                return
+            except PermissionError as exc:
+                last_error = exc
+                try:
+                    if tmp.exists():
+                        tmp.unlink()
+                except OSError:
+                    pass
+                if attempt == max_attempts - 1:
+                    break
+                time.sleep(base_sleep_seconds * (2 ** attempt) + random.uniform(0.0, base_sleep_seconds))
+            except Exception:
+                try:
+                    if tmp.exists():
+                        tmp.unlink()
+                except OSError:
+                    pass
+                raise
+    if last_error is not None:
+        raise last_error
+
+
+def _ordered_chunks(chunks: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: chunks[key] for key in sorted(chunks)}
 
 
 def _parse_stored_datetime(value: Any) -> datetime | None:

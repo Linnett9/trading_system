@@ -1,21 +1,27 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+import application.services.historical_bar_backfill_commands as backfill_commands
+import infrastructure.data.historical_bar_providers as historical_bar_providers
 from application.cli_runtime import FEEDLESS_MODES
 from application.services.historical_bar_backfill_commands import _plan, run_historical_bar_backfill_collect
 from infrastructure.data.historical_bar_overlap import audit_historical_bar_overlap
 from infrastructure.data.historical_bar_providers import (
     AlpacaBasicHistoricalBarProvider,
     BackfillChunkStateStore,
+    CollectionManifest,
     HistoricalBarMetrics,
     HistoricalBarRequest,
+    ImmutableRawChunkStore,
     SharedRateLimiter,
+    _atomic_write_text,
     fetch_chunk_with_retries,
     free_historical_bar_source_inventory,
     resolve_alpaca_credentials,
@@ -545,6 +551,119 @@ def test_collect_dry_run_writes_no_bars_or_canonical_data(tmp_path, monkeypatch)
     assert report["planned_chunk_count"] == 2
     assert not (tmp_path / "raw").exists()
     assert report["canonical_market_data_modified"] is False
+    assert report["manifest_plan_initialization"]["write_performed"] is True
+
+
+def test_manifest_initialize_plan_bulk_writes_once_for_large_plan(tmp_path):
+    writes = []
+
+    def writer(path, text):
+        writes.append((path, text))
+        path.write_text(text, encoding="utf-8")
+
+    requests = [
+        HistoricalBarRequest(
+            symbols=(f"SYM{i % 1000:04d}",),
+            timeframe="5m",
+            start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc) + timedelta(minutes=5 * i),
+            end=datetime(2026, 1, 2, 14, 35, tzinfo=timezone.utc) + timedelta(minutes=5 * i),
+            feed="sip",
+            raw_chunk_id=f"chunk-{i:05d}",
+        )
+        for i in range(40_000)
+    ]
+
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json", writer=writer)
+    result = manifest.initialize_plan(requests, dry_run=True)
+
+    assert result["final_chunk_count"] == 40_000
+    assert result["added_planned_count"] == 40_000
+    assert len(writes) == 1
+    assert len(json.loads(writes[0][1])["chunks"]) == 40_000
+
+    repeated = manifest.initialize_plan(requests, dry_run=True)
+
+    assert repeated["write_performed"] is False
+    assert len(writes) == 1
+
+
+def test_manifest_initialize_plan_preserves_partial_meaningful_states(tmp_path):
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json")
+    manifest.update("chunk-complete", "completed", {"rows": 10})
+    manifest.update("chunk-progress", "in_progress", {"attempt": 1})
+    manifest.update("chunk-failed", "retryable_failure", {"error_message": "rate limited"})
+    manifest.update("chunk-planned", "planned", {"dry_run": False})
+    requests = [
+        HistoricalBarRequest(
+            symbols=("SPY",),
+            timeframe="5m",
+            start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 2, 14, 35, tzinfo=timezone.utc),
+            feed="sip",
+            raw_chunk_id=chunk_id,
+        )
+        for chunk_id in ["chunk-complete", "chunk-progress", "chunk-failed", "chunk-planned", "chunk-new"]
+    ]
+
+    result = manifest.initialize_plan(requests, dry_run=True)
+    chunks = manifest.load()["chunks"]
+
+    assert result["final_chunk_count"] == 5
+    assert chunks["chunk-complete"]["status"] == "completed"
+    assert chunks["chunk-complete"]["rows"] == 10
+    assert chunks["chunk-progress"]["status"] == "in_progress"
+    assert chunks["chunk-failed"]["status"] == "retryable_failure"
+    assert chunks["chunk-planned"]["status"] == "planned"
+    assert chunks["chunk-planned"]["dry_run"] is True
+    assert chunks["chunk-new"]["status"] == "planned"
+
+
+def test_atomic_write_replaces_existing_destination_with_unrelated_temp_present(tmp_path):
+    target = tmp_path / "collection_manifest.json"
+    target.write_text('{"old": true}', encoding="utf-8")
+    stale = tmp_path / "collection_manifest.json.tmp"
+    stale.write_text("stale", encoding="utf-8")
+
+    _atomic_write_text(target, '{"new": true}')
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"new": True}
+    assert stale.read_text(encoding="utf-8") == "stale"
+
+
+def test_atomic_write_retries_transient_permission_error(tmp_path, monkeypatch):
+    target = tmp_path / "collection_manifest.json"
+    calls = {"count": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(historical_bar_providers.os, "replace", flaky_replace)
+    monkeypatch.setattr(historical_bar_providers.time, "sleep", lambda _: None)
+
+    _atomic_write_text(target, '{"ok": true}')
+
+    assert calls["count"] == 2
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
+
+
+def test_atomic_write_retry_exhaustion_preserves_previous_destination(tmp_path, monkeypatch):
+    target = tmp_path / "collection_manifest.json"
+    target.write_text('{"valid": true}', encoding="utf-8")
+
+    def blocked_replace(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(historical_bar_providers.os, "replace", blocked_replace)
+    monkeypatch.setattr(historical_bar_providers.time, "sleep", lambda _: None)
+
+    with pytest.raises(PermissionError):
+        _atomic_write_text(target, '{"valid": false}')
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"valid": True}
 
 
 def test_collect_dry_run_accepts_sip_and_reports_feed_domain_shift(tmp_path, monkeypatch):
@@ -569,6 +688,98 @@ def test_collect_dry_run_accepts_sip_and_reports_feed_domain_shift(tmp_path, mon
     report = json.loads((tmp_path / "reports" / "historical_bar_collect_report.json").read_text())
     assert report["dry_run"] is True
     assert "feed-domain" in report["feed_domain_shift_note"]
+
+
+def test_collect_resume_reloads_completed_raw_chunk_into_staging(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    start = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, 14, 35, tzinfo=timezone.utc)
+    request = _plan(
+        ("SPY",),
+        start,
+        end,
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+    )[0]
+    row = {
+        "symbol": "SPY",
+        "timestamp": start,
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": 1.0,
+        "volume": 100.0,
+        "provider": "alpaca",
+        "feed": "sip",
+        "raw_chunk_identifier": request.raw_chunk_id,
+        "session_type": "pre_market",
+    }
+    raw_root = tmp_path / "raw"
+    ImmutableRawChunkStore(raw_root).write_completed_chunk(
+        request,
+        rows=[row],
+        raw_pages=[{"bars": {"SPY": []}}],
+        metrics={"pages": 1},
+    )
+    output_root = tmp_path / "reports"
+    CollectionManifest(output_root / "collection_manifest.json").update(
+        request.raw_chunk_id or "",
+        "completed",
+        {"rows": 1},
+    )
+
+    class NoFetchProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {
+                "credential_source": "test",
+                "credentials_available": True,
+                "api_key_alias_used": None,
+                "secret_key_alias_used": None,
+                "can_attempt_authenticated_request": True,
+            }
+
+        def fetch_page(self, request):
+            raise AssertionError("completed resumed chunks should be read from raw storage")
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", NoFetchProvider)
+
+    run_historical_bar_backfill_collect(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["SPY"],
+                    "timeframe": "5m",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "output_root": str(output_root),
+                    "raw_root": str(raw_root),
+                    "dry_run": False,
+                    "resume": True,
+                    "write_normalized_staging": True,
+                }
+            }
+        }
+    )
+
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+
+    assert report["chunk_results"] == [
+        {"chunk_id": request.raw_chunk_id, "status": "skipped_completed", "rows": 1}
+    ]
+    assert report["all_session_row_count"] == 1
+    assert report["staging_path"]
+    assert (output_root / "staging" / "sip" / "5m" / "bars.parquet").exists()
 
 
 def test_free_source_inventory_rejects_paid_sources_and_keeps_stooq_as_overlap_source():

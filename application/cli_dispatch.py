@@ -42,6 +42,18 @@ def dispatch(args, config, feed):
     if args.mode == "ml-market-data-inventory":
         _commands("stock_feature_bank_commands").run_market_data_inventory(config)
         return
+    if args.mode == "ml-historical-bar-backfill-probe":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_probe(config)
+        return
+    if args.mode == "ml-historical-bar-backfill-collect":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_collect(config)
+        return
+    if args.mode == "ml-historical-bar-backfill-benchmark":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_benchmark(config)
+        return
+    if args.mode == "ml-historical-bar-feed-overlap":
+        _commands("historical_bar_backfill_commands").run_historical_bar_feed_overlap(config)
+        return
     if args.mode == "ml-build-stock-features":
         _commands("stock_feature_bank_commands").run_build_stock_features(
             config,

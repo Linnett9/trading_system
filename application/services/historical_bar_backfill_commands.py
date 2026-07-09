@@ -200,8 +200,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     all_rows: list[dict[str, Any]] = []
     chunks = []
     if dry_run or not auth["can_attempt_authenticated_request"]:
-        for request in plan:
-            manifest.update(request.raw_chunk_id or "", "planned", {"dry_run": dry_run})
+        plan_initialization = manifest.initialize_plan(plan, dry_run=dry_run)
         report = {
             "mode": "historical_bar_backfill_collect",
             "dry_run": dry_run,
@@ -209,6 +208,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             "feed_domain_shift_note": _feed_domain_shift_note(),
             "credentials": auth,
             "planned_chunk_count": len(plan),
+            "manifest_plan_initialization": plan_initialization,
             "planned_symbol_count": len(symbols),
             "observed_metrics": provider.metrics.as_dict(),
             "blocked_reason": None if dry_run else "Alpaca credentials unavailable",
