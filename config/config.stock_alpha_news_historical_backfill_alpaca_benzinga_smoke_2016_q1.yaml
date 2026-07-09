@@ -1,0 +1,32 @@
+ml:
+  stock_alpha_stock_rows_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_ensemble_diagnostic/dev/ensemble/average_rank/stock_alpha_ensemble_average_rank_predictions.csv
+  stock_alpha_news_historical_backfill:
+    action: collect
+    dry_run: false
+    work_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1/dev
+    provider: alpaca_benzinga
+    start_date: "2016-01-01"
+    end_date: "2016-03-31"
+    partition_frequency: monthly
+    use_canonical_universe: true
+    only_symbols: []
+    max_symbols: 0
+    symbol_batch_size: 25
+    max_partitions_per_run: 4
+    provider_request_limit: 250
+    max_rows_per_partition: 10000
+    request_timeout_seconds: 20
+    rate_limit_sleep_seconds: 1.0
+    assembly_require_all_complete: true
+    provider_config:
+      enabled: true
+      api_key_env: ALPACA_API_KEY_ID
+      secret_key_env: ALPACA_SECRET_KEY
+      page_size: 50
+      max_pages_per_batch: 200
+      max_retries: 1
+      retry_sleep_seconds: 1.0
+  stock_alpha_news_enable_transformer: false
+  research_only: true
+  trading_impact: none
+  production_validated: false

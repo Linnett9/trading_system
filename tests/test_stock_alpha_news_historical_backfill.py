@@ -738,6 +738,10 @@ def test_historical_backfill_configs_parse_without_enabling_models_or_trading():
     for path in [
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_tiny_mock_smoke.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_pilot.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1_assembly.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016_assembly.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_known_positive_pilot.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_known_positive_pilot_assembly.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template.yaml",
@@ -803,6 +807,82 @@ def test_full_historical_backfill_template_uses_unique_canonical_symbols():
     symbols = {symbol for partition in partitions for symbol in partition["symbols"]}
 
     assert len(symbols) == 200
+    assert len(partitions) == 1_016
+
+
+def test_staged_historical_backfill_configs_resolve_expected_partitions_and_roots():
+    stages = [
+        (
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1.yaml",
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1_assembly.yaml",
+            "stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1/dev",
+            "2016-01-01",
+            "2016-03-31",
+            3,
+            24,
+            4,
+        ),
+        (
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016.yaml",
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016_assembly.yaml",
+            "stock_alpha_news_historical_backfill_alpaca_benzinga_2016/dev",
+            "2016-01-01",
+            "2016-12-31",
+            12,
+            96,
+            8,
+        ),
+    ]
+
+    for collect_path, assembly_path, root_fragment, start, end, month_count, partition_count, max_per_run in stages:
+        collect = load_config(collect_path, overlay_project_config=True)
+        assembly = load_config(assembly_path, overlay_project_config=True)
+        collect_settings = collect["ml"]["stock_alpha_news_historical_backfill"]
+        assembly_settings = assembly["ml"]["stock_alpha_news_historical_backfill"]
+        partitions = generate_historical_news_partitions(collect)
+        symbols = {symbol for partition in partitions for symbol in partition["symbols"]}
+        months = {partition["start_date"][:7] for partition in partitions}
+
+        assert collect_settings["action"] == "collect"
+        assert assembly_settings["action"] == "assemble"
+        assert collect_settings["work_dir"] == assembly_settings["work_dir"]
+        assert root_fragment in collect_settings["work_dir"]
+        assert "known_positive_pilot" not in collect_settings["work_dir"]
+        assert "stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev" not in collect_settings["work_dir"]
+        assert collect_settings["start_date"] == start
+        assert collect_settings["end_date"] == end
+        assert assembly_settings["start_date"] == start
+        assert assembly_settings["end_date"] == end
+        assert collect_settings["symbol_batch_size"] == 25
+        assert collect_settings["max_partitions_per_run"] == max_per_run
+        assert len(symbols) == 200
+        assert len(months) == month_count
+        assert len(partitions) == partition_count
+        assert collect["ml"]["stock_alpha_news_enable_transformer"] is False
+        assert assembly["ml"]["stock_alpha_news_enable_transformer"] is False
+        assert collect["ml"]["trading_impact"] == "none"
+        assert assembly["ml"]["trading_impact"] == "none"
+        assert collect["ml"]["production_validated"] is False
+        assert assembly["ml"]["production_validated"] is False
+
+
+def test_full_history_template_root_is_isolated_from_staged_and_pilot_roots():
+    config = load_config(
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template.yaml",
+        overlay_project_config=True,
+    )
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    partitions = generate_historical_news_partitions(config)
+    symbols = {symbol for partition in partitions for symbol in partition["symbols"]}
+    months = {partition["start_date"][:7] for partition in partitions}
+
+    assert settings["work_dir"].endswith("stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev")
+    assert "known_positive_pilot" not in settings["work_dir"]
+    assert "smoke_2016_q1" not in settings["work_dir"]
+    assert "stock_alpha_news_historical_backfill_alpaca_benzinga_2016/dev" not in settings["work_dir"]
+    assert len(symbols) == 200
+    assert len(months) == 127
+    assert settings["symbol_batch_size"] == 25
     assert len(partitions) == 1_016
 
 
