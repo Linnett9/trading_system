@@ -20,7 +20,25 @@ from core.research.ml.stock_level.news_sources import (
 from core.research.ml.stock_level.stock_alpha_news_contract import REQUIRED_NEWS_CONTRACT_COLUMNS
 
 
-PROVENANCE_COLUMNS = ("provider", "provider_article_id", "provider_url")
+PROVENANCE_COLUMNS = (
+    "provider",
+    "provider_article_id",
+    "provider_url",
+    "provider_original_article_id",
+    "provider_symbols",
+    "updated_at_utc",
+    "source_type",
+    "delivery_provider",
+    "original_source",
+    "publisher",
+    "author",
+    "raw_source",
+    "summary",
+    "body_or_full_text",
+    "body_or_summary_kind",
+    "collected_at_utc",
+    "historical_availability_note",
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +54,7 @@ def write_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     output_path = _required_path(ml, "stock_alpha_news_collect_output_path")
     payload, rows = build_stock_alpha_news_free_source_collect(config, sources=sources)
     settings = dict(ml.get("stock_alpha_news_collect", {}) or {})
+    settings = _with_active_probe_window(settings)
     dry_run = bool(settings.get("dry_run", True))
     payload["new_row_count"] = len(rows)
     sec_event_rows = _sec_company_filing_event_rows(rows)
@@ -90,6 +109,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     ml = dict(config.get("ml", {}) or {})
     output_path = _required_path(ml, "stock_alpha_news_collect_output_path")
     settings = dict(ml.get("stock_alpha_news_collect", {}) or {})
+    settings = _with_active_probe_window(settings)
     registry_validation: dict[str, Any] = {}
     universe_path = str(settings.get("universe_path", "")).strip()
     registry_path = str(settings.get("source_registry_path", "")).strip()
@@ -147,7 +167,7 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
         raise ValueError("ml.stock_alpha_news_collect.symbols_per_batch must be at most 500")
     provider_settings = dict(settings.get("providers", {}) or {})
     adapters = dict(sources or default_news_sources())
-    requested, attempted, skipped, rate_limited, failures, counts, collected = [], [], [], [], {}, {}, []
+    requested, attempted, skipped, rate_limited, entitlement_failed, failures, counts, collected = [], [], [], [], [], {}, {}, []
     batch_counts: dict[str, int] = {}
     batch_diagnostics: list[dict[str, Any]] = []
     zero_row_reasons: dict[str, str] = {}
@@ -196,26 +216,52 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
                 canonical_rows = [
                     _canonical_row(row, name) for row in rows[:remaining]
                 ]
-                provider_rows.extend(canonical_rows)
+                windowed_rows, window_counts = _filter_rows_to_publication_window(
+                    canonical_rows,
+                    start_date=str(settings.get("start_date", "")),
+                    end_date=str(settings.get("end_date", "")),
+                )
+                provider_rows.extend(windowed_rows)
                 diagnostic["response_row_count"] = len(rows)
-                diagnostic["normalized_row_count"] = len(canonical_rows)
+                diagnostic["normalized_row_count"] = len(windowed_rows)
+                diagnostic["pre_window_filter_normalized_row_count"] = len(canonical_rows)
+                diagnostic.update(window_counts)
                 diagnostic.update(_provider_extra_diagnostic(adapter))
+                diagnostic["termination_reason"] = str(
+                    diagnostic.get(f"{name}_termination_reason")
+                    or diagnostic.get("termination_reason")
+                    or ("empty_page" if not rows else "end_of_batch")
+                )
                 if not rows:
                     diagnostic["zero_row_reason"] = "empty_provider_response_or_no_matching_articles"
             except Exception as exc:  # provider isolation is intentional
                 message = _redacted_exception_message(exc, api_key=api_key)
                 is_rate_limited = _is_rate_limited(exc)
+                is_entitlement_error = _is_entitlement_error(exc)
                 diagnostic.update(_provider_extra_diagnostic(adapter))
+                if is_rate_limited:
+                    termination_reason = "rate_limit"
+                elif is_entitlement_error:
+                    termination_reason = "entitlement_error"
+                else:
+                    termination_reason = "provider_error"
+                diagnostic["termination_reason"] = termination_reason
                 diagnostic["response_row_count"] = 0
                 diagnostic["normalized_row_count"] = 0
                 diagnostic["rate_limited"] = is_rate_limited
-                diagnostic["zero_row_reason"] = "rate_limited" if is_rate_limited else "provider_error"
+                diagnostic["entitlement_error"] = is_entitlement_error
+                diagnostic["zero_row_reason"] = termination_reason
                 diagnostic["error_type"] = type(exc).__name__
                 diagnostic["error_message"] = message
                 if is_rate_limited:
                     if name not in rate_limited:
                         rate_limited.append(name)
                     zero_row_reasons[name] = "rate_limited"
+                elif is_entitlement_error:
+                    if name not in entitlement_failed:
+                        entitlement_failed.append(name)
+                    failures[name] = f"{type(exc).__name__}: {message}"
+                    zero_row_reasons[name] = "entitlement_error"
                 else:
                     failures[name] = f"{type(exc).__name__}: {message}"
                     zero_row_reasons[name] = "provider_error"
@@ -249,11 +295,12 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
     payload["rate_limit_sleep_seconds"] = rate_limit_sleep_seconds
     payload["provider_batch_counts"] = batch_counts
     payload["provider_batch_diagnostics"] = batch_diagnostics
+    payload.update(_out_of_window_totals(batch_diagnostics))
     payload.update(_rss_registry_diagnostics(settings, symbols, batch_diagnostics))
     payload["registry_validation"] = registry_validation
     payload["provider_zero_row_reasons"] = {
         name: reason for name, reason in sorted(zero_row_reasons.items())
-        if counts.get(name, 0) == 0 or reason in {"rate_limited", "provider_error"}
+        if counts.get(name, 0) == 0 or reason in {"rate_limited", "entitlement_error", "provider_error"}
     }
     payload["symbol_count"] = len(
         {str(row.get("symbol", "")).strip().upper() for row in deduplicated}
@@ -279,20 +326,15 @@ def build_stock_alpha_news_free_source_collect(config: Mapping[str, Any], *, sou
             registry_validation=registry_validation,
         )
     )
-    headlines = [
-        str(row.get("headline", "")).strip().lower()
-        for row in deduplicated
-        if str(row.get("headline", "")).strip()
-    ]
-    payload["duplicate_headline_count"] = len(headlines) - len(set(headlines))
-    payload["duplicate_headline_rate"] = (
-        payload["duplicate_headline_count"] / len(deduplicated)
-        if deduplicated
-        else 0.0
-    )
+    payload.update(_duplicate_diagnostics(collected, deduplicated))
     payload["providers_returned_zero_rows"] = sorted(name for name, count in counts.items() if count == 0)
     payload["providers_rate_limited"] = sorted(rate_limited)
+    payload["providers_entitlement_failed"] = sorted(entitlement_failed)
     payload["provider_policy"] = {name: PROVIDER_METADATA.get(name, {"statuses": ["unclassified"]}) for name in provider_settings}
+    payload["overlap_with_existing_output"] = _existing_output_overlap(
+        output_path,
+        deduplicated,
+    )
     payload["next_action"] = _next_action(dry_run, requested, attempted, skipped, rate_limited, failures, counts, deduplicated)
     return payload, deduplicated
 
@@ -382,6 +424,24 @@ def _configured_symbol_list(values: Any) -> list[str]:
     ]
 
 
+def _with_active_probe_window(settings: Mapping[str, Any]) -> dict[str, Any]:
+    updated = dict(settings)
+    active = str(updated.get("active_window_id", "")).strip()
+    windows = updated.get("probe_windows", []) or []
+    if not active or not isinstance(windows, list):
+        return updated
+    for window in windows:
+        if not isinstance(window, Mapping):
+            continue
+        if str(window.get("id", "")).strip() != active:
+            continue
+        updated["start_date"] = str(window.get("start_date", updated.get("start_date", "")))
+        updated["end_date"] = str(window.get("end_date", updated.get("end_date", "")))
+        updated["active_probe_window"] = dict(window)
+        break
+    return updated
+
+
 def _selected_symbols(
     configured_symbols: list[str],
     *,
@@ -442,6 +502,267 @@ def _row_diagnostics(rows: list[dict[str, Any]], *, requested_symbol_count: int)
         "provider_symbol_counts": provider_symbol_counts,
         "provider_symbol_coverage": provider_symbol_coverage,
         "published_at_utc_range_by_provider": provider_published_ranges,
+        "text_availability_by_provider": _text_availability_by_provider(rows),
+    }
+
+
+def _filter_rows_to_publication_window(
+    rows: list[dict[str, Any]],
+    *,
+    start_date: str,
+    end_date: str,
+) -> tuple[list[dict[str, Any]], dict[str, int | str]]:
+    start_boundary = _publication_start_boundary(start_date)
+    end_boundary = _publication_end_boundary(end_date)
+    accepted: list[dict[str, Any]] = []
+    before_start = 0
+    after_end = 0
+    for row in rows:
+        published = str(row.get("published_at_utc", "")).strip()
+        if start_boundary and published and published < start_boundary:
+            before_start += 1
+            continue
+        if end_boundary and published and published > end_boundary:
+            after_end += 1
+            continue
+        accepted.append(row)
+    rejected = before_start + after_end
+    return accepted, {
+        "publication_window_start_utc_inclusive": start_boundary,
+        "publication_window_end_utc_inclusive": end_boundary,
+        "out_of_window_before_start_count": before_start,
+        "out_of_window_after_end_count": after_end,
+        "out_of_window_rejected_count": rejected,
+    }
+
+
+def _publication_start_boundary(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        return _canonical_utc_text(text)
+    return f"{text[:10]}T00:00:00Z"
+
+
+def _publication_end_boundary(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "T" in text:
+        return _canonical_utc_text(text)
+    return f"{text[:10]}T23:59:59Z"
+
+
+def _canonical_utc_text(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    return parsed.replace(tzinfo=parsed.tzinfo or timezone.utc).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _out_of_window_totals(batch_diagnostics: list[dict[str, Any]]) -> dict[str, int]:
+    before = sum(int(item.get("out_of_window_before_start_count", 0) or 0) for item in batch_diagnostics)
+    after = sum(int(item.get("out_of_window_after_end_count", 0) or 0) for item in batch_diagnostics)
+    return {
+        "out_of_window_before_start_count": before,
+        "out_of_window_after_end_count": after,
+        "out_of_window_rejected_count": before + after,
+    }
+
+
+def _text_availability_by_provider(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        provider = str(row.get("provider", "")).strip()
+        if provider:
+            grouped[provider].append(row)
+    return {
+        provider: _text_availability(values)
+        for provider, values in sorted(grouped.items())
+    }
+
+
+def _text_availability(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    headline_lengths = [
+        len(str(row.get("headline", "")).strip())
+        for row in rows
+        if str(row.get("headline", "")).strip()
+    ]
+    body_lengths = [
+        len(str(row.get("body_or_summary", "")).strip())
+        for row in rows
+        if str(row.get("body_or_summary", "")).strip()
+    ]
+    unique_articles = {
+        str(row.get("provider_article_id", "")).strip()
+        for row in rows
+        if str(row.get("provider_article_id", "")).strip()
+    }
+    updated = [
+        row for row in rows
+        if str(row.get("updated_at_utc", "")).strip()
+    ]
+    symbols_by_article: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        article_id = str(row.get("provider_article_id", "")).strip()
+        symbol = str(row.get("symbol", "")).strip().upper()
+        if article_id and symbol:
+            symbols_by_article[article_id].add(symbol)
+    multi_symbol_articles = sum(1 for symbols in symbols_by_article.values() if len(symbols) > 1)
+    multi_symbol_expansion = sum(max(0, len(symbols) - 1) for symbols in symbols_by_article.values())
+    return {
+        "article_symbol_rows": len(rows),
+        "unique_article_count": len(unique_articles),
+        "headline_availability_rate": len(headline_lengths) / len(rows) if rows else 0.0,
+        "summary_availability_rate": len(body_lengths) / len(rows) if rows else 0.0,
+        "content_availability_rate": len(body_lengths) / len(rows) if rows else 0.0,
+        "updated_timestamp_availability_rate": len(updated) / len(rows) if rows else 0.0,
+        "headline_length_distribution": _length_distribution(headline_lengths),
+        "summary_length_distribution": _length_distribution(body_lengths),
+        "content_length_distribution": _length_distribution(body_lengths),
+        "source_distribution": dict(sorted(Counter(str(row.get("source", "")).strip() for row in rows).items())),
+        "multi_symbol_article_count": multi_symbol_articles,
+        "multi_symbol_expansion_row_count": multi_symbol_expansion,
+    }
+
+
+def _length_distribution(values: list[int]) -> dict[str, float | int]:
+    if not values:
+        return {"count": 0, "min": 0, "p50": 0, "p90": 0, "max": 0, "mean": 0.0}
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "min": ordered[0],
+        "p50": _percentile(ordered, 0.5),
+        "p90": _percentile(ordered, 0.9),
+        "max": ordered[-1],
+        "mean": sum(ordered) / len(ordered),
+    }
+
+
+def _percentile(values: list[int], quantile: float) -> int:
+    if not values:
+        return 0
+    index = round((len(values) - 1) * quantile)
+    return values[max(0, min(len(values) - 1, index))]
+
+
+def _duplicate_diagnostics(
+    collected_rows: list[dict[str, Any]],
+    deduplicated_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    article_symbols: dict[tuple[str, str], set[str]] = defaultdict(set)
+    exact_record_keys: Counter[str] = Counter()
+    headline_provider_ids: dict[tuple[str, str], set[str]] = defaultdict(set)
+    cross_provider_headlines: dict[str, set[str]] = defaultdict(set)
+    for row in collected_rows:
+        provider = str(row.get("provider", "")).strip()
+        provider_id = str(row.get("provider_article_id", "")).strip()
+        symbol = str(row.get("symbol", "")).strip().upper()
+        published = str(row.get("published_at_utc", "")).strip()
+        headline = _normalized_headline(row.get("headline", ""))
+        if provider and provider_id and symbol:
+            article_symbols[(provider, provider_id)].add(symbol)
+        if provider and provider_id:
+            exact_record_keys["|".join((provider, provider_id, symbol, published))] += 1
+        if provider and provider_id and headline:
+            headline_provider_ids[(provider, headline)].add(provider_id)
+        if provider and headline:
+            cross_provider_headlines[headline].add(provider)
+    multi_symbol_row_count = sum(max(0, len(symbols) - 1) for symbols in article_symbols.values())
+    exact_duplicate_record_count = sum(max(0, count - 1) for count in exact_record_keys.values())
+    same_headline_different_provider_id_count = sum(
+        1 for provider_ids in headline_provider_ids.values() if len(provider_ids) > 1
+    )
+    cross_provider_identical_headline_count = sum(
+        1 for providers in cross_provider_headlines.values() if len(providers) > 1
+    )
+    legacy_headlines = [
+        _normalized_headline(row.get("headline", ""))
+        for row in deduplicated_rows
+        if _normalized_headline(row.get("headline", ""))
+    ]
+    duplicate_headline_count = len(legacy_headlines) - len(set(legacy_headlines))
+    return {
+        "same_provider_article_id_multi_symbol_row_count": multi_symbol_row_count,
+        "exact_duplicate_provider_article_record_count": exact_duplicate_record_count,
+        "same_headline_different_provider_article_id_count": same_headline_different_provider_id_count,
+        "cross_provider_identical_normalized_headline_count": cross_provider_identical_headline_count,
+        "near_duplicate_story_count": 0,
+        "near_duplicate_story_detection": "not_run",
+        "duplicate_headline_count": same_headline_different_provider_id_count + cross_provider_identical_headline_count,
+        "duplicate_headline_rate": (
+            (same_headline_different_provider_id_count + cross_provider_identical_headline_count) / len(deduplicated_rows)
+            if deduplicated_rows
+            else 0.0
+        ),
+        "legacy_row_based_duplicate_headline_count": duplicate_headline_count,
+        "legacy_row_based_duplicate_headline_rate": (
+            duplicate_headline_count / len(deduplicated_rows)
+            if deduplicated_rows
+            else 0.0
+        ),
+    }
+
+
+def _normalized_headline(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _existing_output_overlap(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not output_path.exists() or not rows:
+        return {
+            "checked": output_path.exists(),
+            "existing_path": str(output_path),
+            "overlap_count": 0,
+            "overlap_provider_article_id_count": 0,
+            "overlap_normalized_headline_count": 0,
+        }
+    try:
+        existing_rows = CsvRowRepository().read(output_path)
+    except (OSError, ValueError):
+        return {
+            "checked": False,
+            "existing_path": str(output_path),
+            "overlap_count": 0,
+            "overlap_provider_article_id_count": 0,
+            "overlap_normalized_headline_count": 0,
+        }
+    existing_provider_ids = {
+        str(row.get("provider_article_id", "")).strip()
+        for row in existing_rows
+        if str(row.get("provider_article_id", "")).strip()
+    }
+    existing_headlines = {
+        str(row.get("headline", "")).strip().lower()
+        for row in existing_rows
+        if str(row.get("headline", "")).strip()
+    }
+    provider_overlap = sum(
+        1
+        for row in rows
+        if str(row.get("provider_article_id", "")).strip() in existing_provider_ids
+    )
+    headline_overlap = sum(
+        1
+        for row in rows
+        if str(row.get("headline", "")).strip().lower() in existing_headlines
+    )
+    return {
+        "checked": True,
+        "existing_path": str(output_path),
+        "existing_row_count": len(existing_rows),
+        "overlap_count": max(provider_overlap, headline_overlap),
+        "overlap_provider_article_id_count": provider_overlap,
+        "overlap_normalized_headline_count": headline_overlap,
     }
 
 
@@ -455,6 +776,8 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "configured_symbol_count": 0, "requested_symbol_count": 0,
         "only_symbols": [], "max_symbols_per_run": 0,
         "symbols_per_batch": 0,
+        "rss_registry_status_scope": "company_press_release_rss",
+        "rss_registry_loaded": False,
         "verified_feed_symbol_count": 0, "enabled_feed_symbol_count": 0,
         "known_error_feed_symbol_count": 0,
         "disabled_symbol_count": 0, "symbols_without_verified_feed": [],
@@ -467,12 +790,26 @@ def _payload(settings: Mapping[str, Any], output_path: Path, requested: list[str
         "rate_limit_sleep_seconds": 0.0, "provider_batch_counts": {},
         "provider_batch_diagnostics": [], "provider_zero_row_reasons": {},
         "providers_returned_zero_rows": [],
-        "providers_rate_limited": [], "provider_policy": {},
+        "providers_rate_limited": [], "providers_entitlement_failed": [],
+        "provider_policy": {},
+        "overlap_with_existing_output": {},
+        "out_of_window_before_start_count": 0,
+        "out_of_window_after_end_count": 0,
+        "out_of_window_rejected_count": 0,
         "deduplicated_row_count": 0, "output_written": False, "output_path": str(output_path),
         "symbol_count": 0, "duplicate_headline_count": 0,
         "duplicate_headline_rate": 0.0,
+        "same_provider_article_id_multi_symbol_row_count": 0,
+        "exact_duplicate_provider_article_record_count": 0,
+        "same_headline_different_provider_article_id_count": 0,
+        "cross_provider_identical_normalized_headline_count": 0,
+        "near_duplicate_story_count": 0,
+        "near_duplicate_story_detection": "not_run",
+        "legacy_row_based_duplicate_headline_count": 0,
+        "legacy_row_based_duplicate_headline_rate": 0.0,
         "rows_by_provider": {}, "rows_by_symbol": {},
         "provider_symbol_counts": {}, "provider_symbol_coverage": {},
+        "text_availability_by_provider": {},
         "registry_validation": {}, "total_universe_symbol_count": 0,
         "total_universe_coverage": 0.0,
         "canonical_universe_symbol_count": 0, "registry_symbol_count": 0,
@@ -567,6 +904,8 @@ def _rss_registry_diagnostics(
             elif zero_row_reason not in {"feed_disabled", "feed_not_configured"}:
                 enabled_feeds_returned_zero_rows.add(symbol)
     return {
+        "rss_registry_status_scope": "company_press_release_rss",
+        "rss_registry_loaded": bool(feeds_by_symbol),
         "verified_feed_symbol_count": len(verified_symbols),
         "enabled_feed_symbol_count": len(enabled_symbols),
         "known_error_feed_symbol_count": len(known_error_symbols),
@@ -676,6 +1015,20 @@ def _is_rate_limited(exc: Exception) -> bool:
     )
 
 
+def _is_entitlement_error(exc: Exception) -> bool:
+    code = getattr(exc, "code", None)
+    if code in {401, 403}:
+        return True
+    message = str(exc).lower()
+    return (
+        "unauthorized" in message
+        or "forbidden" in message
+        or "permission" in message
+        or "entitlement" in message
+        or "subscription" in message
+    )
+
+
 def _redacted_exception_message(exc: Exception, *, api_key: str) -> str:
     message = str(exc)
     return message.replace(api_key, "[REDACTED]") if api_key else message
@@ -723,11 +1076,13 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Requested symbols: {payload['requested_symbol_count']}",
         f"- Only symbols: {payload['only_symbols']}",
         f"- Max symbols per run: {payload['max_symbols_per_run']}",
-        f"- Verified feed symbols: {payload['verified_feed_symbol_count']}",
-        f"- Enabled feed symbols: {payload['enabled_feed_symbol_count']}",
-        f"- Known-error feed symbols: {payload['known_error_feed_symbol_count']}",
-        f"- Disabled symbols: {payload['disabled_symbol_count']}",
-        f"- Symbols without verified feed: {payload['symbols_without_verified_feed']}",
+        f"- RSS registry scope: {payload['rss_registry_status_scope']}",
+        f"- RSS registry loaded: {payload['rss_registry_loaded']}",
+        f"- RSS verified feed symbols: {payload['verified_feed_symbol_count']}",
+        f"- RSS enabled feed symbols: {payload['enabled_feed_symbol_count']}",
+        f"- RSS known-error feed symbols: {payload['known_error_feed_symbol_count']}",
+        f"- RSS disabled symbols: {payload['disabled_symbol_count']}",
+        f"- RSS symbols without verified feed: {payload['symbols_without_verified_feed']}",
         f"- Symbols with known-error feeds: {payload['symbols_with_known_error_feeds']}",
         f"- Symbols with feed errors: {payload['symbols_with_feed_errors']}",
         f"- Symbols skipped known-error feeds: {payload['symbols_skipped_known_error_feeds']}",
@@ -746,14 +1101,19 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Providers returned zero rows: {payload['providers_returned_zero_rows']}",
         f"- Provider zero-row reasons: {payload['provider_zero_row_reasons']}",
         f"- Providers rate limited: {payload['providers_rate_limited']}",
+        f"- Providers entitlement failed: {payload['providers_entitlement_failed']}",
         f"- Provider policy: {payload['provider_policy']}",
         f"- Providers failed: {payload['providers_failed']}",
         f"- Provider batches: {payload['provider_batch_counts']}",
         f"- Provider batch diagnostic count: {len(payload['provider_batch_diagnostics'])}",
+        f"- Out-of-window before start: {payload['out_of_window_before_start_count']}",
+        f"- Out-of-window after end: {payload['out_of_window_after_end_count']}",
+        f"- Out-of-window rejected: {payload['out_of_window_rejected_count']}",
         f"- Rows collected: {payload['total_rows_collected']}",
         f"- Rows by provider: {payload['rows_by_provider']}",
         f"- Rows by symbol: {payload['rows_by_symbol']}",
         f"- Provider symbol coverage: {payload['provider_symbol_coverage']}",
+        f"- Text availability by provider: {payload['text_availability_by_provider']}",
         f"- Selected symbols: {payload['selected_symbol_count']}",
         f"- Selected disabled symbols: {payload['selected_disabled_symbol_count']}",
         f"- Selected enabled-feed symbols: {payload['selected_enabled_feed_symbol_count']}",
@@ -775,10 +1135,17 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Full-universe SEC-only candidates: {payload['full_universe_sec_only_candidate_symbol_count']}",
         f"- Full-universe disabled pending review: {payload['full_universe_disabled_pending_review_symbol_count']}",
         f"- Published ranges by provider: {payload['published_at_utc_range_by_provider']}",
+        f"- Existing output overlap: {payload['overlap_with_existing_output']}",
         f"- Deduplicated rows: {payload['deduplicated_row_count']}",
         f"- Symbols: {payload['symbol_count']}",
+        f"- Same provider article ID multi-symbol rows: {payload['same_provider_article_id_multi_symbol_row_count']}",
+        f"- Exact duplicate provider article records: {payload['exact_duplicate_provider_article_record_count']}",
+        f"- Same headline with different provider article IDs: {payload['same_headline_different_provider_article_id_count']}",
+        f"- Cross-provider identical headlines: {payload['cross_provider_identical_normalized_headline_count']}",
+        f"- Near-duplicate story detection: {payload['near_duplicate_story_detection']}",
         f"- Duplicate headlines: {payload['duplicate_headline_count']}",
         f"- Duplicate headline rate: {payload['duplicate_headline_rate']}",
+        f"- Legacy row-based duplicate headlines: {payload['legacy_row_based_duplicate_headline_count']}",
         f"- Existing input rows: {payload['existing_input_row_count']}",
         f"- New rows: {payload['new_row_count']}",
         f"- Merge duplicates removed: {payload['merge_deduplicated_row_count']}",

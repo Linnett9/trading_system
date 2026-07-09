@@ -1,0 +1,30 @@
+ml:
+  stock_alpha_news_collect_report_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_alpaca_benzinga_text_availability_2016/dev
+  stock_alpha_news_collect_output_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_collect_alpaca_benzinga_text_availability_2016/dev/alpaca_benzinga_text_availability_2016_rows.csv
+  stock_alpha_news_collect:
+    probe_kind: text_availability_probe
+    enabled: true
+    dry_run: true
+    allow_overwrite: false
+    merge_existing: false
+    backup_existing: false
+    start_date: "2016-01-01"
+    end_date: "2016-01-31"
+    symbols: [AAPL, MSFT, NVDA, AMZN, JPM, XOM]
+    symbols_per_batch: 3
+    max_articles_per_provider: 40
+    provider_request_limit: 40
+    max_rows_per_provider: 80
+    max_symbols_per_run: 6
+    rate_limit_sleep_seconds: 1.0
+    request_timeout_seconds: 20
+    providers:
+      alpaca_benzinga:
+        enabled: true
+        api_key_env: ALPACA_API_KEY_ID
+        secret_key_env: ALPACA_SECRET_KEY
+        page_size: 20
+        max_pages_per_batch: 2
+        max_retries: 1
+        retry_sleep_seconds: 1.0
+  stock_alpha_news_enable_transformer: false

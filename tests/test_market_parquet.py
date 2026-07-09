@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -227,6 +228,35 @@ def test_market_parquet_import_rejects_missing_intraday_directory(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="5m: .*5_us_txt.*1h: .*h_us_txt"):
         run_market_parquet_import(config)
+
+
+def test_market_parquet_daily_command_imports_from_configured_daily_raw_dir(tmp_path):
+    daily_raw = tmp_path / "downloads" / "data" / "daily"
+    daily_raw.mkdir(parents=True)
+    daily_raw.joinpath("AAPL.csv").write_text(
+        "date,open,high,low,close,volume,symbol\n"
+        "2024-01-02,10,12,9,11,100,AAPL\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "processed"
+    report_path = tmp_path / "reports" / "market_parquet_import.json"
+    config = {
+        "ml": {
+            "market_data": {
+                "processed_root": str(output_root),
+                "enabled_timeframes": ["1Day"],
+                "timeframes": {
+                    "1Day": {"raw_dir": str(daily_raw)},
+                },
+                "import_report_path": str(report_path),
+            }
+        }
+    }
+
+    run_market_parquet_import(config, symbols=["AAPL"], timeframes=["1Day"])
+
+    assert market_parquet_path(output_root, "AAPL", "1Day").exists()
+    assert not market_parquet_path(output_root, "AAPL", "1h").exists()
 
 
 def _write_legacy_daily_parquet(path):

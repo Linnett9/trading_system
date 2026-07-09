@@ -121,6 +121,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-collection-plan":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_collection_plan(config)
         return
+    if args.mode == "ml-stock-alpha-news-historical-backfill":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_historical_backfill(config)
+        return
     if args.mode == "ml-stock-alpha-news-daily-confirmation":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_daily_confirmation(config)
         return
@@ -221,6 +224,13 @@ def dispatch(args, config, feed):
 
     if args.mode == "dual-momentum-diagnosis":
         _commands("dual_momentum_commands").run_dual_momentum_diagnosis(config, feed)
+        return
+    if args.mode == "ml-dual-momentum-stock-score-comparison":
+        _commands("dual_momentum_commands").run_stock_ml_dual_momentum_comparison(
+            config,
+            feed,
+            strategy_names=args.strategies,
+        )
         return
 
     if args.mode == "paper-trade":

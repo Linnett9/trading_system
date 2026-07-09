@@ -2,6 +2,7 @@ from core.research.ml.stock_level.stock_alpha_news_contract import write_stock_a
 from core.research.ml.stock_level.stock_alpha_news_feature_diagnostics import write_stock_alpha_news_feature_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_free_source_collect import write_stock_alpha_news_free_source_collect
 from core.research.ml.stock_level.stock_alpha_news_collection_plan import write_stock_alpha_news_collection_plan
+from core.research.ml.stock_level.stock_alpha_news_historical_backfill import write_stock_alpha_news_historical_backfill
 from core.research.ml.stock_level.stock_alpha_news_daily_confirmation import write_stock_alpha_news_daily_confirmation
 from core.research.ml.stock_level.stock_alpha_news_contract_ingest import write_stock_alpha_news_contract_ingest
 from core.research.ml.stock_level.stock_alpha_news_coverage_audit import write_stock_alpha_news_coverage_audit
@@ -228,6 +229,31 @@ def run_ml_stock_alpha_news_collection_plan(config):
     print("news_transformer_enabled=false")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_news_historical_backfill(config):
+    print("\nSTOCK-ALPHA HISTORICAL NEWS BACKFILL")
+    print("mode=research | collection_only=true | trading_impact=none | production_validated=false")
+    try:
+        result = write_stock_alpha_news_historical_backfill(config)
+    except ValueError as exc:
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    import json
+    payload_path = result.assembly_json_path or result.summary_json_path
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    print(f"action={payload.get('action')}")
+    if "status_counts" in payload:
+        print(f"status_counts={payload['status_counts']}")
+        print(f"processed_this_run={payload['processed_this_run']}")
+    else:
+        print(f"row_count={payload['row_count']}")
+        print(f"incomplete_partition_count={payload['incomplete_partition_count']}")
+    print("contract_ingest_invoked=false")
+    print("features_generated=false")
+    print("model_training_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"Manifest: {result.manifest_path}")
+    print(f"JSON: {payload_path}")
 
 def run_ml_stock_alpha_news_daily_confirmation(config):
     print("\nSTOCK-ALPHA DAILY NEWS CONFIRMATION")

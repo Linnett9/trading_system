@@ -1,0 +1,51 @@
+ml:
+  stock_alpha_run_size: dev
+  stock_ranker_model_set: validated_standard
+  stock_target_comparison_model_set: fast
+  stock_alpha_dev_max_dates: 32
+  stock_alpha_dev_max_symbols: 100
+  stock_alpha_dev_recent_dates_only: true
+  stock_ranker_min_train_dates: 12
+  stock_ranker_test_window_dates: 4
+  stock_ranker_embargo_dates: 1
+  stock_ranker_sequence_length: 8
+  dlinear_epochs: 1
+  patchtst_epochs: 1
+  transformer_epochs: 1
+  itransformer_epochs: 1
+  momentum_transformer_epochs: 1
+  multitask_transformer_epochs: 1
+  market_context_encoder_epochs: 1
+  temporal_fusion_transformer_epochs: 1
+  dlinear_batch_size: 16
+  patchtst_batch_size: 16
+  transformer_batch_size: 16
+  itransformer_batch_size: 16
+  momentum_transformer_batch_size: 16
+  multitask_transformer_batch_size: 16
+  market_context_encoder_batch_size: 16
+  temporal_fusion_transformer_batch_size: 16
+  stock_ranker_model_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  stock_alpha_overnight_run_portfolio_replay: false
+  stock_portfolio_policy_sweep_enabled: false
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_stages:
+    stock_artifact: true
+    alpha_features: true
+    baseline_benchmark: true
+    enriched_benchmark: true
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: true
+    attribution: false
+  stock_alpha_report_root: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_multi_model_smoke
+  stock_level_base_prediction_artifacts_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/stock_level_prediction_artifacts.csv
+  stooq_parquet_dir: data/processed
+  stock_alpha_resume_existing_outputs: true
+  stock_alpha_force_refresh: false
+research:
+  dual_momentum:
+    universe_path: data/reference/universes/us_liquid_100.yaml

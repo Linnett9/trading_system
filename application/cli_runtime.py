@@ -27,6 +27,7 @@ FEEDLESS_MODES = {
         "ml-refresh-adjusted-prices",
         "ml-research-batch",
         "ml-online-intraday-benchmark",
+        "ml-dual-momentum-stock-score-comparison",
         "ml-stock-level-alpha-benchmark",
         "ml-stock-level-target-comparison",
         "ml-stock-level-portfolio-replay",

@@ -3,7 +3,12 @@ from core.research.dual_momentum.portfolio import (
 )
 
 
-def build_dual_momentum_tester(config, dual_config):
+def build_dual_momentum_tester(
+    config,
+    dual_config,
+    score_provider=None,
+    rebalance_dates=None,
+):
     return DualMomentumPortfolioBacktester(
         starting_equity=config["backtest"]["starting_equity"],
         experiment_name=dual_config.get("experiment_name"),
@@ -296,4 +301,6 @@ def build_dual_momentum_tester(config, dual_config):
             "ranking_volatility_lookback",
             63,
         ),
+        score_provider=score_provider,
+        rebalance_dates=rebalance_dates,
     )

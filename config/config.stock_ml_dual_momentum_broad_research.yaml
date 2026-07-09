@@ -1,0 +1,22 @@
+ml:
+  stock_ml_dual_momentum_comparison:
+    mode: "broad_research_universe"
+    artifact_path: "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/enriched/stock_level_model_oos_predictions.csv"
+    output_dir: "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/dual_momentum_score_comparison_broad"
+    local_data_provider: "market_parquet"
+    market_parquet_dir: "data/processed"
+    timeframe: "1Day"
+    models:
+      - elastic_net
+      - random_forest
+    top_n_values: [5, 10, 20, 30]
+    top_n_sweep_max_selected_assets_policy: "match_requested_top_n"
+    ensembles:
+      hybrid_momentum_elastic_net:
+        members:
+          dual_momentum: 0.5
+          elastic_net: 0.5
+      hybrid_momentum_random_forest:
+        members:
+          dual_momentum: 0.5
+          random_forest: 0.5
