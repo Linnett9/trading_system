@@ -192,6 +192,18 @@ def test_news_risk_overlay_research_writes_end_to_end_outputs(tmp_path: Path, mo
     manifest = json.loads(result.manifest_json_path.read_text(encoding="utf-8"))
     assert coverage["row_coverage_ratio"] == 1.0
     assert metrics["price_plus_news"]["oos_rows"] > 0
+    assert metrics["paper_trading_enabled"] is False
+    assert metrics["live_trading_enabled"] is False
+    assert metrics["paper_orders_enabled"] is False
+    assert manifest["mode"] == "ml-stock-alpha-news-risk-overlay-research"
+    assert manifest["research_only"] is True
+    assert manifest["trading_impact"] == "none"
+    assert manifest["price_candidates_path"] == str(price_path)
+    assert manifest["news_features_path"] == str(news_path)
+    assert manifest["output_dir"] == str(tmp_path / "research-results")
+    assert manifest["full_joined_row_count"] == 8
+    assert manifest["dataset_csv_row_count"] == 8
+    assert manifest["shadow_csv_row_count"] > 0
     assert manifest["transformer_trained"] is False
     assert manifest["paper_orders_enabled"] is False
     portfolio = json.loads(result.portfolio_json_path.read_text(encoding="utf-8"))
@@ -220,6 +232,32 @@ def test_news_risk_overlay_research_writes_end_to_end_outputs(tmp_path: Path, mo
     assert "news_contrarian_rerank_catastrophic_veto_manual_review" in risk_metrics
 
 
+def test_news_risk_overlay_research_path_builder_preserves_artifact_path_contract(tmp_path: Path) -> None:
+    paths = research.build_news_risk_research_paths(tmp_path / "overlay")
+
+    expected = {
+        "dataset_csv_path": "stock_alpha_news_risk_overlay_dataset.csv",
+        "coverage_json_path": "coverage_report.json",
+        "leakage_json_path": "leakage_report.json",
+        "metrics_json_path": "logistic_regression_metrics.json",
+        "portfolio_json_path": "price_vs_news_portfolio_report.json",
+        "chronological_split_manifest_json_path": "chronological_split_manifest.json",
+        "contrarian_grid_selection_json_path": "contrarian_grid_selection.json",
+        "catastrophic_news_audit_json_path": "catastrophic_news_audit.json",
+        "catastrophic_veto_policy_mode_comparison_json_path": "catastrophic_veto_policy_mode_comparison.json",
+        "news_evidence_lineage_report_json_path": "news_evidence_lineage_report.json",
+        "news_event_taxonomy_report_json_path": "news_event_taxonomy_report.json",
+        "news_point_in_time_text_safety_report_json_path": "news_point_in_time_text_safety_report.json",
+        "shadow_csv_path": "shadow_decision_log.csv",
+        "manifest_json_path": "model_manifest.json",
+        "markdown_path": "README.md",
+    }
+
+    assert paths.output_dir == tmp_path / "overlay"
+    for attribute, filename in expected.items():
+        assert getattr(paths, attribute) == paths.output_dir / filename
+
+
 def test_news_risk_overlay_research_fails_without_label_sources(tmp_path: Path) -> None:
     price_path = tmp_path / "price_candidates.csv"
     news_path = tmp_path / "news_features.csv"
@@ -245,6 +283,50 @@ def test_news_risk_overlay_research_fails_without_label_sources(tmp_path: Path) 
     )
 
     with pytest.raises(ValueError, match="adverse-outcome label source"):
+        write_stock_alpha_news_risk_overlay_research(
+            {
+                "ml": {
+                    "stock_alpha_news_risk_overlay_price_candidates_path": str(price_path),
+                    "stock_alpha_news_risk_overlay_news_features_path": str(news_path),
+                    "stock_alpha_news_risk_overlay_output_dir": str(tmp_path / "research-results"),
+                }
+            }
+        )
+
+
+def test_news_risk_overlay_research_raises_on_timestamp_leakage_if_join_reports_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    price_path = tmp_path / "price_candidates.csv"
+    news_path = tmp_path / "news_features.csv"
+    _write_csv(
+        price_path,
+        [_price_row("2024-01-01", "AAPL", -0.06, 0.90, -0.07)],
+    )
+    _write_csv(
+        news_path,
+        [
+            {
+                "symbol": "AAPL",
+                "available_at_timestamp": "2024-01-01T01:00:00+00:00",
+                "sentiment": "-0.8",
+            }
+        ],
+    )
+
+    def fake_join(price_rows, _news_rows, _overlay_config):
+        joined = [dict(price_rows[0], decision_timestamp="2024-01-01T00:00:00+00:00", news_coverage_status="COVERED")]
+        return joined, {
+            "leakage_violation_count": 1,
+            "future_news_rows_rejected": 0,
+            "symbol_coverage": {"AAPL": 1},
+            "date_coverage": {"2024-01-01": 1},
+        }
+
+    monkeypatch.setattr(research, "join_news_to_stock_alpha_observations", fake_join)
+
+    with pytest.raises(ValueError, match="timestamp leakage detected"):
         write_stock_alpha_news_risk_overlay_research(
             {
                 "ml": {
