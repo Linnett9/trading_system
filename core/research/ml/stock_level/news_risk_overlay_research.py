@@ -38,9 +38,21 @@ from core.research.ml.stock_level.news_transformer import (
 from core.research.ml.stock_level.news_risk_overlay_research_artifacts import (
     write_news_risk_research_artifacts,
 )
+from core.research.ml.stock_level.news_risk_overlay_research_manifest import (
+    build_news_risk_metrics_and_manifest,
+)
 from core.research.ml.stock_level.news_risk_overlay_research_paths import (
     NewsRiskResearchPaths,
     build_news_risk_research_paths,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_reports import (
+    build_news_risk_validation_and_evidence_reports,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_variants import (
+    ResearchCandidateFilterSpec,
+    ResearchStrategyVariantSpec,
+    build_news_risk_research_variants,
+    build_research_strategy_variant_inputs,
 )
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
 
@@ -90,54 +102,6 @@ EXCLUDED_FEATURE_COLUMNS = {
     "news_has_coverage_30d",
     "news_news_has_coverage_30d",
 }
-
-
-@dataclass(frozen=True)
-class ResearchCandidateFilterSpec:
-    filter_name: str
-    enabled: bool = False
-    reason: str = "opt-in research-only candidate filter"
-
-
-@dataclass(frozen=True)
-class ResearchStrategyVariantSpec:
-    base_variant_name: str
-    new_variant_name: str
-    candidate_filter: ResearchCandidateFilterSpec | None = None
-    filtered_candidate_rows: Sequence[Mapping[str, Any]] | None = None
-    metadata: Mapping[str, Any] | None = None
-    research_only: bool = True
-    enabled_for_research: bool = True
-    enabled_for_paper_trading: bool = False
-    enabled_for_live_trading: bool = False
-
-
-def build_research_strategy_variant_inputs(
-    candidate_rows: Sequence[Mapping[str, Any]],
-    variant_spec: ResearchStrategyVariantSpec,
-) -> dict[str, Any]:
-    source_rows = (
-        variant_spec.filtered_candidate_rows
-        if variant_spec.filtered_candidate_rows is not None
-        else candidate_rows
-    )
-    copied_rows = [dict(row) for row in source_rows]
-    filter_spec = variant_spec.candidate_filter
-    filter_enabled = bool(filter_spec and filter_spec.enabled)
-    return {
-        "base_variant_name": variant_spec.base_variant_name,
-        "new_variant_name": variant_spec.new_variant_name,
-        "research_only": variant_spec.research_only,
-        "filter_name": filter_spec.filter_name if filter_spec else "NONE",
-        "filter_enabled": filter_enabled,
-        "candidate_rows": copied_rows,
-        "candidate_count": len(copied_rows),
-        "metadata": dict(variant_spec.metadata or {}),
-        "default_behavior_unchanged": not filter_enabled,
-        "enabled_for_research": variant_spec.enabled_for_research,
-        "paper_trading_enabled": variant_spec.enabled_for_paper_trading,
-        "live_trading_enabled": variant_spec.enabled_for_live_trading,
-    }
 
 
 @dataclass(frozen=True)
@@ -235,227 +199,79 @@ def write_stock_alpha_news_risk_overlay_research(
         transaction_cost_bps=float(ml.get("stock_alpha_news_risk_overlay_transaction_cost_bps", 0.0)),
         slippage_bps=float(ml.get("stock_alpha_news_risk_overlay_slippage_bps", 0.0)),
     )
-    catastrophic_veto_filter = apply_catastrophic_veto_to_candidates(oos_rows)
-    catastrophic_veto_confirmed_only_filter = apply_catastrophic_veto_to_candidates(
+    variants = build_news_risk_research_variants(
         oos_rows,
-        policy_mode="CONFIRMED_ONLY_RESEARCH",
+        apply_catastrophic_veto_to_candidates=apply_catastrophic_veto_to_candidates,
+        apply_catastrophic_policy_variant_to_candidates=apply_catastrophic_policy_variant_to_candidates,
+        catastrophic_policy_variants=CATASTROPHIC_POLICY_VARIANTS,
     )
-    catastrophic_veto_manual_review_filter = apply_catastrophic_veto_to_candidates(
-        oos_rows,
-        policy_mode="MANUAL_REVIEW_RESEARCH",
+    replay = _run_news_risk_replay(
+        oos_rows=oos_rows,
+        ml=ml,
+        price_score_column=price_score_column,
+        output_dir=output_dir,
+        extra_research_variants=variants["extra_research_variants"],
+        parallel_config=parallel_config,
+        parallel_report=parallel_report,
     )
-    policy_variant_filters = {
-        str(spec["policy_name"]): apply_catastrophic_policy_variant_to_candidates(oos_rows, str(spec["policy_name"]))
-        for spec in CATASTROPHIC_POLICY_VARIANTS
-    }
-    catastrophic_veto_variant = ResearchStrategyVariantSpec(
-        base_variant_name="news_contrarian_rerank",
-        new_variant_name="news_contrarian_rerank_catastrophic_veto",
-        candidate_filter=ResearchCandidateFilterSpec(
-            filter_name="catastrophic_veto",
-            enabled=True,
-        ),
-        filtered_candidate_rows=catastrophic_veto_filter["filtered_candidates"],
-        metadata={
-            "policy": "catastrophic_veto_v1",
-            "candidate_count_before_veto": len(oos_rows),
-            "candidate_count_after_veto": len(catastrophic_veto_filter["filtered_candidates"]),
-            "blocked_candidate_count": len(catastrophic_veto_filter["blocked_candidates"]),
-        },
-        research_only=True,
-        enabled_for_research=True,
-        enabled_for_paper_trading=False,
-        enabled_for_live_trading=False,
+    diagnostic_reports = _build_news_risk_model_diagnostic_reports(
+        oos_rows=oos_rows,
+        replay=replay,
+        overlay_config=overlay_config,
+        price_score_column=price_score_column,
+        ml=ml,
+        parallel_report=parallel_report,
     )
-    catastrophic_veto_confirmed_only_variant = ResearchStrategyVariantSpec(
-        base_variant_name="news_contrarian_rerank",
-        new_variant_name="news_contrarian_rerank_catastrophic_veto_confirmed_only",
-        candidate_filter=ResearchCandidateFilterSpec(
-            filter_name="catastrophic_veto_confirmed_only",
-            enabled=True,
-        ),
-        filtered_candidate_rows=catastrophic_veto_confirmed_only_filter["filtered_candidates"],
-        metadata={
-            "policy": "catastrophic_veto_confirmed_only_research_v1",
-            "policy_mode": "CONFIRMED_ONLY_RESEARCH",
-            "candidate_count_before_veto": len(oos_rows),
-            "candidate_count_after_veto": len(catastrophic_veto_confirmed_only_filter["filtered_candidates"]),
-            "blocked_candidate_count": len(catastrophic_veto_confirmed_only_filter["blocked_candidates"]),
-            "unknown_text_candidate_count": len(catastrophic_veto_confirmed_only_filter["unknown_text_candidates"]),
-            "missing_availability_candidate_count": len(catastrophic_veto_confirmed_only_filter["missing_availability_candidates"]),
-        },
-        research_only=True,
-        enabled_for_research=True,
-        enabled_for_paper_trading=False,
-        enabled_for_live_trading=False,
-    )
-    catastrophic_veto_manual_review_variant = ResearchStrategyVariantSpec(
-        base_variant_name="news_contrarian_rerank",
-        new_variant_name="news_contrarian_rerank_catastrophic_veto_manual_review",
-        candidate_filter=ResearchCandidateFilterSpec(
-            filter_name="catastrophic_veto_manual_review",
-            enabled=True,
-        ),
-        filtered_candidate_rows=catastrophic_veto_manual_review_filter["filtered_candidates"],
-        metadata={
-            "policy": "catastrophic_veto_manual_review_research_v1",
-            "policy_mode": "MANUAL_REVIEW_RESEARCH",
-            "candidate_count_before_veto": len(oos_rows),
-            "candidate_count_after_veto": len(catastrophic_veto_manual_review_filter["filtered_candidates"]),
-            "blocked_candidate_count": len(catastrophic_veto_manual_review_filter["blocked_candidates"]),
-            "unknown_text_candidate_count": len(catastrophic_veto_manual_review_filter["unknown_text_candidates"]),
-            "missing_availability_candidate_count": len(catastrophic_veto_manual_review_filter["missing_availability_candidates"]),
-        },
-        research_only=True,
-        enabled_for_research=True,
-        enabled_for_paper_trading=False,
-        enabled_for_live_trading=False,
-    )
-    policy_replay_variants = [
-        ResearchStrategyVariantSpec(
-            base_variant_name="news_contrarian_rerank",
-            new_variant_name=str(filter_result["variant_name"]),
-            candidate_filter=ResearchCandidateFilterSpec(
-                filter_name=f"catastrophic_policy_variant_{policy_name.lower()}",
-                enabled=True,
-            ),
-            filtered_candidate_rows=filter_result["filtered_candidates"],
-            metadata={
-                "policy": f"{policy_name.lower()}_research_v1",
-                "policy_name": policy_name,
-                "policy_stage": filter_result["policy_stage"],
-                "candidate_count_before_veto": len(oos_rows),
-                "candidate_count_after_veto": len(filter_result["filtered_candidates"]),
-                "blocked_candidate_count": len(filter_result["blocked_candidates"]),
-                "unknown_evidence_candidate_count": len(filter_result["unknown_candidates"]),
-            },
-            research_only=True,
-            enabled_for_research=True,
-            enabled_for_paper_trading=False,
-            enabled_for_live_trading=False,
-        )
-        for policy_name, filter_result in policy_variant_filters.items()
-        if filter_result["policy_stage"] == "FULL_REPLAY_RESEARCH"
-    ]
-    with _timed_phase(parallel_report, "replay"):
-        replay = _build_open_trade_replay(
-            oos_rows,
-            config=ml,
-            price_score_column=price_score_column,
-            output_dir=output_dir,
-            extra_research_variants=[
-                catastrophic_veto_variant,
-                catastrophic_veto_confirmed_only_variant,
-                catastrophic_veto_manual_review_variant,
-                *policy_replay_variants,
-            ],
-            parallel_config=parallel_config,
-            parallel_report=parallel_report,
-        )
-    with _timed_phase(parallel_report, "model_diagnostic_reports"):
-        score_direction_audit = _score_direction_audit(
-            rows=oos_rows,
-            config=overlay_config,
-            target_column="news_risk_label",
-        )
-        _assert_score_direction_contract(score_direction_audit, oos_rows)
-        score_decile_rows, score_direction_report, decile_join_audit, decile_reconciliation = _news_score_decile_diagnostics(
-            oos_rows,
-            replay["trade_ledger"],
-            price_score_column=price_score_column,
-        )
-        replay_action_attribution = _replay_action_attribution(
-            replay["action_events"],
-            replay["trade_ledger"],
-            replay.get("hypothetical_trade_ledger", []),
-        )
-        event_category_analysis = _event_category_analysis(oos_rows, replay["trade_ledger"])
-        contrarian_report = _contrarian_strategy_report(
-            replay["risk_metrics"],
-            replay.get("variant_settings", {}),
-            ml,
-        )
-        price_stabilisation = _price_stabilisation_report(ml)
-        resilience_analysis = _resilience_filter_analysis(oos_rows)
-        extreme_archive_rows, extreme_memory_report = _extreme_event_archive(oos_rows, ml)
-    with _timed_phase(parallel_report, "cost_scenarios"):
-        cost_scenarios = _cost_scenario_comparison(
-            oos_rows,
-            bars_by_symbol=replay["bars_by_symbol"],
-            price_score_column=price_score_column,
-            base_replay_config=replay["replay_config"],
-            parallel_config=parallel_config,
-            parallel_report=parallel_report,
-        )
-    validation = _contrarian_validation_stage_reports(
-        rows=oos_rows,
+    score_direction_audit = diagnostic_reports["score_direction_audit"]
+    score_decile_rows = diagnostic_reports["score_decile_rows"]
+    score_direction_report = diagnostic_reports["score_direction_report"]
+    decile_join_audit = diagnostic_reports["decile_join_audit"]
+    decile_reconciliation = diagnostic_reports["decile_reconciliation"]
+    replay_action_attribution = diagnostic_reports["replay_action_attribution"]
+    event_category_analysis = diagnostic_reports["event_category_analysis"]
+    contrarian_report = diagnostic_reports["contrarian_report"]
+    price_stabilisation = diagnostic_reports["price_stabilisation"]
+    resilience_analysis = diagnostic_reports["resilience_analysis"]
+    extreme_archive_rows = diagnostic_reports["extreme_archive_rows"]
+    extreme_memory_report = diagnostic_reports["extreme_memory_report"]
+    cost_scenarios = _build_news_risk_cost_scenarios(
+        oos_rows=oos_rows,
         replay=replay,
         price_score_column=price_score_column,
-        config=ml,
+        parallel_config=parallel_config,
+        parallel_report=parallel_report,
+    )
+    validation = build_news_risk_validation_and_evidence_reports(
+        oos_rows=oos_rows,
+        replay=replay,
+        price_score_column=price_score_column,
+        ml=ml,
         cost_scenarios=cost_scenarios,
-        data_audit=replay["replay_data_audit"],
+        news_path=news_path,
+        news_rows=news_rows,
+        labeled=labeled,
+        contrarian_validation_stage_reports=_contrarian_validation_stage_reports,
+        optional_csv_stage=_optional_csv_stage,
+        news_evidence_lineage_artifacts=_news_evidence_lineage_artifacts,
     )
-    evidence_stages = {
-        "raw_news": _optional_csv_stage(ml, "stock_alpha_news_raw_path"),
-        "provider_normalized_news": _optional_csv_stage(
-            ml,
-            "stock_alpha_news_collect_output_path",
-            "stock_alpha_news_provider_normalized_path",
-        ),
-        "news_contract": _optional_csv_stage(ml, "stock_alpha_news_contract_path"),
-        "news_features": {"available": True, "path": str(news_path), "rows": news_rows},
-        "joined_candidate_rows": {"available": True, "path": "IN_MEMORY_POINT_IN_TIME_JOIN", "rows": labeled},
-        "catastrophic_veto_input_rows": {"available": True, "path": "IN_MEMORY_OOS_ROWS", "rows": oos_rows},
-    }
-    (
-        validation["news_evidence_lineage_report"],
-        validation["news_evidence_lineage_by_stage"],
-        validation["news_evidence_missing_field_examples"],
-        validation["news_evidence_readiness_report"],
-    ) = _news_evidence_lineage_artifacts(evidence_stages)
-    validation["news_evidence_readiness_report"].update(
-        {
-            "event_taxonomy_status": validation["news_event_taxonomy_report"]["status"],
-            "event_taxonomy_research_ready": validation["news_event_taxonomy_report"]["event_taxonomy_research_ready"],
-            "duplicate_grouping_status": validation["news_duplicate_grouping_report"]["status"],
-            "duplicate_grouping_heuristic_ready": validation["news_duplicate_grouping_report"]["duplicate_grouping_heuristic_ready"],
-            "point_in_time_text_safety_status": validation["news_point_in_time_text_safety_report"]["status"],
-            "point_in_time_text_safety_ready": validation["news_point_in_time_text_safety_report"]["point_in_time_text_safety_ready"],
-            "keyword_baseline_status": validation["news_text_keyword_baseline_report"]["status"],
-            "keyword_baseline_ready": validation["news_text_keyword_baseline_report"]["keyword_baseline_ready"],
-        }
-    )
-
     paths = build_news_risk_research_paths(output_dir)
-    metrics = {
-        "model_type": "in_repo_logistic_regression",
-        "chronological_walk_forward": True,
-        "transformer_trained": False,
-        "paper_trading_enabled": False,
-        "live_trading_enabled": False,
-        "paper_orders_enabled": False,
-        "price_only": price_metrics,
-        "price_plus_news": news_metrics,
-        "price_feature_columns": price_feature_columns,
-        "price_plus_news_feature_columns": price_news_feature_columns,
-    }
-    manifest = {
-        "mode": "ml-stock-alpha-news-risk-overlay-research",
-        "research_only": True,
-        "trading_impact": "none",
-        "price_candidates_path": str(price_path),
-        "news_features_path": str(news_path),
-        "output_dir": str(output_dir),
-        "price_score_column": price_score_column,
-        "return_column": return_column,
-        "label_source_columns": [column for column in LABEL_SOURCE_COLUMNS if column in labeled[0]],
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "full_joined_row_count": len(labeled),
-        "dataset_csv_row_count": len(_limited_rows(labeled, dataset_max_rows)),
-        "shadow_csv_row_count": len(_limited_rows(decision_rows, shadow_max_rows)),
-        "transformer_trained": False,
-        "paper_orders_enabled": False,
-    }
+    metrics, manifest = build_news_risk_metrics_and_manifest(
+        price_path=price_path,
+        news_path=news_path,
+        output_dir=output_dir,
+        price_score_column=price_score_column,
+        return_column=return_column,
+        labeled=labeled,
+        decision_rows=decision_rows,
+        dataset_max_rows=dataset_max_rows,
+        shadow_max_rows=shadow_max_rows,
+        price_metrics=price_metrics,
+        news_metrics=news_metrics,
+        price_feature_columns=price_feature_columns,
+        price_news_feature_columns=price_news_feature_columns,
+        label_source_columns=LABEL_SOURCE_COLUMNS,
+        limited_rows=_limited_rows,
+    )
     with _timed_phase(parallel_report, "report_writing"):
         write_news_risk_research_artifacts(
             paths=paths,
@@ -670,6 +486,98 @@ def _run_news_risk_model_diagnostics(
         "decision_rows": decision_rows,
         "oos_rows": oos_rows,
     }
+
+
+def _run_news_risk_replay(
+    *,
+    oos_rows: list[dict[str, Any]],
+    ml: Mapping[str, Any],
+    price_score_column: str,
+    output_dir: Path,
+    extra_research_variants: Sequence[ResearchStrategyVariantSpec],
+    parallel_config: NewsRiskParallelConfig,
+    parallel_report: dict[str, Any],
+) -> Mapping[str, Any]:
+    with _timed_phase(parallel_report, "replay"):
+        return _build_open_trade_replay(
+            oos_rows,
+            config=ml,
+            price_score_column=price_score_column,
+            output_dir=output_dir,
+            extra_research_variants=extra_research_variants,
+            parallel_config=parallel_config,
+            parallel_report=parallel_report,
+        )
+
+
+def _build_news_risk_model_diagnostic_reports(
+    *,
+    oos_rows: list[dict[str, Any]],
+    replay: Mapping[str, Any],
+    overlay_config: NewsRiskOverlayConfig,
+    price_score_column: str,
+    ml: Mapping[str, Any],
+    parallel_report: dict[str, Any],
+) -> dict[str, Any]:
+    with _timed_phase(parallel_report, "model_diagnostic_reports"):
+        score_direction_audit = _score_direction_audit(
+            rows=oos_rows,
+            config=overlay_config,
+            target_column="news_risk_label",
+        )
+        _assert_score_direction_contract(score_direction_audit, oos_rows)
+        score_decile_rows, score_direction_report, decile_join_audit, decile_reconciliation = _news_score_decile_diagnostics(
+            oos_rows,
+            replay["trade_ledger"],
+            price_score_column=price_score_column,
+        )
+        replay_action_attribution = _replay_action_attribution(
+            replay["action_events"],
+            replay["trade_ledger"],
+            replay.get("hypothetical_trade_ledger", []),
+        )
+        event_category_analysis = _event_category_analysis(oos_rows, replay["trade_ledger"])
+        contrarian_report = _contrarian_strategy_report(
+            replay["risk_metrics"],
+            replay.get("variant_settings", {}),
+            ml,
+        )
+        price_stabilisation = _price_stabilisation_report(ml)
+        resilience_analysis = _resilience_filter_analysis(oos_rows)
+        extreme_archive_rows, extreme_memory_report = _extreme_event_archive(oos_rows, ml)
+    return {
+        "score_direction_audit": score_direction_audit,
+        "score_decile_rows": score_decile_rows,
+        "score_direction_report": score_direction_report,
+        "decile_join_audit": decile_join_audit,
+        "decile_reconciliation": decile_reconciliation,
+        "replay_action_attribution": replay_action_attribution,
+        "event_category_analysis": event_category_analysis,
+        "contrarian_report": contrarian_report,
+        "price_stabilisation": price_stabilisation,
+        "resilience_analysis": resilience_analysis,
+        "extreme_archive_rows": extreme_archive_rows,
+        "extreme_memory_report": extreme_memory_report,
+    }
+
+
+def _build_news_risk_cost_scenarios(
+    *,
+    oos_rows: list[dict[str, Any]],
+    replay: Mapping[str, Any],
+    price_score_column: str,
+    parallel_config: NewsRiskParallelConfig,
+    parallel_report: dict[str, Any],
+) -> Mapping[str, Any]:
+    with _timed_phase(parallel_report, "cost_scenarios"):
+        return _cost_scenario_comparison(
+            oos_rows,
+            bars_by_symbol=replay["bars_by_symbol"],
+            price_score_column=price_score_column,
+            base_replay_config=replay["replay_config"],
+            parallel_config=parallel_config,
+            parallel_report=parallel_report,
+        )
 
 
 def write_stock_alpha_news_risk_overlay_parallel_benchmark(
