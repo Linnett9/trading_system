@@ -31,6 +31,20 @@ from core.research.ml.stock_level.news_risk_overlay_research import (
     write_stock_alpha_news_risk_overlay_research,
 )
 from core.research.ml.stock_level.news_risk_overlay import NewsRiskOverlayConfig
+from core.research.ml.stock_level.news_risk_overlay_research_accounting import (
+    portfolio_comparison,
+    portfolio_stats,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_decisions import (
+    apply_news_decisions,
+    apply_probabilities,
+    assign_candidate_ids,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_model import (
+    classification_metrics,
+    roc_auc,
+    walk_forward_logistic,
+)
 from core.research.ml.stock_level.news_sources import (
     catastrophic_news_taxonomy_report,
     classify_catastrophic_news_event,
@@ -531,6 +545,107 @@ def test_decile_reconciliation_adds_missing_trade_id_as_provenance_only() -> Non
     assert join_audit["matched_trade_rows"] == 1
     assert reconciliation["by_strategy_variant"]["news_contrarian_rerank"]["unique_matched_trade_ids"] == 1
 
+
+def test_extracted_model_helpers_preserve_degenerate_auc_and_no_fold_error() -> None:
+    assert roc_auc([1, 1], [0.2, 0.8]) == 0.0
+    assert roc_auc([0, 0], [0.2, 0.8]) == 0.0
+
+    metrics = classification_metrics([0, 1], [0.25, 0.75])
+    assert set(metrics) == {
+        "accuracy",
+        "precision",
+        "recall",
+        "brier",
+        "roc_auc",
+        "positive_rate",
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="walk-forward logistic regression produced no out-of-sample predictions",
+    ):
+        walk_forward_logistic(
+            [{"feature": 1.0, "news_risk_label": 1}, {"feature": 2.0, "news_risk_label": 1}],
+            ["feature"],
+            [([0], [1])],
+            learning_rate=0.1,
+            epochs=1,
+            l2=0.0,
+            max_train_rows=0,
+        )
+
+
+def test_extracted_accounting_helpers_preserve_empty_stats_and_approximation_text() -> None:
+    assert portfolio_stats([], return_column="price_only_period_return_net") == {
+        "periods": 0,
+        "starting_equity": 0.0,
+        "ending_equity": 0.0,
+        "total_return_decimal": 0.0,
+        "total_return_percent": 0.0,
+        "wealth_multiple": 0.0,
+        "CAGR": 0.0,
+        "annualised_volatility": 0.0,
+        "maximum_drawdown": 0.0,
+        "average_drawdown": 0.0,
+        "longest_drawdown_duration": 0.0,
+        "Sharpe_ratio": 0.0,
+        "Sortino_ratio": 0.0,
+        "Calmar_ratio": 0.0,
+        "worst_day": 0.0,
+        "worst_trade": 0.0,
+        "maximum_adverse_excursion": 0.0,
+        "expected_shortfall_CVaR_5pct": 0.0,
+        "average_gross_exposure": 0.0,
+        "average_net_exposure": 0.0,
+        "turnover": 0.0,
+        "transaction_costs": 0.0,
+        "number_of_positions": 0.0,
+    }
+
+    report = portfolio_comparison(
+        [],
+        price_score_column="score",
+        return_column="actual_forward_return_10d",
+        top_n=1,
+        starting_equity=100.0,
+        transaction_cost_bps=0.0,
+        slippage_bps=0.0,
+    )
+    assert report["accounting_approximation"] == (
+        "Decision-level marked-to-market approximation using realized forward returns "
+        "from candidate artifacts. Overlapping holdings are approximated by one "
+        "equal-weight decision-period basket per timestamp because the artifacts do "
+        "not include full open-position daily mark-to-market paths."
+    )
+    assert {"price_only", "price_plus_news", "equity_curve", "drawdown_curve"}.issubset(report)
+
+
+def test_extracted_decision_helpers_preserve_mutation_contract() -> None:
+    rows = [
+        {
+            "decision_timestamp": "2024-01-01T00:00:00+00:00",
+            "symbol": "aapl",
+            "score": "0.4",
+            "news_coverage_status": "COVERED",
+            "news_feature_timestamp": "2023-12-31T00:00:00+00:00",
+        }
+    ]
+    apply_probabilities(rows, {0: 0.8}, "price_plus_news_risk_probability")
+    assign_candidate_ids(rows, "score")
+    first_id = rows[0]["candidate_id"]
+    assign_candidate_ids(rows, "score")
+
+    decisions = apply_news_decisions(
+        rows,
+        NewsRiskOverlayConfig(block_threshold=0.7, reduce_threshold=0.5),
+        "score",
+    )
+
+    assert rows[0]["candidate_id"] == first_id
+    assert rows[0]["price_plus_news_risk_probability"] == 0.8
+    assert rows[0]["news_action"] == "BLOCK"
+    assert rows[0]["news_position_multiplier"] == 0.0
+    assert decisions[0]["order_submitted"] is False
 
 def test_decile_attribution_requires_candidate_id() -> None:
     rows = [

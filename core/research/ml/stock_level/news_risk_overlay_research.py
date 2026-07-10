@@ -23,9 +23,7 @@ from core.research.ml.stock_level.news_risk_overlay import (
     NewsRiskOverlayConfig,
     build_news_risk_labels,
     chronological_splits,
-    evaluate_candidate,
     join_news_to_stock_alpha_observations,
-    shadow_decision_row,
 )
 from core.research.ml.stock_level.news_sources import (
     catastrophic_news_taxonomy_report,
@@ -38,8 +36,30 @@ from core.research.ml.stock_level.news_transformer import (
 from core.research.ml.stock_level.news_risk_overlay_research_artifacts import (
     write_news_risk_research_artifacts,
 )
+from core.research.ml.stock_level.news_risk_overlay_research_accounting import (
+    adverse_excursion as _adverse_excursion,
+    drawdown_curve as _drawdown_curve,
+    equity_curve as _equity_curve,
+    expected_shortfall_cvar as _expected_shortfall,
+    merge_curves as _merge_curves,
+    period_accounting_row as _period_accounting_row,
+    portfolio_comparison as _portfolio_comparison,
+    portfolio_stats as _portfolio_stats,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_decisions import (
+    apply_news_decisions as _apply_news_decisions,
+    apply_probabilities as _apply_probabilities,
+    assign_candidate_ids as _assign_candidate_ids,
+)
 from core.research.ml.stock_level.news_risk_overlay_research_manifest import (
     build_news_risk_metrics_and_manifest,
+)
+from core.research.ml.stock_level.news_risk_overlay_research_model import (
+    classification_metrics as _classification_metrics,
+    fit_logistic as _fit_logistic,
+    predict_logistic as _predict_logistic,
+    roc_auc as _roc_auc,
+    walk_forward_logistic as _walk_forward_logistic,
 )
 from core.research.ml.stock_level.news_risk_overlay_research_paths import (
     NewsRiskResearchPaths,
@@ -936,413 +956,6 @@ def _validate_source_rows(
         raise ValueError(f"price candidates missing configurable adverse-outcome label source: {price_path}")
 
 
-def _walk_forward_logistic(
-    rows: list[Mapping[str, Any]],
-    feature_columns: list[str],
-    splits: list[tuple[list[int], list[int]]],
-    *,
-    learning_rate: float,
-    epochs: int,
-    l2: float,
-    max_train_rows: int,
-) -> tuple[dict[str, Any], dict[int, float]]:
-    probabilities: dict[int, float] = {}
-    fold_reports = []
-    for fold_id, (train_index, test_index) in enumerate(splits, start=1):
-        if max_train_rows > 0:
-            train_index = train_index[-max_train_rows:]
-        train = [rows[index] for index in train_index]
-        test = [rows[index] for index in test_index]
-        labels = [int(row["news_risk_label"]) for row in train]
-        if len(set(labels)) < 2:
-            continue
-        model = _fit_logistic(train, feature_columns, learning_rate=learning_rate, epochs=epochs, l2=l2)
-        fold_probs = [_predict_logistic(model, row) for row in test]
-        for index, probability in zip(test_index, fold_probs):
-            probabilities[index] = probability
-        fold_reports.append(
-            {
-                "fold_id": fold_id,
-                "train_rows": len(train),
-                "test_rows": len(test),
-                **_classification_metrics([int(row["news_risk_label"]) for row in test], fold_probs),
-            }
-        )
-    if not probabilities:
-        raise ValueError("walk-forward logistic regression produced no out-of-sample predictions")
-    y_true = [int(rows[index]["news_risk_label"]) for index in probabilities]
-    y_prob = [probabilities[index] for index in probabilities]
-    return {
-        "oos_rows": len(probabilities),
-        "folds_completed": len(fold_reports),
-        "folds": fold_reports,
-        **_classification_metrics(y_true, y_prob),
-    }, probabilities
-
-
-def _fit_logistic(
-    rows: list[Mapping[str, Any]],
-    feature_columns: list[str],
-    *,
-    learning_rate: float,
-    epochs: int,
-    l2: float,
-) -> dict[str, Any]:
-    matrix = [[_number(row.get(column)) or 0.0 for column in feature_columns] for row in rows]
-    labels = [float(row["news_risk_label"]) for row in rows]
-    means = [mean(column) for column in zip(*matrix)]
-    stdevs = [pstdev(column) or 1.0 for column in zip(*matrix)]
-    weights = [0.0 for _ in feature_columns]
-    intercept = 0.0
-    for _ in range(max(1, epochs)):
-        grad = [0.0 for _ in weights]
-        intercept_grad = 0.0
-        for features, label in zip(matrix, labels):
-            scaled = [(value - means[i]) / stdevs[i] for i, value in enumerate(features)]
-            prediction = _sigmoid(intercept + sum(w * x for w, x in zip(weights, scaled)))
-            error = prediction - label
-            intercept_grad += error
-            for i, value in enumerate(scaled):
-                grad[i] += error * value
-        n = max(len(matrix), 1)
-        intercept -= learning_rate * intercept_grad / n
-        for i in range(len(weights)):
-            weights[i] -= learning_rate * ((grad[i] / n) + l2 * weights[i])
-    return {"columns": feature_columns, "means": means, "stdevs": stdevs, "weights": weights, "intercept": intercept}
-
-
-def _predict_logistic(model: Mapping[str, Any], row: Mapping[str, Any]) -> float:
-    total = float(model["intercept"])
-    for column, avg, scale, weight in zip(model["columns"], model["means"], model["stdevs"], model["weights"]):
-        total += float(weight) * (((_number(row.get(column)) or 0.0) - float(avg)) / float(scale))
-    return _sigmoid(total)
-
-
-def _classification_metrics(y_true: list[int], y_prob: list[float]) -> dict[str, float]:
-    if not y_true:
-        return {"accuracy": 0.0, "precision": 0.0, "recall": 0.0, "brier": 0.0, "roc_auc": 0.0}
-    predictions = [1 if value >= 0.5 else 0 for value in y_prob]
-    tp = sum(1 for y, p in zip(y_true, predictions) if y == 1 and p == 1)
-    fp = sum(1 for y, p in zip(y_true, predictions) if y == 0 and p == 1)
-    tn = sum(1 for y, p in zip(y_true, predictions) if y == 0 and p == 0)
-    fn = sum(1 for y, p in zip(y_true, predictions) if y == 1 and p == 0)
-    return {
-        "accuracy": (tp + tn) / len(y_true),
-        "precision": tp / max(tp + fp, 1),
-        "recall": tp / max(tp + fn, 1),
-        "brier": mean([(p - y) ** 2 for y, p in zip(y_true, y_prob)]),
-        "roc_auc": _roc_auc(y_true, y_prob),
-        "positive_rate": sum(y_true) / len(y_true),
-    }
-
-
-def _roc_auc(y_true: list[int], y_prob: list[float]) -> float:
-    positive_count = sum(1 for label in y_true if label == 1)
-    negative_count = len(y_true) - positive_count
-    if not positive_count or not negative_count:
-        return 0.0
-    ranked = sorted(zip(y_prob, y_true), key=lambda item: item[0])
-    rank_sum = 0.0
-    rank = 1
-    index = 0
-    while index < len(ranked):
-        end = index + 1
-        while end < len(ranked) and ranked[end][0] == ranked[index][0]:
-            end += 1
-        average_rank = (rank + end) / 2.0
-        rank_sum += average_rank * sum(1 for _, label in ranked[index:end] if label == 1)
-        rank = end + 1
-        index = end
-    return (rank_sum - positive_count * (positive_count + 1) / 2.0) / (
-        positive_count * negative_count
-    )
-
-
-def _apply_probabilities(rows: list[dict[str, Any]], probabilities: Mapping[int, float], column: str) -> None:
-    for index, value in probabilities.items():
-        rows[index][column] = value
-
-
-def _assign_candidate_ids(rows: list[dict[str, Any]], price_score_column: str) -> None:
-    for index, row in enumerate(rows):
-        decision_timestamp = str(row.get("decision_timestamp", row.get("rebalance_date", "")))
-        symbol = str(row.get("symbol", "")).upper()
-        row.setdefault("decision_timestamp", decision_timestamp)
-        row.setdefault("model_version", str(row.get("source_model_type") or row.get("source_model_version") or "news-risk-overlay-research-v1"))
-        payload = "|".join(
-            [
-                decision_timestamp,
-                symbol,
-                str(row.get(price_score_column, "")),
-                str(row.get("price_plus_news_risk_probability", "")),
-                str(row.get("model_version", "")),
-                str(index),
-            ]
-        )
-        row["candidate_id"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
-
-
-def _apply_news_decisions(
-    rows: list[dict[str, Any]],
-    config: NewsRiskOverlayConfig,
-    price_score_column: str,
-) -> list[dict[str, Any]]:
-    decision_rows = []
-    for row in rows:
-        probability = _number(row.get("price_plus_news_risk_probability"))
-        decision = evaluate_candidate(
-            symbol=str(row.get("symbol", "")),
-            decision_timestamp=_timestamp(row),
-            base_position_size=1.0,
-            price_model_score=_number(row.get(price_score_column)) or 0.0,
-            recent_features=row,
-            risk_probability=probability,
-            config=config,
-        )
-        row["news_action"] = decision.action
-        row["news_position_multiplier"] = decision.recommended_position_multiplier
-        decision_rows.append(
-            shadow_decision_row(
-                timestamp=_timestamp(row),
-                symbol=str(row.get("symbol", "")),
-                price_score=_number(row.get(price_score_column)) or 0.0,
-                price_only_position_size=1.0,
-                decision=decision,
-                order_submitted=False,
-                relevant_news_features={key: row[key] for key in row if key.startswith("news_")},
-            )
-        )
-    return decision_rows
-
-
-def _portfolio_comparison(
-    rows: Iterable[Mapping[str, Any]],
-    *,
-    price_score_column: str,
-    return_column: str,
-    top_n: int,
-    starting_equity: float,
-    transaction_cost_bps: float,
-    slippage_bps: float,
-) -> dict[str, Any]:
-    by_date: dict[str, list[Mapping[str, Any]]] = {}
-    for row in rows:
-        by_date.setdefault(str(row.get("decision_timestamp", ""))[:10], []).append(row)
-    control_periods = []
-    experiment_periods = []
-    for date_key in sorted(by_date):
-        ranked = sorted(
-            by_date[date_key],
-            key=lambda row: _number(row.get(price_score_column)) or float("-inf"),
-            reverse=True,
-        )[: max(1, top_n)]
-        if not ranked:
-            continue
-        control_periods.append(
-            _period_accounting_row(
-                date_key,
-                ranked,
-                return_column=return_column,
-                overlay=False,
-                transaction_cost_bps=transaction_cost_bps,
-                slippage_bps=slippage_bps,
-            )
-        )
-        experiment_periods.append(
-            _period_accounting_row(
-                date_key,
-                ranked,
-                return_column=return_column,
-                overlay=True,
-                transaction_cost_bps=transaction_cost_bps,
-                slippage_bps=slippage_bps,
-            )
-        )
-    control_curve = _equity_curve(control_periods, starting_equity=starting_equity, prefix="price_only")
-    experiment_curve = _equity_curve(
-        experiment_periods,
-        starting_equity=starting_equity,
-        prefix="price_plus_news",
-    )
-    control_stats = _portfolio_stats(control_curve, return_column="price_only_period_return_net")
-    experiment_stats = _portfolio_stats(experiment_curve, return_column="price_plus_news_period_return_net")
-    return {
-        "price_score_column": price_score_column,
-        "return_column": return_column,
-        "top_n": top_n,
-        "starting_equity": starting_equity,
-        "transaction_cost_bps": transaction_cost_bps,
-        "slippage_bps": slippage_bps,
-        "accounting_approximation": (
-            "Decision-level marked-to-market approximation using realized forward returns "
-            "from candidate artifacts. Overlapping holdings are approximated by one "
-            "equal-weight decision-period basket per timestamp because the artifacts do "
-            "not include full open-position daily mark-to-market paths."
-        ),
-        "price_only": control_stats,
-        "price_plus_news": experiment_stats,
-        "news_overlay_lowered_drawdown": (
-            experiment_stats["maximum_drawdown"] > control_stats["maximum_drawdown"]
-        ),
-        "incremental_total_return_decimal": (
-            experiment_stats["total_return_decimal"] - control_stats["total_return_decimal"]
-        ),
-        "equity_curve": _merge_curves(control_curve, experiment_curve),
-        "drawdown_curve": _drawdown_curve(control_curve, experiment_curve),
-    }
-
-
-def _period_accounting_row(
-    date_key: str,
-    rows: list[Mapping[str, Any]],
-    *,
-    return_column: str,
-    overlay: bool,
-    transaction_cost_bps: float,
-    slippage_bps: float,
-) -> dict[str, Any]:
-    # trade_return_net is the candidate realized forward return after applying
-    # overlay exposure and subtracting one-way transaction cost plus slippage.
-    # It is not a portfolio total return until basket returns are compounded
-    # through _equity_curve as ending_equity / starting_equity - 1.
-    selected = []
-    total_cost_bps = transaction_cost_bps + slippage_bps
-    for row in rows:
-        multiplier = float(row.get("news_position_multiplier", 1.0) or 0.0) if overlay else 1.0
-        gross_return = (_number(row.get(return_column)) or 0.0) * multiplier
-        trade_cost = abs(multiplier) * total_cost_bps / 10_000.0
-        selected.append(
-            {
-                "symbol": row.get("symbol", ""),
-                "gross_return": gross_return,
-                "trade_return_net": gross_return - trade_cost,
-                "gross_exposure": abs(multiplier),
-                "transaction_cost": trade_cost,
-                "max_adverse_excursion": _adverse_excursion(row),
-            }
-        )
-    denominator = max(len(selected), 1)
-    return {
-        "date": date_key,
-        "period_return_net": sum(row["trade_return_net"] for row in selected) / denominator,
-        "gross_exposure": sum(row["gross_exposure"] for row in selected) / denominator,
-        "net_exposure": sum(row["gross_exposure"] for row in selected) / denominator,
-        "transaction_costs": sum(row["transaction_cost"] for row in selected) / denominator,
-        "number_of_positions": sum(row["gross_exposure"] > 0 for row in selected),
-        "worst_trade": min((row["trade_return_net"] for row in selected), default=0.0),
-        "maximum_adverse_excursion": min(
-            (row["max_adverse_excursion"] for row in selected if row["max_adverse_excursion"] is not None),
-            default=0.0,
-        ),
-    }
-
-
-def _equity_curve(
-    period_rows: list[Mapping[str, Any]],
-    *,
-    starting_equity: float,
-    prefix: str,
-) -> list[dict[str, Any]]:
-    equity = starting_equity
-    peak = starting_equity
-    curve = []
-    previous_exposure = 0.0
-    drawdown_duration = 0
-    for row in period_rows:
-        period_return = float(row["period_return_net"])
-        equity *= 1.0 + period_return
-        peak = max(peak, equity)
-        drawdown = equity / peak - 1.0 if peak else 0.0
-        drawdown_duration = drawdown_duration + 1 if drawdown < 0 else 0
-        exposure = float(row["gross_exposure"])
-        curve.append(
-            {
-                "date": row["date"],
-                f"{prefix}_period_return_net": period_return,
-                f"{prefix}_ending_equity": equity,
-                f"{prefix}_drawdown": drawdown,
-                f"{prefix}_drawdown_duration": drawdown_duration,
-                f"{prefix}_gross_exposure": exposure,
-                f"{prefix}_net_exposure": float(row["net_exposure"]),
-                f"{prefix}_turnover": abs(exposure - previous_exposure),
-                f"{prefix}_transaction_costs": float(row["transaction_costs"]),
-                f"{prefix}_number_of_positions": int(row["number_of_positions"]),
-                f"{prefix}_worst_trade": float(row["worst_trade"]),
-                f"{prefix}_maximum_adverse_excursion": float(row["maximum_adverse_excursion"]),
-            }
-        )
-        previous_exposure = exposure
-    return curve
-
-
-def _portfolio_stats(curve: list[Mapping[str, Any]], *, return_column: str) -> dict[str, float]:
-    if not curve:
-        return {
-            "periods": 0,
-            "starting_equity": 0.0,
-            "ending_equity": 0.0,
-            "total_return_decimal": 0.0,
-            "total_return_percent": 0.0,
-            "wealth_multiple": 0.0,
-            "CAGR": 0.0,
-            "annualised_volatility": 0.0,
-            "maximum_drawdown": 0.0,
-            "average_drawdown": 0.0,
-            "longest_drawdown_duration": 0.0,
-            "Sharpe_ratio": 0.0,
-            "Sortino_ratio": 0.0,
-            "Calmar_ratio": 0.0,
-            "worst_day": 0.0,
-            "worst_trade": 0.0,
-            "maximum_adverse_excursion": 0.0,
-            "expected_shortfall_CVaR_5pct": 0.0,
-            "average_gross_exposure": 0.0,
-            "average_net_exposure": 0.0,
-            "turnover": 0.0,
-            "transaction_costs": 0.0,
-            "number_of_positions": 0.0,
-        }
-    prefix = return_column.replace("_period_return_net", "")
-    returns = [float(row[return_column]) for row in curve]
-    starting_equity = float(curve[0][f"{prefix}_ending_equity"]) / (1.0 + returns[0])
-    ending_equity = float(curve[-1][f"{prefix}_ending_equity"])
-    wealth_multiple = ending_equity / starting_equity if starting_equity else 0.0
-    total_return_decimal = wealth_multiple - 1.0
-    periods_per_year = 252.0
-    years = max(len(returns) / periods_per_year, 1.0 / periods_per_year)
-    downside = [min(value, 0.0) for value in returns]
-    volatility = pstdev(returns) * math.sqrt(periods_per_year) if len(returns) > 1 else 0.0
-    downside_volatility = pstdev(downside) * math.sqrt(periods_per_year) if len(downside) > 1 else 0.0
-    average_period_return = mean(returns)
-    maximum_drawdown = min(float(row[f"{prefix}_drawdown"]) for row in curve)
-    expected_shortfall = _expected_shortfall(returns)
-    return {
-        "periods": len(returns),
-        "starting_equity": starting_equity,
-        "ending_equity": ending_equity,
-        "total_return_decimal": total_return_decimal,
-        "total_return_percent": total_return_decimal * 100.0,
-        "wealth_multiple": wealth_multiple,
-        "CAGR": wealth_multiple ** (1.0 / years) - 1.0 if wealth_multiple > 0 else -1.0,
-        "annualised_volatility": volatility,
-        "maximum_drawdown": maximum_drawdown,
-        "average_drawdown": mean(float(row[f"{prefix}_drawdown"]) for row in curve),
-        "longest_drawdown_duration": max(float(row[f"{prefix}_drawdown_duration"]) for row in curve),
-        "Sharpe_ratio": (average_period_return * periods_per_year) / volatility if volatility else 0.0,
-        "Sortino_ratio": (average_period_return * periods_per_year) / downside_volatility if downside_volatility else 0.0,
-        "Calmar_ratio": (wealth_multiple ** (1.0 / years) - 1.0) / abs(maximum_drawdown) if maximum_drawdown else 0.0,
-        "worst_day": min(returns),
-        "worst_trade": min(float(row[f"{prefix}_worst_trade"]) for row in curve),
-        "maximum_adverse_excursion": min(float(row[f"{prefix}_maximum_adverse_excursion"]) for row in curve),
-        "expected_shortfall_CVaR_5pct": expected_shortfall,
-        "average_gross_exposure": mean(float(row[f"{prefix}_gross_exposure"]) for row in curve),
-        "average_net_exposure": mean(float(row[f"{prefix}_net_exposure"]) for row in curve),
-        "turnover": sum(float(row[f"{prefix}_turnover"]) for row in curve),
-        "transaction_costs": sum(float(row[f"{prefix}_transaction_costs"]) for row in curve),
-        "number_of_positions": sum(float(row[f"{prefix}_number_of_positions"]) for row in curve),
-    }
-
-
 def _feature_columns(rows: list[Mapping[str, Any]], *, include_news: bool) -> list[str]:
     columns = []
     all_columns = list(dict.fromkeys(key for row in rows for key in row))
@@ -1361,56 +974,6 @@ def _feature_columns(rows: list[Mapping[str, Any]], *, include_news: bool) -> li
         news = [column for column in columns if column.startswith("news_")]
         return [*price, *news]
     return columns
-
-
-def _merge_curves(
-    control_curve: list[Mapping[str, Any]],
-    experiment_curve: list[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    rows = []
-    for control, experiment in zip(control_curve, experiment_curve):
-        rows.append({**control, **{k: v for k, v in experiment.items() if k != "date"}})
-    return rows
-
-
-def _drawdown_curve(
-    control_curve: list[Mapping[str, Any]],
-    experiment_curve: list[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    rows = []
-    for control, experiment in zip(control_curve, experiment_curve):
-        rows.append(
-            {
-                "date": control["date"],
-                "price_only_drawdown": control["price_only_drawdown"],
-                "price_plus_news_drawdown": experiment["price_plus_news_drawdown"],
-                "price_only_drawdown_duration": control["price_only_drawdown_duration"],
-                "price_plus_news_drawdown_duration": experiment["price_plus_news_drawdown_duration"],
-            }
-        )
-    return rows
-
-
-def _expected_shortfall(returns: list[float], tail_fraction: float = 0.05) -> float:
-    if not returns:
-        return 0.0
-    count = max(1, math.ceil(len(returns) * tail_fraction))
-    return mean(sorted(returns)[:count])
-
-
-def _adverse_excursion(row: Mapping[str, Any]) -> float | None:
-    for column in (
-        "actual_max_adverse_excursion",
-        "forward_max_adverse_excursion",
-        "max_adverse_excursion",
-    ):
-        value = _number(row.get(column))
-        if value is not None:
-            return value
-    drawdown = _number(row.get("actual_future_drawdown"))
-    if drawdown is not None:
-        return -abs(drawdown)
-    return None
 
 
 def _limit_features(
@@ -10675,8 +10238,3 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
-
-
-def _sigmoid(value: float) -> float:
-    value = max(-35.0, min(35.0, value))
-    return 1.0 / (1.0 + math.exp(-value))
