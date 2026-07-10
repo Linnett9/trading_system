@@ -171,120 +171,61 @@ def write_stock_alpha_news_risk_overlay_research(
     config: Mapping[str, Any],
 ) -> NewsRiskResearchPaths:
     run_started = time.perf_counter()
-    ml = dict(config.get("ml", {}) or {})
-    parallel_config = _parallel_config(ml)
-    parallel_report = _parallel_report_skeleton(parallel_config)
-    output_dir = Path(
-        str(
-            ml.get(
-                "stock_alpha_news_risk_overlay_output_dir",
-                "research-results/stock_alpha_news_risk_overlay",
-            )
-        )
-    )
+    runtime = _resolve_news_risk_runtime_config(config)
+    ml = runtime["ml"]
+    parallel_config = runtime["parallel_config"]
+    parallel_report = runtime["parallel_report"]
+    output_dir = runtime["output_dir"]
     with _timed_phase(parallel_report, "sequential_preflight"):
         _check_output_disk_space(output_dir, ml)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with _timed_phase(parallel_report, "input_loading"):
-        price_path = _locate_price_candidates(config)
-        news_path = _locate_news_features(config)
-        price_rows = _read_csv(price_path)
-        news_rows = _read_csv(news_path)
-        _validate_source_rows(price_rows, news_rows, price_path, news_path)
-
-    overlay_config = NewsRiskOverlayConfig(
-        decision_timestamp_column=_optional_str(
-            ml.get("stock_alpha_news_risk_overlay_decision_timestamp_column")
-        ),
-        news_timestamp_preference=tuple(dict.fromkeys((*TIMESTAMP_COLUMNS, *DECISION_TIMESTAMP_COLUMNS))),
-        adverse_return_threshold=float(
-            ml.get("stock_alpha_news_risk_overlay_adverse_return_threshold", -0.05)
-        ),
-        block_threshold=float(ml.get("stock_alpha_news_risk_overlay_block_threshold", 0.70)),
-        reduce_threshold=float(ml.get("stock_alpha_news_risk_overlay_reduce_threshold", 0.50)),
-        reduce_multiplier=float(ml.get("stock_alpha_news_risk_overlay_reduce_multiplier", 0.50)),
-        model_version=str(ml.get("stock_alpha_news_risk_overlay_model_version", "news-risk-overlay-research-v1")),
+    price_path, news_path, price_rows, news_rows = _load_news_risk_research_inputs(
+        config,
+        ml,
+        parallel_report,
     )
-    with _timed_phase(parallel_report, "point_in_time_join"):
-        joined, leakage = join_news_to_stock_alpha_observations(price_rows, news_rows, overlay_config)
-        labeled = build_news_risk_labels(joined, overlay_config)
-    coverage = _coverage_report(labeled, leakage)
-    min_coverage = float(ml.get("stock_alpha_news_risk_overlay_min_coverage_ratio", 0.01))
-    if coverage["covered_row_count"] <= 0 or coverage["row_coverage_ratio"] < min_coverage:
-        raise ValueError(
-            "stock-alpha news risk overlay coverage unavailable: "
-            f"covered_row_count={coverage['covered_row_count']} "
-            f"row_coverage_ratio={coverage['row_coverage_ratio']:.4f} "
-            f"required_min={min_coverage:.4f}"
-        )
-    if leakage.get("leakage_violation_count", 0):
-        raise ValueError("timestamp leakage detected in joined news features")
+    overlay_config = _build_news_risk_overlay_config(ml)
+    labeled_dataset = _build_labeled_news_risk_dataset(
+        price_rows,
+        news_rows,
+        overlay_config,
+        ml,
+        parallel_report,
+    )
+    labeled = labeled_dataset["labeled"]
+    leakage = labeled_dataset["leakage"]
+    coverage = labeled_dataset["coverage"]
 
     folds = int(ml.get("stock_alpha_news_risk_overlay_walk_forward_folds", 3))
     embargo_days = int(ml.get("stock_alpha_news_risk_overlay_embargo_days", 0))
-    learning_rate = float(ml.get("stock_alpha_news_risk_overlay_learning_rate", 0.05))
-    epochs = int(ml.get("stock_alpha_news_risk_overlay_epochs", 60))
-    l2 = float(ml.get("stock_alpha_news_risk_overlay_l2", 0.01))
-    max_train_rows = int(ml.get("stock_alpha_news_risk_overlay_max_train_rows", 12000))
-    max_features = int(ml.get("stock_alpha_news_risk_overlay_max_features", 48))
     dataset_max_rows = int(ml.get("stock_alpha_news_risk_overlay_dataset_max_rows", 5000))
     shadow_max_rows = int(ml.get("stock_alpha_news_risk_overlay_shadow_max_rows", 5000))
     audit_detail_max_rows = int(ml.get("stock_alpha_news_risk_overlay_audit_detail_max_rows", 1000))
-    price_score_column = _choose_column(
-        labeled,
-        _configured_first(ml.get("stock_alpha_news_risk_overlay_price_score_column"), PRICE_SCORE_COLUMNS),
-        "price score",
-    )
-    return_column = _choose_column(
-        labeled,
-        _configured_first(ml.get("stock_alpha_news_risk_overlay_return_column"), RETURN_COLUMNS),
-        "portfolio return",
-    )
-    price_feature_columns = _limit_features(
-        _feature_columns(labeled, include_news=False),
-        labeled,
-        max_features=max_features,
-    )
-    price_news_feature_columns = _limit_features(
-        _feature_columns(labeled, include_news=True),
-        labeled,
-        max_features=max_features,
-        require_news=True,
-    )
-    if not price_feature_columns:
-        raise ValueError("no numeric price candidate features available for price-only baseline")
-    if not any(column.startswith("news_") for column in price_news_feature_columns):
-        raise ValueError("no numeric joined news features available for price-plus-news baseline")
+    selected_features = _select_news_risk_features(labeled, ml)
+    price_score_column = selected_features["price_score_column"]
+    return_column = selected_features["return_column"]
+    price_feature_columns = selected_features["price_feature_columns"]
+    price_news_feature_columns = selected_features["price_news_feature_columns"]
 
     splits = chronological_splits(labeled, folds=folds, embargo_days=embargo_days)
     if not splits:
         raise ValueError("not enough timestamped rows for chronological walk-forward splits")
 
-    with _timed_phase(parallel_report, "model_diagnostics"):
-        price_metrics, price_probs = _walk_forward_logistic(
-            labeled,
-            price_feature_columns,
-            splits,
-            learning_rate=learning_rate,
-            epochs=epochs,
-            l2=l2,
-            max_train_rows=max_train_rows,
-        )
-        news_metrics, news_probs = _walk_forward_logistic(
-            labeled,
-            price_news_feature_columns,
-            splits,
-            learning_rate=learning_rate,
-            epochs=epochs,
-            l2=l2,
-            max_train_rows=max_train_rows,
-        )
-        _apply_probabilities(labeled, price_probs, "price_only_news_risk_probability")
-        _apply_probabilities(labeled, news_probs, "price_plus_news_risk_probability")
-        _assign_candidate_ids(labeled, price_score_column)
-        decision_rows = _apply_news_decisions(labeled, overlay_config, price_score_column)
-        oos_rows = [row for index, row in enumerate(labeled) if index in news_probs]
+    diagnostics = _run_news_risk_model_diagnostics(
+        labeled,
+        splits,
+        price_feature_columns,
+        price_news_feature_columns,
+        ml,
+        overlay_config,
+        price_score_column,
+        parallel_report,
+    )
+    price_metrics = diagnostics["price_metrics"]
+    news_metrics = diagnostics["news_metrics"]
+    decision_rows = diagnostics["decision_rows"]
+    oos_rows = diagnostics["oos_rows"]
     portfolio = _portfolio_comparison(
         oos_rows,
         price_score_column=price_score_column,
@@ -566,6 +507,169 @@ def write_stock_alpha_news_risk_overlay_research(
     parallel_report["determinism_status"] = _parallel_determinism_status(parallel_report)
     _write_json(paths.parallel_execution_report_json_path, parallel_report)
     return paths
+
+
+def _resolve_news_risk_runtime_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    ml = dict(config.get("ml", {}) or {})
+    parallel_config = _parallel_config(ml)
+    parallel_report = _parallel_report_skeleton(parallel_config)
+    output_dir = Path(
+        str(
+            ml.get(
+                "stock_alpha_news_risk_overlay_output_dir",
+                "research-results/stock_alpha_news_risk_overlay",
+            )
+        )
+    )
+    return {
+        "ml": ml,
+        "parallel_config": parallel_config,
+        "parallel_report": parallel_report,
+        "output_dir": output_dir,
+    }
+
+
+def _load_news_risk_research_inputs(
+    config: Mapping[str, Any],
+    ml: Mapping[str, Any],
+    parallel_report: dict[str, Any],
+) -> tuple[Path, Path, list[dict[str, str]], list[dict[str, str]]]:
+    del ml
+    with _timed_phase(parallel_report, "input_loading"):
+        price_path = _locate_price_candidates(config)
+        news_path = _locate_news_features(config)
+        price_rows = _read_csv(price_path)
+        news_rows = _read_csv(news_path)
+        _validate_source_rows(price_rows, news_rows, price_path, news_path)
+    return price_path, news_path, price_rows, news_rows
+
+
+def _build_news_risk_overlay_config(ml: Mapping[str, Any]) -> NewsRiskOverlayConfig:
+    return NewsRiskOverlayConfig(
+        decision_timestamp_column=_optional_str(
+            ml.get("stock_alpha_news_risk_overlay_decision_timestamp_column")
+        ),
+        news_timestamp_preference=tuple(dict.fromkeys((*TIMESTAMP_COLUMNS, *DECISION_TIMESTAMP_COLUMNS))),
+        adverse_return_threshold=float(
+            ml.get("stock_alpha_news_risk_overlay_adverse_return_threshold", -0.05)
+        ),
+        block_threshold=float(ml.get("stock_alpha_news_risk_overlay_block_threshold", 0.70)),
+        reduce_threshold=float(ml.get("stock_alpha_news_risk_overlay_reduce_threshold", 0.50)),
+        reduce_multiplier=float(ml.get("stock_alpha_news_risk_overlay_reduce_multiplier", 0.50)),
+        model_version=str(ml.get("stock_alpha_news_risk_overlay_model_version", "news-risk-overlay-research-v1")),
+    )
+
+
+def _build_labeled_news_risk_dataset(
+    price_rows: list[dict[str, str]],
+    news_rows: list[dict[str, str]],
+    overlay_config: NewsRiskOverlayConfig,
+    ml: Mapping[str, Any],
+    parallel_report: dict[str, Any],
+) -> dict[str, Any]:
+    with _timed_phase(parallel_report, "point_in_time_join"):
+        joined, leakage = join_news_to_stock_alpha_observations(price_rows, news_rows, overlay_config)
+        labeled = build_news_risk_labels(joined, overlay_config)
+    coverage = _coverage_report(labeled, leakage)
+    min_coverage = float(ml.get("stock_alpha_news_risk_overlay_min_coverage_ratio", 0.01))
+    if coverage["covered_row_count"] <= 0 or coverage["row_coverage_ratio"] < min_coverage:
+        raise ValueError(
+            "stock-alpha news risk overlay coverage unavailable: "
+            f"covered_row_count={coverage['covered_row_count']} "
+            f"row_coverage_ratio={coverage['row_coverage_ratio']:.4f} "
+            f"required_min={min_coverage:.4f}"
+        )
+    if leakage.get("leakage_violation_count", 0):
+        raise ValueError("timestamp leakage detected in joined news features")
+    return {
+        "labeled": labeled,
+        "leakage": leakage,
+        "coverage": coverage,
+    }
+
+
+def _select_news_risk_features(
+    labeled: list[dict[str, Any]],
+    ml: Mapping[str, Any],
+) -> dict[str, Any]:
+    max_features = int(ml.get("stock_alpha_news_risk_overlay_max_features", 48))
+    price_score_column = _choose_column(
+        labeled,
+        _configured_first(ml.get("stock_alpha_news_risk_overlay_price_score_column"), PRICE_SCORE_COLUMNS),
+        "price score",
+    )
+    return_column = _choose_column(
+        labeled,
+        _configured_first(ml.get("stock_alpha_news_risk_overlay_return_column"), RETURN_COLUMNS),
+        "portfolio return",
+    )
+    price_feature_columns = _limit_features(
+        _feature_columns(labeled, include_news=False),
+        labeled,
+        max_features=max_features,
+    )
+    price_news_feature_columns = _limit_features(
+        _feature_columns(labeled, include_news=True),
+        labeled,
+        max_features=max_features,
+        require_news=True,
+    )
+    if not price_feature_columns:
+        raise ValueError("no numeric price candidate features available for price-only baseline")
+    if not any(column.startswith("news_") for column in price_news_feature_columns):
+        raise ValueError("no numeric joined news features available for price-plus-news baseline")
+    return {
+        "price_score_column": price_score_column,
+        "return_column": return_column,
+        "price_feature_columns": price_feature_columns,
+        "price_news_feature_columns": price_news_feature_columns,
+    }
+
+
+def _run_news_risk_model_diagnostics(
+    labeled: list[dict[str, Any]],
+    splits: list[tuple[list[int], list[int]]],
+    price_feature_columns: list[str],
+    price_news_feature_columns: list[str],
+    ml: Mapping[str, Any],
+    overlay_config: NewsRiskOverlayConfig,
+    price_score_column: str,
+    parallel_report: dict[str, Any],
+) -> dict[str, Any]:
+    learning_rate = float(ml.get("stock_alpha_news_risk_overlay_learning_rate", 0.05))
+    epochs = int(ml.get("stock_alpha_news_risk_overlay_epochs", 60))
+    l2 = float(ml.get("stock_alpha_news_risk_overlay_l2", 0.01))
+    max_train_rows = int(ml.get("stock_alpha_news_risk_overlay_max_train_rows", 12000))
+    with _timed_phase(parallel_report, "model_diagnostics"):
+        price_metrics, price_probs = _walk_forward_logistic(
+            labeled,
+            price_feature_columns,
+            splits,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            l2=l2,
+            max_train_rows=max_train_rows,
+        )
+        news_metrics, news_probs = _walk_forward_logistic(
+            labeled,
+            price_news_feature_columns,
+            splits,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            l2=l2,
+            max_train_rows=max_train_rows,
+        )
+        _apply_probabilities(labeled, price_probs, "price_only_news_risk_probability")
+        _apply_probabilities(labeled, news_probs, "price_plus_news_risk_probability")
+        _assign_candidate_ids(labeled, price_score_column)
+        decision_rows = _apply_news_decisions(labeled, overlay_config, price_score_column)
+        oos_rows = [row for index, row in enumerate(labeled) if index in news_probs]
+    return {
+        "price_metrics": price_metrics,
+        "news_metrics": news_metrics,
+        "decision_rows": decision_rows,
+        "oos_rows": oos_rows,
+    }
 
 
 def write_stock_alpha_news_risk_overlay_parallel_benchmark(
