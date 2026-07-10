@@ -35,6 +35,9 @@ from core.research.ml.stock_level.news_transformer import (
     build_news_transformer_readiness_report,
     build_news_transformer_training_plan,
 )
+from core.research.ml.stock_level.news_risk_overlay_research_artifacts import (
+    write_news_risk_research_artifacts,
+)
 from core.research.ml.stock_level.news_risk_overlay_research_paths import (
     NewsRiskResearchPaths,
     build_news_risk_research_paths,
@@ -513,193 +516,51 @@ def write_stock_alpha_news_risk_overlay_research(
         "paper_orders_enabled": False,
     }
     with _timed_phase(parallel_report, "report_writing"):
-        _write_csv(paths.dataset_csv_path, _limited_rows(labeled, dataset_max_rows))
-        _write_csv(paths.shadow_csv_path, _limited_rows(decision_rows, shadow_max_rows))
-        _write_json(paths.coverage_json_path, coverage)
-        _write_json(paths.leakage_json_path, _limited_audit_details(leakage, audit_detail_max_rows))
-        _write_json(paths.metrics_json_path, metrics)
-        _write_json(paths.portfolio_json_path, portfolio)
-        _write_json(paths.accounting_json_path, _accounting_definitions())
-        _write_json(paths.accounting_audit_json_path, _accounting_audit(portfolio))
-        _write_csv(paths.equity_curve_csv_path, portfolio["equity_curve"])
-        _write_csv(paths.drawdown_curve_csv_path, portfolio["drawdown_curve"])
-        _write_csv(paths.trade_ledger_csv_path, replay["trade_ledger"])
-        _write_csv(paths.daily_equity_price_only_csv_path, replay["daily_equity"]["price_only"])
-        _write_csv(paths.daily_equity_news_cash_csv_path, replay["daily_equity"]["news_cash"])
-        _write_csv(paths.daily_equity_news_replacement_csv_path, replay["daily_equity"]["news_replacement"])
-        _write_csv(paths.daily_equity_news_reduced_size_csv_path, replay["daily_equity"]["news_reduced_size"])
-        _write_json(paths.open_trade_portfolio_json_path, replay["portfolio_comparison"])
-        _write_json(paths.replay_risk_metrics_json_path, replay["risk_metrics"])
-        _write_json(paths.action_attribution_json_path, replay["action_attribution"])
-        _write_json(paths.score_direction_audit_json_path, score_direction_audit)
-        _write_csv(paths.news_score_deciles_csv_path, score_decile_rows)
-        _write_csv(paths.corrected_news_score_deciles_csv_path, score_decile_rows)
-        _write_json(paths.decile_join_audit_json_path, decile_join_audit)
-        _write_json(paths.decile_trade_reconciliation_json_path, decile_reconciliation)
-        _write_json(paths.news_score_direction_report_json_path, score_direction_report)
-        paths.news_score_direction_summary_md_path.write_text(
-            _score_direction_markdown(score_direction_report),
-            encoding="utf-8",
-        )
-        _write_json(paths.replay_action_attribution_json_path, replay_action_attribution)
-        _write_json(paths.event_category_analysis_json_path, event_category_analysis)
-        _write_json(paths.contrarian_strategy_comparison_json_path, contrarian_report)
-        _write_csv(paths.contrarian_trade_ledger_csv_path, replay.get("contrarian_trade_ledger", []))
-        _write_json(paths.price_stabilisation_comparison_json_path, price_stabilisation)
-        _write_json(paths.resilience_filter_analysis_json_path, resilience_analysis)
-        _write_csv(paths.extreme_event_archive_csv_path, extreme_archive_rows)
-        _write_json(paths.extreme_event_memory_report_json_path, extreme_memory_report)
-        _write_json(paths.cost_scenario_comparison_json_path, cost_scenarios)
-        _write_json(paths.chronological_split_manifest_json_path, validation["chronological_split_manifest"])
-        _append_experiment_registry_entry(
-            paths.experiment_registry_jsonl_path,
-            rows=oos_rows,
-            replay=replay,
-            validation=validation,
+        write_news_risk_research_artifacts(
+            paths=paths,
+            labeled=labeled,
+            dataset_max_rows=dataset_max_rows,
+            decision_rows=decision_rows,
+            shadow_max_rows=shadow_max_rows,
             coverage=coverage,
-            event_category_analysis=event_category_analysis,
+            leakage=leakage,
+            audit_detail_max_rows=audit_detail_max_rows,
+            metrics=metrics,
+            portfolio=portfolio,
+            replay=replay,
+            score_direction_audit=score_direction_audit,
+            score_decile_rows=score_decile_rows,
+            decile_join_audit=decile_join_audit,
             decile_reconciliation=decile_reconciliation,
+            score_direction_report=score_direction_report,
+            replay_action_attribution=replay_action_attribution,
+            event_category_analysis=event_category_analysis,
+            contrarian_report=contrarian_report,
+            price_stabilisation=price_stabilisation,
+            resilience_analysis=resilience_analysis,
+            extreme_archive_rows=extreme_archive_rows,
+            extreme_memory_report=extreme_memory_report,
+            cost_scenarios=cost_scenarios,
+            validation=validation,
+            oos_rows=oos_rows,
+            manifest=manifest,
             config=ml,
-        )
-        _write_csv(paths.contrarian_grid_results_csv_path, validation["contrarian_grid_results"])
-        _write_json(paths.contrarian_grid_selection_json_path, validation["contrarian_grid_selection"])
-        _write_csv(paths.contrarian_fold_results_csv_path, validation["contrarian_fold_results"])
-        _write_json(paths.contrarian_parameter_stability_json_path, validation["contrarian_parameter_stability"])
-        _write_json(paths.contrarian_frozen_config_json_path, validation["contrarian_frozen_config"])
-        _write_json(paths.contrarian_holdout_report_json_path, validation["contrarian_holdout_report"])
-        _write_csv(paths.contrarian_holdout_trade_ledger_csv_path, validation["contrarian_holdout_trade_ledger"])
-        _write_csv(paths.contrarian_holdout_equity_csv_path, validation["contrarian_holdout_equity"])
-        paths.contrarian_holdout_comparison_md_path.write_text(
-            validation["contrarian_holdout_comparison_md"],
-            encoding="utf-8",
-        )
-        _write_csv(paths.contrarian_walk_forward_folds_csv_path, validation["contrarian_walk_forward_folds"])
-        _write_json(paths.contrarian_walk_forward_summary_json_path, validation["contrarian_walk_forward_summary"])
-        _write_json(paths.contrarian_chronological_validation_plan_json_path, validation["contrarian_chronological_validation_plan"])
-        _write_csv(paths.contrarian_chronological_periods_csv_path, validation["contrarian_chronological_periods"])
-        _write_json(paths.contrarian_walk_forward_validation_report_json_path, validation["contrarian_walk_forward_validation_report"])
-        _write_json(paths.contrarian_placebo_permutation_report_json_path, validation["contrarian_placebo_permutation_report"])
-        _write_csv(paths.contrarian_placebo_permutation_results_csv_path, validation["contrarian_placebo_permutation_results"])
-        _write_json(paths.contrarian_matched_control_report_json_path, validation["contrarian_matched_control_report"])
-        _write_csv(paths.contrarian_matched_control_results_csv_path, validation["contrarian_matched_control_results"])
-        _write_json(paths.contrarian_profit_concentration_report_json_path, validation["contrarian_profit_concentration_report"])
-        _write_csv(paths.contrarian_trade_fragility_by_symbol_csv_path, validation["contrarian_trade_fragility_by_symbol"])
-        _write_csv(paths.contrarian_trade_fragility_by_year_csv_path, validation["contrarian_trade_fragility_by_year"])
-        _write_csv(paths.contrarian_top_trade_removal_csv_path, validation["contrarian_top_trade_removal"])
-        _write_json(paths.contrarian_year_regime_report_json_path, validation["contrarian_year_regime_report"])
-        _write_csv(paths.contrarian_year_regime_results_csv_path, validation["contrarian_year_regime_results"])
-        _write_csv(paths.contrarian_year_regime_examples_csv_path, validation["contrarian_year_regime_examples"])
-        _write_json(paths.contrarian_symbol_year_ablation_report_json_path, validation["contrarian_symbol_year_ablation_report"])
-        _write_csv(paths.contrarian_without_top_symbols_csv_path, validation["contrarian_without_top_symbols"])
-        _write_csv(paths.contrarian_without_top_years_csv_path, validation["contrarian_without_top_years"])
-        _write_json(paths.contrarian_cost_slippage_robustness_report_json_path, validation["contrarian_cost_slippage_robustness_report"])
-        _write_csv(paths.contrarian_cost_slippage_robustness_csv_path, validation["contrarian_cost_slippage_robustness"])
-        _write_json(paths.contrarian_data_validity_audit_json_path, validation["contrarian_data_validity_audit"])
-        _write_json(paths.intraday_5min_expansion_plan_json_path, validation["intraday_5min_expansion_plan"])
-        _write_csv(paths.contrarian_placebo_results_csv_path, validation["contrarian_placebo_results"])
-        _write_json(paths.contrarian_placebo_summary_json_path, validation["contrarian_placebo_summary"])
-        _write_json(paths.contrarian_matched_controls_json_path, validation["contrarian_matched_controls"])
-        _write_csv(paths.contrarian_contribution_by_year_csv_path, validation["contrarian_contribution_by_year"])
-        _write_csv(paths.contrarian_contribution_by_symbol_csv_path, validation["contrarian_contribution_by_symbol"])
-        _write_json(paths.contrarian_concentration_report_json_path, validation["contrarian_concentration_report"])
-        _write_json(paths.universe_survivorship_audit_json_path, validation["universe_survivorship_audit"])
-        _write_csv(paths.universe_membership_by_date_csv_path, validation["universe_membership_by_date"])
-        _write_json(paths.corporate_action_audit_json_path, validation["corporate_action_audit"])
-        _write_json(paths.missing_news_bias_report_json_path, validation["missing_news_bias_report"])
-        _write_csv(paths.covered_vs_uncovered_candidates_csv_path, validation["covered_vs_uncovered_candidates"])
-        _write_json(paths.text_model_readiness_json_path, validation["text_model_readiness"])
-        _write_json(paths.news_transformer_readiness_json_path, validation["news_transformer_readiness"])
-        _write_json(paths.news_transformer_training_plan_json_path, validation["news_transformer_training_plan"])
-        _write_json(paths.catastrophic_news_audit_json_path, validation["catastrophic_news_audit"])
-        _write_csv(paths.catastrophic_news_candidates_csv_path, validation["catastrophic_news_candidates"])
-        _write_json(paths.catastrophic_news_veto_report_json_path, validation["catastrophic_news_veto_report"])
-        _write_json(paths.catastrophic_veto_candidate_attribution_json_path, validation["catastrophic_veto_candidate_attribution"])
-        _write_csv(paths.catastrophic_veto_trade_attribution_csv_path, validation["catastrophic_veto_trade_attribution"])
-        _write_json(paths.catastrophic_veto_strategy_comparison_json_path, validation["catastrophic_veto_strategy_comparison"])
-        _write_json(paths.catastrophic_veto_policy_json_path, validation["catastrophic_veto_policy"])
-        _write_json(paths.catastrophic_veto_filtered_strategy_report_json_path, validation["catastrophic_veto_filtered_strategy_report"])
-        _write_csv(paths.catastrophic_veto_removed_trades_csv_path, validation["catastrophic_veto_removed_trades"])
-        _write_csv(paths.catastrophic_veto_removed_symbols_csv_path, validation["catastrophic_veto_removed_symbols"])
-        _write_json(paths.catastrophic_veto_full_replay_report_json_path, validation["catastrophic_veto_full_replay_report"])
-        _write_csv(
-            paths.catastrophic_veto_full_replay_trade_ledger_csv_path,
-            validation["catastrophic_veto_full_replay_trade_ledger"],
-            empty_fields=("trade_id", "candidate_id", "symbol", "strategy_variant", "entry_date", "exit_date"),
-        )
-        _write_csv(
-            paths.catastrophic_veto_full_replay_equity_csv_path,
-            validation["catastrophic_veto_full_replay_equity"],
-            empty_fields=("date", "strategy_variant", "total_equity", "daily_return"),
-        )
-        _write_csv(paths.catastrophic_veto_filtered_candidates_csv_path, validation["catastrophic_veto_filtered_candidates"])
-        _write_csv(paths.catastrophic_veto_blocked_candidates_csv_path, validation["catastrophic_veto_blocked_candidates"])
-        _write_json(paths.catastrophic_veto_replay_seam_report_json_path, validation["catastrophic_veto_replay_seam_report"])
-        _write_json(paths.catastrophic_veto_bounceback_report_json_path, validation["catastrophic_veto_bounceback_report"])
-        _write_csv(paths.catastrophic_veto_bounceback_by_category_csv_path, validation["catastrophic_veto_bounceback_by_category"])
-        _write_csv(paths.catastrophic_veto_bounceback_examples_csv_path, validation["catastrophic_veto_bounceback_examples"])
-        _write_json(paths.catastrophic_veto_extreme_only_policy_proposal_json_path, validation["catastrophic_veto_extreme_only_policy_proposal"])
-        _write_json(paths.catastrophic_veto_policy_variant_comparison_json_path, validation["catastrophic_veto_policy_variant_comparison"])
-        _write_csv(paths.catastrophic_veto_policy_variant_counts_csv_path, validation["catastrophic_veto_policy_variant_counts"])
-        _write_csv(paths.catastrophic_veto_policy_variant_metrics_csv_path, validation["catastrophic_veto_policy_variant_metrics"])
-        _write_csv(paths.catastrophic_veto_policy_variant_removed_trades_csv_path, validation["catastrophic_veto_policy_variant_removed_trades"])
-        _write_csv(paths.catastrophic_veto_policy_variant_bounceback_csv_path, validation["catastrophic_veto_policy_variant_bounceback"])
-        _write_json(paths.catastrophic_veto_policy_frontier_report_json_path, validation["catastrophic_veto_policy_frontier_report"])
-        _write_csv(paths.catastrophic_veto_policy_frontier_csv_path, validation["catastrophic_veto_policy_frontier"])
-        _write_csv(paths.catastrophic_veto_policy_variant_examples_csv_path, validation["catastrophic_veto_policy_variant_examples"])
-        _write_json(paths.catastrophic_veto_loser_bounceback_casebook_json_path, validation["catastrophic_veto_loser_bounceback_casebook"])
-        _write_csv(paths.catastrophic_veto_loser_bounceback_cases_csv_path, validation["catastrophic_veto_loser_bounceback_cases"])
-        _write_csv(paths.catastrophic_veto_loser_bounceback_feature_diff_csv_path, validation["catastrophic_veto_loser_bounceback_feature_diff"])
-        _write_csv(paths.catastrophic_veto_loser_bounceback_keyword_diff_csv_path, validation["catastrophic_veto_loser_bounceback_keyword_diff"])
-        _write_json(paths.catastrophic_veto_taxonomy_improvement_plan_json_path, validation["catastrophic_veto_taxonomy_improvement_plan"])
-        _write_json(paths.catastrophic_veto_parked_status_json_path, validation["catastrophic_veto_parked_status"])
-        _write_json(paths.catastrophic_news_evidence_quality_report_json_path, validation["catastrophic_news_evidence_quality_report"])
-        _write_csv(paths.catastrophic_news_evidence_quality_by_field_csv_path, validation["catastrophic_news_evidence_quality_by_field"])
-        _write_csv(paths.catastrophic_news_evidence_quality_by_symbol_csv_path, validation["catastrophic_news_evidence_quality_by_symbol"])
-        _write_json(paths.catastrophic_veto_policy_mode_comparison_json_path, validation["catastrophic_veto_policy_mode_comparison"])
-        _write_csv(paths.catastrophic_veto_policy_mode_counts_csv_path, validation["catastrophic_veto_policy_mode_counts"])
-        _write_json(paths.news_evidence_lineage_report_json_path, validation["news_evidence_lineage_report"])
-        _write_csv(paths.news_evidence_lineage_by_stage_csv_path, validation["news_evidence_lineage_by_stage"])
-        _write_csv(paths.news_evidence_missing_field_examples_csv_path, validation["news_evidence_missing_field_examples"])
-        _write_json(paths.news_evidence_readiness_report_json_path, validation["news_evidence_readiness_report"])
-        _write_json(paths.news_event_taxonomy_report_json_path, validation["news_event_taxonomy_report"])
-        _write_csv(paths.news_event_taxonomy_counts_csv_path, validation["news_event_taxonomy_counts"])
-        _write_csv(paths.news_event_taxonomy_examples_csv_path, validation["news_event_taxonomy_examples"])
-        _write_json(paths.news_duplicate_grouping_report_json_path, validation["news_duplicate_grouping_report"])
-        _write_csv(paths.news_duplicate_grouping_examples_csv_path, validation["news_duplicate_grouping_examples"])
-        _write_json(paths.news_point_in_time_text_safety_report_json_path, validation["news_point_in_time_text_safety_report"])
-        _write_csv(paths.news_point_in_time_text_safety_examples_csv_path, validation["news_point_in_time_text_safety_examples"])
-        _write_json(paths.news_text_keyword_baseline_report_json_path, validation["news_text_keyword_baseline_report"])
-        _write_csv(paths.news_text_keyword_baseline_scores_csv_path, validation["news_text_keyword_baseline_scores"])
-        _write_json(paths.validation_stage_placeholders_json_path, validation["validation_stage_placeholders"])
-        _write_json(paths.walk_forward_validation_report_json_path, validation["walk_forward_validation_report"])
-        _write_csv(paths.walk_forward_fold_results_csv_path, validation["walk_forward_fold_results"])
-        _write_json(paths.placebo_permutation_report_json_path, validation["placebo_permutation_report"])
-        _write_csv(paths.placebo_permutation_results_csv_path, validation["placebo_permutation_results"])
-        _write_json(paths.exposure_matched_controls_json_path, validation["exposure_matched_controls"])
-        _write_json(paths.trade_count_matched_controls_json_path, validation["trade_count_matched_controls"])
-        _write_json(paths.concentration_fragility_report_json_path, validation["concentration_fragility_report"])
-        _write_json(paths.replay_assumptions_json_path, replay["replay_assumptions"])
-        _write_json(paths.replay_data_audit_json_path, replay["replay_data_audit"])
-        _write_json(paths.manifest_json_path, manifest)
-        _write_json(paths.artifact_manifest_json_path, _research_artifact_manifest(paths))
-        _write_json(paths.artifact_validation_report_json_path, _artifact_validation_report(paths))
-        _write_json(paths.news_validation_workflow_map_json_path, _news_validation_workflow_map(paths))
-        _write_json(paths.validation_dependency_graph_json_path, _validation_dependency_graph(paths))
-        _write_json(paths.validation_readiness_dashboard_json_path, _validation_readiness_dashboard(paths))
-        _write_json(paths.artifact_lineage_report_json_path, _artifact_lineage_report(paths))
-        _write_json(paths.news_validation_gap_analysis_json_path, _news_validation_gap_analysis(paths))
-        paths.markdown_path.write_text(
-            _markdown(
-                manifest,
-                coverage,
-                metrics,
-                portfolio,
-                replay,
-                score_direction_report,
-                contrarian_report,
-                cost_scenarios,
-            ),
-            encoding="utf-8",
+            write_csv=_write_csv,
+            write_json=_write_json,
+            limited_rows=_limited_rows,
+            limited_audit_details=_limited_audit_details,
+            accounting_definitions=_accounting_definitions,
+            accounting_audit=_accounting_audit,
+            score_direction_markdown=_score_direction_markdown,
+            append_experiment_registry_entry=_append_experiment_registry_entry,
+            research_artifact_manifest=_research_artifact_manifest,
+            artifact_validation_report=_artifact_validation_report,
+            news_validation_workflow_map=_news_validation_workflow_map,
+            validation_dependency_graph=_validation_dependency_graph,
+            validation_readiness_dashboard=_validation_readiness_dashboard,
+            artifact_lineage_report=_artifact_lineage_report,
+            news_validation_gap_analysis=_news_validation_gap_analysis,
+            markdown=_markdown,
         )
     parallel_report["elapsed_seconds_total"] = time.perf_counter() - run_started
     parallel_report["determinism_status"] = _parallel_determinism_status(parallel_report)
