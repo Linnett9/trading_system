@@ -8,7 +8,7 @@ batch_workers: 4
 model_threads: 1
 torch_num_threads: 1
 sklearn_n_jobs: 1
-feature_workers: 4
+feature_workers: 1
 stock_alpha_feature_n_jobs: 4
 stock_ranker_model_n_jobs: 4
 stock_target_comparison_n_jobs: 4

@@ -13,9 +13,13 @@ from application.services.ml_commands_artifacts import _update_source_leaderboar
 from core.research.ml.artifacts import MLExperimentPathBuilder
 from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.datasets import MODEL_INPUT_CONTRACT_VERSION
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION
 from core.research.ml.experiment_runner import MLExperimentRunner
-from core.research.ml.runtime_parallelism import apply_runtime_parallelism, apply_worker_thread_environment, format_runtime_settings
+from core.research.ml.runtime_parallelism import (
+    apply_runtime_parallelism,
+    apply_worker_thread_environment,
+    format_runtime_settings,
+)
 
 
 def run_ml_research_batch(
@@ -35,61 +39,62 @@ def run_ml_research_batch(
     parent_overrides = _batch_parent_overrides(config)
     resume_completed = bool(batch_config.get("resume_completed", True))
     worker = worker_fn or _run_ml_research_batch_worker
+    include_parent_overrides = _worker_accepts_parent_overrides(worker)
 
     print("\nML RESEARCH BATCH")
     print("mode=research | trading_impact=none")
     print(f"Configs: {len(items)}")
     print(f"Workers: {max_workers}")
-    print(f"Executor max_workers: {max_workers}")
+    if max_workers > 1:
+        print(f"Executor max_workers: {max_workers}")
     print(f"Model threads: {model_threads}")
     print(f"Runtime: {format_runtime_settings(runtime_settings)}")
     print(f"Shared expanded dataset: {shared_dataset_path}")
 
-    results: list[MLResearchBatchResult] = []
-    with executor_cls(max_workers=max_workers) as executor:
-        include_parent_overrides = _worker_accepts_parent_overrides(worker)
-        futures = {
-            (
-                executor.submit(
-                    worker,
-                    str(item.config_path),
-                    model_threads,
-                    shared_dataset_path,
-                    profile_name,
-                    parent_overrides,
-                    resume_completed,
-                )
-                if include_parent_overrides
-                else executor.submit(
-                    worker,
-                    str(item.config_path),
-                    model_threads,
-                    shared_dataset_path,
-                    profile_name,
-                )
-            ): item
-            for item in items
-        }
-        for future in as_completed(futures):
-            item = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:  # pragma: no cover - defensive process boundary
-                result = MLResearchBatchResult(
-                    config_path=str(item.config_path),
-                    output_dir=str(item.output_dir),
-                    success=False,
-                    error=str(exc),
-                )
+    if max_workers <= 1:
+        results = []
+        for item in items:
+            result = _run_batch_item(
+                item,
+                worker=worker,
+                model_threads=model_threads,
+                shared_dataset_path=shared_dataset_path,
+                profile_name=profile_name,
+                parent_overrides=parent_overrides,
+                resume_completed=resume_completed,
+                include_parent_overrides=include_parent_overrides,
+            )
+            _print_batch_result(item, result)
             results.append(result)
-            status = "ok" if result.success else "failed"
-            print(f"{status}: {result.config_path} -> {result.output_dir}")
-            if result.error:
-                print(f"  error: {result.error}")
             if fail_fast and not result.success:
-                for pending in futures:
-                    pending.cancel()
                 break
+    else:
+        indexed_results: list[tuple[int, MLResearchBatchResult]] = []
+        with executor_cls(max_workers=max_workers) as executor:
+            future_by_index = {
+                executor.submit(
+                    _run_batch_item,
+                    item,
+                    worker=worker,
+                    model_threads=model_threads,
+                    shared_dataset_path=shared_dataset_path,
+                    profile_name=profile_name,
+                    parent_overrides=parent_overrides,
+                    resume_completed=resume_completed,
+                    include_parent_overrides=include_parent_overrides,
+                ): index
+                for index, item in enumerate(items)
+            }
+            for future in as_completed(future_by_index):
+                index = future_by_index[future]
+                result = future.result()
+                indexed_results.append((index, result))
+                _print_batch_result(items[index], result)
+                if fail_fast and not result.success:
+                    for pending in future_by_index:
+                        pending.cancel()
+                    break
+        results = [result for _, result in sorted(indexed_results)]
 
     failures = [result for result in results if not result.success]
     if failures:
@@ -106,6 +111,49 @@ def run_ml_research_batch(
         )
         print(f"Leaderboard: {leaderboard_markdown_path}")
     return results
+
+
+def _run_batch_item(
+    item: MLResearchBatchItem,
+    *,
+    worker: Callable[..., MLResearchBatchResult],
+    model_threads: int,
+    shared_dataset_path: str,
+    profile_name: str,
+    parent_overrides: dict[str, Any],
+    resume_completed: bool,
+    include_parent_overrides: bool,
+) -> MLResearchBatchResult:
+    try:
+        if include_parent_overrides:
+            return worker(
+                str(item.config_path),
+                model_threads,
+                shared_dataset_path,
+                profile_name,
+                parent_overrides,
+                resume_completed,
+            )
+        return worker(
+            str(item.config_path),
+            model_threads,
+            shared_dataset_path,
+            profile_name,
+        )
+    except Exception as exc:  # pragma: no cover - defensive process boundary
+        return MLResearchBatchResult(
+            config_path=str(item.config_path),
+            output_dir=str(item.output_dir),
+            success=False,
+            error=str(exc),
+        )
+
+
+def _print_batch_result(item: MLResearchBatchItem, result: MLResearchBatchResult) -> None:
+    status = "ok" if result.success else "failed"
+    print(f"{status}: {item.config_path} -> {result.output_dir}")
+    if result.error:
+        print(f"  error: {result.error}")
 
 
 def _worker_accepts_parent_overrides(worker: Callable[..., MLResearchBatchResult]) -> bool:

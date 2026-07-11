@@ -1,6 +1,10 @@
 import pytest
 
+from config.config_defaults_ml import ML_DEFAULTS
 from config.config_loader import load_config, validate_config
+from core.research.ml.stock_level.news_risk_overlay_research_parallel import (
+    parallel_config as news_risk_parallel_config,
+)
 
 
 def test_environment_alpaca_credentials_override_file_values(monkeypatch):
@@ -449,6 +453,38 @@ def test_load_config_accepts_ml_inventory_and_universe_defaults():
     assert config["ml"]["min_history_years"] == 9
     assert config["ml"]["max_latest_gap_days"] == 14
     assert config["ml"]["min_average_dollar_volume_252d"] == 50_000_000
+
+
+def test_news_risk_parallel_defaults_remain_conservative():
+    assert ML_DEFAULTS["news_risk_parallel_enabled"] is False
+    assert ML_DEFAULTS["news_risk_max_workers"] is None
+
+
+def test_news_risk_overlay_research_config_enables_four_workers():
+    config = load_config(
+        "config/config.stock_alpha_news_risk_overlay_research.yaml",
+        overlay_project_config=True,
+    )
+    parallel = news_risk_parallel_config(config["ml"])
+
+    assert parallel.enabled is True
+    assert parallel.requested_workers == 4
+    assert parallel.actual_workers == 4
+    assert parallel.backend == "thread"
+    assert parallel.min_items == 16
+    assert parallel.chunk_size == 32
+    assert parallel.batch_limit == 128
+
+
+def test_unrelated_research_configs_do_not_enable_news_risk_parallelism():
+    config = load_config(
+        "configs/research/stock_level_alpha_benchmark.yaml",
+        overlay_project_config=True,
+    )
+    parallel = news_risk_parallel_config(config["ml"])
+
+    assert parallel.enabled is False
+    assert parallel.requested_workers is None
 
 
 def test_full_market_multi_timeframe_config_validates():

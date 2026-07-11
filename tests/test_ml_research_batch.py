@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import inspect
+import threading
+import time
 
 import pytest
 
@@ -52,6 +54,48 @@ def test_ml_research_batch_rejects_duplicate_output_dirs(tmp_path):
 
     with pytest.raises(RuntimeError, match="Duplicate ml.output_dir"):
         validate_ml_research_batch_config(_batch_config(shared_cache, [first, second]))
+
+
+def test_ml_research_batch_max_workers_one_uses_serial_order(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n",
+        encoding="utf-8",
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    invoked = []
+    captured_leaderboard_dirs = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, first_dir, rest=None: (
+            captured_leaderboard_dirs.append([first_dir, *(rest or [])])
+            or (tmp_path / "leaderboard.md", tmp_path / "leaderboard.json")
+        ),
+    )
+
+    class ForbiddenExecutor(ThreadPoolExecutor):
+        def __init__(self, max_workers):
+            raise AssertionError("serial max_workers=1 path should not create executor")
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        invoked.append(Path(config_path).stem)
+        return MLResearchBatchResult(
+            config_path=config_path,
+            output_dir=str(Path(config_path).with_suffix("")),
+            success=True,
+        )
+
+    results = run_ml_research_batch(
+        _batch_config(shared_cache, [first, second], max_workers=1),
+        executor_cls=ForbiddenExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert invoked == ["first", "second"]
+    assert [Path(result.config_path).stem for result in results] == ["first", "second"]
+    assert [path.name for path in captured_leaderboard_dirs[0]] == ["first", "second"]
 
 
 def test_ml_research_batch_runs_two_dummy_configs_in_parallel(tmp_path):
@@ -104,7 +148,10 @@ def test_ml_research_batch_runs_two_dummy_configs_in_parallel(tmp_path):
     assert len(captured_leaderboard_dirs[0]) == 2
 
 
-def test_ml_research_batch_passes_resolved_workers_to_executor(tmp_path, monkeypatch):
+def test_ml_research_batch_uses_bounded_executor_when_max_workers_exceeds_one(
+    tmp_path,
+    monkeypatch,
+):
     shared_cache = tmp_path / "cache" / "ml"
     shared_cache.mkdir(parents=True)
     (shared_cache / "expanded_rebalance_dataset.csv").write_text(
@@ -136,6 +183,123 @@ def test_ml_research_batch_passes_resolved_workers_to_executor(tmp_path, monkeyp
     assert captured["max_workers"] == 4
 
 
+def test_ml_research_batch_never_exceeds_configured_concurrency(
+    tmp_path,
+    monkeypatch,
+):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n", encoding="utf-8"
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    third = _research_config(tmp_path, "third", "reports/third", shared_cache)
+    lock = threading.Lock()
+    active = 0
+    peak_active = 0
+    invoked = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, output_dir, additional=None: (
+            tmp_path / "leaderboard.md", tmp_path / "leaderboard.json"
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        nonlocal active, peak_active
+        with lock:
+            invoked.append(Path(config_path).stem)
+            active += 1
+            peak_active = max(peak_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    run_ml_research_batch(
+        _batch_config(shared_cache, [first, second, third], max_workers=2),
+        executor_cls=ThreadPoolExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert peak_active <= 2
+    assert sorted(invoked) == ["first", "second", "third"]
+
+
+def test_ml_research_batch_publishes_outputs_in_config_order(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n", encoding="utf-8"
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    captured_leaderboard_dirs = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, first_dir, rest=None: (
+            captured_leaderboard_dirs.append([first_dir, *(rest or [])])
+            or (tmp_path / "leaderboard.md", tmp_path / "leaderboard.json")
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        if Path(config_path).stem == "first":
+            time.sleep(0.05)
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    results = run_ml_research_batch(
+        _batch_config(shared_cache, [first, second], max_workers=2),
+        executor_cls=ThreadPoolExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert [Path(result.config_path).stem for result in results] == ["first", "second"]
+    assert [path.name for path in captured_leaderboard_dirs[0]] == ["first", "second"]
+
+
+def test_ml_research_batch_surfaces_worker_exception(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n",
+        encoding="utf-8",
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, output_dir, additional=None: (
+            tmp_path / "leaderboard.md", tmp_path / "leaderboard.json"
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        if Path(config_path).stem == "second":
+            raise RuntimeError("boom")
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    with pytest.raises(RuntimeError, match="second.yaml: boom"):
+        run_ml_research_batch(
+            _batch_config(shared_cache, [first, second], max_workers=2, fail_fast=False),
+            executor_cls=ThreadPoolExecutor,
+            worker_fn=fake_worker,
+        )
+
+
 def test_ml_research_applies_runtime_parallelism_settings(monkeypatch, tmp_path):
     captured = {}
 
@@ -149,9 +313,17 @@ def test_ml_research_applies_runtime_parallelism_settings(monkeypatch, tmp_path)
             output_dir.mkdir(parents=True)
             return _fake_ml_result(output_dir)
 
-    monkeypatch.setattr(ml_commands, "MLExperimentRunner", FakeRunner)
+    from importlib import import_module
+
+    research_module = import_module(run_ml_research.__module__)
+
     monkeypatch.setattr(
-        ml_commands,
+        research_module,
+        "MLExperimentRunner",
+        FakeRunner,
+    )
+    monkeypatch.setattr(
+        research_module,
         "_update_source_leaderboard",
         lambda config, output_dir: (
             tmp_path / "leaderboard.md",

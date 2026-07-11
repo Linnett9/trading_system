@@ -13,5 +13,5 @@ ml_research_batch:
     - configs/research/news_analysis_transformer_should_reduce_exposure.yaml
     - configs/research/tft_should_reduce_exposure.yaml
   max_workers: 4
-  model_threads: 2
+  model_threads: 1
   fail_fast: false

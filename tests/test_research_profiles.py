@@ -194,5 +194,5 @@ def test_research_profiles_apply_ml_parallelism_values():
     assert benchmark["ml"]["model_threads"] == 1
     assert benchmark["ml"]["torch_num_threads"] == 1
     assert benchmark["ml"]["sklearn_n_jobs"] == 1
-    assert benchmark["ml"]["feature_workers"] == 4
+    assert benchmark["ml"]["feature_workers"] == 1
     assert benchmark["ml"]["stock_ranker_model_n_jobs"] == 4
