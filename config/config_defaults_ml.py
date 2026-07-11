@@ -43,6 +43,11 @@ ML_DEFAULTS = {
         "resume_import": True,
         "import_report_path": "reports/ml/market_parquet_import.json",
     },
+    "historical_bar_backfill": {
+        "collection_workers": 4,
+        "progress_report_interval_seconds": 60,
+        "max_collect_chunks": 0,
+    },
     "inventory_output_dir": "reports/ml",
     "universe_output_dir": "data/reference/universes",
     "min_history_years": 9,

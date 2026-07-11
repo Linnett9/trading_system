@@ -39,6 +39,18 @@ def dispatch(args, config, feed):
     if args.mode == "ml-data-inventory":
         _commands("ml_commands").run_ml_data_inventory(config)
         return
+    if args.mode == "ml-historical-bar-backfill-probe":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_probe(config)
+        return
+    if args.mode == "ml-historical-bar-backfill-collect":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_collect(config)
+        return
+    if args.mode == "ml-historical-bar-backfill-benchmark":
+        _commands("historical_bar_backfill_commands").run_historical_bar_backfill_benchmark(config)
+        return
+    if args.mode == "ml-historical-bar-feed-overlap":
+        _commands("historical_bar_backfill_commands").run_historical_bar_feed_overlap(config)
+        return
     if args.mode == "ml-build-universes":
         _commands("ml_commands").run_ml_build_universes(config)
         return

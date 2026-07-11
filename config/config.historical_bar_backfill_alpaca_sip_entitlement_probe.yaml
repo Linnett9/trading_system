@@ -1,0 +1,16 @@
+ml:
+  historical_bar_backfill:
+    provider: alpaca
+    feed: sip
+    timeframe: 5m
+    symbols: [SPY, AAPL, MSFT]
+    max_symbols: 3
+    start: "2026-06-24T13:30:00+00:00"
+    end: "2026-06-24T14:30:00+00:00"
+    limit: 10000
+    adjustment: all
+    extended_hours: false
+    requests_per_minute: 180
+    max_in_flight_requests: 1
+    max_retries: 1
+    output_root: reports/market_data/historical_bar_backfill/sip_entitlement_probe
