@@ -252,6 +252,7 @@ class AlpacaBasicHistoricalBarProvider:
         self._opener = opener
         self._timeout_seconds = timeout_seconds
         self.metrics = metrics or HistoricalBarMetrics()
+        self._metrics_lock = threading.Lock()
 
     def capabilities(self) -> HistoricalBarProviderCapabilities:
         return HistoricalBarProviderCapabilities(
@@ -303,26 +304,30 @@ class AlpacaBasicHistoricalBarProvider:
             },
         )
         self.rate_limiter.acquire()
-        self.metrics.requests_attempted += 1
+        with self._metrics_lock:
+            self.metrics.requests_attempted += 1
         started = time.monotonic()
         try:
             with self._opener(http_request, timeout=self._timeout_seconds) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            self.metrics.requests_failed += 1
+            with self._metrics_lock:
+                self.metrics.requests_failed += 1
+                if exc.code == 429:
+                    self.metrics.http_429_count += 1
             if exc.code == 429:
-                self.metrics.http_429_count += 1
                 self.rate_limiter.reduce_pressure_after_429()
             raise AlpacaHistoricalBarError.from_http_error(exc) from exc
         finally:
             self.rate_limiter.release()
         latency = time.monotonic() - started
-        self.metrics.requests_successful += 1
-        self.metrics.response_latency_seconds.append(latency)
         bars = _normalize_alpaca_bars(payload, request)
-        self.metrics.pages_downloaded += 1
-        self.metrics.rows_downloaded += len(bars)
-        self.metrics.throttle_sleep_time_seconds = self.rate_limiter.sleep_time_seconds
+        with self._metrics_lock:
+            self.metrics.requests_successful += 1
+            self.metrics.response_latency_seconds.append(latency)
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += len(bars)
+            self.metrics.throttle_sleep_time_seconds = self.rate_limiter.sleep_time_seconds
         return HistoricalBarPage(
             bars=bars,
             next_page_token=payload.get("next_page_token"),
@@ -411,32 +416,39 @@ class CollectionManifest:
         path: str | Path,
         *,
         writer: Callable[[Path, str], None] | None = None,
+        journal_path: str | Path | None = None,
     ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.journal_path = Path(journal_path) if journal_path is not None else self.path.with_suffix(self.path.suffix + ".events.jsonl")
         self._writer = writer or _atomic_write_text
         self._lock = threading.Lock()
+        self._state_cache: dict[str, Any] | None = None
 
     def load(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return {"chunks": {}}
-        return json.loads(self.path.read_text(encoding="utf-8"))
+        with self._lock:
+            state = self._load_unlocked()
+            return {**state, "chunks": dict(state.get("chunks", {}))}
 
     def update(self, chunk_id: str, status: str, metadata: Mapping[str, Any] | None = None) -> None:
         if status not in self.VALID_STATUSES:
             raise ValueError(f"unsupported chunk status: {status}")
+        event = {
+            **dict(metadata or {}),
+            "chunk_id": chunk_id,
+            "status": status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
         with self._lock:
-            state = self.load()
+            state = self._load_unlocked()
             chunks = dict(state.get("chunks", {}))
             chunks[chunk_id] = {
                 **dict(chunks.get(chunk_id, {})),
-                **dict(metadata or {}),
-                "chunk_id": chunk_id,
-                "status": status,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                **event,
             }
-            state["chunks"] = _ordered_chunks(chunks)
-            self._writer(self.path, json.dumps(state, indent=2, default=str))
+            state["chunks"] = chunks
+            self._append_event_unlocked(event)
+            self._state_cache = state
 
     def initialize_plan(
         self,
@@ -446,7 +458,7 @@ class CollectionManifest:
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
-            state = self.load()
+            state = self._load_unlocked()
             chunks = dict(state.get("chunks", {}))
             existing = len(chunks)
             added = 0
@@ -478,6 +490,8 @@ class CollectionManifest:
             changed = added > 0 or updated_planned > 0 or len(chunks) != existing
             if changed:
                 self._writer(self.path, json.dumps(state, indent=2, default=str))
+                self._truncate_journal_unlocked()
+                self._state_cache = state
             return {
                 "existing_chunk_count": existing,
                 "final_chunk_count": len(chunks),
@@ -492,6 +506,56 @@ class CollectionManifest:
 
     def is_completed(self, chunk_id: str) -> bool:
         return self.status(chunk_id) in {"completed", "empty_valid_response"}
+
+    def checkpoint(self) -> None:
+        with self._lock:
+            state = self._load_unlocked()
+            state["chunks"] = _ordered_chunks(dict(state.get("chunks", {})))
+            self._writer(self.path, json.dumps(state, indent=2, default=str))
+            self._truncate_journal_unlocked()
+            self._state_cache = state
+
+    def _load_unlocked(self) -> dict[str, Any]:
+        if self._state_cache is not None:
+            return self._state_cache
+        if self.path.exists():
+            state = json.loads(self.path.read_text(encoding="utf-8"))
+        else:
+            state = {"chunks": {}}
+        chunks = dict(state.get("chunks", {}))
+        if self.journal_path.exists():
+            journal_text = self.journal_path.read_text(encoding="utf-8")
+            journal_lines = journal_text.splitlines()
+            journal_ended_cleanly = journal_text.endswith("\n") or journal_text == ""
+            for index, line in enumerate(journal_lines, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    if index == len(journal_lines) and not journal_ended_cleanly:
+                        continue
+                    raise
+                chunk_id = str(event.get("chunk_id", ""))
+                status = str(event.get("status", ""))
+                if not chunk_id or status not in self.VALID_STATUSES:
+                    continue
+                chunks[chunk_id] = {**dict(chunks.get(chunk_id, {})), **event}
+        state["chunks"] = chunks
+        self._state_cache = state
+        return state
+
+    def _append_event_unlocked(self, event: Mapping[str, Any]) -> None:
+        self.journal_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(dict(event), default=str, separators=(",", ":")) + "\n"
+        with open(self.journal_path, "ab") as handle:
+            handle.write(payload.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def _truncate_journal_unlocked(self) -> None:
+        if self.journal_path.exists():
+            _atomic_write_text(self.journal_path, "")
 
 
 class ImmutableRawChunkStore:
@@ -610,7 +674,7 @@ def fetch_chunk_with_retries(
                 attempt += 1
                 metrics = getattr(provider, "metrics", None)
                 if metrics is not None:
-                    metrics.requests_retried += 1
+                    _increment_metric(metrics, "requests_retried", owner=provider)
                 if attempt > max_retries:
                     raise
                 sleep_for = (
@@ -752,6 +816,15 @@ def _chunk_id(request: HistoricalBarRequest) -> str:
             "extended" if request.extended_hours else "regular",
         ]
     )
+
+
+def _increment_metric(metrics: Any, name: str, *, owner: Any | None = None) -> None:
+    lock = getattr(owner, "_metrics_lock", None)
+    if lock is None:
+        setattr(metrics, name, getattr(metrics, name) + 1)
+        return
+    with lock:
+        setattr(metrics, name, getattr(metrics, name) + 1)
 
 
 def _atomic_write_text(path: Path, text: str) -> None:

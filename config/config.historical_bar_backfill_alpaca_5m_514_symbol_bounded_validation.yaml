@@ -11,16 +11,16 @@ ml:
     requests_per_minute: 180
     max_in_flight_requests: 4
     collection_workers: 4
-    progress_report_interval_seconds: 60
+    progress_report_interval_seconds: 30
+    max_collect_chunks: 75
     max_retries: 3
     dry_run: false
     resume: true
     force_refresh: false
     write_raw: true
     raw_write: true
-    write_normalized_staging: true
-    staging_write: true
-    rth_research_view_audit_enabled: true
+    write_normalized_staging: false
+    staging_write: false
     canonical_market_data_writes_enabled: false
     canonical_merge: false
     raw_root: data/raw/alpaca/stock_bars

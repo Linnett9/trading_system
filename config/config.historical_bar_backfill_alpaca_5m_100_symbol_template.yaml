@@ -1,0 +1,21 @@
+ml:
+  historical_bar_backfill:
+    provider: alpaca
+    feed: iex
+    timeframe: 5m
+    universe_file: config/universes/alpaca_100_symbols.txt
+    start: "REPLACE_WITH_CONFIRMED_FREE_COVERAGE_START"
+    end: "REPLACE_WITH_COLLECTION_END"
+    symbol_batch_size: 10
+    date_window_days: 10
+    requests_per_minute: 180
+    max_in_flight_requests: 4
+    max_retries: 3
+    dry_run: false
+    resume: true
+    force_refresh: false
+    write_raw: true
+    write_normalized_staging: true
+    canonical_market_data_writes_enabled: false
+    raw_root: data/raw/alpaca/stock_bars
+    output_root: reports/market_data/historical_bar_backfill/5m_100_symbol

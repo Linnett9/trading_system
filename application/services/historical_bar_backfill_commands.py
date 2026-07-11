@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from infrastructure.data.historical_bar_providers import (
     AlpacaBasicHistoricalBarProvider,
@@ -154,6 +156,7 @@ def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
 
 
 def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
+    collect_started = time.monotonic()
     settings = dict((config.get("ml", {}) or {}).get("historical_bar_backfill", {}) or {})
     if str(settings.get("provider", "alpaca")).lower() != "alpaca":
         raise ValueError("historical_bar_backfill currently implements provider=alpaca only")
@@ -175,6 +178,9 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     force_refresh = bool(settings.get("force_refresh", False))
     write_raw = bool(settings.get("write_raw", settings.get("raw_write", True)))
     write_staging = bool(settings.get("write_normalized_staging", settings.get("staging_write", True)))
+    collection_workers = max(1, int(settings.get("collection_workers", 1)))
+    max_collect_chunks = int(settings.get("max_collect_chunks", 0) or 0)
+    progress_interval_seconds = float(settings.get("progress_report_interval_seconds", 60.0) or 0.0)
     provider = AlpacaBasicHistoricalBarProvider(
         feed=str(settings.get("feed", "iex")),
         config=config,
@@ -196,7 +202,6 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     )
     manifest = CollectionManifest(output_root / "collection_manifest.json")
     raw_store = ImmutableRawChunkStore(settings.get("raw_root", "data/raw/alpaca/stock_bars"))
-    state_store = BackfillChunkStateStore(output_root / "chunk_state.json")
     all_rows: list[dict[str, Any]] = []
     chunks = []
     if dry_run or not auth["can_attempt_authenticated_request"]:
@@ -216,54 +221,88 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         _write_collect_report(output_root, report)
         _print_collect_report(output_root, report)
         return
+    plan_initialization = manifest.initialize_plan(plan, dry_run=False)
+    selected_chunk_count = 0
+    pending_requests = []
     for request in plan:
         chunk_id = request.raw_chunk_id or ""
         if resume and not force_refresh and manifest.is_completed(chunk_id):
-            try:
-                skipped_rows = raw_store.read_completed_chunk(request)
-                all_rows.extend(skipped_rows)
-                chunks.append({"chunk_id": chunk_id, "status": "skipped_completed", "rows": len(skipped_rows)})
-            except FileNotFoundError as exc:
-                chunks.append({"chunk_id": chunk_id, "status": "skipped_completed_raw_missing", "error_message": str(exc)})
-            continue
-        manifest.update(chunk_id, "in_progress", {"symbols": list(request.symbols), "start": request.start.isoformat(), "end": request.end.isoformat()})
-        try:
-            before = provider.metrics.as_dict()
-            rows, chunk = fetch_chunk_with_retries(
-                provider,
-                request,
-                state_store=state_store if resume else None,
-                max_retries=int(settings.get("max_retries", 3)),
+            chunks.append(
+                {
+                    "chunk_id": chunk_id,
+                    "status": "skipped_completed",
+                    "rows": 0,
+                    "raw_reload_deferred": bool(write_staging),
+                }
             )
-            after = provider.metrics.as_dict()
-            chunk_metrics = _metric_delta(before, after)
-            raw_manifest = None
-            if write_raw:
-                raw_manifest = raw_store.write_completed_chunk(
-                    request,
-                    rows=rows,
-                    raw_pages=chunk.get("raw_pages", []),
-                    metrics={**chunk, **chunk_metrics},
-                    force_refresh=force_refresh,
-                    raw_write=True,
-                )
-            all_rows.extend(rows)
-            status = "completed" if rows else "empty_valid_response"
-            manifest.update(chunk_id, status, {"rows": len(rows), "pages": chunk.get("pages", 0), "raw_manifest": raw_manifest})
-            chunks.append({"chunk_id": chunk_id, "status": status, "rows": len(rows), "pages": chunk.get("pages", 0)})
-        except Exception as exc:
-            status = getattr(exc, "classification", "retryable_failure")
-            manifest.update(chunk_id, status, {"error_type": type(exc).__name__, "error_message": str(exc)})
-            chunks.append({"chunk_id": chunk_id, "status": status, "error_type": type(exc).__name__})
-            if status in {"permanent_authentication_failure", "entitlement_failure"}:
+            continue
+        if max_collect_chunks > 0 and len(pending_requests) >= max_collect_chunks:
+            break
+        pending_requests.append(request)
+        selected_chunk_count += 1
+    work_chunk_count = selected_chunk_count + len([row for row in chunks if row.get("status") == "skipped_completed"])
+    progress = _CollectionProgress(
+        total=work_chunk_count,
+        already_completed=len([row for row in chunks if row.get("status") == "skipped_completed"]),
+        workers=collection_workers,
+        report_interval_seconds=progress_interval_seconds,
+    )
+    if collection_workers == 1:
+        for request in pending_requests:
+            result = _collect_one_chunk(
+                provider=provider,
+                manifest=manifest,
+                raw_store=raw_store,
+                request=request,
+                max_retries=int(settings.get("max_retries", 3)),
+                write_raw=write_raw,
+                force_refresh=force_refresh,
+            )
+            all_rows.extend(result.pop("rows_data", []))
+            chunks.append(result)
+            progress.record(result, provider.metrics.as_dict())
+            if result.get("status") in {"permanent_authentication_failure", "entitlement_failure"}:
                 break
+    else:
+        with ThreadPoolExecutor(max_workers=collection_workers) as executor:
+            futures = {
+                executor.submit(
+                    _collect_one_chunk,
+                    provider=provider,
+                    manifest=manifest,
+                    raw_store=raw_store,
+                    request=request,
+                    max_retries=int(settings.get("max_retries", 3)),
+                    write_raw=write_raw,
+                    force_refresh=force_refresh,
+                ): request
+                for request in pending_requests
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                all_rows.extend(result.pop("rows_data", []))
+                chunks.append(result)
+                progress.record(result, provider.metrics.as_dict())
+    staging_deferred_reason = None
+    if write_staging:
+        if max_collect_chunks > 0:
+            staging_deferred_reason = "max_collect_chunks_bounded_collection"
+        elif _manifest_has_unfinished_collection(manifest, plan):
+            staging_deferred_reason = "collection_incomplete"
+        else:
+            all_rows = _load_completed_raw_rows_for_staging(
+                plan=plan,
+                manifest=manifest,
+                raw_store=raw_store,
+                chunk_results=chunks,
+            )
     pre_validation = validate_normalized_bars(all_rows)
     consolidated_rows = []
     consolidation_report: dict[str, Any] | None = None
     post_validation: dict[str, Any] | None = None
     staging_path = None
     coverage_report = []
-    if write_staging and all_rows:
+    if write_staging and staging_deferred_reason is None and all_rows:
         consolidated_rows, consolidation_report = consolidate_staging_chunks(
             all_rows,
             allow_conflicting_duplicates=bool(settings.get("allow_conflicting_duplicates", False)),
@@ -280,6 +319,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             feed=str(settings.get("feed", "iex")),
         )
     research_view_audit = _research_view_audit(consolidated_rows or all_rows, post_validation or pre_validation, coverage_report)
+    collection_elapsed_seconds = time.monotonic() - collect_started
     report = {
         "mode": "historical_bar_backfill_collect",
         "research_data_only": True,
@@ -291,9 +331,22 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "feed_domain_shift_note": _feed_domain_shift_note(),
         "credentials": auth,
         "planned_chunk_count": len(plan),
+        "collected_plan_chunk_count": work_chunk_count,
+        "max_collect_chunks": max_collect_chunks,
+        "manifest_plan_initialization": plan_initialization,
         "chunk_results": chunks,
+        "collection_workers": collection_workers,
+        "collection_elapsed_seconds": collection_elapsed_seconds,
+        "completed_chunks_per_hour": (
+            len([row for row in chunks if row.get("status") in {"completed", "empty_valid_response"}])
+            / collection_elapsed_seconds
+            * 3600.0
+            if collection_elapsed_seconds > 0
+            else 0.0
+        ),
         "raw_write_enabled": write_raw,
         "staging_write_enabled": write_staging,
+        "staging_deferred_reason": staging_deferred_reason,
         "staging_path": str(staging_path) if staging_path else None,
         "pre_consolidation_validation": pre_validation,
         "post_consolidation_validation": post_validation,
@@ -445,6 +498,186 @@ def run_historical_bar_feed_overlap(config: Mapping[str, Any]) -> None:
     print("HISTORICAL BAR FEED OVERLAP")
     print("canonical_source_selected=false")
     print(f"Report: {path}")
+
+
+def _collect_one_chunk(
+    *,
+    provider: Any,
+    manifest: CollectionManifest,
+    raw_store: ImmutableRawChunkStore,
+    request: HistoricalBarRequest,
+    max_retries: int,
+    write_raw: bool,
+    force_refresh: bool,
+) -> dict[str, Any]:
+    chunk_id = request.raw_chunk_id or ""
+    manifest_started = time.perf_counter()
+    manifest.update(
+        chunk_id,
+        "in_progress",
+        {"symbols": list(request.symbols), "start": request.start.isoformat(), "end": request.end.isoformat()},
+    )
+    manifest_in_progress_seconds = time.perf_counter() - manifest_started
+    try:
+        before = provider.metrics.as_dict()
+        fetch_started = time.perf_counter()
+        rows, chunk = fetch_chunk_with_retries(
+            provider,
+            request,
+            state_store=None,
+            max_retries=max_retries,
+        )
+        fetch_seconds = time.perf_counter() - fetch_started
+        after = provider.metrics.as_dict()
+        chunk_metrics = _metric_delta(before, after)
+        raw_manifest = None
+        raw_write_seconds = 0.0
+        if write_raw:
+            raw_started = time.perf_counter()
+            raw_manifest = raw_store.write_completed_chunk(
+                request,
+                rows=rows,
+                raw_pages=chunk.get("raw_pages", []),
+                metrics={**chunk, **chunk_metrics},
+                force_refresh=force_refresh,
+                raw_write=True,
+            )
+            raw_write_seconds = time.perf_counter() - raw_started
+        status = "completed" if rows else "empty_valid_response"
+        manifest_started = time.perf_counter()
+        manifest.update(chunk_id, status, {"rows": len(rows), "pages": chunk.get("pages", 0), "raw_manifest": raw_manifest})
+        manifest_terminal_seconds = time.perf_counter() - manifest_started
+        return {
+            "chunk_id": chunk_id,
+            "status": status,
+            "rows": len(rows),
+            "pages": chunk.get("pages", 0),
+            "requests": chunk_metrics.get("requests_attempted", 0),
+            "retries": chunk_metrics.get("requests_retried", 0),
+            "http_429_count": chunk_metrics.get("http_429_count", 0),
+            "fetch_seconds": fetch_seconds,
+            "raw_write_seconds": raw_write_seconds,
+            "manifest_update_seconds": manifest_in_progress_seconds + manifest_terminal_seconds,
+            "rows_data": rows,
+        }
+    except Exception as exc:
+        status = getattr(exc, "classification", "retryable_failure")
+        manifest_started = time.perf_counter()
+        manifest.update(chunk_id, status, {"error_type": type(exc).__name__, "error_message": str(exc)})
+        manifest_failure_seconds = time.perf_counter() - manifest_started
+        return {
+            "chunk_id": chunk_id,
+            "status": status,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "manifest_update_seconds": manifest_in_progress_seconds + manifest_failure_seconds,
+            "rows_data": [],
+        }
+
+
+def _manifest_has_unfinished_collection(
+    manifest: CollectionManifest,
+    plan: Sequence[HistoricalBarRequest],
+) -> bool:
+    completed_statuses = {"completed", "empty_valid_response"}
+    state = manifest.load()
+    chunks = state.get("chunks", {})
+    for request in plan:
+        chunk_id = request.raw_chunk_id or ""
+        if chunks.get(chunk_id, {}).get("status") not in completed_statuses:
+            return True
+    return False
+
+
+def _load_completed_raw_rows_for_staging(
+    *,
+    plan: Sequence[HistoricalBarRequest],
+    manifest: CollectionManifest,
+    raw_store: ImmutableRawChunkStore,
+    chunk_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    result_by_chunk = {
+        str(result.get("chunk_id")): result
+        for result in chunk_results
+        if result.get("chunk_id")
+    }
+    for request in plan:
+        chunk_id = request.raw_chunk_id or ""
+        if not manifest.is_completed(chunk_id):
+            continue
+        result = result_by_chunk.get(chunk_id)
+        try:
+            chunk_rows = raw_store.read_completed_chunk(request)
+        except FileNotFoundError as exc:
+            if result is not None:
+                result["status"] = "skipped_completed_raw_missing"
+                result["error_message"] = str(exc)
+            continue
+        rows.extend(chunk_rows)
+        if result is not None and result.get("status") == "skipped_completed":
+            result["rows"] = len(chunk_rows)
+            result["raw_reload_deferred"] = False
+    return rows
+
+
+class _CollectionProgress:
+    def __init__(
+        self,
+        *,
+        total: int,
+        already_completed: int,
+        workers: int,
+        report_interval_seconds: float,
+    ) -> None:
+        self.total = max(1, total)
+        self.completed = already_completed
+        self.workers = workers
+        self.report_interval_seconds = report_interval_seconds
+        self.started = time.monotonic()
+        self.last_report = self.started
+        self.recent: deque[tuple[float, int, int, float]] = deque()
+        self.retries = 0.0
+        self.http_429_count = 0.0
+
+    def record(self, result: Mapping[str, Any], metrics: Mapping[str, Any]) -> None:
+        now = time.monotonic()
+        if result.get("status") in {"completed", "empty_valid_response"}:
+            self.completed += 1
+        rows = int(result.get("rows", 0) or 0)
+        requests = int(result.get("requests", 0) or 0)
+        self.retries += float(result.get("retries", 0) or 0)
+        self.http_429_count += float(result.get("http_429_count", 0) or 0)
+        self.recent.append((now, 1, requests, float(rows)))
+        while self.recent and now - self.recent[0][0] > 15 * 60:
+            self.recent.popleft()
+        if self.report_interval_seconds > 0 and now - self.last_report >= self.report_interval_seconds:
+            self.last_report = now
+            self.print(metrics)
+
+    def print(self, metrics: Mapping[str, Any]) -> None:
+        now = time.monotonic()
+        window_seconds = max(1.0, now - (self.recent[0][0] if self.recent else self.started))
+        recent_chunks = sum(row[1] for row in self.recent)
+        recent_requests = sum(row[2] for row in self.recent)
+        recent_rows = sum(row[3] for row in self.recent)
+        chunks_per_hour = recent_chunks / window_seconds * 3600.0
+        remaining = max(0, self.total - self.completed)
+        eta_hours = remaining / chunks_per_hour if chunks_per_hour else None
+        eta_text = f"{eta_hours:.2f}" if eta_hours is not None else "unknown"
+        print(
+            "BACKFILL PROGRESS "
+            f"completed={self.completed}/{self.total} "
+            f"percent={self.completed / self.total * 100.0:.2f} "
+            f"chunks_per_hour={chunks_per_hour:.1f} "
+            f"requests_per_minute={recent_requests / window_seconds * 60.0:.1f} "
+            f"rows_per_second={recent_rows / window_seconds:.1f} "
+            f"retries={int(self.retries)} "
+            f"http_429={int(self.http_429_count)} "
+            f"active_workers={self.workers} "
+            f"eta_hours={eta_text} "
+            f"provider_effective_rpm={float(metrics.get('effective_requests_per_minute', 0) or 0):.1f}"
+        )
 
 
 def _parse_datetime(value: Any) -> datetime | None:

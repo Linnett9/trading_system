@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
@@ -18,6 +20,7 @@ from infrastructure.data.historical_bar_providers import (
     BackfillChunkStateStore,
     CollectionManifest,
     HistoricalBarMetrics,
+    HistoricalBarPage,
     HistoricalBarRequest,
     ImmutableRawChunkStore,
     SharedRateLimiter,
@@ -618,6 +621,88 @@ def test_manifest_initialize_plan_preserves_partial_meaningful_states(tmp_path):
     assert chunks["chunk-new"]["status"] == "planned"
 
 
+def test_manifest_updates_append_journal_without_rewriting_large_snapshot(tmp_path):
+    writes = []
+
+    def writer(path, text):
+        writes.append((path, len(text)))
+        path.write_text(text, encoding="utf-8")
+
+    requests = [
+        HistoricalBarRequest(
+            symbols=(f"SYM{i % 1000:04d}",),
+            timeframe="5m",
+            start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc) + timedelta(minutes=5 * i),
+            end=datetime(2026, 1, 2, 14, 35, tzinfo=timezone.utc) + timedelta(minutes=5 * i),
+            feed="sip",
+            raw_chunk_id=f"chunk-{i:05d}",
+        )
+        for i in range(40_000)
+    ]
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json", writer=writer)
+    manifest.initialize_plan(requests, dry_run=False)
+
+    for request in requests[:1_000]:
+        manifest.update(request.raw_chunk_id or "", "completed", {"rows": 1})
+
+    assert len(writes) == 1
+    assert (tmp_path / "collection_manifest.json.events.jsonl").exists()
+    assert len((tmp_path / "collection_manifest.json.events.jsonl").read_text(encoding="utf-8").splitlines()) == 1_000
+    reloaded = CollectionManifest(tmp_path / "collection_manifest.json")
+    assert reloaded.is_completed("chunk-00999")
+    assert not reloaded.is_completed("chunk-01000")
+
+    reloaded.checkpoint()
+
+    assert (tmp_path / "collection_manifest.json.events.jsonl").read_text(encoding="utf-8") == ""
+    assert CollectionManifest(tmp_path / "collection_manifest.json").is_completed("chunk-00999")
+
+
+def test_manifest_replay_preserves_valid_events_before_truncated_final_line(tmp_path):
+    path = tmp_path / "collection_manifest.json"
+    path.write_text(json.dumps({"chunks": {"chunk-0": {"chunk_id": "chunk-0", "status": "planned"}}}), encoding="utf-8")
+    journal = tmp_path / "collection_manifest.json.events.jsonl"
+    journal.write_text(
+        json.dumps({"chunk_id": "chunk-0", "status": "completed", "updated_at": "2026-01-01T00:00:00+00:00"})
+        + "\n"
+        + '{"chunk_id":"chunk-1","status":"completed"',
+        encoding="utf-8",
+    )
+
+    reloaded = CollectionManifest(path)
+
+    assert reloaded.is_completed("chunk-0")
+    assert reloaded.status("chunk-1") is None
+
+
+def test_manifest_replay_rejects_malformed_nonfinal_journal_line(tmp_path):
+    path = tmp_path / "collection_manifest.json"
+    path.write_text(json.dumps({"chunks": {}}), encoding="utf-8")
+    journal = tmp_path / "collection_manifest.json.events.jsonl"
+    journal.write_text(
+        '{"chunk_id":"bad","status":"completed"\n'
+        + json.dumps({"chunk_id": "chunk-0", "status": "completed", "updated_at": "2026-01-01T00:00:00+00:00"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(json.JSONDecodeError):
+        CollectionManifest(path).load()
+
+
+def test_manifest_replays_in_progress_and_retryable_states_as_retryable_on_restart(tmp_path):
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json")
+    manifest.update("chunk-in-progress", "in_progress", {"attempt": 1})
+    manifest.update("chunk-retry", "retryable_failure", {"error_message": "transport"})
+
+    reloaded = CollectionManifest(tmp_path / "collection_manifest.json")
+
+    assert reloaded.status("chunk-in-progress") == "in_progress"
+    assert reloaded.status("chunk-retry") == "retryable_failure"
+    assert not reloaded.is_completed("chunk-in-progress")
+    assert not reloaded.is_completed("chunk-retry")
+
+
 def test_atomic_write_replaces_existing_destination_with_unrelated_temp_present(tmp_path):
     target = tmp_path / "collection_manifest.json"
     target.write_text('{"old": true}', encoding="utf-8")
@@ -775,11 +860,328 @@ def test_collect_resume_reloads_completed_raw_chunk_into_staging(tmp_path, monke
     report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
 
     assert report["chunk_results"] == [
-        {"chunk_id": request.raw_chunk_id, "status": "skipped_completed", "rows": 1}
+        {"chunk_id": request.raw_chunk_id, "status": "skipped_completed", "rows": 1, "raw_reload_deferred": False}
     ]
     assert report["all_session_row_count"] == 1
     assert report["staging_path"]
     assert (output_root / "staging" / "sip" / "5m" / "bars.parquet").exists()
+
+
+def test_collect_resume_does_not_preload_completed_raw_before_bounded_collection(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports"
+    raw_root = tmp_path / "raw"
+    start = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc)
+    planned = _plan(
+        ("SPY",),
+        start,
+        end,
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+    )
+    completed_row = {
+        "symbol": "SPY",
+        "timestamp": planned[0].start,
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": 1.0,
+        "volume": 100.0,
+        "provider": "alpaca",
+        "feed": "sip",
+        "raw_chunk_identifier": planned[0].raw_chunk_id,
+        "session_type": "rth",
+    }
+    ImmutableRawChunkStore(raw_root).write_completed_chunk(
+        planned[0],
+        rows=[completed_row],
+        raw_pages=[{"bars": {"SPY": []}}],
+        metrics={"pages": 1},
+    )
+    manifest = CollectionManifest(output_root / "collection_manifest.json")
+    manifest.initialize_plan(planned, dry_run=False)
+    manifest.update(planned[0].raw_chunk_id or "", "completed", {"rows": 1})
+    reads = []
+
+    def fail_if_read(self, request):
+        reads.append(request.raw_chunk_id)
+        raise AssertionError("bounded resume should not read completed raw rows before collection")
+
+    class OneChunkProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {
+                "credential_source": "test",
+                "credentials_available": True,
+                "api_key_alias_used": None,
+                "secret_key_alias_used": None,
+                "can_attempt_authenticated_request": True,
+            }
+
+        def fetch_page(self, request):
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += 1
+            return HistoricalBarPage(
+                bars=[
+                    {
+                        "symbol": "SPY",
+                        "timestamp": request.start,
+                        "open": 2.0,
+                        "high": 2.0,
+                        "low": 2.0,
+                        "close": 2.0,
+                        "volume": 200.0,
+                        "provider": "alpaca",
+                        "feed": request.feed,
+                        "raw_chunk_identifier": request.raw_chunk_id,
+                    }
+                ],
+                next_page_token=None,
+                raw_payload={"bars": {"SPY": []}},
+                latency_seconds=0.0,
+            )
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", OneChunkProvider)
+    monkeypatch.setattr(ImmutableRawChunkStore, "read_completed_chunk", fail_if_read)
+
+    run_historical_bar_backfill_collect(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["SPY"],
+                    "timeframe": "5m",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "output_root": str(output_root),
+                    "raw_root": str(raw_root),
+                    "dry_run": False,
+                    "resume": True,
+                    "write_normalized_staging": True,
+                    "date_window_days": 1,
+                    "max_collect_chunks": 1,
+                    "progress_report_interval_seconds": 0,
+                }
+            }
+        }
+    )
+
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+    assert reads == []
+    assert report["staging_deferred_reason"] == "max_collect_chunks_bounded_collection"
+    assert report["staging_path"] is None
+    assert any(row["status"] == "completed" for row in report["chunk_results"])
+
+
+def test_collect_resume_retries_stale_in_progress_chunk(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports"
+    raw_root = tmp_path / "raw"
+    start = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, 14, 35, tzinfo=timezone.utc)
+    planned = _plan(
+        ("SPY",),
+        start,
+        end,
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+    )
+    manifest = CollectionManifest(output_root / "collection_manifest.json")
+    manifest.initialize_plan(planned, dry_run=False)
+    manifest.update(planned[0].raw_chunk_id or "", "in_progress", {"attempt": 1})
+    calls = []
+
+    class RetryProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {
+                "credential_source": "test",
+                "credentials_available": True,
+                "api_key_alias_used": None,
+                "secret_key_alias_used": None,
+                "can_attempt_authenticated_request": True,
+            }
+
+        def fetch_page(self, request):
+            calls.append(request.raw_chunk_id)
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += 1
+            return HistoricalBarPage(
+                bars=[
+                    {
+                        "symbol": "SPY",
+                        "timestamp": request.start,
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 100.0,
+                        "provider": "alpaca",
+                        "feed": request.feed,
+                        "raw_chunk_identifier": request.raw_chunk_id,
+                    }
+                ],
+                next_page_token=None,
+                raw_payload={"bars": {"SPY": []}},
+                latency_seconds=0.0,
+            )
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", RetryProvider)
+
+    run_historical_bar_backfill_collect(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["SPY"],
+                    "timeframe": "5m",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "output_root": str(output_root),
+                    "raw_root": str(raw_root),
+                    "dry_run": False,
+                    "resume": True,
+                    "write_normalized_staging": True,
+                    "progress_report_interval_seconds": 0,
+                }
+            }
+        }
+    )
+
+    assert calls == [planned[0].raw_chunk_id]
+    assert CollectionManifest(output_root / "collection_manifest.json").is_completed(planned[0].raw_chunk_id or "")
+
+
+def test_collect_parallel_workers_do_not_collect_same_chunk_twice_and_retry_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports"
+    raw_root = tmp_path / "raw"
+    start = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+    planned = _plan(
+        ("AAPL", "MSFT", "NVDA", "AMZN"),
+        start,
+        end,
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+    )
+    manifest = CollectionManifest(output_root / "collection_manifest.json")
+    manifest.initialize_plan(planned, dry_run=False)
+    manifest.update(planned[1].raw_chunk_id or "", "retryable_failure", {"error_message": "previous transport failure"})
+    calls = []
+    lock = threading.Lock()
+
+    class ConcurrentFakeProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {
+                "credential_source": "test",
+                "credentials_available": True,
+                "api_key_alias_used": None,
+                "secret_key_alias_used": None,
+                "can_attempt_authenticated_request": True,
+            }
+
+        def fetch_page(self, request):
+            with lock:
+                calls.append(request.raw_chunk_id)
+                self.metrics.requests_attempted += 1
+                self.metrics.requests_successful += 1
+                self.metrics.pages_downloaded += 1
+                self.metrics.rows_downloaded += 1
+            time.sleep(0.01)
+            return HistoricalBarPage(
+                bars=[
+                    {
+                        "symbol": request.symbols[0],
+                        "timestamp": request.start,
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 100.0,
+                        "provider": "alpaca",
+                        "feed": request.feed,
+                        "collection_timestamp": "test",
+                        "requested_timeframe": request.timeframe,
+                        "native_timeframe": "5Min",
+                        "adjustment_mode": request.adjustment,
+                        "extended_hours": False,
+                        "session_policy": "all_returned_bars_preserved",
+                        "session_type": "rth",
+                        "raw_chunk_identifier": request.raw_chunk_id,
+                        "normalizer_version": "test",
+                    }
+                ],
+                next_page_token=None,
+                raw_payload={"bars": {request.symbols[0]: []}},
+                latency_seconds=0.01,
+            )
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", ConcurrentFakeProvider)
+
+    run_historical_bar_backfill_collect(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["AAPL", "MSFT", "NVDA", "AMZN"],
+                    "timeframe": "5m",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "output_root": str(output_root),
+                    "raw_root": str(raw_root),
+                    "dry_run": False,
+                    "resume": True,
+                    "write_normalized_staging": True,
+                    "symbol_batch_size": 1,
+                    "date_window_days": 1,
+                    "collection_workers": 4,
+                    "progress_report_interval_seconds": 0,
+                }
+            }
+        }
+    )
+
+    assert sorted(calls) == sorted(request.raw_chunk_id for request in planned)
+    assert len(calls) == len(set(calls)) == len(planned)
+    reloaded = CollectionManifest(output_root / "collection_manifest.json")
+    assert all(reloaded.is_completed(request.raw_chunk_id or "") for request in planned)
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+    assert report["collection_workers"] == 4
+    assert report["post_consolidation_validation"]["valid"] is True
 
 
 def test_free_source_inventory_rejects_paid_sources_and_keeps_stooq_as_overlap_source():
