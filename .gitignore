@@ -55,3 +55,6 @@ PROJECT_TREE.txt
 !reports/**/.gitkeep
 !logs/.gitkeep
 !data/.gitkeep
+
+# Downloaded Stooq raw data
+data/raw/stooq_bulk/
