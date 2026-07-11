@@ -1,0 +1,22 @@
+ml:
+  stock_alpha_news_canonical_corpus:
+    # The historical assembly below is immutable. This command writes a separate
+    # offline derived canonical corpus and must reconcile 1:1 at article-symbol row level.
+    source_assembly_csv_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev/stock_alpha_news_historical_corpus_assembly.csv
+    source_assembly_metadata_json_path: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev/stock_alpha_news_historical_corpus_assembly.json
+    expected_source_checksum: d9fe4889921c349e51e4413ecc4fa2f77aaf7d59b46e39dcdddda794d6cb686e
+    output_dir: reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_canonical_corpus_alpaca_benzinga_full/dev
+    canonical_schema_version: stock_alpha_news.canonical.v1
+    transformation_version: stock_alpha_news.historical_assembly_to_canonical.v1
+    write_enabled: false
+  research_only: true
+  collection_only: true
+  trading_impact: none
+  production_validated: false
+  features_generated: false
+  model_training_invoked: false
+  model_inference_invoked: false
+  stock_alpha_news_enable_transformer: false
+  news_transformer_enabled: false
+  paper_trading_enabled: false
+  live_trading_enabled: false

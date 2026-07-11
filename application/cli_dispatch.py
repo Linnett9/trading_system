@@ -108,6 +108,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-alpha-news-historical-backfill":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_historical_backfill(config)
         return
+    if args.mode == "ml-stock-alpha-news-canonical-corpus":
+        _commands("ml_commands_stock").run_ml_stock_alpha_news_canonical_corpus(config)
+        return
     if args.mode == "ml-stock-alpha-news-daily-confirmation":
         _commands("ml_commands_stock").run_ml_stock_alpha_news_daily_confirmation(config)
         return

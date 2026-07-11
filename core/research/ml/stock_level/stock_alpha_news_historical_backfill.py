@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -25,6 +27,7 @@ SUMMARY_MARKDOWN_FILENAME = "stock_alpha_news_historical_backfill_summary.md"
 ASSEMBLY_FILENAME = "stock_alpha_news_historical_corpus_assembly.csv"
 ASSEMBLY_JSON_FILENAME = "stock_alpha_news_historical_corpus_assembly.json"
 ASSEMBLY_MARKDOWN_FILENAME = "stock_alpha_news_historical_corpus_assembly.md"
+LOGGER = logging.getLogger(__name__)
 
 
 class HistoricalBackfillManifestIntegrityError(ValueError):
@@ -59,9 +62,12 @@ def write_stock_alpha_news_historical_backfill(
     action = str(settings.get("action", "collect")).strip().lower()
     if action == "assemble":
         return write_stock_alpha_news_historical_corpus_assembly(config)
-    if action not in {"collect", "backfill"}:
+    if action in {"collect_until_done", "collect_until_drained"} or bool(settings.get("run_until_drained", False)):
+        payload = build_stock_alpha_news_historical_backfill_until_done(config, sources=sources)
+    elif action in {"collect", "backfill"}:
+        payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
+    else:
         raise ValueError(f"unsupported historical backfill action: {action}")
-    payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
     paths = _paths(settings)
     writer = ResearchArtifactWriter()
     writer.write_json(paths.manifest_path, payload["manifest"])
@@ -93,6 +99,80 @@ def write_stock_alpha_news_historical_corpus_assembly(
     return paths
 
 
+def build_stock_alpha_news_historical_backfill_until_done(
+    config: Mapping[str, Any],
+    *,
+    sources: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    settings = _settings(config)
+    max_iterations = max(1, int(settings.get("max_iterations", 100) or 100))
+    sleep_seconds = max(0.0, float(settings.get("sleep_between_iterations_seconds", 5.0) or 0.0))
+    iterations: list[dict[str, Any]] = []
+    total_processed = 0
+    total_completed = 0
+    total_partial = 0
+    total_failed = 0
+    last_payload: dict[str, Any] | None = None
+    stopped_reason = "max_iterations"
+
+    for iteration in range(1, max_iterations + 1):
+        last_payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
+        summary = dict(last_payload["summary"])
+        manifest = dict(last_payload["manifest"])
+        iteration_summary = {
+            "iteration": iteration,
+            "status_counts": dict(summary.get("status_counts", {}) or {}),
+            "processed_this_run": int(summary.get("processed_this_run", 0) or 0),
+            "skipped_complete": int(summary.get("skipped_complete", 0) or 0),
+            "completed_this_run": int(summary.get("completed_this_run", 0) or 0),
+            "partial_this_run": int(summary.get("partial_this_run", 0) or 0),
+            "failed_this_run": int(summary.get("failed_this_run", 0) or 0),
+        }
+        iterations.append(iteration_summary)
+        total_processed += iteration_summary["processed_this_run"]
+        total_completed += iteration_summary["completed_this_run"]
+        total_partial += iteration_summary["partial_this_run"]
+        total_failed += iteration_summary["failed_this_run"]
+        LOGGER.info(
+            "historical_backfill_collect_until_done iteration=%s status_counts=%s "
+            "processed_this_run=%s skipped_complete=%s completed_this_run=%s "
+            "partial_this_run=%s failed_this_run=%s",
+            iteration_summary["iteration"],
+            iteration_summary["status_counts"],
+            iteration_summary["processed_this_run"],
+            iteration_summary["skipped_complete"],
+            iteration_summary["completed_this_run"],
+            iteration_summary["partial_this_run"],
+            iteration_summary["failed_this_run"],
+        )
+        stop_reason = _collect_until_done_stop_reason(summary, manifest)
+        if stop_reason:
+            stopped_reason = stop_reason
+            break
+        if iteration < max_iterations and sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+    if last_payload is None:
+        last_payload = build_stock_alpha_news_historical_backfill(config, sources=sources)
+    final_summary = dict(last_payload["summary"])
+    final_summary.update({
+        "action": "collect_until_done",
+        "run_until_drained": True,
+        "collect_until_done": True,
+        "iteration_count": len(iterations),
+        "max_iterations": max_iterations,
+        "sleep_between_iterations_seconds": sleep_seconds,
+        "stopped_reason": stopped_reason,
+        "final_status_counts": dict(final_summary.get("status_counts", {}) or {}),
+        "iteration_summaries": iterations,
+        "total_processed_across_iterations": total_processed,
+        "total_completed_across_iterations": total_completed,
+        "total_partial_across_iterations": total_partial,
+        "total_failed_across_iterations": total_failed,
+    })
+    return {"manifest": last_payload["manifest"], "summary": final_summary}
+
+
 def build_stock_alpha_news_historical_backfill(
     config: Mapping[str, Any],
     *,
@@ -119,10 +199,12 @@ def build_stock_alpha_news_historical_backfill(
     failed = 0
     partial = 0
     completed = 0
-    for partition in partitions:
+    for partition in _partition_processing_order(partitions, manifest_records):
         record = manifest_records[partition["partition_id"]]
         if record.get("status") == "complete" and _complete_record_valid(record):
             skipped_complete += 1
+            continue
+        if _partial_partition_superseded(record, manifest_records.values()):
             continue
         if max_partitions and processed >= max_partitions:
             break
@@ -189,7 +271,7 @@ def build_stock_alpha_news_historical_corpus_assembly(
     manifest = _load_manifest(paths.manifest_path)
     incomplete = [
         row for row in manifest.get("partitions", [])
-        if row.get("status") != "complete"
+        if not _partition_resolved_for_assembly(row, manifest.get("partitions", []))
     ]
     if incomplete and bool(settings.get("assembly_require_all_complete", True)):
         return _assembly_payload(manifest, [], incomplete, paths), []
@@ -273,6 +355,117 @@ def _partition_from_manifest_record(record: Mapping[str, Any]) -> dict[str, Any]
         "identity_hash": str(record.get("identity_hash", "")),
         "parent_partition_id": str(record.get("parent_partition_id", "")),
     }
+
+
+def _partial_partition_superseded(
+    record: Mapping[str, Any],
+    records: Any,
+) -> bool:
+    if str(record.get("status", "")) != "partial":
+        return False
+    partition_id = str(record.get("partition_id", ""))
+    if not partition_id:
+        return False
+    child_ids = [str(value) for value in record.get("child_partition_ids", []) or [] if str(value).strip()]
+    if child_ids:
+        return True
+    return any(
+        str(candidate.get("parent_partition_id", "")) == partition_id
+        for candidate in records or []
+    )
+
+
+def _partition_processing_order(
+    partitions: list[dict[str, Any]],
+    manifest_records: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    records = list(manifest_records.values())
+    child_partitions: list[dict[str, Any]] = []
+    other_partitions: list[dict[str, Any]] = []
+    for partition in partitions:
+        record = manifest_records.get(str(partition["partition_id"]), {})
+        if (
+            str(record.get("parent_partition_id", "")).strip()
+            and not _partial_partition_superseded(record, records)
+        ):
+            child_partitions.append(partition)
+        else:
+            other_partitions.append(partition)
+    return [*child_partitions, *other_partitions]
+
+
+def _collect_until_done_stop_reason(
+    summary: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> str:
+    provider_reason = _blocking_provider_stop_reason(manifest)
+    if provider_reason:
+        return provider_reason
+    if int(summary.get("failed_this_run", 0) or 0) > 0:
+        return "failed_partitions"
+    if int(summary.get("processed_this_run", 0) or 0) == 0:
+        return "drained"
+    return ""
+
+
+def _blocking_provider_stop_reason(manifest: Mapping[str, Any]) -> str:
+    blocking_fields = [
+        ("provider_skipped_missing_key", "provider_skipped_missing_key"),
+        ("provider_entitlement_failed", "provider_entitlement_failed"),
+        ("provider_rate_limited", "provider_rate_limited"),
+        ("provider_failed", "provider_failed"),
+    ]
+    for record in manifest.get("partitions", []) or []:
+        if str(record.get("status", "")) != "failed":
+            continue
+        for field, reason in blocking_fields:
+            if bool(record.get(field, False)):
+                return reason
+        if bool(record.get("provider_requested", False)) and not bool(record.get("provider_attempted", False)):
+            return "provider_not_attempted"
+        last_error = str(record.get("last_error", "")).strip()
+        if last_error in {
+            "provider_not_requested",
+            "provider_not_attempted",
+            "provider_skipped_missing_key",
+            "rate_limited",
+            "entitlement_error",
+            "provider_zero_batches",
+            "provider_attempted_without_pages",
+            "provider_attempted_without_termination_reason",
+        }:
+            return last_error
+    return ""
+
+
+def _partition_resolved_for_assembly(
+    record: Mapping[str, Any],
+    records: Any,
+    *,
+    _seen: set[str] | None = None,
+) -> bool:
+    status = str(record.get("status", ""))
+    if status == "complete":
+        return True
+    if status != "partial":
+        return False
+    partition_id = str(record.get("partition_id", ""))
+    if not partition_id:
+        return False
+    seen = set(_seen or set())
+    if partition_id in seen:
+        return False
+    seen.add(partition_id)
+    children = [
+        child for child in records or []
+        if str(child.get("parent_partition_id", "")) == partition_id
+    ]
+    if not children:
+        return False
+    return all(
+        _partition_resolved_for_assembly(child, records, _seen=seen)
+        for child in children
+    )
 
 
 def _child_partitions_for_dense_partition(
@@ -903,8 +1096,11 @@ def _backfill_summary(
         "completed_this_run": completed,
         "partial_this_run": partial,
         "failed_this_run": failed,
+        "collection_only": True,
+        "contract_ingest_invoked": False,
         "features_generated": False,
         "model_training_invoked": False,
+        "news_transformer_enabled": False,
         "trading_impact": "none",
         "production_validated": False,
     }

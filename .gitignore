@@ -11,6 +11,10 @@ venv/
 # Caches
 cache/
 
+# Temporary / backup files
+*.bak
+PROJECT_TREE.txt
+
 # Data - do not push large datasets to GitHub
 /data/
 datasets/
@@ -23,6 +27,8 @@ logs/
 runs/
 outputs/
 artifacts/
+research-results/
+research-results/
 
 # Models / checkpoints
 models/
@@ -40,6 +46,10 @@ checkpoints/
 *.pem
 config.local.yaml
 secrets.yaml
+
+# Local scratch/backup files
+*.bak
+PROJECT_TREE.txt
 
 # Keep empty artifact directories if needed
 !reports/**/.gitkeep

@@ -12,15 +12,26 @@ from core.research.ml.stock_level.stock_alpha_news_historical_backfill import (
 )
 
 
-@pytest.mark.parametrize("action", ["collect", "backfill"])
+@pytest.mark.parametrize("action", ["collect", "backfill", "collect_until_done"])
 def test_historical_backfill_collection_actions_report_summary_json(monkeypatch, capsys, tmp_path, action):
     summary_path = tmp_path / "stock_alpha_news_historical_backfill_summary.json"
     assembly_path = tmp_path / "stock_alpha_news_historical_corpus_assembly.json"
     summary_path.write_text(
         json.dumps({
-            "action": "collect",
+            "action": action,
             "status_counts": {"complete": 1},
             "processed_this_run": 1,
+            "iteration_summaries": [
+                {
+                    "iteration": 1,
+                    "status_counts": {"complete": 1},
+                    "processed_this_run": 1,
+                    "skipped_complete": 0,
+                    "completed_this_run": 1,
+                    "partial_this_run": 0,
+                    "failed_this_run": 0,
+                }
+            ] if action == "collect_until_done" else [],
         }),
         encoding="utf-8",
     )
@@ -39,6 +50,8 @@ def test_historical_backfill_collection_actions_report_summary_json(monkeypatch,
     assert called["count"] == 1
     assert f"JSON: {summary_path}" in output
     assert f"JSON: {assembly_path}" not in output
+    if action == "collect_until_done":
+        assert "iteration=1 status_counts={'complete': 1} processed_this_run=1" in output
 
 
 def test_historical_backfill_assembly_action_reports_assembly_json(monkeypatch, capsys, tmp_path):

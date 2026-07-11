@@ -10,6 +10,7 @@ from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_news_historical_backfill import (
     SCHEMA_VERSION,
     build_stock_alpha_news_historical_backfill,
+    build_stock_alpha_news_historical_backfill_until_done,
     build_stock_alpha_news_historical_corpus_assembly,
     generate_historical_news_partitions,
     write_stock_alpha_news_historical_backfill,
@@ -52,6 +53,19 @@ class FakeNewsSource:
 
 class KeyedFakeNewsSource(FakeNewsSource):
     api_key_required = True
+
+
+class SequencedFakeNewsSource(FakeNewsSource):
+    def __init__(self, events):
+        super().__init__(rows=[])
+        self.events = list(events)
+
+    def collect(self, **kwargs):
+        event = self.events.pop(0) if self.events else {"rows": []}
+        self.rows = list(event.get("rows", [_row(str(self.calls + 1), "AAPL")]))
+        self.more = bool(event.get("more", False))
+        self.fail = bool(event.get("fail", False))
+        return super().collect(**kwargs)
 
 
 def test_historical_backfill_generates_deterministic_monthly_symbol_batch_partitions(tmp_path):
@@ -438,6 +452,172 @@ def test_historical_backfill_partial_partition_not_marked_complete_when_more_res
     assert child_records[0]["end_date"] == "2024-01-16"
 
 
+def test_historical_backfill_superseded_partial_parent_is_not_reprocessed_before_children(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL"], batch_size=1)
+    config["ml"]["stock_alpha_news_historical_backfill"]["max_partitions_per_run"] = 1
+    first = build_stock_alpha_news_historical_backfill(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(more=True)},
+    )
+    parent = first["manifest"]["partitions"][0]
+    child_ids = list(parent["child_partition_ids"])
+    assert parent["status"] == "partial"
+    assert parent["attempt_count"] == 1
+    assert len(child_ids) == 2
+
+    second = build_stock_alpha_news_historical_backfill(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(rows=[])},
+    )
+    records = {row["partition_id"]: row for row in second["manifest"]["partitions"]}
+    parent_after = records[parent["partition_id"]]
+    child_records = [records[child_id] for child_id in child_ids]
+
+    assert second["summary"]["processed_this_run"] == 1
+    assert parent_after["status"] == "partial"
+    assert parent_after["attempt_count"] == 1
+    assert [row["attempt_count"] for row in child_records] == [1, 0]
+    assert child_records[0]["status"] == "complete"
+    assert len([row for row in second["manifest"]["partitions"] if row.get("parent_partition_id") == parent["partition_id"]]) == 2
+
+
+def test_historical_backfill_repeated_run_does_not_duplicate_child_partitions(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL"], batch_size=1)
+    config["ml"]["stock_alpha_news_historical_backfill"]["max_partitions_per_run"] = 1
+    first = build_stock_alpha_news_historical_backfill(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(more=True)},
+    )
+    parent = first["manifest"]["partitions"][0]
+
+    build_stock_alpha_news_historical_backfill(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(rows=[])},
+    )
+    third = build_stock_alpha_news_historical_backfill(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(rows=[])},
+    )
+    child_records = [
+        row for row in third["manifest"]["partitions"]
+        if row.get("parent_partition_id") == parent["partition_id"]
+    ]
+
+    assert len(child_records) == 2
+    assert parent["child_partition_ids"] == [row["partition_id"] for row in child_records]
+
+
+def test_historical_backfill_collect_until_done_loops_until_drained_and_respects_batch_cap(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL", "MSFT", "NVDA"], batch_size=1)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["action"] = "collect_until_done"
+    settings["max_partitions_per_run"] = 2
+    settings["max_iterations"] = 10
+    settings["sleep_between_iterations_seconds"] = 0
+    source = FakeNewsSource(rows=[_row("1", "AAPL")])
+
+    payload = build_stock_alpha_news_historical_backfill_until_done(
+        config,
+        sources={"alpaca_benzinga": source},
+    )
+    summary = payload["summary"]
+
+    assert summary["collect_until_done"] is True
+    assert summary["run_until_drained"] is True
+    assert summary["stopped_reason"] == "drained"
+    assert summary["iteration_count"] == 3
+    assert [row["processed_this_run"] for row in summary["iteration_summaries"]] == [2, 1, 0]
+    assert all(row["processed_this_run"] <= 2 for row in summary["iteration_summaries"])
+    assert summary["total_processed_across_iterations"] == 3
+    assert summary["total_completed_across_iterations"] == 3
+    assert summary["total_partial_across_iterations"] == 0
+    assert summary["total_failed_across_iterations"] == 0
+    assert summary["final_status_counts"] == {"complete": 3}
+    assert summary["collection_only"] is True
+    assert summary["contract_ingest_invoked"] is False
+    assert summary["features_generated"] is False
+    assert summary["model_training_invoked"] is False
+    assert summary["news_transformer_enabled"] is False
+    assert summary["trading_impact"] == "none"
+    assert summary["production_validated"] is False
+
+
+def test_historical_backfill_collect_until_done_stops_on_failed_partition(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL", "MSFT"], batch_size=1)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["action"] = "collect_until_done"
+    settings["max_partitions_per_run"] = 1
+    settings["max_iterations"] = 10
+    settings["sleep_between_iterations_seconds"] = 0
+
+    payload = build_stock_alpha_news_historical_backfill_until_done(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(fail=True)},
+    )
+    summary = payload["summary"]
+
+    assert summary["iteration_count"] == 1
+    assert summary["stopped_reason"] in {"provider_failed", "failed_partitions"}
+    assert summary["total_processed_across_iterations"] == 1
+    assert summary["total_failed_across_iterations"] == 1
+    assert summary["final_status_counts"]["failed"] == 1
+
+
+def test_historical_backfill_collect_until_done_stops_on_max_iterations(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL", "MSFT", "NVDA"], batch_size=1)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["action"] = "collect_until_done"
+    settings["max_partitions_per_run"] = 1
+    settings["max_iterations"] = 2
+    settings["sleep_between_iterations_seconds"] = 0
+
+    payload = build_stock_alpha_news_historical_backfill_until_done(
+        config,
+        sources={"alpaca_benzinga": FakeNewsSource(rows=[_row("1", "AAPL")])},
+    )
+    summary = payload["summary"]
+
+    assert summary["iteration_count"] == 2
+    assert summary["stopped_reason"] == "max_iterations"
+    assert [row["processed_this_run"] for row in summary["iteration_summaries"]] == [1, 1]
+    assert summary["total_processed_across_iterations"] == 2
+    assert summary["total_completed_across_iterations"] == 2
+    assert summary["final_status_counts"] == {"complete": 2, "pending": 1}
+
+
+def test_historical_backfill_collect_until_done_processes_child_partitions_across_iterations(tmp_path):
+    config = _config(tmp_path, symbols=["AAPL"], batch_size=1)
+    settings = config["ml"]["stock_alpha_news_historical_backfill"]
+    settings["action"] = "collect_until_done"
+    settings["max_partitions_per_run"] = 1
+    settings["max_iterations"] = 10
+    settings["sleep_between_iterations_seconds"] = 0
+    source = SequencedFakeNewsSource([
+        {"more": True, "rows": [_row("parent", "AAPL")]},
+        {"rows": [_row("child-1", "AAPL")]},
+        {"rows": [_row("child-2", "AAPL")]},
+    ])
+
+    payload = build_stock_alpha_news_historical_backfill_until_done(
+        config,
+        sources={"alpaca_benzinga": source},
+    )
+    records = payload["manifest"]["partitions"]
+    parent = records[0]
+    children = [row for row in records if row.get("parent_partition_id") == parent["partition_id"]]
+    summary = payload["summary"]
+
+    assert summary["stopped_reason"] == "drained"
+    assert [row["processed_this_run"] for row in summary["iteration_summaries"]] == [1, 1, 1, 0]
+    assert summary["total_processed_across_iterations"] == 3
+    assert summary["total_partial_across_iterations"] == 1
+    assert summary["total_completed_across_iterations"] == 2
+    assert parent["status"] == "partial"
+    assert parent["attempt_count"] == 1
+    assert [row["status"] for row in children] == ["complete", "complete"]
+    assert len(children) == 2
+
+
 def test_historical_backfill_existing_artifact_without_complete_manifest_is_rebuilt(tmp_path):
     config = _config(tmp_path)
     partition = generate_historical_news_partitions(config)[0]
@@ -612,7 +792,40 @@ def test_historical_corpus_assembly_excludes_partial_parent_partition(tmp_path):
 
     payload, rows = build_stock_alpha_news_historical_corpus_assembly(config)
 
-    assert payload["incomplete_partition_count"] == 1
+    assert payload["incomplete_partition_count"] == 0
+    assert payload["row_count"] == 1
+    assert [row["provider_article_id"] for row in rows] == ["child"]
+
+
+def test_historical_corpus_assembly_blocks_when_partial_parent_child_is_incomplete(tmp_path):
+    config = _config(tmp_path)
+    _write_manifest(config, [
+        _partial_record("parent"),
+        {
+            **_partial_record("child"),
+            "status": "pending",
+            "parent_partition_id": "parent",
+        },
+    ])
+
+    payload, rows = build_stock_alpha_news_historical_corpus_assembly(config)
+
+    assert rows == []
+    assert payload["incomplete_partition_count"] == 2
+    assert set(payload["incomplete_partitions"]) == {"parent", "child"}
+
+
+def test_historical_corpus_assembly_proceeds_when_partial_parent_descendants_complete(tmp_path):
+    config = _config(tmp_path)
+    artifact, checksum = _write_partition_csv(tmp_path, "child", [_row("child", "AAPL")])
+    _write_manifest(config, [
+        _partial_record("parent"),
+        _complete_record("child", output_artifact=str(artifact), output_row_count=1, checksum=checksum, parent_partition_id="parent"),
+    ])
+
+    payload, rows = build_stock_alpha_news_historical_corpus_assembly(config)
+
+    assert payload["incomplete_partition_count"] == 0
     assert payload["row_count"] == 1
     assert [row["provider_article_id"] for row in rows] == ["child"]
 
@@ -739,12 +952,15 @@ def test_historical_backfill_configs_parse_without_enabling_models_or_trading():
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_tiny_mock_smoke.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_pilot.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1_collect_until_done.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1_assembly.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016_collect_until_done.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016_assembly.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_known_positive_pilot.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_known_positive_pilot_assembly.yaml",
         "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template.yaml",
+        "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template_collect_until_done.yaml",
     ]:
         config = load_config(path, overlay_project_config=True)
         ml = config["ml"]
@@ -864,6 +1080,58 @@ def test_staged_historical_backfill_configs_resolve_expected_partitions_and_root
         assert assembly["ml"]["trading_impact"] == "none"
         assert collect["ml"]["production_validated"] is False
         assert assembly["ml"]["production_validated"] is False
+
+
+def test_staged_collect_until_done_configs_resolve_expected_partitions_and_roots():
+    stages = [
+        (
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1_collect_until_done.yaml",
+            "stock_alpha_news_historical_backfill_alpaca_benzinga_smoke_2016_q1/dev",
+            "2016-01-01",
+            "2016-03-31",
+            24,
+            4,
+            100,
+        ),
+        (
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_2016_collect_until_done.yaml",
+            "stock_alpha_news_historical_backfill_alpaca_benzinga_2016/dev",
+            "2016-01-01",
+            "2016-12-31",
+            96,
+            8,
+            200,
+        ),
+        (
+            "config/config.stock_alpha_news_historical_backfill_alpaca_benzinga_full_template_collect_until_done.yaml",
+            "stock_alpha_news_historical_backfill_alpaca_benzinga_full/dev",
+            "2016-01-01",
+            "2026-07-08",
+            1_016,
+            1,
+            2_000,
+        ),
+    ]
+
+    for config_path, root_fragment, start, end, partition_count, max_per_run, max_iterations in stages:
+        config = load_config(config_path, overlay_project_config=True)
+        settings = config["ml"]["stock_alpha_news_historical_backfill"]
+        partitions = generate_historical_news_partitions(config)
+        symbols = {symbol for partition in partitions for symbol in partition["symbols"]}
+
+        assert settings["action"] == "collect_until_done"
+        assert root_fragment in settings["work_dir"]
+        assert settings["start_date"] == start
+        assert settings["end_date"] == end
+        assert settings["symbol_batch_size"] == 25
+        assert settings["max_partitions_per_run"] == max_per_run
+        assert settings["max_iterations"] == max_iterations
+        assert settings["sleep_between_iterations_seconds"] == 5.0
+        assert len(symbols) == 200
+        assert len(partitions) == partition_count
+        assert config["ml"]["stock_alpha_news_enable_transformer"] is False
+        assert config["ml"]["trading_impact"] == "none"
+        assert config["ml"]["production_validated"] is False
 
 
 def test_full_history_template_root_is_isolated_from_staged_and_pilot_roots():

@@ -32,7 +32,10 @@ from core.research.ml.stock_level.news_sources.providers import (
 )
 from core.research.ml.stock_level.news_sources.registry import (
     NEWS_SOURCE_CLASSIFICATIONS,
+    NEWS_SOURCE_PLANNING_SCHEMA_VERSION,
     load_validated_rss_registry,
+    news_source_planning_registry,
+    reconcile_news_source_registry,
 )
 
 __all__ = [
@@ -48,6 +51,7 @@ __all__ = [
     "GdeltNewsSource",
     "MassiveStockNewsSource",
     "NEWS_SOURCE_CLASSIFICATIONS",
+    "NEWS_SOURCE_PLANNING_SCHEMA_VERSION",
     "NewsApiNewsSource",
     "NewsSource",
     "ProviderRateLimitError",
@@ -59,6 +63,8 @@ __all__ = [
     "default_news_sources",
     "gdelt_query_terms",
     "load_validated_rss_registry",
+    "news_source_planning_registry",
+    "reconcile_news_source_registry",
     "normalize_sec_company_tickers",
     "normalize_sec_ticker",
     "sec_submissions_url",

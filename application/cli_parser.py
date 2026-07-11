@@ -66,6 +66,7 @@ def parse_args():
             "ml-stock-alpha-news-collect-free-sources",
             "ml-stock-alpha-news-collection-plan",
             "ml-stock-alpha-news-historical-backfill",
+            "ml-stock-alpha-news-canonical-corpus",
             "ml-stock-alpha-news-daily-confirmation",
             "ml-stock-alpha-news-coverage-audit",
             "ml-stock-alpha-news-risk-overlay-research",

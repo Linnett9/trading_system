@@ -22,6 +22,7 @@ from core.research.ml.stock_level.news_risk_overlay_research import (
 )
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
+import core.research.ml.stock_level.news_sources.historical_canonical_corpus as historical_canonical_corpus
 
 
 def _stock_alpha_news_historical_backfill_action(config: Mapping[str, Any]) -> str:
@@ -36,7 +37,7 @@ def _stock_alpha_news_historical_backfill_payload_path(
     result: Any,
 ) -> Path | None:
     action = _stock_alpha_news_historical_backfill_action(config)
-    if action in {"collect", "backfill"}:
+    if action in {"collect", "backfill", "collect_until_done", "collect_until_drained"}:
         return result.summary_json_path
     if action == "assemble":
         return result.assembly_json_path
@@ -272,6 +273,13 @@ def run_ml_stock_alpha_news_historical_backfill(config):
     if "status_counts" in payload:
         print(f"status_counts={payload['status_counts']}")
         print(f"processed_this_run={payload['processed_this_run']}")
+        for iteration in payload.get("iteration_summaries", []) or []:
+            print(
+                "iteration={iteration} status_counts={status_counts} "
+                "processed_this_run={processed_this_run} skipped_complete={skipped_complete} "
+                "completed_this_run={completed_this_run} partial_this_run={partial_this_run} "
+                "failed_this_run={failed_this_run}".format(**iteration)
+            )
     else:
         print(f"row_count={payload['row_count']}")
         print(f"incomplete_partition_count={payload['incomplete_partition_count']}")
@@ -281,6 +289,56 @@ def run_ml_stock_alpha_news_historical_backfill(config):
     print("news_transformer_enabled=false")
     print(f"Manifest: {result.manifest_path}")
     print(f"JSON: {payload_path}")
+
+def run_ml_stock_alpha_news_canonical_corpus(config):
+    print("\nSTOCK-ALPHA NEWS CANONICAL CORPUS")
+    print("mode=research | offline_derived_stage=true | trading_impact=none | production_validated=false")
+    try:
+        manifest = historical_canonical_corpus.materialize_historical_canonical_corpus_from_config(
+            _historical_canonical_corpus_config(config)
+        )
+    except historical_canonical_corpus.HistoricalCanonicalCorpusError as exc:
+        print("canonical_corpus_written=false")
+        print(f"blocking_issue={exc}")
+        raise SystemExit(1) from None
+    print(f"source_row_count={manifest['source_row_count']}")
+    print(f"canonical_row_count={manifest['canonical_row_count']}")
+    print(f"row_count_reconciled={str(manifest['row_count_reconciled']).lower()}")
+    print("contract_ingest_invoked=false")
+    print("features_generated=false")
+    print("model_training_invoked=false")
+    print("model_inference_invoked=false")
+    print("news_transformer_enabled=false")
+    print(f"Canonical CSV: {manifest['output_files']['canonical_corpus_csv']}")
+    print(f"Manifest JSON: {manifest['output_files']['manifest_json']}")
+    print(f"Audit JSON: {manifest['output_files']['audit_json']}")
+    print(f"Summary Markdown: {manifest['output_files']['summary_markdown']}")
+    return manifest
+
+def _historical_canonical_corpus_config(config):
+    settings = dict(
+        dict(config.get("ml", {}) or {}).get("stock_alpha_news_canonical_corpus", {}) or {}
+    )
+    if not settings:
+        raise historical_canonical_corpus.HistoricalCanonicalCorpusError(
+            "ml.stock_alpha_news_canonical_corpus config is required"
+        )
+    return historical_canonical_corpus.HistoricalCanonicalCorpusConfig(
+        source_assembly_csv_path=settings.get("source_assembly_csv_path", ""),
+        source_assembly_metadata_json_path=settings.get("source_assembly_metadata_json_path", ""),
+        output_dir=settings.get("output_dir", ""),
+        expected_source_checksum=settings.get("expected_source_checksum", ""),
+        canonical_schema_version=settings.get(
+            "canonical_schema_version",
+            historical_canonical_corpus.CANONICAL_NEWS_SCHEMA_VERSION,
+        ),
+        transformation_version=settings.get(
+            "transformation_version",
+            historical_canonical_corpus.HISTORICAL_CANONICAL_TRANSFORMATION_VERSION,
+        ),
+        write_enabled=bool(settings.get("write_enabled", False)),
+        ingested_at_utc=settings.get("ingested_at_utc"),
+    )
 
 def run_ml_stock_alpha_news_daily_confirmation(config):
     print("\nSTOCK-ALPHA DAILY NEWS CONFIRMATION")
