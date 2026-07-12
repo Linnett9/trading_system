@@ -129,6 +129,11 @@ def build_dataset(
             "feature_id": feature_key,
             "metadata": {
                 "rebalance_date": str(feature_row.get("rebalance_date", feature_date)),
+                "feature_timestamp": str(feature_row.get("feature_timestamp", feature_date)),
+                "decision_timestamp": str(feature_row.get("decision_timestamp", feature_date)),
+                "label_available_timestamp": str(
+                    label_row.get("label_available_timestamp", label_end)
+                ),
                 "variant_id": str(feature_row.get("variant_id", "")),
                 "symbol": str(feature_row.get("symbol", "")),
                 "selected_symbols": str(feature_row.get("selected_symbols", "")),
@@ -175,6 +180,9 @@ def _numeric_feature_values(row: dict[str, float | str]) -> dict[str, float]:
         "feature_id",
         "label_start_date",
         "label_end_date",
+        "label_available_timestamp",
+        "feature_timestamp",
+        "decision_timestamp",
         "rebalance_date",
         "outcome_end_date",
         "selected_symbols",

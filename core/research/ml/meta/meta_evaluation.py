@@ -55,6 +55,7 @@ def _chronological_meta_probabilities(
             row
             for row in rows
             if row.get("rebalance_date") in train_dates
+            and _label_available_timestamp(row) <= first_test_date
             and (
                 not purge_overlapping_labels
                 or not _label_overlaps_validation(row, first_test_date)
@@ -81,6 +82,12 @@ def _chronological_meta_probabilities(
             ])
             if purge_overlapping_labels
             else 0,
+            "purged_unavailable_label_count": len([
+                row
+                for row in rows
+                if row.get("rebalance_date") in train_dates
+                and _label_available_timestamp(row) > first_test_date
+            ]),
             "prediction_generated": False,
         }
         if not train_fold_rows or not test_rows:
@@ -100,8 +107,20 @@ def _chronological_meta_probabilities(
         audit["max_training_rebalance_date"] = max(
             row.get("rebalance_date", "") for row in train_fold_rows
         )
+        audit["max_training_label_available_timestamp"] = max(
+            _label_available_timestamp(row) for row in train_fold_rows
+        )
         audits.append(audit)
     return probabilities, audits
+
+
+def _label_available_timestamp(row: dict[str, str]) -> str:
+    return (
+        row.get("label_available_timestamp")
+        or row.get("label_end_date")
+        or row.get("outcome_end_date")
+        or ""
+    )
 
 
 def _label_overlaps_validation(row: dict[str, str], validation_start: str) -> bool:
@@ -142,7 +161,13 @@ def _walk_forward_meta_evaluation(
             continue
         first_test_date = test_dates[0]
         train_dates = [date for date in unique_dates if date < first_test_date]
-        train_rows = [row for row in rows if row.get("rebalance_date") in train_dates]
+        train_rows = [
+            row
+            for row in rows
+            if row.get("rebalance_date") in train_dates
+            and row.get("split") == "out_of_fold"
+            and _label_available_timestamp(row) <= first_test_date
+        ]
         test_rows = [row for row in rows if row.get("rebalance_date") in set(test_dates)]
         if not train_rows or not test_rows:
             continue
@@ -150,6 +175,7 @@ def _walk_forward_meta_evaluation(
         train_labels = [int(row["actual_label"]) for row in train_rows]
         test_features = [_feature_values(row) for row in test_rows]
         test_labels = [int(row["actual_label"]) for row in test_rows]
+        train_row_dates = [row.get("rebalance_date", "") for row in train_rows]
         model = _fit_meta_model(
             model_type,
             train_features,
@@ -171,17 +197,53 @@ def _walk_forward_meta_evaluation(
             reduced_exposure,
             reduce_when=reduce_when,
         )
+        prediction_rows = [
+            {
+                "feature_id": row.get("feature_id", ""),
+                "rebalance_date": row.get("rebalance_date", ""),
+                "split": "out_of_fold",
+                "fold": str(fold_index + 1),
+                "actual_label": row.get("actual_label", ""),
+                "predicted_probability": str(float(probability)),
+                "prediction": str(int(prediction)),
+                "model_type": _normalize_meta_model_type(model_type),
+                "validation_method": "chronological_meta_walk_forward_strict_oos",
+            }
+            for row, probability, prediction in zip(test_rows, probabilities, predictions)
+        ]
         folds.append({
             "fold": fold_index + 1,
-            "train_start_date": min(train_dates),
-            "train_end_date": max(train_dates),
+            "train_start_date": min(train_row_dates),
+            "train_end_date": max(train_row_dates),
             "test_start_date": min(test_dates),
             "test_end_date": max(test_dates),
             "train_sample_count": len(train_rows),
             "test_sample_count": len(test_rows),
+            "maximum_training_label_available_timestamp": max(
+                _label_available_timestamp(row) for row in train_rows
+            ),
+            "purged_unavailable_label_count": len([
+                row
+                for row in rows
+                if row.get("rebalance_date") in train_dates
+                and _label_available_timestamp(row) > first_test_date
+            ]),
+            "preprocessing_fit_row_count": len(train_rows),
+            "base_prediction_provenance": "out_of_fold_source_prediction_artifacts",
+            "leakage_assertions": {
+                "training_labels_matured": max(
+                    _label_available_timestamp(row) for row in train_rows
+                )
+                <= first_test_date,
+                "test_dates_excluded_from_training": max(train_row_dates) < min(test_dates),
+                "training_base_predictions_out_of_fold": all(
+                    row.get("split") == "out_of_fold" for row in train_rows
+                ),
+            },
             "metrics": classification_metrics(test_labels, predictions),
             "calibration": calibration,
             "overlay": overlay,
+            "prediction_rows": prediction_rows,
         })
     summary = _walk_forward_summary(folds)
     return {
@@ -190,6 +252,22 @@ def _walk_forward_meta_evaluation(
         "fold_count": len(folds),
         "folds": folds,
         "summary": summary,
+        "prediction_rows": [
+            prediction
+            for fold in folds
+            for prediction in fold.get("prediction_rows", [])
+        ],
+        "temporal_policy": {
+            "training_window_type": "expanding",
+            "training_eligibility_rule": "label_available_timestamp <= meta_decision_timestamp",
+            "base_prediction_requirement": "meta training rows must be out_of_fold artifacts",
+        },
+        "leakage_checks_passed": all(
+            fold.get("leakage_assertions", {}).get("training_labels_matured")
+            and fold.get("leakage_assertions", {}).get("test_dates_excluded_from_training")
+            and fold.get("leakage_assertions", {}).get("training_base_predictions_out_of_fold")
+            for fold in folds
+        ),
         "research_only": True,
         "trading_impact": "none",
     }

@@ -6,6 +6,7 @@ from core.research.ml.stock_level import stock_level_feature_attribution
 from core.research.ml.stock_level.feature_attribution.service import (
     build_stock_level_feature_attribution,
 )
+from core.research.ml.stock_level_benchmark_types import TARGET_PROVENANCE_CONTRACT_VERSION
 
 
 class SyntheticLinearRegressor:
@@ -139,6 +140,7 @@ def _rows() -> list[dict[str, str]]:
     rows = []
     for date_index in range(8):
         date = f"2024-01-{date_index + 1:02d}"
+        provenance = _target_provenance(date_index)
         for symbol_index in range(10):
             useful = float(symbol_index - 5) / 10.0
             noise = [
@@ -149,6 +151,7 @@ def _rows() -> list[dict[str, str]]:
                 {
                     "rebalance_date": date,
                     "symbol": f"S{symbol_index:02d}",
+                    **provenance,
                     "predicted_momentum_20d": str(useful),
                     "predicted_momentum_60d": str(noise[0]),
                     "predicted_momentum_120d": str(noise[1]),
@@ -163,3 +166,27 @@ def _rows() -> list[dict[str, str]]:
                 }
             )
     return rows
+
+
+def _target_provenance(date_index: int) -> dict[str, str]:
+    date = f"2024-01-{date_index + 1:02d}"
+    label_start = f"2024-01-{date_index + 2:02d}"
+    label_end = f"2024-01-{date_index + 2:02d}"
+    label_available = f"2024-01-{date_index + 3:02d}"
+    return {
+        "benchmark_symbol": "SPY",
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "feature_timestamp": date,
+        "decision_timestamp": date,
+        "target_horizon": "10_trading_observations",
+        "target_observation_count": "10",
+        "target_start_timestamp": date,
+        "label_start_timestamp": label_start,
+        "label_end_timestamp": label_end,
+        "label_available_timestamp": label_available,
+        "target_price_convention": "simple_close_to_close",
+        "benchmark_target_start_timestamp": date,
+        "benchmark_label_start_timestamp": label_start,
+        "benchmark_label_end_timestamp": label_end,
+        "benchmark_label_available_timestamp": label_available,
+    }

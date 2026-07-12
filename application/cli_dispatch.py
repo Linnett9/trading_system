@@ -75,11 +75,20 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-level-alpha-benchmark":
         _commands("ml_commands").run_ml_stock_level_alpha_benchmark(config)
         return
+    if args.mode == "ml-stock-selector-final-fit":
+        _commands("ml_commands").run_ml_stock_selector_final_fit(config)
+        return
+    if args.mode == "ml-selector-exposure-comparison":
+        _commands("ml_commands").run_ml_selector_exposure_comparison(config)
+        return
     if args.mode == "ml-stock-level-target-comparison":
         _commands("ml_commands").run_ml_stock_level_target_comparison(config)
         return
     if args.mode == "ml-stock-level-portfolio-replay":
         _commands("ml_commands").run_ml_stock_level_portfolio_replay(config)
+        return
+    if args.mode == "ml-stock-selector-rebalance-dataset":
+        _commands("ml_commands").run_ml_stock_selector_rebalance_dataset(config)
         return
     if args.mode == "ml-stock-level-portfolio-policy-sweep":
         _commands("ml_commands").run_ml_stock_level_portfolio_policy_sweep(config)

@@ -11,7 +11,7 @@ from core.research.ml.stock_level.stock_alpha_deep_model_diagnostics import REQU
 from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, MODEL_SETS, TARGET_MODEL_SETS, TABULAR_MODELS
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
 from core.research.ml.stock_level.stock_level_sequence_regressors import SequenceRegressorConfig, TorchSequenceReturnRegressor
-from core.research.ml.stock_level_benchmark_types import AUXILIARY_TARGET_COLUMNS, MODEL_NAMES, SEQUENCE_MODEL_NAMES, TABULAR_MODEL_NAMES
+from core.research.ml.stock_level_benchmark_types import AUXILIARY_TARGET_COLUMNS, MODEL_NAMES, SEQUENCE_MODEL_NAMES, TABULAR_MODEL_NAMES, TARGET_PROVENANCE_CONTRACT_VERSION
 
 
 def _rows(count=4):
@@ -575,7 +575,7 @@ def test_tiny_news_transformer_diagnostic_enabled_reaches_model_branch(tmp_path,
     rows = payload["diagnostics"]
     assert rows
     assert any(row["prediction_count"] > 0 for row in rows)
-    assert all(row["skip_reason"] in {None, "test_sequence_windows_missing"} for row in rows)
+    assert all(row["skip_reason"] in {None, "test_sequence_windows_missing", "no_sequence_windows_created"} for row in rows)
     assert any(row["skip_reason"] is None for row in rows)
 
 
@@ -591,18 +591,39 @@ def _write_artifact(path, *, auxiliary=False, generic_news=False):
     if generic_news:
         extra_header += ",news_random_score,sentiment_blob"
         extra_row += ",1.0,0.5"
+    provenance_header = (
+        ",benchmark_symbol,target_provenance_contract_version,feature_timestamp,"
+        "decision_timestamp,target_horizon,target_observation_count,"
+        "target_start_timestamp,label_start_timestamp,label_end_timestamp,"
+        "label_available_timestamp,target_price_convention,"
+        "benchmark_target_start_timestamp,benchmark_label_start_timestamp,"
+        "benchmark_label_end_timestamp,benchmark_label_available_timestamp"
+    )
     path.write_text(
         "\n".join(
             [
-                f"rebalance_date,symbol,feature,actual_forward_return_10d,predicted_momentum_120d,predicted_risk_adjusted_momentum{extra_header}",
+                f"rebalance_date,symbol,feature,actual_forward_return_10d,predicted_momentum_120d,predicted_risk_adjusted_momentum{provenance_header}{extra_header}",
                 *[
-                    f"2024-01-{date_index + 1:02d},AAA,{date_index / 10},0.1,0.2,0.3{extra_row}"
+                    f"2024-01-{date_index + 1:02d},AAA,{date_index / 10},0.1,0.2,0.3{_provenance_csv(date_index)}{extra_row}"
                     for date_index in range(8)
                 ],
             ]
         )
         + "\n",
         encoding="utf-8",
+    )
+
+
+def _provenance_csv(date_index):
+    date = f"2024-01-{date_index + 1:02d}"
+    label_start = f"2024-01-{date_index + 2:02d}"
+    label_end = f"2024-01-{date_index + 3:02d}"
+    label_available = f"2024-01-{date_index + 4:02d}"
+    return (
+        f",SPY,{TARGET_PROVENANCE_CONTRACT_VERSION},{date},{date},"
+        f"10_trading_observations,10,{date},{label_start},{label_end},"
+        f"{label_available},simple_close_to_close,{date},{label_start},"
+        f"{label_end},{label_available}"
     )
 
 

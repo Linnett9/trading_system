@@ -57,6 +57,32 @@ def run_ml_stock_level_alpha_benchmark(config):
     print(f"Leaderboard Markdown: {result.markdown_path}")
     print(f"OOS predictions: {result.predictions_path}")
 
+def run_ml_stock_selector_final_fit(config):
+    from core.research.ml.stock_level.final_fitted_selector import (
+        write_final_fitted_stock_selector,
+    )
+
+    result = write_final_fitted_stock_selector(config)
+    print("\nSTOCK SELECTOR FINAL FIT")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Output dir: {result.output_dir}")
+    print(f"Run dir: {result.run_dir}")
+    print(f"Audit: {result.audit_path}")
+    print(f"Latest completed: {result.latest_completed_path}")
+
+def run_ml_selector_exposure_comparison(config):
+    from core.research.ml.stock_level.selector_exposure_comparison import (
+        write_selector_exposure_comparison,
+    )
+
+    result = write_selector_exposure_comparison(config)
+    print("\nSELECTOR EXPOSURE MATCHED COMPARISON")
+    print("mode=research | trading_impact=none | production_validated=false")
+    print(f"Output dir: {result.output_dir}")
+    print(f"Run dir: {result.run_dir}")
+    print(f"Summary: {result.comparison_summary_json}")
+    print(f"Audit: {result.audit_json}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,
@@ -82,6 +108,18 @@ def run_ml_stock_level_portfolio_replay(config):
     print(f"Summary Markdown: {result.markdown_path}")
     print(f"Equity curves: {result.equity_curves_path}")
     print(f"Holdings: {result.holdings_path}")
+
+def run_ml_stock_selector_rebalance_dataset(config):
+    from core.research.ml.stock_level.stock_level_portfolio_replay import (
+        write_stock_selector_rebalance_dataset,
+    )
+
+    result = write_stock_selector_rebalance_dataset(config)
+    print("\nSTOCK SELECTOR REBALANCE DATASET")
+    print("mode=research | training_performed=false | trading_impact=none")
+    print(f"Rows: {result.row_count}")
+    print(f"Dataset: {result.dataset_path}")
+    print(f"Metadata: {result.metadata_path}")
 
 def run_ml_stock_level_portfolio_policy_sweep(config):
     from core.research.ml.stock_level.stock_level_portfolio_policy_sweep import (

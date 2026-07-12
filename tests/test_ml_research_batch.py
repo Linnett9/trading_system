@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
 from pathlib import Path
 import inspect
+import threading
+import time
 
 import pytest
 
@@ -18,7 +21,15 @@ from application.services.ml_commands import (
     run_ml_research_batch,
     validate_ml_research_batch_config,
 )
+from application.services.ml_commands_batch import (
+    _completed_ml_research_output_check,
+    _current_model_input_identity,
+)
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
+from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
+from core.research.ml.config import MLExperimentConfig
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION
+from core.research.ml.immutable_runs import deterministic_run_id, preserve_immutable_run
 
 
 def test_ml_research_batch_config_validation(tmp_path):
@@ -52,6 +63,48 @@ def test_ml_research_batch_rejects_duplicate_output_dirs(tmp_path):
 
     with pytest.raises(RuntimeError, match="Duplicate ml.output_dir"):
         validate_ml_research_batch_config(_batch_config(shared_cache, [first, second]))
+
+
+def test_ml_research_batch_max_workers_one_uses_serial_order(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n",
+        encoding="utf-8",
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    invoked = []
+    captured_leaderboard_dirs = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, first_dir, rest=None: (
+            captured_leaderboard_dirs.append([first_dir, *(rest or [])])
+            or (tmp_path / "leaderboard.md", tmp_path / "leaderboard.json")
+        ),
+    )
+
+    class ForbiddenExecutor(ThreadPoolExecutor):
+        def __init__(self, max_workers):
+            raise AssertionError("serial max_workers=1 path should not create executor")
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        invoked.append(Path(config_path).stem)
+        return MLResearchBatchResult(
+            config_path=config_path,
+            output_dir=str(Path(config_path).with_suffix("")),
+            success=True,
+        )
+
+    results = run_ml_research_batch(
+        _batch_config(shared_cache, [first, second], max_workers=1),
+        executor_cls=ForbiddenExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert invoked == ["first", "second"]
+    assert [Path(result.config_path).stem for result in results] == ["first", "second"]
+    assert [path.name for path in captured_leaderboard_dirs[0]] == ["first", "second"]
 
 
 def test_ml_research_batch_runs_two_dummy_configs_in_parallel(tmp_path):
@@ -104,7 +157,10 @@ def test_ml_research_batch_runs_two_dummy_configs_in_parallel(tmp_path):
     assert len(captured_leaderboard_dirs[0]) == 2
 
 
-def test_ml_research_batch_passes_resolved_workers_to_executor(tmp_path, monkeypatch):
+def test_ml_research_batch_uses_bounded_executor_when_max_workers_exceeds_one(
+    tmp_path,
+    monkeypatch,
+):
     shared_cache = tmp_path / "cache" / "ml"
     shared_cache.mkdir(parents=True)
     (shared_cache / "expanded_rebalance_dataset.csv").write_text(
@@ -136,6 +192,123 @@ def test_ml_research_batch_passes_resolved_workers_to_executor(tmp_path, monkeyp
     assert captured["max_workers"] == 4
 
 
+def test_ml_research_batch_never_exceeds_configured_concurrency(
+    tmp_path,
+    monkeypatch,
+):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n", encoding="utf-8"
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    third = _research_config(tmp_path, "third", "reports/third", shared_cache)
+    lock = threading.Lock()
+    active = 0
+    peak_active = 0
+    invoked = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, output_dir, additional=None: (
+            tmp_path / "leaderboard.md", tmp_path / "leaderboard.json"
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        nonlocal active, peak_active
+        with lock:
+            invoked.append(Path(config_path).stem)
+            active += 1
+            peak_active = max(peak_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    run_ml_research_batch(
+        _batch_config(shared_cache, [first, second, third], max_workers=2),
+        executor_cls=ThreadPoolExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert peak_active <= 2
+    assert sorted(invoked) == ["first", "second", "third"]
+
+
+def test_ml_research_batch_publishes_outputs_in_config_order(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n", encoding="utf-8"
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    captured_leaderboard_dirs = []
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, first_dir, rest=None: (
+            captured_leaderboard_dirs.append([first_dir, *(rest or [])])
+            or (tmp_path / "leaderboard.md", tmp_path / "leaderboard.json")
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        if Path(config_path).stem == "first":
+            time.sleep(0.05)
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    results = run_ml_research_batch(
+        _batch_config(shared_cache, [first, second], max_workers=2),
+        executor_cls=ThreadPoolExecutor,
+        worker_fn=fake_worker,
+    )
+
+    assert [Path(result.config_path).stem for result in results] == ["first", "second"]
+    assert [path.name for path in captured_leaderboard_dirs[0]] == ["first", "second"]
+
+
+def test_ml_research_batch_surfaces_worker_exception(tmp_path, monkeypatch):
+    shared_cache = tmp_path / "cache" / "ml"
+    shared_cache.mkdir(parents=True)
+    (shared_cache / "expanded_rebalance_dataset.csv").write_text(
+        "feature_id,feature_date,should_reduce_exposure\n",
+        encoding="utf-8",
+    )
+    first = _research_config(tmp_path, "first", "reports/first", shared_cache)
+    second = _research_config(tmp_path, "second", "reports/second", shared_cache)
+    monkeypatch.setattr(
+        "application.services.ml_commands_batch._update_source_leaderboard",
+        lambda config, output_dir, additional=None: (
+            tmp_path / "leaderboard.md", tmp_path / "leaderboard.json"
+        ),
+    )
+
+    def fake_worker(config_path, model_threads, expanded_dataset_path, profile_name=""):
+        if Path(config_path).stem == "second":
+            raise RuntimeError("boom")
+        return MLResearchBatchResult(
+            config_path,
+            str(Path(config_path).with_suffix("")),
+            True,
+        )
+
+    with pytest.raises(RuntimeError, match="second.yaml: boom"):
+        run_ml_research_batch(
+            _batch_config(shared_cache, [first, second], max_workers=2, fail_fast=False),
+            executor_cls=ThreadPoolExecutor,
+            worker_fn=fake_worker,
+        )
+
+
 def test_ml_research_applies_runtime_parallelism_settings(monkeypatch, tmp_path):
     captured = {}
 
@@ -149,9 +322,17 @@ def test_ml_research_applies_runtime_parallelism_settings(monkeypatch, tmp_path)
             output_dir.mkdir(parents=True)
             return _fake_ml_result(output_dir)
 
-    monkeypatch.setattr(ml_commands, "MLExperimentRunner", FakeRunner)
+    from importlib import import_module
+
+    research_module = import_module(run_ml_research.__module__)
+
     monkeypatch.setattr(
-        ml_commands,
+        research_module,
+        "MLExperimentRunner",
+        FakeRunner,
+    )
+    monkeypatch.setattr(
+        research_module,
         "_update_source_leaderboard",
         lambda config, output_dir: (
             tmp_path / "leaderboard.md",
@@ -309,6 +490,336 @@ def test_incomplete_run_detection_skips_complete_and_empty_dirs(tmp_path):
     assert incomplete == [history_only, metrics_only, partial]
 
 
+def test_completed_ml_research_output_skips_compatible_run(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is True
+    assert check.reason == ""
+
+
+def test_completed_ml_research_output_skips_compatible_immutable_run(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    identity = _current_model_input_identity(
+        config,
+        MLExperimentConfig.from_config(config),
+    )
+    assert identity is not None
+    run_identity = {
+        **identity.values,
+        "model_name": "noop",
+        "feature_set": "expanded_rebalance_v1",
+    }
+    run_id = deterministic_run_id("exposure_ml", run_identity)
+    preserve_immutable_run(
+        output_dir=output_dir,
+        run_id=run_id,
+        kind="exposure_ml",
+        identity=run_identity,
+        artifact_paths=(
+            output_dir / "metrics.json",
+            output_dir / "metadata.json",
+            output_dir / "predictions.csv",
+            output_dir / "model.json",
+            output_dir / "prediction_artifacts.csv",
+            output_dir / "prediction_artifacts.json",
+            output_dir / "dataset_audit.json",
+        ),
+    )
+    for name in (
+        "metrics.json",
+        "metadata.json",
+        "predictions.csv",
+        "model.json",
+        "prediction_artifacts.csv",
+        "prediction_artifacts.json",
+        "dataset_audit.json",
+    ):
+        (output_dir / name).unlink()
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is True
+    assert check.reason == ""
+
+
+def test_completed_ml_research_output_rejects_changed_dataset_hash(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["dataset_hash"] = "different-dataset"
+    metadata["data_hash"] = "different-dataset"
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "metrics.json_dataset_hash_mismatch"
+
+
+def test_completed_ml_research_output_rejects_prediction_dataset_hash_mismatch(
+    tmp_path,
+):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    updated_dataset_hash = "different-dataset"
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["dataset_hash"] = updated_dataset_hash
+    metadata["data_hash"] = updated_dataset_hash
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    metrics = _read_json(output_dir / "metrics.json")
+    metrics["dataset_hash"] = updated_dataset_hash
+    (output_dir / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+    dataset_audit = _read_json(output_dir / "dataset_audit.json")
+    dataset_audit["dataset_hash"] = updated_dataset_hash
+    (output_dir / "dataset_audit.json").write_text(
+        json.dumps(dataset_audit),
+        encoding="utf-8",
+    )
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "prediction_dataset_hash_mismatch"
+
+
+def test_completed_ml_research_output_rejects_changed_feature_columns(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["feature_columns"] = ["alpha", "gamma"]
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "prediction_feature_columns_mismatch"
+
+
+def test_completed_ml_research_output_rejects_changed_feature_order(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["feature_columns"] = ["beta", "alpha"]
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "prediction_feature_columns_mismatch"
+
+
+def test_completed_ml_research_output_rejects_changed_target(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["target_label_name"] = "other_target"
+    metadata["label_type"] = "other_target"
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "label_type_mismatch"
+
+
+def test_completed_ml_research_output_rejects_missing_or_malformed_metadata(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    (output_dir / "metadata.json").write_text("{not-json", encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "malformed_metadata"
+
+
+def test_completed_ml_research_output_rejects_partial_artifact_set(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    (output_dir / "model.json").unlink()
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "missing_or_empty_required_artifacts:model.json"
+
+
+def test_completed_ml_research_output_rejects_not_complete_status(tmp_path):
+    config = _completed_run_config(tmp_path)
+    output_dir = _write_completed_batch_output(config)
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["run_status"] = "partial"
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "run_status_not_complete"
+
+
+def test_completed_ml_research_output_rejects_added_current_input_row(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    _write_current_input_rows(config, [*_current_input_rows(), _current_input_row("c")])
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_sample_count_mismatch"
+
+
+def test_completed_ml_research_output_rejects_removed_current_input_row(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    _write_current_input_rows(config, [_current_input_row("a")])
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_sample_count_mismatch"
+
+
+def test_completed_ml_research_output_rejects_current_predictor_value_change(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    rows = _current_input_rows()
+    rows[0]["alpha"] = "99.0"
+    _write_current_input_rows(config, rows)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_model_input_hash_mismatch"
+
+
+def test_completed_ml_research_output_rejects_current_target_value_change(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    rows = _current_input_rows()
+    rows[0]["should_reduce_exposure"] = "0"
+    _write_current_input_rows(config, rows)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_dataset_hash_mismatch"
+
+
+def test_completed_ml_research_output_rejects_current_feature_membership_change(
+    tmp_path,
+):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    rows = _current_input_rows()
+    for row in rows:
+        row["gamma"] = "1.0"
+    _write_current_input_rows(config, rows, fieldnames=[*_current_input_fieldnames(), "gamma"])
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_feature_columns_mismatch"
+
+
+def test_completed_ml_research_output_rejects_current_feature_order_change(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    fieldnames = _current_input_fieldnames()
+    alpha_index = fieldnames.index("alpha")
+    beta_index = fieldnames.index("beta")
+    fieldnames[alpha_index], fieldnames[beta_index] = (
+        fieldnames[beta_index],
+        fieldnames[alpha_index],
+    )
+    _write_current_input_rows(config, _current_input_rows(), fieldnames=fieldnames)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_feature_order_mismatch"
+
+
+def test_completed_ml_research_output_rejects_current_date_coverage_change(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    rows = _current_input_rows()
+    rows[1]["feature_date"] = "2024-01-03"
+    rows[1]["rebalance_date"] = "2024-01-03"
+    rows[1]["label_start_date"] = "2024-01-04"
+    rows[1]["label_end_date"] = "2024-01-08"
+    _write_current_input_rows(config, rows)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_date_coverage_mismatch"
+
+
+def test_completed_ml_research_output_rejects_changed_current_input_file(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    new_input_path = tmp_path / "cache" / "ml" / "other_rebalance_dataset.csv"
+    config["ml"]["expanded_rebalance_dataset_path"] = str(new_input_path)
+    _write_current_input_rows(config, _current_input_rows())
+    output_dir = Path(config["ml"]["output_dir"])
+    metadata = _read_json(output_dir / "metadata.json")
+    metadata["config_hash"] = MLCoreArtifactWriter.hash_payload(config)
+    (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_input_source_mismatch"
+
+
+def test_completed_ml_research_output_rejects_internally_consistent_stale_artifacts(
+    tmp_path,
+):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    rows = _current_input_rows()
+    rows[0]["alpha"] = "42.0"
+    _write_current_input_rows(config, rows)
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_model_input_hash_mismatch"
+
+
+def test_completed_ml_research_output_rejects_unavailable_current_identity(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_completed_batch_output(config)
+    Path(config["ml"]["expanded_rebalance_dataset_path"]).unlink()
+
+    check = _completed_ml_research_output_check(config)
+
+    assert check.reusable is False
+    assert check.reason == "current_input_identity_unavailable"
+
+
+def test_current_model_input_identity_is_deterministic(tmp_path):
+    config = _completed_run_config(tmp_path)
+    _write_current_input_rows(config, _current_input_rows())
+
+    first = _current_model_input_identity(
+        config,
+        MLExperimentConfig.from_config(config),
+    )
+    second = _current_model_input_identity(
+        config,
+        MLExperimentConfig.from_config(config),
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.values == second.values
+
+
 def _batch_config(
     shared_cache: Path,
     config_paths: list[Path],
@@ -325,6 +836,189 @@ def _batch_config(
             "fail_fast": fail_fast,
         },
     }
+
+
+def _completed_run_config(tmp_path: Path) -> dict:
+    return {
+        "ml": {
+            "model_type": "noop",
+            "feature_set": "expanded_rebalance_v1",
+            "label_type": "should_reduce_exposure",
+            "output_dir": str(tmp_path / "reports" / "noop"),
+            "read_existing_expanded_rebalance_dataset": True,
+            "expanded_rebalance_dataset_path": str(
+                tmp_path / "cache" / "ml" / "expanded_rebalance_dataset.csv"
+            ),
+        }
+    }
+
+
+def _write_completed_batch_output(
+    config: dict,
+    *,
+    feature_columns: list[str] | None = None,
+) -> Path:
+    _write_current_input_rows(config, _current_input_rows())
+    identity = _current_model_input_identity(
+        config,
+        MLExperimentConfig.from_config(config),
+    )
+    assert identity is not None
+    values = identity.values
+    dataset_hash = values["dataset_hash"]
+    model_input_hash = values["model_input_hash"]
+    feature_columns = feature_columns or values["feature_columns"]
+    output_dir = Path(config["ml"]["output_dir"])
+    output_dir.mkdir(parents=True)
+    metadata = {
+        "config_hash": MLCoreArtifactWriter.hash_payload(config),
+        "data_hash": dataset_hash,
+        "dataset_hash": dataset_hash,
+        "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+        "model_input_hash": model_input_hash,
+        "feature_columns": feature_columns,
+        "feature_count": len(feature_columns),
+        "sample_count": 2,
+        "source_dataset_row_count": 2,
+        "feature_date_min": "2024-01-01",
+        "feature_date_max": "2024-01-02",
+        "training_date_min": "2024-01-01",
+        "training_date_max": "2024-01-02",
+        "model_input_source_path": values["model_input_source_path"],
+        "model_name": "noop",
+        "model_type": "noop",
+        "feature_set": "expanded_rebalance_v1",
+        "label_type": "should_reduce_exposure",
+        "target_label_name": "should_reduce_exposure",
+        "run_status": "complete",
+        "research_only": True,
+    }
+    prediction_metadata = {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "data_hash": dataset_hash,
+        "dataset_hash": dataset_hash,
+        "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+        "model_input_hash": model_input_hash,
+        "feature_columns": feature_columns,
+        "feature_count": len(feature_columns),
+        "sample_count": 2,
+        "model_type": "noop",
+        "label_type": "should_reduce_exposure",
+        "target_label_name": "should_reduce_exposure",
+        "model_input_source_path": values["model_input_source_path"],
+    }
+    row = {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "profile": "",
+        "model_name": "noop",
+        "model_type": "noop",
+        "config_path": "",
+        "dataset_hash": dataset_hash,
+        "source_dataset_row_count": "2",
+        "train_sample_count": "1",
+        "prediction_date": "2024-01-02",
+        "symbol": "",
+        "rebalance_date": "2024-01-02",
+        "actual_label": "0",
+        "predicted_probability": "0.5",
+        "feature_id": "feature-a",
+        "split": "holdout",
+    }
+    for name, payload in {
+        "metadata.json": metadata,
+        "metrics.json": {
+            "dataset_hash": dataset_hash,
+            "model_type": "noop",
+            "label_type": "should_reduce_exposure",
+            "feature_set": "expanded_rebalance_v1",
+        },
+        "dataset_audit.json": {"sample_count": 2, "feature_count": 2},
+        "prediction_artifacts.json": prediction_metadata,
+    }.items():
+        (output_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+    (output_dir / "prediction_artifacts.csv").write_text(
+        ",".join(row) + "\n" + ",".join(row.values()) + "\n",
+        encoding="utf-8",
+    )
+    (output_dir / "predictions.csv").write_text("prediction\n0\n", encoding="utf-8")
+    (output_dir / "model.json").write_text("{}", encoding="utf-8")
+    return output_dir
+
+
+def _current_input_fieldnames() -> list[str]:
+    return [
+        "feature_id",
+        "feature_date",
+        "rebalance_date",
+        "label_start_date",
+        "label_end_date",
+        "symbol",
+        "variant_id",
+        "alpha",
+        "beta",
+        "should_reduce_exposure",
+        "future_drawdown",
+        "future_max_drawdown",
+        "forward_return_5d",
+        "forward_return_10d",
+        "future_volatility",
+        "max_adverse_excursion",
+        "max_favourable_excursion",
+        "champion_excess_return",
+        "volatility_adjusted_excess_return",
+    ]
+
+
+def _current_input_rows() -> list[dict[str, str]]:
+    return [_current_input_row("a"), _current_input_row("b")]
+
+
+def _current_input_row(suffix: str) -> dict[str, str]:
+    day = {"a": "01", "b": "02", "c": "03"}.get(suffix, "04")
+    label_start_day = f"{int(day) + 1:02d}"
+    label_end_day = f"{int(day) + 5:02d}"
+    return {
+        "feature_id": f"feature-{suffix}",
+        "feature_date": f"2024-01-{day}",
+        "rebalance_date": f"2024-01-{day}",
+        "label_start_date": f"2024-01-{label_start_day}",
+        "label_end_date": f"2024-01-{label_end_day}",
+        "symbol": "SPY",
+        "variant_id": "variant-a",
+        "alpha": "1.0" if suffix != "b" else "2.0",
+        "beta": "3.0" if suffix != "b" else "4.0",
+        "should_reduce_exposure": "1" if suffix == "a" else "0",
+        "future_drawdown": "-0.10" if suffix == "a" else "-0.02",
+        "future_max_drawdown": "-0.10" if suffix == "a" else "-0.02",
+        "forward_return_5d": "0.01",
+        "forward_return_10d": "0.02",
+        "future_volatility": "0.12",
+        "max_adverse_excursion": "-0.05",
+        "max_favourable_excursion": "0.04",
+        "champion_excess_return": "-0.01" if suffix == "a" else "0.03",
+        "volatility_adjusted_excess_return": "-0.10" if suffix == "a" else "0.20",
+    }
+
+
+def _write_current_input_rows(
+    config: dict,
+    rows: list[dict[str, str]],
+    *,
+    fieldnames: list[str] | None = None,
+) -> None:
+    path = Path(config["ml"]["expanded_rebalance_dataset_path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = fieldnames or _current_input_fieldnames()
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        import csv
+
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _fake_ml_result(output_dir: Path):

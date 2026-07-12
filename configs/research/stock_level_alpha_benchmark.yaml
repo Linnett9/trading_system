@@ -8,10 +8,13 @@ ml:
   stock_ranker_include_sequence_models: false
   stock_ranker_include_engineered_features: true
   stock_ranker_model_n_jobs: 4
+  model_threads: 1
+  torch_num_threads: 1
+  sklearn_n_jobs: 1
+  feature_workers: 1
   stock_ranker_permutation_importance_repeats: 3
   stock_ranker_sequence_length: 13
   stock_ranker_sequence_epochs: 3
   stock_ranker_sequence_batch_size: 256
   stock_ranker_sequence_device: cpu
-  sklearn_n_jobs: 2
   random_seed: 42

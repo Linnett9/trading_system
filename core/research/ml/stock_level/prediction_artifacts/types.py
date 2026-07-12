@@ -41,14 +41,33 @@ ACTUAL_COLUMNS = (
     "actual_future_volatility",
     "actual_future_drawdown",
     "actual_max_adverse_excursion",
+    "actual_benchmark_return_10d",
     "actual_market_residual_return_10d",
     "actual_vol_adjusted_forward_return_10d",
     "actual_drawdown_adjusted_forward_return_10d",
     "actual_rank_normalized_forward_return_10d",
     "actual_top_decile_label_10d",
 )
+TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v1"
+TARGET_PROVENANCE_COLUMNS = (
+    "target_provenance_contract_version",
+    "feature_timestamp",
+    "decision_timestamp",
+    "target_horizon",
+    "target_observation_count",
+    "target_start_timestamp",
+    "label_start_timestamp",
+    "label_end_timestamp",
+    "label_available_timestamp",
+    "target_price_convention",
+    "benchmark_target_start_timestamp",
+    "benchmark_label_start_timestamp",
+    "benchmark_label_end_timestamp",
+    "benchmark_label_available_timestamp",
+)
 TARGET_TYPES = {
     "actual_forward_return_10d": "raw",
+    "actual_benchmark_return_10d": "benchmark",
     "actual_market_residual_return_10d": "residual",
     "actual_vol_adjusted_forward_return_10d": "volatility-adjusted",
     "actual_drawdown_adjusted_forward_return_10d": "drawdown-adjusted",

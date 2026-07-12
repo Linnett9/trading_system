@@ -12,6 +12,7 @@ from core.research.ml.stock_level.stock_level_model_ranking_benchmark import bui
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_model_set, resolve_stock_alpha_target_model_set
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_output_dir
 from core.research.ml.stock_level.stock_alpha_stage_selection import StockAlphaStageSelector
+from core.research.ml.stock_level_benchmark_types import TARGET_PROVENANCE_CONTRACT_VERSION
 
 
 def test_dev_ultrafast_config_resolves_to_dev_fast_and_ultrafast():
@@ -822,12 +823,13 @@ def test_run_status_marks_ranker_benchmark_stale_when_split_settings_change(tmp_
 
 def test_low_rebalance_date_error_includes_split_details_and_config_path():
     rows = [
-        {
-            "rebalance_date": f"2024-01-{day:02d}",
-            "symbol": "AAA",
-            "predicted_momentum_20d": "0.1",
-            "actual_forward_return_10d": "0.01",
-        }
+            {
+                "rebalance_date": f"2024-01-{day:02d}",
+                "symbol": "AAA",
+                **_target_provenance(day),
+                "predicted_momentum_20d": "0.1",
+                "actual_forward_return_10d": "0.01",
+            }
         for day in range(1, 25)
     ]
     with pytest.raises(ValueError) as exc:
@@ -848,3 +850,23 @@ def test_low_rebalance_date_error_includes_split_details_and_config_path():
     assert "embargo_dates=2" in message
     assert "active_config_path=config/config.stock_alpha_dev_ultrafast.yaml" in message
     assert "use benchmark/full data" in message
+
+
+def _target_provenance(day: int) -> dict[str, str]:
+    date = f"2024-01-{day:02d}"
+    label_start = f"2024-01-{day + 1:02d}"
+    label_end = f"2024-01-{day + 2:02d}"
+    label_available = f"2024-01-{day + 3:02d}"
+    return {
+        "benchmark_symbol": "SPY",
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "feature_timestamp": date,
+        "decision_timestamp": date,
+        "target_horizon": "10_trading_observations",
+        "target_observation_count": "10",
+        "target_start_timestamp": date,
+        "label_start_timestamp": label_start,
+        "label_end_timestamp": label_end,
+        "label_available_timestamp": label_available,
+        "target_price_convention": "simple_close_to_close",
+    }

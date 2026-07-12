@@ -48,6 +48,13 @@ def build_meta_dataset_rows(
                 "label_end_date",
                 expanded.get("outcome_end_date", ""),
             ),
+            "label_available_timestamp": expanded.get(
+                "label_available_timestamp",
+                expanded.get(
+                    "label_end_date",
+                    expanded.get("outcome_end_date", ""),
+                ),
+            ),
         }
         row.update(actual_auxiliary_values(
             expanded,
@@ -174,6 +181,16 @@ def _load_source_predictions(source_dirs: list[Path]) -> tuple[dict[str, dict[st
                 f"for {source_dir}: csv={sorted(row_hashes)} metadata={dataset_hash}"
             )
         dataset_hashes[model_type] = dataset_hash
+        selected_rows, resolution_count = _dedupe_source_prediction_rows(
+            rows,
+            model_type=model_type,
+            path=path,
+        )
+        if resolution_count:
+            warnings.append(
+                "Resolved overlapping out_of_fold/holdout source predictions by "
+                f"preferring out_of_fold rows for {model_type}: {resolution_count}"
+            )
         sources[model_type] = {
             row["feature_id"]: {
                 **row,
@@ -191,11 +208,59 @@ def _load_source_predictions(source_dirs: list[Path]) -> tuple[dict[str, dict[st
                     metadata.get("test_sample_count", row.get("test_sample_count", ""))
                 ),
             }
-            for row in rows
-            if row.get("split") in {"out_of_fold", "holdout"}
+            for row in selected_rows
         }
     _validate_source_dataset_hashes(dataset_hashes)
     return sources, warnings
+
+
+def _dedupe_source_prediction_rows(
+    rows: list[dict[str, str]],
+    *,
+    model_type: str,
+    path: Path,
+) -> tuple[list[dict[str, str]], int]:
+    selected: dict[str, dict[str, str]] = {}
+    seen_feature_splits: set[tuple[str, str, str, str]] = set()
+    resolved = 0
+    for row in rows:
+        split = row.get("split", "")
+        if split not in {"out_of_fold", "holdout"}:
+            continue
+        feature_id = row.get("feature_id", "")
+        rebalance_date = row.get("rebalance_date") or row.get("date") or row.get("prediction_date", "")
+        feature_split_key = (model_type, feature_id, rebalance_date, split)
+        if feature_split_key in seen_feature_splits:
+            raise RuntimeError(
+                "Duplicate source prediction row for feature/date/split: "
+                f"model={model_type}; feature_id={feature_id}; "
+                f"rebalance_date={rebalance_date}; split={split}; path={path}"
+            )
+        seen_feature_splits.add(feature_split_key)
+        existing = selected.get(feature_id)
+        if existing is None:
+            selected[feature_id] = row
+            continue
+        existing_date = (
+            existing.get("rebalance_date")
+            or existing.get("date")
+            or existing.get("prediction_date", "")
+        )
+        if existing_date != rebalance_date:
+            raise RuntimeError(
+                "Source prediction artifact has conflicting dates for feature_id: "
+                f"model={model_type}; feature_id={feature_id}; "
+                f"dates={sorted({existing_date, rebalance_date})}; path={path}"
+            )
+        if existing.get("split") == split:
+            raise RuntimeError(
+                "Duplicate source prediction row for feature_id/split: "
+                f"model={model_type}; feature_id={feature_id}; split={split}; path={path}"
+            )
+        if split == "out_of_fold":
+            selected[feature_id] = row
+        resolved += 1
+    return list(selected.values()), resolved
 
 
 def _read_prediction_artifact_metadata(path: Path) -> dict[str, Any]:

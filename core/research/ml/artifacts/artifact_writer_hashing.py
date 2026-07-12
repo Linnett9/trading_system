@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 import subprocess
 from typing import Any
 
-from core.research.ml.data.datasets import MLDataset
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION, MLDataset
 
 
 class MLArtifactHashingMixin:
@@ -42,15 +43,40 @@ class MLArtifactHashingMixin:
             "rows": rows,
         }
     def model_input_hash(self, dataset: MLDataset) -> str:
-        return self.hash_payload({
-            "features": dataset.features,
+        return self.hash_payload(self.model_input_identity(dataset))
+    def model_input_identity(self, dataset: MLDataset) -> dict[str, Any]:
+        feature_columns = self.model_input_feature_columns(dataset)
+        return {
+            "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+            "model_type": self._experiment_config.model_type,
+            "feature_set": self._experiment_config.feature_set,
+            "label_type": self._experiment_config.label_type,
+            "feature_columns": feature_columns,
+            "features": [
+                [features.get(column) for column in feature_columns]
+                for features in dataset.features
+            ],
             "labels": dataset.labels,
             "feature_ids": dataset.feature_ids,
             "feature_dates": dataset.feature_dates,
             "label_start_dates": dataset.label_start_dates,
             "label_end_dates": dataset.label_end_dates,
             "auxiliary_targets": dataset.auxiliary_targets,
-        })
+        }
+    @staticmethod
+    def model_input_feature_columns(dataset: MLDataset) -> list[str]:
+        if not dataset.features:
+            return []
+        return list(dataset.features[0].keys())
+    def model_input_source_path(self) -> str:
+        ml_config = self._config.get("ml", {}) or {}
+        source_path = ml_config.get("expanded_rebalance_dataset_path")
+        if source_path is None:
+            source_path = (
+                Path(self._config.get("cache", {}).get("ml_dir", "cache/ml"))
+                / "expanded_rebalance_dataset.csv"
+            )
+        return str(Path(str(source_path)).resolve())
     @staticmethod
     def hash_payload(payload: Any) -> str:
         serialized = json.dumps(payload, sort_keys=True, default=str)

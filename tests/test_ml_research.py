@@ -878,6 +878,7 @@ def test_should_reduce_exposure_label_uses_expanded_rebalance_outcomes():
             "label_start_date": "2024-03-01",
             "label_end_date": "2024-04-11",
             "future_max_drawdown": -0.02,
+            "forward_return_5d": "",
             "champion_excess_return": 0.03,
             "volatility_adjusted_excess_return": 0.15,
             "should_reduce_exposure": 0,
@@ -890,6 +891,7 @@ def test_should_reduce_exposure_label_uses_expanded_rebalance_outcomes():
     assert [row["should_reduce_exposure"] for row in result.rows] == [1, 0]
     assert result.rows[0]["feature_id"] == "variant_2024-01-31_0"
     assert result.rows[0]["forward_return_5d"] == -0.02
+    assert result.rows[1]["forward_return_5d"] is None
     assert result.rows[0]["future_drawdown"] == -0.09
     assert result.rows[0]["max_favourable_excursion"] == 0.03
 

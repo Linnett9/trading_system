@@ -1,0 +1,3 @@
+ml:
+  news_risk_parallel_enabled: true
+  news_risk_max_workers: 4

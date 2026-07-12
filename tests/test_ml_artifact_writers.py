@@ -8,7 +8,7 @@ import pytest
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
 from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.config import MLExperimentConfig
-from core.research.ml.data.datasets import MLDataset
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION, MLDataset
 from core.research.ml.features.features import MLFeatureBuildResult
 from core.research.ml.features.labels import MLLabelBuildResult
 from core.research.ml.validation import ChronologicalSplit
@@ -104,6 +104,19 @@ def test_core_artifact_writer_preserves_summary_audit_and_holdout_files(tmp_path
 
     metadata = json.loads((tmp_path / "metadata.json").read_text())
     assert metadata["dataset_hash"] == metrics["dataset_hash"]
+    assert metadata["model_input_contract_version"] == MODEL_INPUT_CONTRACT_VERSION
+    assert metadata["model_input_hash"] == writer.model_input_hash(dataset)
+    assert metadata["feature_columns"] == ["alpha"]
+    assert metadata["feature_count"] == 1
+    assert metadata["sample_count"] == 2
+    assert metadata["feature_date_min"] == "2024-01-01"
+    assert metadata["feature_date_max"] == "2024-01-02"
+    assert metadata["training_date_min"] == "2024-01-01"
+    assert metadata["training_date_max"] == "2024-01-02"
+    assert metadata["target_label_name"] == "champion_success"
+    assert metadata["model_name"] == "noop"
+    assert metadata["model_type"] == "noop"
+    assert metadata["run_status"] == "complete"
     assert metadata["validation"]["method"] == "purged_chronological_holdout"
     assert metadata["research_only"] is True
 
@@ -184,6 +197,12 @@ def test_core_artifact_writer_preserves_prediction_artifact_schema(tmp_path):
     metadata = json.loads((tmp_path / "prediction_artifacts.json").read_text())
     assert metadata["artifact_schema_version"] == ARTIFACT_SCHEMA_VERSION
     assert metadata["dataset_hash"] == "dataset-hash"
+    assert metadata["model_input_contract_version"] == MODEL_INPUT_CONTRACT_VERSION
+    assert metadata["model_input_hash"] == writer.model_input_hash(dataset)
+    assert metadata["feature_columns"] == ["alpha"]
+    assert metadata["feature_count"] == 1
+    assert metadata["sample_count"] == 6
+    assert metadata["target_label_name"] == "champion_success"
     assert metadata["validation_method"] == (
         "rolling_walk_forward_out_of_fold_plus_holdout"
     )
@@ -191,6 +210,24 @@ def test_core_artifact_writer_preserves_prediction_artifact_schema(tmp_path):
     assert metadata["auxiliary_targets"] == ["future_drawdown"]
     assert "predicted_extra" in metadata["auxiliary_prediction_columns"]
     assert "actual_future_drawdown" in metadata["auxiliary_actual_columns"]
+
+
+def test_model_input_hash_is_sensitive_to_feature_order() -> None:
+    writer = _writer()
+    first = _dataset(
+        features=[{"alpha": 1.0, "beta": 2.0}],
+        labels=[1],
+        feature_dates=["2024-01-01"],
+    )
+    second = _dataset(
+        features=[{"beta": 2.0, "alpha": 1.0}],
+        labels=[1],
+        feature_dates=["2024-01-01"],
+    )
+
+    assert writer.model_input_feature_columns(first) == ["alpha", "beta"]
+    assert writer.model_input_feature_columns(second) == ["beta", "alpha"]
+    assert writer.model_input_hash(first) != writer.model_input_hash(second)
 
 
 def _writer() -> MLCoreArtifactWriter:

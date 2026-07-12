@@ -117,7 +117,7 @@ def _run_model_walk_forward_unlimited(
     sequence_length: int,
 ) -> dict[tuple[str, str], float]:
     predictions: dict[tuple[str, str], float] = {}
-    for _, train_rows, test_rows, _, _, _ in _walk_forward_partitions(
+    for _, train_rows, test_rows, _, _, _, _ in _walk_forward_partitions(
         prepared_rows,
         dates,
         first_test_index=first_test_index,
@@ -199,13 +199,32 @@ def _walk_forward_partitions(
         )
     )
     for fold in splitter.split(prepared_rows, dates=dates):
+        decision_timestamp = fold.test_dates[0] if fold.test_dates else ""
+        eligible_train_rows = [
+            row for row in fold.train_rows
+            if str(row.get("label_available_timestamp", row.get("label_end_timestamp", row["rebalance_date"])))
+            <= decision_timestamp
+        ]
+        purged_count = len(fold.train_rows) - len(eligible_train_rows)
+        if not eligible_train_rows:
+            raise ValueError(
+                "Walk-forward fold has no label-eligible training rows: "
+                f"fold_id={fold.fold_id}; decision_timestamp={decision_timestamp}; "
+                f"candidate_train_rows={len(fold.train_rows)}; purged_rows={purged_count}"
+            )
+        train_dates = tuple(sorted({str(row["rebalance_date"]) for row in eligible_train_rows}))
+        eligible_train_rows = [
+            {**row, "temporal_purged_before_fold": 0}
+            for row in eligible_train_rows
+        ]
         yield (
             fold.fold_id,
-            list(fold.train_rows),
+            list(eligible_train_rows),
             list(fold.test_rows),
-            list(fold.train_dates),
+            list(train_dates),
             list(fold.test_dates),
             list(fold.embargoed_dates),
+            purged_count,
         )
 
 

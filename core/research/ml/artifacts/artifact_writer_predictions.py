@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from core.research.ml.artifacts.artifact_schema import ARTIFACT_SCHEMA_VERSION
-from core.research.ml.data.datasets import MLDataset
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION, MLDataset
 from core.research.ml.validation import ChronologicalSplit, rolling_walk_forward
 
 
@@ -76,6 +76,7 @@ class MLPredictionArtifactWriterMixin:
             )
         )
         auxiliary_fieldnames = self.prediction_artifact_auxiliary_fieldnames(rows)
+        feature_columns = self.model_input_feature_columns(dataset)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         fieldnames = [
             "artifact_schema_version",
@@ -121,6 +122,13 @@ class MLPredictionArtifactWriterMixin:
             "config_hash": self.hash_payload(self._config),
             "data_hash": provenance["dataset_hash"],
             "dataset_hash": provenance["dataset_hash"],
+            "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+            "model_input_hash": self.model_input_hash(dataset),
+            "feature_columns": feature_columns,
+            "feature_count": len(feature_columns),
+            "sample_count": dataset.sample_count,
+            "target_label_name": self._experiment_config.label_type,
+            "model_input_source_path": self.model_input_source_path(),
             "source_dataset_row_count": provenance["source_dataset_row_count"],
             "train_sample_count": provenance["train_sample_count"],
             "test_sample_count": provenance["test_sample_count"],

@@ -62,6 +62,12 @@ def test_research_profile_isolates_cache_and_reports():
     assert development["ml"]["expanded_rebalance_dataset_path"] != (
         benchmark["ml"]["expanded_rebalance_dataset_path"]
     )
+    assert development["ml"]["stock_selector_rebalance_dataset_path"] == (
+        "cache/ml/development/stock_selector_rebalance_dataset.csv"
+    )
+    assert benchmark["ml"]["stock_selector_rebalance_dataset_path"] == (
+        "cache/ml/benchmark/stock_selector_rebalance_dataset.csv"
+    )
 
 
 def test_research_profile_sets_universe_and_years():
@@ -194,5 +200,5 @@ def test_research_profiles_apply_ml_parallelism_values():
     assert benchmark["ml"]["model_threads"] == 1
     assert benchmark["ml"]["torch_num_threads"] == 1
     assert benchmark["ml"]["sklearn_n_jobs"] == 1
-    assert benchmark["ml"]["feature_workers"] == 4
+    assert benchmark["ml"]["feature_workers"] == 1
     assert benchmark["ml"]["stock_ranker_model_n_jobs"] == 4

@@ -9,6 +9,13 @@ from core.research.ml.data.sequence_dataset import (
     build_sequence_indices,
     sequence_group_ids_from_metadata,
 )
+from core.research.ml.models.torch_checkpointing import (
+    TorchCheckpointSession,
+    binary_validation_loss,
+    checkpoint_identity,
+    checkpoint_validation_fraction,
+    validation_split_tensors,
+)
 
 
 LEAKAGE_PREFIXES = (
@@ -143,15 +150,35 @@ class TemporalFusionTransformerMLModel:
             weight_decay=self.weight_decay,
         )
         criterion = nn.BCEWithLogitsLoss(pos_weight=self._pos_weight_tensor(torch, labels))
-        dataset = torch.utils.data.TensorDataset(sequences, known_tensor, labels)
+        train_tensors, train_labels, validation_tensors, validation_labels = (
+            validation_split_tensors(
+                (sequences, known_tensor),
+                labels,
+                fraction=checkpoint_validation_fraction(self),
+            )
+        )
+        dataset = torch.utils.data.TensorDataset(
+            train_tensors[0],
+            train_tensors[1],
+            train_labels,
+        )
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=max(1, self.batch_size),
             shuffle=True,
             generator=torch.Generator().manual_seed(self.random_seed),
         )
+        checkpoint = TorchCheckpointSession(
+            torch=torch,
+            model_owner=self,
+            network=model,
+            optimizer=optimizer,
+            identity=checkpoint_identity(self, x_train=x_train, y_train=y_train),
+            total_epochs=max(1, self.epochs),
+        )
+        resume = checkpoint.restore_if_compatible()
         model.train()
-        for _ in range(max(1, self.epochs)):
+        for epoch in range(resume.start_epoch, max(1, self.epochs)):
             for batch_observed, batch_known, batch_y in loader:
                 batch_observed = batch_observed.to(self.device)
                 batch_known = batch_known.to(self.device)
@@ -162,6 +189,22 @@ class TemporalFusionTransformerMLModel:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
+            checkpoint.save_epoch(
+                completed_epoch=epoch,
+                validation_metric=binary_validation_loss(
+                    torch,
+                    model,
+                    criterion,
+                    validation_tensors,
+                    validation_labels,
+                    self.device,
+                    forward=lambda network, tensors: network(
+                        tensors[0].to(self.device),
+                        tensors[1].to(self.device),
+                    )[0],
+                ),
+            )
+        checkpoint.restore_best_weights()
         self.model = model.cpu()
 
     def predict(self, x: list[dict[str, float]]) -> list[int]:

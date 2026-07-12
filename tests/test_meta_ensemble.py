@@ -86,6 +86,19 @@ def test_meta_ensemble_joins_predictions_by_feature_id_and_audits_leakage():
     assert "patchtst_raw_probability" in rows[0]
 
 
+def test_meta_dataset_carries_label_available_timestamp():
+    expanded_rows = [_expanded("a", "2024-01-01")]
+    expanded_rows[0]["label_available_timestamp"] = "2024-01-12"
+    sources = {
+        "dlinear": {"a": _prediction("a", "2024-01-01", "out_of_fold", 1)},
+        "patchtst": {"a": _prediction("a", "2024-01-01", "out_of_fold", 1)},
+    }
+
+    rows, _ = build_meta_dataset_rows(expanded_rows, sources)
+
+    assert rows[0]["label_available_timestamp"] == "2024-01-12"
+
+
 def test_meta_ensemble_ingests_predicted_auxiliary_columns_without_actual_leakage():
     expanded_rows = [_expanded("a", "2024-01-01")]
     expanded_rows[0]["label_start_date"] = "2024-01-02"
@@ -369,6 +382,29 @@ def test_meta_ensemble_refuses_legacy_prediction_artifacts_without_csv_dataset_h
         _load_source_predictions([source_dir])
 
 
+def test_meta_source_loader_prefers_out_of_fold_when_holdout_overlaps(tmp_path):
+    source_dir = tmp_path / "dlinear"
+    _write_prediction_artifact_dir(source_dir, "dlinear", "dataset-hash")
+    prediction_path = source_dir / "prediction_artifacts.csv"
+    rows = list(csv.DictReader(prediction_path.open()))
+    duplicate = dict(rows[0])
+    duplicate["split"] = "holdout"
+    duplicate["fold"] = "holdout"
+    duplicate["raw_probability"] = "0.9"
+    duplicate["predicted_probability"] = "0.9"
+    rows.append(duplicate)
+    with prediction_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    sources, warnings = _load_source_predictions([source_dir])
+
+    assert sources["dlinear"]["feature-a"]["split"] == "out_of_fold"
+    assert sources["dlinear"]["feature-a"]["raw_probability"] == "0.4"
+    assert any("preferring out_of_fold" in warning for warning in warnings)
+
+
 def test_meta_ensemble_detects_same_date_split_leakage():
     expanded_rows = [_expanded("a", "2024-01-01"), _expanded("b", "2024-01-01")]
     sources = {
@@ -525,6 +561,158 @@ def test_meta_walk_forward_uses_prior_dates_and_reports_summary():
     assert result["folds"][0]["train_end_date"] < result["folds"][0]["test_start_date"]
     assert result["summary"]["balanced_accuracy"] is not None
     assert result["summary"]["overlay_return_delta"] is not None
+    assert result["leakage_checks_passed"] is True
+    assert all(
+        fold["maximum_training_label_available_timestamp"] <= fold["test_start_date"]
+        for fold in result["folds"]
+    )
+
+
+def test_meta_walk_forward_excludes_unavailable_training_labels():
+    rows = [
+        _meta_row("a", "2024-01-01", 0, 0.2),
+        _meta_row("b", "2024-01-08", 1, 0.8),
+        _meta_row("c", "2024-01-15", 0, 0.3),
+        _meta_row("d", "2024-01-22", 1, 0.7),
+        _meta_row("e", "2024-01-29", 0, 0.4),
+        _meta_row("f", "2024-02-05", 1, 0.6),
+    ]
+    rows[1]["label_available_timestamp"] = "2024-02-10"
+
+    result = _walk_forward_meta_evaluation(
+        rows,
+        model_type="logistic_regression",
+        fold_count=2,
+        threshold=0.5,
+        reduced_exposure=0.7,
+        reduce_when="above_or_equal_threshold",
+        random_seed=42,
+        calibration_bin_count=5,
+    )
+
+    assert result["fold_count"] == 2
+    assert any(fold["purged_unavailable_label_count"] == 1 for fold in result["folds"])
+    assert all(
+        fold["maximum_training_label_available_timestamp"] <= fold["test_start_date"]
+        for fold in result["folds"]
+    )
+
+
+def test_meta_walk_forward_trains_only_on_out_of_fold_source_rows():
+    rows = [
+        _meta_row("warmup", "2024-01-01", 0, 0.2, split="holdout"),
+        _meta_row("a", "2024-01-08", 0, 0.3),
+        _meta_row("b", "2024-01-15", 1, 0.8),
+        _meta_row("c", "2024-01-22", 0, 0.4),
+        _meta_row("d", "2024-01-29", 1, 0.7),
+    ]
+
+    result = _walk_forward_meta_evaluation(
+        rows,
+        model_type="logistic_regression",
+        fold_count=2,
+        threshold=0.5,
+        reduced_exposure=0.7,
+        reduce_when="above_or_equal_threshold",
+        random_seed=42,
+        calibration_bin_count=5,
+    )
+
+    assert result["fold_count"] == 1
+    assert result["folds"][0]["train_start_date"] == "2024-01-08"
+    assert result["folds"][0]["leakage_assertions"]["training_base_predictions_out_of_fold"]
+    assert result["prediction_rows"]
+    assert all(row["split"] == "out_of_fold" for row in result["prediction_rows"])
+
+
+def test_chronological_meta_probabilities_use_only_matured_labels():
+    rows = [
+        _meta_row("a", "2024-01-01", 0, 0.2),
+        _meta_row("b", "2024-01-08", 1, 0.8),
+        _meta_row("c", "2024-01-15", 0, 0.3),
+        _meta_row("d", "2024-01-22", 1, 0.7),
+        _meta_row("e", "2024-01-29", 0, 0.4),
+        _meta_row("f", "2024-02-05", 1, 0.6),
+    ]
+    rows[1]["label_available_timestamp"] = "2024-02-10"
+
+    _, audits = _chronological_meta_probabilities(
+        rows,
+        model_type="logistic_regression",
+        fold_count=2,
+        embargo_rebalance_dates=0,
+        purge_overlapping_labels=False,
+        random_seed=42,
+        sklearn_n_jobs=1,
+    )
+
+    generated = [audit for audit in audits if audit["prediction_generated"]]
+    assert generated
+    assert any(audit["purged_unavailable_label_count"] == 1 for audit in generated)
+    assert all(
+        audit["max_training_label_available_timestamp"] <= audit["validation_start"]
+        for audit in generated
+    )
+
+
+def test_meta_temporal_audit_artifacts_are_written(tmp_path):
+    expanded_path = tmp_path / "expanded.csv"
+    output_dir = tmp_path / "meta"
+    source_a = tmp_path / "dlinear"
+    source_b = tmp_path / "patchtst"
+    rows = [
+        {
+            **_expanded(f"feature-{index}", f"2024-01-{index + 1:02d}"),
+            "label_available_timestamp": f"2024-01-{min(index + 2, 28):02d}",
+            "champion_return_next_period": "0.02" if index % 2 else "-0.01",
+        }
+        for index in range(8)
+    ]
+    expanded_path.parent.mkdir(parents=True, exist_ok=True)
+    with expanded_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    _write_prediction_artifact_dir(source_a, "dlinear", "dataset-hash")
+    _write_prediction_artifact_dir(source_b, "patchtst", "dataset-hash")
+    for source in (source_a, source_b):
+        prediction_path = source / "prediction_artifacts.csv"
+        prediction_rows = list(csv.DictReader(prediction_path.open()))
+        rewritten = []
+        for index, row in enumerate(rows):
+            template = dict(prediction_rows[0])
+            template.update({
+                "feature_id": row["feature_id"],
+                "date": row["rebalance_date"],
+                "prediction_date": row["rebalance_date"],
+                "split": "out_of_fold" if index < 6 else "holdout",
+                "actual_label": str(index % 2),
+                "raw_probability": str(0.4 + index * 0.05),
+                "calibrated_probability": str(0.4 + index * 0.05),
+            })
+            rewritten.append(template)
+        with prediction_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rewritten[0]))
+            writer.writeheader()
+            writer.writerows(rewritten)
+
+    result = run_meta_ensemble({
+        "ml": {
+            "output_dir": str(output_dir),
+            "meta_dataset_path": str(tmp_path / "meta_dataset.csv"),
+            "expanded_rebalance_dataset_path": str(expanded_path),
+            "source_prediction_dirs": [str(source_a), str(source_b)],
+            "walk_forward_folds": 2,
+            "meta_auxiliary_walk_forward_folds": 1,
+            "meta_model_types": ["logistic_regression"],
+        }
+    })
+
+    assert result.temporal_audit_path.exists()
+    assert result.temporal_folds_path.exists()
+    audit = json.loads(result.temporal_audit_path.read_text(encoding="utf-8"))
+    assert audit["base_prediction_provenance"]["training_rows_are_out_of_fold"]
+    assert audit["leakage_checks_passed"] is True
 
 
 def test_meta_learner_comparison_includes_requested_models_and_optional_lightgbm():
@@ -641,6 +829,15 @@ def test_run_meta_ensemble_writes_trading_research_leaderboard_files(tmp_path):
         "Research only. Trading impact: none. Production validated: false."
         in result.trading_research_leaderboard_markdown_path.read_text(encoding="utf-8")
     )
+    latest = json.loads((output_dir / "latest_completed.json").read_text())
+    run_dir = output_dir / "runs" / latest["run_id"]
+    manifest = json.loads((run_dir / "run_manifest.json").read_text())
+    assert manifest["kind"] == "exposure_meta_ensemble"
+    assert manifest["run_status"] == "complete"
+    assert latest["run_id"].startswith("exposure_meta_ensemble-")
+    source_identities = manifest["source_prediction_identities"]
+    assert [item["model_type"] for item in source_identities] == ["dlinear", "patchtst"]
+    assert all(item["dataset_hash"] == "dataset-hash" for item in source_identities)
 
 
 def _expanded(feature_id: str, date: str) -> dict[str, str]:
