@@ -31,6 +31,13 @@ def _audit(
             }
         )
     source_columns = list(source_rows[0]) if source_rows else []
+    populated_features = [row["feature"] for row in features if row["populated_count"] > 0]
+    if len(populated_features) == len(ENGINEERED_FEATURE_COLUMNS):
+        enrichment_status = "enriched"
+    elif populated_features:
+        enrichment_status = "partially_enriched"
+    else:
+        enrichment_status = "no_additional_features"
     source_by_key = {
         (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()): row
         for row in source_rows
@@ -42,6 +49,16 @@ def _audit(
         "row_count": len(rows),
         "source_column_count": len(source_columns),
         "engineered_feature_count": len(ENGINEERED_FEATURE_COLUMNS),
+        "resolved_enriched_columns": populated_features,
+        "resolved_enriched_column_count": len(populated_features),
+        "enrichment_status": enrichment_status,
+        "enrichment_contract_version": "stock_level_alpha_enrichment_contract_v1",
+        "enrichment_configuration_identity": {
+            "partition": "symbol_level_time_series_features",
+            "cross_sectional_features_after_parallel_assembly": True,
+            "uses_history_strictly_before_rebalance": True,
+            "n_jobs": n_jobs,
+        },
         "source_columns_preserved": all(
             all(row.get(column) == source_by_key.get(
                 (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()),
