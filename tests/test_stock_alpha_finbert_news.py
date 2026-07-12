@@ -64,6 +64,8 @@ def test_huggingface_adapter_uses_config_label_indices_and_inference_contract(mo
         tokenizer_id="local-tokenizer",
         model_revision="model-sha",
         tokenizer_revision="tokenizer-sha",
+        model_path="local-model-path",
+        tokenizer_path="local-tokenizer-path",
         device="cpu",
         max_token_length=7,
         local_files_only=True,
@@ -74,6 +76,8 @@ def test_huggingface_adapter_uses_config_label_indices_and_inference_contract(mo
 
     assert state["model"].to_device == "cpu"
     assert state["model"].eval_called is True
+    assert state["model_from_pretrained"]["args"] == ("local-model-path",)
+    assert state["tokenizer_from_pretrained"]["args"] == ("local-tokenizer-path",)
     assert state["no_grad_entered"] is True
     assert state["tokenizer"].calls == [
         {

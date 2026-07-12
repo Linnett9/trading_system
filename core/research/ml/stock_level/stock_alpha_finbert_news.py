@@ -250,6 +250,8 @@ class HuggingFaceFinBertAdapter:
         tokenizer_id: str | None = None,
         model_revision: str = "main",
         tokenizer_revision: str | None = None,
+        model_path: str | None = None,
+        tokenizer_path: str | None = None,
         device: str = "cpu",
         max_token_length: int = 256,
         local_files_only: bool = True,
@@ -276,13 +278,13 @@ class HuggingFaceFinBertAdapter:
             inference_device=resolved_device,
         )
         self._tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_id,
+            tokenizer_path or tokenizer_id,
             revision=tokenizer_revision,
             local_files_only=local_files_only,
             cache_dir=cache_dir,
         )
         self._model = AutoModelForSequenceClassification.from_pretrained(
-            model_id,
+            model_path or model_id,
             revision=model_revision,
             local_files_only=local_files_only,
             cache_dir=cache_dir,
@@ -736,6 +738,8 @@ def write_finbert_news_probe(config: Mapping[str, Any]) -> FinBertSmokePaths:
             tokenizer_id=str(settings.get("tokenizer_id", settings.get("model_id", "ProsusAI/finbert"))),
             model_revision=str(settings.get("model_revision", "main")),
             tokenizer_revision=str(settings.get("tokenizer_revision", settings.get("model_revision", "main"))),
+            model_path=settings.get("model_path"),
+            tokenizer_path=settings.get("tokenizer_path") or settings.get("model_path"),
             device=str(settings.get("device", "cpu")),
             max_token_length=max_token_length,
             local_files_only=bool(settings.get("local_files_only", True)),
@@ -743,7 +747,8 @@ def write_finbert_news_probe(config: Mapping[str, Any]) -> FinBertSmokePaths:
         )
     else:
         raise ValueError("stock_alpha_finbert_news.adapter must be fixture or huggingface")
-    articles = _fixture_articles()
+    articles_path = settings.get("article_csv_path")
+    articles = CsvRowRepository().read(Path(articles_path)) if articles_path else _fixture_articles()
     scoring = score_finbert_articles(
         articles,
         adapter=adapter,
@@ -753,7 +758,8 @@ def write_finbert_news_probe(config: Mapping[str, Any]) -> FinBertSmokePaths:
         batch_size=batch_size,
     )
     scored = CsvRowRepository().read(scoring.scored_articles_csv_path)
-    decisions = _fixture_decision_rows()
+    decisions_path = settings.get("decision_csv_path")
+    decisions = CsvRowRepository().read(Path(decisions_path)) if decisions_path else _fixture_decision_rows()
     stock_features, stock_audit = build_stock_finbert_features(scored, decisions, lookback_days=(1, 3, 7))
     writer = ResearchArtifactWriter()
     stock_features_path = output / "stock_finbert_features.csv"
@@ -763,7 +769,9 @@ def write_finbert_news_probe(config: Mapping[str, Any]) -> FinBertSmokePaths:
     joined, selector_audit = join_finbert_features_for_selector(decisions, [r for r in stock_features if int(r["finbert_lookback_days"]) == 7], include_news=True)
     selector_audit_path = output / "selector_news_alignment_audit.json"
     writer.write_json(selector_audit_path, selector_audit)
-    exposure_features, exposure_audit = build_exposure_finbert_features(_fixture_holdings_rows(), stock_features, include_news=True, lookback_days=7)
+    holdings_path = settings.get("holdings_csv_path")
+    holdings = CsvRowRepository().read(Path(holdings_path)) if holdings_path else _fixture_holdings_rows()
+    exposure_features, exposure_audit = build_exposure_finbert_features(holdings, stock_features, include_news=True, lookback_days=7)
     exposure_path = output / "exposure_finbert_features.csv"
     writer.write_csv(exposure_path, exposure_features, fieldnames=EXPOSURE_NEWS_FEATURE_COLUMNS)
     exposure_audit_path = output / "exposure_news_alignment_audit.json"
