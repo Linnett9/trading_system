@@ -4,6 +4,14 @@ import math
 from pathlib import Path
 from typing import Any
 
+from core.research.ml.models.torch_checkpointing import (
+    TorchCheckpointSession,
+    binary_validation_loss,
+    checkpoint_identity,
+    checkpoint_validation_fraction,
+    validation_split_tensors,
+)
+
 
 def _torch_dependencies() -> tuple[Any, Any]:
     try:
@@ -77,7 +85,14 @@ class DLinearSequenceMLModel:
         )
         criterion = nn.BCEWithLogitsLoss(pos_weight=self._pos_weight_tensor(torch, y_train))
 
-        dataset = torch.utils.data.TensorDataset(sequences.reshape(sequences.shape[0], -1), labels)
+        train_tensors, train_labels, validation_tensors, validation_labels = (
+            validation_split_tensors(
+                (sequences.reshape(sequences.shape[0], -1),),
+                labels,
+                fraction=checkpoint_validation_fraction(self),
+            )
+        )
+        dataset = torch.utils.data.TensorDataset(train_tensors[0], train_labels)
         generator = torch.Generator().manual_seed(self.random_seed)
         loader = torch.utils.data.DataLoader(
             dataset,
@@ -85,9 +100,18 @@ class DLinearSequenceMLModel:
             shuffle=True,
             generator=generator,
         )
+        checkpoint = TorchCheckpointSession(
+            torch=torch,
+            model_owner=self,
+            network=model,
+            optimizer=optimizer,
+            identity=checkpoint_identity(self, x_train=x_train, y_train=y_train),
+            total_epochs=max(1, self.epochs),
+        )
+        resume = checkpoint.restore_if_compatible()
 
         model.train()
-        for _ in range(max(1, self.epochs)):
+        for epoch in range(resume.start_epoch, max(1, self.epochs)):
             for batch_x, batch_y in loader:
                 batch_x = batch_x.to(self.device)
                 batch_y = batch_y.to(self.device)
@@ -97,7 +121,19 @@ class DLinearSequenceMLModel:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
+            checkpoint.save_epoch(
+                completed_epoch=epoch,
+                validation_metric=binary_validation_loss(
+                    torch,
+                    model,
+                    criterion,
+                    validation_tensors,
+                    validation_labels,
+                    self.device,
+                ),
+            )
 
+        checkpoint.restore_best_weights()
         self.model = model.cpu()
 
     def predict(self, x: list[dict[str, float]]) -> list[int]:

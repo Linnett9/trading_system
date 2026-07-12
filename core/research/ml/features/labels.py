@@ -177,6 +177,9 @@ class ShouldReduceExposureLabelBuilder:
                 "feature_date": str(feature["feature_date"]),
                 "label_start_date": str(feature["label_start_date"]),
                 "label_end_date": str(feature["label_end_date"]),
+                "label_available_timestamp": str(
+                    feature.get("label_available_timestamp", feature["label_end_date"])
+                ),
                 "should_reduce_exposure": int(feature["should_reduce_exposure"]),
                 "forward_return_5d": _optional_float(feature, "forward_return_5d"),
                 "forward_return_10d": _optional_float(feature, "forward_return_10d"),
@@ -234,4 +237,4 @@ def _maximum_drawdown(prices: list[float]) -> float:
 
 def _optional_float(row: dict[str, float | str], key: str) -> float | None:
     value = row.get(key)
-    return float(value) if value is not None else None
+    return float(value) if value not in (None, "") else None

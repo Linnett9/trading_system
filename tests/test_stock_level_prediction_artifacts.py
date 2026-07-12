@@ -6,6 +6,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
 import yaml
 
 from core.research.ml.stock_level import stock_level_prediction_artifacts
@@ -14,6 +15,9 @@ from core.research.ml.stock_level.prediction_artifacts.service import (
     write_stock_level_prediction_artifacts,
 )
 from core.research.ml.stock_level.prediction_artifacts.sources import _universe_symbols
+from core.research.ml.stock_level.prediction_artifacts.types import (
+    TARGET_PROVENANCE_CONTRACT_VERSION,
+)
 
 
 def test_stock_level_artifacts_create_one_row_per_symbol_date():
@@ -104,25 +108,108 @@ def test_missing_early_history_baseline_features_are_reported():
 
 def test_market_residual_is_generated_without_market_in_tradable_universe():
     rows, audit = build_stock_level_prediction_artifacts(
-        expanded_rows=[_expanded("2024-01-01")], artifact_rows=[],
+        expanded_rows=[_expanded("2024-01-01"), _expanded("2024-01-12")], artifact_rows=[],
         universe_symbols=["AAA"],
         closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
         market_symbol="SPY",
     )
+    expected_benchmark = (210.0 / 200.0) - 1.0
+    expected_raw = (110.0 / 100.0) - 1.0
+    assert rows[0]["benchmark_symbol"] == "SPY"
+    assert rows[0]["actual_benchmark_return_10d"] == pytest.approx(expected_benchmark)
     assert rows[0]["actual_market_residual_return_10d"] != ""
+    assert rows[0]["actual_market_residual_return_10d"] == pytest.approx(
+        expected_raw - expected_benchmark
+    )
     assert audit["market_residual_label_generation"]["market_symbol_loaded"] is True
     assert audit["market_residual_label_generation"]["market_symbol_is_tradable_candidate"] is False
+    assert (
+        audit["market_residual_label_generation"]["benchmark_return_column"]
+        == "actual_benchmark_return_10d"
+    )
+
+
+def test_configured_benchmark_symbol_supplies_actual_benchmark_return():
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01"), _expanded("2024-01-12")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _closes(100.0), "QQQ": _closes(300.0)},
+        market_symbol="QQQ",
+    )
+
+    assert rows[0]["benchmark_symbol"] == "QQQ"
+    assert rows[0]["actual_benchmark_return_10d"] == pytest.approx(
+        (310.0 / 300.0) - 1.0
+    )
+
+
+def test_forward_target_provenance_uses_same_future_observation_and_preserves_value():
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01"), _expanded("2024-01-12")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
+    )
+
+    row = rows[0]
+
+    assert row["actual_forward_return_10d"] == pytest.approx((110.0 / 100.0) - 1.0)
+    assert row["target_provenance_contract_version"] == TARGET_PROVENANCE_CONTRACT_VERSION
+    assert row["feature_timestamp"] == "2024-01-01"
+    assert row["decision_timestamp"] == "2024-01-01"
+    assert row["target_horizon"] == "10_trading_observations"
+    assert row["target_observation_count"] == 10
+    assert row["target_start_timestamp"] == "2024-01-01"
+    assert row["label_start_timestamp"] == "2024-01-02"
+    assert row["label_end_timestamp"] == "2024-01-11"
+    assert row["label_available_timestamp"] == "2024-01-12"
+    assert row["benchmark_label_end_timestamp"] == "2024-01-11"
+    assert row["benchmark_label_available_timestamp"] == "2024-01-12"
+    assert audit["target_provenance_audit"]["complete_rows"] == 1
+
+
+def test_forward_target_availability_uses_ordered_trading_calendar_not_calendar_offset():
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02"), _expanded("2024-01-17")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _business_day_closes(100.0), "SPY": _business_day_closes(200.0)},
+    )
+
+    row = next(row for row in rows if row["rebalance_date"] == "2024-01-02")
+
+    assert row["actual_forward_return_10d"] == pytest.approx((110.0 / 100.0) - 1.0)
+    assert row["label_end_timestamp"] == "2024-01-16"
+    assert row["label_available_timestamp"] == "2024-01-17"
+
+
+def test_missing_benchmark_data_leaves_benchmark_outcome_blank():
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _closes(100.0)},
+        market_symbol="QQQ",
+    )
+
+    assert rows[0]["benchmark_symbol"] == "QQQ"
+    assert rows[0]["actual_benchmark_return_10d"] == ""
+    assert rows[0]["actual_market_residual_return_10d"] == ""
+    assert audit["market_residual_label_generation"]["market_symbol_loaded"] is False
 
 
 def test_risk_aware_targets_are_populated_with_required_history():
     rebalance = (date(2024, 1, 1) + timedelta(days=30)).isoformat()
+    later_decision = (date.fromisoformat(rebalance) + timedelta(days=11)).isoformat()
     rows, _ = build_stock_level_prediction_artifacts(
-        expanded_rows=[_expanded(rebalance)], artifact_rows=[], universe_symbols=["AAA", "BBB"],
+        expanded_rows=[_expanded(rebalance), _expanded(later_decision)], artifact_rows=[], universe_symbols=["AAA", "BBB"],
         closes_by_symbol={"AAA": _long_closes(100, 1.0), "BBB": _long_closes(80, .4), "SPY": _long_closes(200, .3)},
     )
-    assert all(row["actual_vol_adjusted_forward_return_10d"] != "" for row in rows)
-    assert all(row["actual_market_residual_return_10d"] != "" for row in rows)
-    assert all(row["actual_rank_normalized_forward_return_10d"] != "" for row in rows)
+    rebalance_rows = [row for row in rows if row["rebalance_date"] == rebalance]
+    assert all(row["actual_vol_adjusted_forward_return_10d"] != "" for row in rebalance_rows)
+    assert all(row["actual_market_residual_return_10d"] != "" for row in rebalance_rows)
+    assert all(row["actual_rank_normalized_forward_return_10d"] != "" for row in rebalance_rows)
 
 
 def test_existing_artifact_level_files_are_preserved(tmp_path):
@@ -164,6 +251,9 @@ def test_existing_artifact_level_files_are_preserved(tmp_path):
     assert old_artifact.read_text(encoding="utf-8") == "sentinel\n"
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["existing_artifact_level_files_preserved"] is True
+    with paths.csv_path.open("r", encoding="utf-8", newline="") as handle:
+        artifact_rows = list(csv.DictReader(handle))
+    assert artifact_rows[0]["benchmark_symbol"] == "SPY"
 
 
 def test_stock_alpha_artifact_universe_uses_diagnostic_limit_and_required_symbols(tmp_path):
@@ -223,6 +313,21 @@ def _closes(start: float) -> dict[str, dict[str, float]]:
         date = f"2024-01-{day:02d}"
         close[date] = start + index
         dollar_volume[date] = (start + index) * 1_000_000
+    return {"close": close, "dollar_volume": dollar_volume}
+
+
+def _business_day_closes(start: float) -> dict[str, dict[str, float]]:
+    close = {}
+    dollar_volume = {}
+    current = date(2024, 1, 2)
+    index = 0
+    while len(close) < 20:
+        if current.weekday() < 5:
+            key = current.isoformat()
+            close[key] = start + index
+            dollar_volume[key] = (start + index) * 1_000_000
+            index += 1
+        current += timedelta(days=1)
     return {"close": close, "dollar_volume": dollar_volume}
 
 

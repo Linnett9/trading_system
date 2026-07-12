@@ -11,6 +11,8 @@ class MetaEnsembleResult:
     audit_path: Path
     metrics_path: Path
     walk_forward_metrics_path: Path
+    temporal_audit_path: Path
+    temporal_folds_path: Path
     probability_calibration_path: Path
     calibrated_probability_calibration_path: Path
     holdout_shadow_overlay_path: Path

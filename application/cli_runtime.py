@@ -32,6 +32,7 @@ FEEDLESS_MODES = {
         "ml-stock-level-alpha-benchmark",
         "ml-stock-level-target-comparison",
         "ml-stock-level-portfolio-replay",
+        "ml-stock-selector-rebalance-dataset",
         "ml-stock-level-portfolio-policy-sweep",
         "ml-stock-alpha-experiment-report",
         "ml-stock-alpha-candidate-report",

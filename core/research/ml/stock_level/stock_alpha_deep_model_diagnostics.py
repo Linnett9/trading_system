@@ -214,7 +214,7 @@ def _write_one_model_diagnostics(
         )
     feature_columns = _sequence_feature_columns(model_name, news, features); factory = factories.get(model_name)
     diagnostics = []
-    for fold_id, train, test, _, _, _ in _walk_forward_partitions(prepared, dates, first_test_index=settings.min_train_dates + settings.embargo_dates, test_window_dates=settings.test_window_dates, embargo_dates=settings.embargo_dates):
+    for fold_id, train, test, _, _, _, _purged_row_count in _walk_forward_partitions(prepared, dates, first_test_index=settings.min_train_dates + settings.embargo_dates, test_window_dates=settings.test_window_dates, embargo_dates=settings.embargo_dates):
         def predict(train_x, test_x, train_target_rows, factory=factory):
             auxiliary = [[r[column] for column in auxiliary_columns] for r in train_target_rows] if auxiliary_columns else None
             model = factory(); model.fit(train_x, [r[TARGET_COLUMN] for r in train_target_rows], auxiliary); values = model.predict(test_x); return values, None, getattr(model, "diagnostics", {})

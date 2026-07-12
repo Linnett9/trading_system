@@ -186,7 +186,7 @@ def build_stock_level_feature_attribution(
             "embargoed_dates": embargoed_dates,
             "chronological_guard_passed": train_dates[-1] < test_dates[0],
         }
-        for fold_id, train_rows, test_rows, train_dates, test_dates, embargoed_dates
+        for fold_id, train_rows, test_rows, train_dates, test_dates, embargoed_dates, _purged_row_count
         in _walk_forward_partitions(
             prepared_rows,
             dates,

@@ -60,7 +60,7 @@ def _attribute_model(
     }
     ablation_predictions = {feature: [] for feature in feature_columns}
     fold_count = 0
-    for fold_id, train_rows, test_rows, _, _, _ in _walk_forward_partitions(
+    for fold_id, train_rows, test_rows, _, _, _, _purged_row_count in _walk_forward_partitions(
         prepared_rows,
         dates,
         first_test_index=first_test_index,

@@ -8,6 +8,7 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
     CONTEXT_COLUMNS,
     NOTICE,
     PREDICTION_COLUMNS,
+    TARGET_PROVENANCE_COLUMNS,
 )
 
 
@@ -15,11 +16,13 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "rebalance_date",
         "symbol",
+        "benchmark_symbol",
         "sector",
         "average_dollar_volume_21d",
         "average_dollar_volume_63d",
         *PREDICTION_COLUMNS,
         *ACTUAL_COLUMNS,
+        *TARGET_PROVENANCE_COLUMNS,
         *CONTEXT_COLUMNS,
         "source",
         "source_feature_id",

@@ -62,6 +62,12 @@ def test_research_profile_isolates_cache_and_reports():
     assert development["ml"]["expanded_rebalance_dataset_path"] != (
         benchmark["ml"]["expanded_rebalance_dataset_path"]
     )
+    assert development["ml"]["stock_selector_rebalance_dataset_path"] == (
+        "cache/ml/development/stock_selector_rebalance_dataset.csv"
+    )
+    assert benchmark["ml"]["stock_selector_rebalance_dataset_path"] == (
+        "cache/ml/benchmark/stock_selector_rebalance_dataset.csv"
+    )
 
 
 def test_research_profile_sets_universe_and_years():

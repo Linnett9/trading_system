@@ -4,7 +4,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
 from core.research.ml.allocation.allocation_v2 import write_allocation_v2_reports
+from core.research.ml.immutable_runs import (
+    deterministic_run_id,
+    file_digest,
+    preserve_immutable_run,
+    read_run_manifest,
+    run_dir_from_latest_completed,
+)
 from core.research.ml.metrics.calibration import (
     build_probability_calibration,
     compare_calibration_methods,
@@ -206,6 +214,43 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         json.dumps(walk_forward, indent=2),
         encoding="utf-8",
     )
+    meta_prediction_artifacts_path = output_dir / "prediction_artifacts.csv"
+    meta_prediction_metadata_path = output_dir / "prediction_artifacts.json"
+    _write_csv(
+        meta_prediction_artifacts_path,
+        [
+            {key: str(value) for key, value in row.items()}
+            for row in walk_forward.get("prediction_rows", [])
+        ],
+    )
+    meta_prediction_metadata_path.write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 1,
+                "workflow": "exposure_meta_ensemble",
+                "model_type": selected_meta_model_type,
+                "validation_method": "chronological_meta_walk_forward_strict_oos",
+                "row_count": len(walk_forward.get("prediction_rows", [])),
+                "dataset_hash": file_digest(dataset_path),
+                "source_dataset_hash": audit.get("source_dataset_hash"),
+                "source_model_count": audit.get("source_model_count"),
+                "temporal_policy": walk_forward.get("temporal_policy", {}),
+                "run_status": "complete",
+                "research_only": True,
+                "trading_impact": "none",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    temporal_audit_path = output_dir / "meta_ensemble_temporal_audit.json"
+    temporal_folds_path = output_dir / "meta_ensemble_temporal_folds.csv"
+    temporal_audit = _meta_temporal_audit(walk_forward, train_rows)
+    temporal_audit_path.write_text(
+        json.dumps(temporal_audit, indent=2),
+        encoding="utf-8",
+    )
+    _write_csv(temporal_folds_path, _meta_temporal_fold_rows(walk_forward))
 
     holdout_overlay_path = output_dir / "holdout_shadow_overlay.json"
     overlay = _overlay_summary(
@@ -335,12 +380,14 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
         optimizer_results_path=allocation_paths.optimizer_results_json,
         auxiliary_metrics_path=auxiliary_result.metrics_json_path,
     )
-    return MetaEnsembleResult(
+    result = MetaEnsembleResult(
         output_dir=output_dir,
         meta_dataset_path=dataset_path,
         audit_path=audit_path,
         metrics_path=metrics_path,
         walk_forward_metrics_path=walk_forward_path,
+        temporal_audit_path=temporal_audit_path,
+        temporal_folds_path=temporal_folds_path,
         probability_calibration_path=calibration_path,
         calibrated_probability_calibration_path=calibrated_probability_calibration_path,
         holdout_shadow_overlay_path=holdout_overlay_path,
@@ -385,3 +432,180 @@ def run_meta_ensemble(config: dict[str, Any]) -> MetaEnsembleResult:
             trading_leaderboard_paths.markdown_path
         ),
     )
+    _preserve_meta_ensemble_run(
+        result,
+        config=config,
+        source_dirs=source_dirs,
+        audit=audit,
+        metrics=metrics,
+        selected_meta_model_type=selected_meta_model_type,
+    )
+    return result
+
+
+def _preserve_meta_ensemble_run(
+    result: MetaEnsembleResult,
+    *,
+    config: dict[str, Any],
+    source_dirs: list[Path],
+    audit: dict[str, Any],
+    metrics: dict[str, Any],
+    selected_meta_model_type: str,
+) -> None:
+    source_identities = [_source_prediction_identity(path) for path in source_dirs]
+    temporal_audit = json.loads(result.temporal_audit_path.read_text(encoding="utf-8"))
+    temporal_policy_identity = temporal_audit.get("temporal_policy", {})
+    identity = {
+        "source_prediction_identities": source_identities,
+        "source_dataset_hash": audit.get("source_dataset_hash"),
+        "source_dataset_hashes": {
+            item["model_type"]: item.get("dataset_hash")
+            for item in source_identities
+        },
+        "source_model_input_hashes": {
+            item["model_type"]: item.get("model_input_hash")
+            for item in source_identities
+        },
+        "source_model_count": audit.get("source_model_count"),
+        "temporal_policy_identity": temporal_policy_identity,
+        "meta_model_type": selected_meta_model_type,
+        "metrics": metrics,
+        "meta_dataset_sha256": file_digest(result.meta_dataset_path),
+        "temporal_audit_sha256": file_digest(result.temporal_audit_path),
+        "config_hash": MLCoreArtifactWriter.hash_payload(config),
+    }
+    run_id = deterministic_run_id("exposure_meta_ensemble", identity)
+    preserve_immutable_run(
+        output_dir=result.output_dir,
+        run_id=run_id,
+        kind="exposure_meta_ensemble",
+        identity=identity,
+        artifact_paths=(
+            result.meta_dataset_path,
+            result.audit_path,
+            result.metrics_path,
+            result.output_dir / "prediction_artifacts.csv",
+            result.output_dir / "prediction_artifacts.json",
+            result.walk_forward_metrics_path,
+            result.temporal_audit_path,
+            result.temporal_folds_path,
+            result.probability_calibration_path,
+            result.calibrated_probability_calibration_path,
+            result.holdout_shadow_overlay_path,
+            result.threshold_sweep_path,
+            result.meta_model_comparison_path,
+            result.promotion_gates_path,
+            result.overlay_model_comparison_path,
+            result.leaderboard_path,
+            result.leaderboard_markdown_path,
+            result.meta_auxiliary_predictions_path,
+            result.meta_auxiliary_metrics_json_path,
+            result.meta_auxiliary_metrics_markdown_path,
+            result.trading_research_leaderboard_csv_path,
+            result.trading_research_leaderboard_json_path,
+            result.trading_research_leaderboard_markdown_path,
+        ),
+        extra_manifest={
+            "source_prediction_identities": source_identities,
+            "temporal_policy_identity": temporal_policy_identity,
+            "meta_model_type": selected_meta_model_type,
+        },
+    )
+
+
+def _meta_temporal_audit(
+    walk_forward: dict[str, Any],
+    train_rows: list[dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "workflow": "meta_ensemble_walk_forward",
+        "temporal_policy": walk_forward.get("temporal_policy", {}),
+        "base_prediction_provenance": {
+            "training_split_required": "out_of_fold",
+            "training_rows_are_out_of_fold": all(
+                row.get("split") == "out_of_fold" for row in train_rows
+            ),
+            "source": "prediction_artifacts.csv",
+        },
+        "folds": [
+            {
+                key: value
+                for key, value in fold.items()
+                if key not in {"metrics", "calibration", "overlay", "prediction_rows"}
+            }
+            for fold in walk_forward.get("folds", [])
+        ],
+        "leakage_checks_passed": bool(walk_forward.get("leakage_checks_passed")),
+        "research_only": True,
+        "trading_impact": "none",
+    }
+
+
+def _meta_temporal_fold_rows(
+    walk_forward: dict[str, Any],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for fold in walk_forward.get("folds", []):
+        assertions = fold.get("leakage_assertions", {})
+        rows.append({
+            "fold": str(fold.get("fold", "")),
+            "train_start_date": str(fold.get("train_start_date", "")),
+            "train_end_date": str(fold.get("train_end_date", "")),
+            "test_start_date": str(fold.get("test_start_date", "")),
+            "test_end_date": str(fold.get("test_end_date", "")),
+            "train_sample_count": str(fold.get("train_sample_count", "")),
+            "test_sample_count": str(fold.get("test_sample_count", "")),
+            "maximum_training_label_available_timestamp": str(
+                fold.get("maximum_training_label_available_timestamp", "")
+            ),
+            "purged_unavailable_label_count": str(
+                fold.get("purged_unavailable_label_count", "")
+            ),
+            "preprocessing_fit_row_count": str(
+                fold.get("preprocessing_fit_row_count", "")
+            ),
+            "base_prediction_provenance": str(
+                fold.get("base_prediction_provenance", "")
+            ),
+            "training_labels_matured": str(
+                assertions.get("training_labels_matured", "")
+            ),
+            "test_dates_excluded_from_training": str(
+                assertions.get("test_dates_excluded_from_training", "")
+            ),
+        })
+    return rows
+
+
+def _source_prediction_identity(source_dir: Path) -> dict[str, Any]:
+    prediction_path = source_dir / "prediction_artifacts.csv"
+    metadata_path = source_dir / "prediction_artifacts.json"
+    metadata: dict[str, Any] = {}
+    try:
+        parsed = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            metadata = parsed
+    except (OSError, ValueError, TypeError):
+        metadata = {}
+    latest_run_dir = run_dir_from_latest_completed(source_dir)
+    run_manifest = read_run_manifest(latest_run_dir) if latest_run_dir else None
+    return {
+        "source_dir": str(source_dir),
+        "source_run_id": (run_manifest or {}).get("run_id"),
+        "source_run_status": (run_manifest or {}).get("run_status"),
+        "prediction_artifacts_sha256": (
+            file_digest(prediction_path) if prediction_path.exists() else None
+        ),
+        "prediction_metadata_sha256": (
+            file_digest(metadata_path) if metadata_path.exists() else None
+        ),
+        "model_type": metadata.get("model_type"),
+        "dataset_hash": metadata.get("dataset_hash"),
+        "model_input_contract_version": metadata.get(
+            "model_input_contract_version"
+        ),
+        "model_input_hash": metadata.get("model_input_hash"),
+        "feature_columns": metadata.get("feature_columns"),
+        "target_label_name": metadata.get("target_label_name"),
+    }

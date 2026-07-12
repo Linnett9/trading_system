@@ -57,6 +57,12 @@ class StockLevelResearchConfig:
     portfolio_allow_short: bool
     portfolio_signal_columns: tuple[str, ...]
     overnight_run_portfolio_replay: bool
+    stock_selector_rebalance_source_dir: Path
+    stock_selector_rebalance_selected_signal: str
+    stock_selector_rebalance_selected_policy: str
+    stock_selector_rebalance_dataset_path: Path
+    stock_selector_rebalance_metadata_path: Path
+    stock_selector_rebalance_outcome_horizon_days: int
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "StockLevelResearchConfig":
@@ -163,6 +169,30 @@ class StockLevelResearchConfig:
             portfolio_allow_short=bool(ml.get("stock_portfolio_replay_allow_short", False)),
             portfolio_signal_columns=tuple(ml.get("stock_portfolio_replay_signal_columns", ["stock_level_predicted_forward_return_10d_elastic_net", "stock_level_predicted_forward_return_10d_random_forest", "predicted_momentum_120d"])),
             overnight_run_portfolio_replay=bool(ml.get("stock_alpha_overnight_run_portfolio_replay", True)),
+            stock_selector_rebalance_source_dir=Path(
+                ml.get("stock_selector_rebalance_source_dir", output_dir)
+            ),
+            stock_selector_rebalance_selected_signal=str(
+                ml.get("stock_selector_rebalance_selected_signal", "")
+            ).strip(),
+            stock_selector_rebalance_selected_policy=str(
+                ml.get("stock_selector_rebalance_selected_policy", "")
+            ).strip(),
+            stock_selector_rebalance_dataset_path=Path(
+                ml.get(
+                    "stock_selector_rebalance_dataset_path",
+                    output_dir / "stock_selector_rebalance_dataset.csv",
+                )
+            ),
+            stock_selector_rebalance_metadata_path=Path(
+                ml.get(
+                    "stock_selector_rebalance_metadata_path",
+                    output_dir / "stock_selector_rebalance_dataset.json",
+                )
+            ),
+            stock_selector_rebalance_outcome_horizon_days=int(
+                ml.get("stock_selector_rebalance_outcome_horizon_days", 10)
+            ),
         )
         instance.validate()
         return instance
@@ -185,6 +215,7 @@ class StockLevelResearchConfig:
             "stock_feature_attribution_max_features": self.attribution_max_features,
             "stock_feature_attribution_permutation_repeats": self.attribution_permutation_repeats,
             "stock_portfolio_replay_top_n": self.portfolio_top_n,
+            "stock_selector_rebalance_outcome_horizon_days": self.stock_selector_rebalance_outcome_horizon_days,
         }
         for name, value in positive.items():
             if value < 1:

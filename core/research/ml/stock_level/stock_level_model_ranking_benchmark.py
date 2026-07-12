@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 from typing import Any, Callable
 
+from core.research.ml.artifacts.artifact_writers import MLCoreArtifactWriter
+from core.research.ml.immutable_runs import (
+    deterministic_run_id,
+    file_digest,
+    preserve_immutable_run,
+)
 from core.research.ml.stock_level_benchmark_types import (
     BASELINE_COLUMNS,
     FEATURE_COLUMNS,
@@ -14,6 +21,8 @@ from core.research.ml.stock_level_benchmark_types import (
     SEQUENCE_MODEL_NAMES,
     TABULAR_MODEL_NAMES,
     TARGET_COLUMN,
+    TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
     StockLevelModelRankingBenchmarkPaths,
 )
 from core.research.ml.stock_level_benchmark_models import (
@@ -129,6 +138,7 @@ def write_stock_level_model_ranking_benchmark(
         json_path=output_dir / "stock_level_model_ranking_benchmark.json",
         markdown_path=output_dir / "stock_level_model_ranking_benchmark.md",
         predictions_path=output_dir / "stock_level_model_oos_predictions.csv",
+        temporal_audit_path=output_dir / "stock_level_temporal_audit.json",
     )
     with logger.stage("report_generation"):
         writer = ResearchArtifactWriter()
@@ -143,8 +153,69 @@ def write_stock_level_model_ranking_benchmark(
             fieldnames=_prediction_columns(payload["completed_models"]),
         )
         writer.write_json(paths.json_path, payload)
+        writer.write_json(
+            paths.temporal_audit_path,
+            payload.get("temporal_audit", {"version": 1, "folds": [], "summary": {}}),
+        )
         writer.write_markdown(paths.markdown_path, _markdown(payload))
+    _preserve_stock_selector_benchmark_run(
+        output_dir,
+        paths,
+        payload,
+        config=config,
+        source_path=source_path,
+    )
     return paths
+
+
+def _preserve_stock_selector_benchmark_run(
+    output_dir: Path,
+    paths: StockLevelModelRankingBenchmarkPaths,
+    payload: dict[str, Any],
+    *,
+    config: dict[str, Any],
+    source_path: Path,
+) -> None:
+    identity = {
+        "source_path": str(source_path),
+        "source_sha256": file_digest(source_path),
+        "target_column": payload.get("target_column"),
+        "feature_columns": payload.get("feature_columns"),
+        "requested_models": payload.get("requested_models"),
+        "completed_models": payload.get("completed_models"),
+        "input_row_count": payload.get("input_row_count"),
+        "eligible_row_count": payload.get("eligible_row_count"),
+        "input_date_count": payload.get("input_date_count"),
+        "input_symbol_count": payload.get("input_symbol_count"),
+        "oos_row_count": payload.get("oos_row_count"),
+        "oos_date_count": payload.get("oos_date_count"),
+        "oos_symbol_count": payload.get("oos_symbol_count"),
+        "walk_forward": payload.get("walk_forward"),
+        "temporal_policy": payload.get("temporal_policy"),
+        "target_provenance_contract_version": payload.get(
+            "target_provenance_contract_version"
+        ),
+        "stock_ranker_model_set": payload.get("stock_ranker_model_set"),
+        "config_hash": MLCoreArtifactWriter.hash_payload(config),
+    }
+    run_id = deterministic_run_id("stock_selector_benchmark", identity)
+    preserve_immutable_run(
+        output_dir=output_dir,
+        run_id=run_id,
+        kind="stock_selector_benchmark",
+        identity=identity,
+        artifact_paths=(
+            paths.csv_path,
+            paths.json_path,
+            paths.markdown_path,
+            paths.predictions_path,
+            paths.temporal_audit_path,
+        ),
+        extra_manifest={
+            "best_model_name": (payload.get("best_ml_model") or {}).get("name"),
+            "champion_pointer_updated": False,
+        },
+    )
 
 
 def _factories_for_model_set(
@@ -321,6 +392,7 @@ def build_stock_level_model_ranking_benchmark(
         row for row in leaderboard if row["name"] == "momentum_120d"
     )
     comparison = _compare_to_momentum(best_ml, momentum)
+    target_provenance_summary = _target_provenance_summary(prepared_rows)
     payload = {
         "mode": "stock_level_model_ranking_benchmark_research_only",
         "purpose": (
@@ -345,6 +417,9 @@ def build_stock_level_model_ranking_benchmark(
         "prediction_columns": [
             f"{PREDICTION_PREFIX}{name}" for name in completed_models
         ],
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "target_provenance_columns": list(TARGET_PROVENANCE_COLUMNS),
+        "target_provenance_summary": target_provenance_summary,
         "parallelism": {
             "requested_workers": model_n_jobs,
             "effective_workers": min(model_n_jobs, len(specs)),
@@ -375,6 +450,41 @@ def build_stock_level_model_ranking_benchmark(
             ),
             "folds": folds,
         },
+        "temporal_policy": {
+            "version": 2,
+            "workflow": "stock_selector_oos_benchmark",
+            "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+            "training_window_type": "expanding",
+            "decision_timestamp_column": "decision_timestamp",
+            "feature_timestamp_column": "feature_timestamp",
+            "label_end_timestamp_column": "label_end_timestamp",
+            "label_available_timestamp_column": "label_available_timestamp",
+            "training_eligibility_rule": "label_available_timestamp <= decision_timestamp",
+            "validation_policy": "none_for_stock_selector_models",
+            "purge_policy": "exclude_candidate_train_rows_with_unmatured_labels",
+            "embargo_rebalance_dates": embargo_dates,
+            "minimum_training_dates": min_train_dates,
+            "test_window_dates": test_window_dates,
+        },
+        "temporal_audit": {
+            "version": 2,
+            "workflow": "stock_selector_oos_benchmark",
+            "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+            "target_provenance_summary": target_provenance_summary,
+            "leakage_checks_passed": all(
+                fold["chronological_guard_passed"]
+                and fold["label_availability_guard_passed"]
+                for fold in folds
+            ),
+            "folds": folds,
+            "summary": {
+                "fold_count": len(folds),
+                "total_purged_rows": sum(fold["purged_row_count"] for fold in folds),
+                "total_oos_rows": len(predictions),
+                "duplicate_oos_keys": len(predictions)
+                - len({(row["rebalance_date"], row["symbol"]) for row in predictions}),
+            },
+        },
         "ranking_rule": (
             "Descending mean Spearman IC, then descending top-minus-bottom spread."
         ),
@@ -390,3 +500,25 @@ def build_stock_level_model_ranking_benchmark(
         **RESEARCH_METADATA,
     }
     return predictions, payload
+
+
+def _target_provenance_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    complete = sum(
+        1
+        for row in rows
+        if all(str(row.get(column, "")).strip() for column in TARGET_PROVENANCE_COLUMNS)
+    )
+    versions = sorted(
+        {
+            str(row.get("target_provenance_contract_version"))
+            for row in rows
+            if str(row.get("target_provenance_contract_version") or "").strip()
+        }
+    )
+    return {
+        "total_rows": len(rows),
+        "complete_rows": complete,
+        "missing_rows": len(rows) - complete,
+        "contract_versions": versions,
+        "required_columns": list(TARGET_PROVENANCE_COLUMNS),
+    }

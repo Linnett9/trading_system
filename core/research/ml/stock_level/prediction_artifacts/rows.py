@@ -20,6 +20,8 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
     CONTEXT_COLUMNS,
     PREDICTION_COLUMNS,
     RESEARCH_METADATA,
+    TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
     TARGET_TYPES,
 )
 
@@ -75,12 +77,20 @@ def build_stock_level_prediction_artifacts(
                 "source_model_type": source.get("model_type", ""),
                 "source_split": source.get("split", ""),
                 "source_dataset_hash": source.get("dataset_hash", ""),
+                "benchmark_symbol": market_symbol,
                 "true_stock_level_row": True,
             }
             for column in PREDICTION_COLUMNS:
                 row[column] = source.get(column, "")
             row.update(_baseline_predictions(symbol_data, date))
-            row.update(_actual_targets(symbol_data, date, market_data=market_data))
+            row.update(
+                _actual_targets(
+                    symbol_data,
+                    date,
+                    market_data=market_data,
+                    decision_dates=dates,
+                )
+            )
             for column in CONTEXT_COLUMNS:
                 row[column] = context.get(column, "")
             rows.append(row)
@@ -88,6 +98,10 @@ def build_stock_level_prediction_artifacts(
     audit = _audit(rows, symbols, dates, artifact_rows)
     audit["market_residual_label_generation"] = {
         "market_symbol": market_symbol,
+        "benchmark_symbol": market_symbol,
+        "benchmark_return_column": "actual_benchmark_return_10d",
+        "benchmark_return_horizon_trading_days": 10,
+        "benchmark_return_convention": "simple_close_to_close",
         "market_symbol_loaded": bool(market_data.get("close_dates")),
         "market_symbol_is_tradable_candidate": market_symbol in symbols,
         "computed_before_dev_symbol_filtering": True,
@@ -181,6 +195,11 @@ def _audit(
         column: sum(row.get(column) in (None, "") for row in rows)
         for column in ACTUAL_COLUMNS
     }
+    provenance_complete = sum(
+        1
+        for row in rows
+        if all(str(row.get(column, "")).strip() for column in TARGET_PROVENANCE_COLUMNS)
+    )
     target_audit = {
         column: {
             "target_type": target_type,
@@ -212,6 +231,12 @@ def _audit(
         "missing_prediction_counts": missing_predictions,
         "populated_prediction_counts": populated_predictions,
         "missing_actual_target_counts": missing_actuals,
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "target_provenance_audit": {
+            "complete_rows": provenance_complete,
+            "missing_rows": len(rows) - provenance_complete,
+            "required_columns": list(TARGET_PROVENANCE_COLUMNS),
+        },
         "target_audit": target_audit,
         "artifact_rows_with_symbol_predictions": artifact_symbol_rows,
         "true_stock_level_rows": bool(rows),

@@ -11,6 +11,7 @@ from core.research.ml.stock_level_benchmark_types import (
     NOTICE,
     PREDICTION_PREFIX,
     TARGET_COLUMN,
+    TARGET_PROVENANCE_COLUMNS,
 )
 
 
@@ -51,7 +52,9 @@ def _prediction_columns(model_names: list[str]) -> list[str]:
     return [
         "rebalance_date",
         "symbol",
+        "benchmark_symbol",
         "fold_id",
+        *TARGET_PROVENANCE_COLUMNS,
         TARGET_COLUMN,
         *AUXILIARY_TARGET_COLUMNS,
         *TARGET_OUTPUT_COLUMNS,

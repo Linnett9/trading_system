@@ -79,6 +79,12 @@ def apply_research_profile(config: dict[str, Any], profile_name: str | None) -> 
     ml_config["expanded_rebalance_audit_path"] = str(
         report_dir / "expanded_rebalance_dataset_audit.json"
     )
+    ml_config["stock_selector_rebalance_dataset_path"] = str(
+        cache_dir / "stock_selector_rebalance_dataset.csv"
+    )
+    ml_config["stock_selector_rebalance_metadata_path"] = str(
+        report_dir / "stock_selector_rebalance_dataset.json"
+    )
     ml_config["inventory_output_dir"] = str(report_dir)
 
     if "output_dir" in ml_config:

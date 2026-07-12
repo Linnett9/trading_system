@@ -1,16 +1,32 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from statistics import pstdev
 from typing import Any
 
 from core.research.ml.stock_level.prediction_artifacts.math import (
-    _forward_return,
     _trailing_volatility,
 )
 from core.research.ml.stock_level.prediction_artifacts.types import (
     ACTUAL_COLUMNS,
+    TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
 )
+
+
+@dataclass(frozen=True)
+class ForwardTarget:
+    value: float | str
+    start_timestamp: str
+    label_start_timestamp: str
+    end_timestamp: str
+    available_timestamp: str
+    horizon: int
+
+    @property
+    def horizon_label(self) -> str:
+        return f"{self.horizon}_trading_observations"
 
 
 def _actual_targets(
@@ -18,22 +34,28 @@ def _actual_targets(
     rebalance_date: str,
     *,
     market_data: dict[str, Any] | None = None,
+    decision_dates: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     closes_by_date = symbol_data.get("close", {})
     dates = symbol_data.get("close_dates", [])
     if rebalance_date not in closes_by_date:
-        return {column: "" for column in ACTUAL_COLUMNS}
+        return _empty_targets()
     index = dates.index(rebalance_date)
     start = closes_by_date[rebalance_date]
     if start <= 0.0:
-        return {column: "" for column in ACTUAL_COLUMNS}
-    forward = []
-    for horizon in (5, 10):
-        end_index = index + horizon
-        if end_index < len(dates):
-            forward.append((horizon, closes_by_date[dates[end_index]] / start - 1.0))
-        else:
-            forward.append((horizon, ""))
+        return _empty_targets()
+    forward_5d = _forward_target(
+        symbol_data,
+        rebalance_date,
+        5,
+        decision_dates=decision_dates,
+    )
+    forward_10d = _forward_target(
+        symbol_data,
+        rebalance_date,
+        10,
+        decision_dates=decision_dates,
+    )
     future_prices = [
         closes_by_date[date]
         for date in dates[index + 1 : index + 11]
@@ -45,16 +67,23 @@ def _actual_targets(
         if future_prices[i - 1] > 0.0
     ]
     drawdowns = [(price / start) - 1.0 for price in future_prices]
-    raw_10d = forward[1][1]
-    market_10d = _forward_return(market_data or {}, rebalance_date, 10)
+    raw_10d = forward_10d.value
+    benchmark_10d = _forward_target(
+        market_data or {},
+        rebalance_date,
+        10,
+        decision_dates=decision_dates,
+    )
+    market_10d = benchmark_10d.value
     pre_vol = _trailing_volatility(dates, symbol_data.get("close_values", []), rebalance_date, lookback=20)
     adverse = min(drawdowns) if drawdowns else ""
-    return {
-        "actual_forward_return_5d": forward[0][1],
-        "actual_forward_return_10d": forward[1][1],
+    targets = {
+        "actual_forward_return_5d": forward_5d.value,
+        "actual_forward_return_10d": forward_10d.value,
         "actual_future_volatility": pstdev(returns) if len(returns) > 1 else "",
         "actual_future_drawdown": min(drawdowns) if drawdowns else "",
         "actual_max_adverse_excursion": min(drawdowns) if drawdowns else "",
+        "actual_benchmark_return_10d": market_10d,
         "actual_market_residual_return_10d": (
             raw_10d - market_10d if raw_10d != "" and market_10d != "" else ""
         ),
@@ -70,6 +99,79 @@ def _actual_targets(
         ),
         "actual_rank_normalized_forward_return_10d": "",
         "actual_top_decile_label_10d": "",
+    }
+    targets.update(_target_provenance(rebalance_date, forward_10d, benchmark_10d))
+    return targets
+
+
+def _forward_target(
+    symbol_data: dict[str, Any],
+    rebalance_date: str,
+    horizon: int,
+    *,
+    decision_dates: list[str] | tuple[str, ...] | None = None,
+) -> ForwardTarget:
+    closes_by_date = symbol_data.get("close", {})
+    dates = list(symbol_data.get("close_dates", []))
+    if rebalance_date not in closes_by_date or rebalance_date not in dates:
+        return ForwardTarget("", "", "", "", "", horizon)
+    index = dates.index(rebalance_date)
+    start = closes_by_date[rebalance_date]
+    end_index = index + horizon
+    if start <= 0.0 or end_index >= len(dates):
+        return ForwardTarget("", "", "", "", "", horizon)
+    end_timestamp = dates[end_index]
+    end = closes_by_date[end_timestamp]
+    if end <= 0.0:
+        return ForwardTarget("", "", "", "", "", horizon)
+    label_start = dates[index + 1] if index + 1 < len(dates) else ""
+    candidates = sorted(set(decision_dates or dates))
+    available = _first_after(candidates, end_timestamp)
+    if not available:
+        return ForwardTarget("", "", "", "", "", horizon)
+    return ForwardTarget(
+        value=(end / start) - 1.0,
+        start_timestamp=rebalance_date,
+        label_start_timestamp=label_start,
+        end_timestamp=end_timestamp,
+        available_timestamp=available,
+        horizon=horizon,
+    )
+
+
+def _target_provenance(
+    rebalance_date: str,
+    target: ForwardTarget,
+    benchmark: ForwardTarget,
+) -> dict[str, Any]:
+    if target.value == "":
+        return {column: "" for column in TARGET_PROVENANCE_COLUMNS}
+    return {
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "feature_timestamp": rebalance_date,
+        "decision_timestamp": rebalance_date,
+        "target_horizon": target.horizon_label,
+        "target_observation_count": target.horizon,
+        "target_start_timestamp": target.start_timestamp,
+        "label_start_timestamp": target.label_start_timestamp,
+        "label_end_timestamp": target.end_timestamp,
+        "label_available_timestamp": target.available_timestamp,
+        "target_price_convention": "simple_close_to_close",
+        "benchmark_target_start_timestamp": benchmark.start_timestamp,
+        "benchmark_label_start_timestamp": benchmark.label_start_timestamp,
+        "benchmark_label_end_timestamp": benchmark.end_timestamp,
+        "benchmark_label_available_timestamp": benchmark.available_timestamp,
+    }
+
+
+def _first_after(values: list[str], timestamp: str) -> str:
+    return next((value for value in values if value > timestamp), "")
+
+
+def _empty_targets() -> dict[str, Any]:
+    return {
+        **{column: "" for column in ACTUAL_COLUMNS},
+        **{column: "" for column in TARGET_PROVENANCE_COLUMNS},
     }
 
 def _add_cross_sectional_targets(rows: list[dict[str, Any]]) -> None:

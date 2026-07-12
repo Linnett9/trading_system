@@ -7,6 +7,10 @@ from typing import Any, Callable
 from core.research.ml.stock_level.stock_level_alpha_features import (
     ENGINEERED_FEATURE_COLUMNS,
 )
+from core.research.ml.stock_level.prediction_artifacts.types import (
+    TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
+)
 
 
 RESEARCH_METADATA = {
@@ -39,6 +43,7 @@ AUXILIARY_TARGET_COLUMNS = (
     "actual_future_drawdown",
 )
 TARGET_OUTPUT_COLUMNS = (
+    "actual_benchmark_return_10d",
     "actual_market_residual_return_10d",
     "actual_vol_adjusted_forward_return_10d",
     "actual_drawdown_adjusted_forward_return_10d",
@@ -77,6 +82,7 @@ class StockLevelModelRankingBenchmarkPaths:
     json_path: Path
     markdown_path: Path
     predictions_path: Path
+    temporal_audit_path: Path
 
 
 @dataclass(frozen=True)

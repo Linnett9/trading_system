@@ -5,6 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from core.research.ml.models import IMLModel
+from core.research.ml.models.torch_checkpointing import (
+    TorchCheckpointSession,
+    binary_validation_loss,
+    checkpoint_identity,
+    checkpoint_validation_fraction,
+    validation_split_tensors,
+)
 from core.research.ml.data.sequence_dataset import (
     build_sequence_indices,
     sequence_group_ids_from_metadata,
@@ -122,7 +129,14 @@ class TransformerSequenceMLModel(IMLModel):
         device = torch.device(self.device)
         x_tensor = torch.tensor(sequences, dtype=torch.float32, device=device)
         y_tensor = torch.tensor(labels, dtype=torch.float32, device=device)
-        dataset = TensorDataset(x_tensor, y_tensor)
+        train_tensors, train_labels, validation_tensors, validation_labels = (
+            validation_split_tensors(
+                (x_tensor,),
+                y_tensor,
+                fraction=checkpoint_validation_fraction(self),
+            )
+        )
+        dataset = TensorDataset(train_tensors[0], train_labels)
         loader = DataLoader(
             dataset,
             batch_size=max(1, self.batch_size),
@@ -154,16 +168,37 @@ class TransformerSequenceMLModel(IMLModel):
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
+        checkpoint = TorchCheckpointSession(
+            torch=torch,
+            model_owner=self,
+            network=model,
+            optimizer=optimizer,
+            identity=checkpoint_identity(self, x_train=x_train, y_train=y_train),
+            total_epochs=max(1, self.epochs),
+        )
+        resume = checkpoint.restore_if_compatible()
 
         model.train()
-        for _ in range(max(1, self.epochs)):
+        for epoch in range(resume.start_epoch, max(1, self.epochs)):
             for batch_x, batch_y in loader:
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(batch_x)
                 loss = loss_fn(logits, batch_y)
                 loss.backward()
                 optimizer.step()
+            checkpoint.save_epoch(
+                completed_epoch=epoch,
+                validation_metric=binary_validation_loss(
+                    torch,
+                    model,
+                    loss_fn,
+                    validation_tensors,
+                    validation_labels,
+                    self.device,
+                ),
+            )
 
+        checkpoint.restore_best_weights()
         self.model = model.cpu()
         self.training_summary = TransformerTrainingSummary(
             True,

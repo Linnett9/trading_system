@@ -8,6 +8,12 @@ from core.research.ml.models.multitask_transformer_network import (
     _safe_feature_names,
 )
 from core.research.ml.models.multitask_transformer_types import MultiTaskTransformerTrainingSummary
+from core.research.ml.models.torch_checkpointing import (
+    TorchCheckpointSession,
+    checkpoint_identity,
+    checkpoint_validation_fraction,
+    validation_split_tensors,
+)
 from core.research.ml.models.transformer_model import _torch_dependencies
 
 
@@ -79,7 +85,19 @@ class MultiTaskTransformerTrainingMixin:
             device=device,
         )
         mask_tensor = torch.tensor(regression_mask, dtype=torch.float32, device=device)
-        dataset = TensorDataset(x_tensor, y_tensor, regression_tensor, mask_tensor)
+        train_tensors, train_labels, validation_tensors, validation_labels = (
+            validation_split_tensors(
+                (x_tensor, regression_tensor, mask_tensor),
+                y_tensor,
+                fraction=checkpoint_validation_fraction(self),
+            )
+        )
+        dataset = TensorDataset(
+            train_tensors[0],
+            train_labels,
+            train_tensors[1],
+            train_tensors[2],
+        )
         loader = DataLoader(
             dataset,
             batch_size=max(1, self.batch_size),
@@ -122,9 +140,18 @@ class MultiTaskTransformerTrainingMixin:
             lr=self.learning_rate,
             weight_decay=self.weight_decay,
         )
+        checkpoint = TorchCheckpointSession(
+            torch=torch,
+            model_owner=self,
+            network=model,
+            optimizer=optimizer,
+            identity=checkpoint_identity(self, x_train=x_train, y_train=y_train),
+            total_epochs=max(1, self.epochs),
+        )
+        resume = checkpoint.restore_if_compatible()
 
         model.train()
-        for _ in range(max(1, self.epochs)):
+        for epoch in range(resume.start_epoch, max(1, self.epochs)):
             for batch_x, batch_y, batch_regression, batch_mask in loader:
                 optimizer.zero_grad(set_to_none=True)
                 classification_logits, regression_outputs = model(batch_x)
@@ -143,7 +170,20 @@ class MultiTaskTransformerTrainingMixin:
                 loss = self.classification_weight * classification_loss + regression_loss
                 loss.backward()
                 optimizer.step()
+            checkpoint.save_epoch(
+                completed_epoch=epoch,
+                validation_metric=self._multitask_validation_loss(
+                    torch,
+                    model,
+                    classification_loss_fn,
+                    regression_loss_fn,
+                    regression_weights,
+                    validation_tensors,
+                    validation_labels,
+                ),
+            )
 
+        checkpoint.restore_best_weights()
         self.model = model.cpu()
         self.training_summary = MultiTaskTransformerTrainingSummary(
             True,
@@ -252,3 +292,29 @@ class MultiTaskTransformerTrainingMixin:
         weighted = loss_values * mask * regression_weights
         denominator = (mask * regression_weights).sum().clamp_min(1.0)
         return weighted.sum() / denominator
+
+    def _multitask_validation_loss(
+        self,
+        torch,
+        model,
+        classification_loss_fn,
+        regression_loss_fn,
+        regression_weights,
+        validation_tensors,
+        validation_labels,
+    ) -> float:
+        model.eval()
+        with torch.no_grad():
+            classification_logits, regression_outputs = model(validation_tensors[0])
+            classification_loss = classification_loss_fn(
+                classification_logits,
+                validation_labels,
+            )
+            regression_loss = self._masked_regression_loss(
+                regression_loss_fn(regression_outputs, validation_tensors[1]),
+                validation_tensors[2],
+                regression_weights,
+            )
+            loss = self.classification_weight * classification_loss + regression_loss
+        model.train()
+        return float(loss.detach().cpu().item())

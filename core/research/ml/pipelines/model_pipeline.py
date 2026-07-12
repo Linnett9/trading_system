@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.data.datasets import MLDataset
 from core.research.ml.models import build_ml_model
+from core.research.ml.models.torch_checkpointing import (
+    attach_torch_checkpoint_settings,
+    checkpoint_settings_from_config,
+)
 from core.research.ml.validation import ChronologicalSplit
 
 
@@ -27,12 +33,30 @@ class MLModelPipeline:
         self._experiment_config = experiment_config
 
     def build_model(self) -> Any:
-        return build_ml_model(
+        model = build_ml_model(
             self._experiment_config.model_type,
             random_seed=self._experiment_config.random_seed,
             class_weight=self.class_weight(),
             model_config=self._ml_config(),
         )
+        attach_torch_checkpoint_settings(
+            model,
+            settings=checkpoint_settings_from_config(
+                dict(self._config),
+                model_type=self._experiment_config.model_type,
+                output_dir=self._experiment_config.output_dir,
+            ),
+            resolved_config_hash=_stable_config_hash(dict(self._config)),
+            target_label=self._experiment_config.label_type,
+            run_identity=str(
+                self._ml_config().get(
+                    "research_label",
+                    self._experiment_config.model_type,
+                )
+            ),
+            news_contract=dict(self._ml_config().get("news_contract", {}) or {}),
+        )
+        return model
 
     def fit(self, model: Any, dataset: MLDataset) -> None:
         self.set_sequence_context(model, dataset)
@@ -221,3 +245,8 @@ class MLModelPipeline:
 
     def _ml_config(self) -> Mapping[str, Any]:
         return self._config.get("ml", {}) or {}
+
+
+def _stable_config_hash(config: dict[str, Any]) -> str:
+    raw = json.dumps(config, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()

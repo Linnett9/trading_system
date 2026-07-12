@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from core.research.ml.data.datasets import MLDataset
+from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION, MLDataset
 from core.research.ml.features.features import MLFeatureBuildResult
 from core.research.ml.features.labels import MLLabelBuildResult
 from core.research.ml.metrics.evaluation import classification_metrics
@@ -211,16 +211,31 @@ class MLArtifactBasicWritersMixin:
         split: ChronologicalSplit,
     ) -> None:
         dataset_hash = self.source_dataset_hash(dataset)
+        feature_columns = self.model_input_feature_columns(dataset)
+        feature_date_min = min(dataset.feature_dates) if dataset.feature_dates else None
+        feature_date_max = max(dataset.feature_dates) if dataset.feature_dates else None
         payload = {
             "timestamp": datetime.utcnow().isoformat(),
             "config_hash": self.hash_payload(self._config),
             "data_hash": dataset_hash,
             "dataset_hash": dataset_hash,
+            "model_input_contract_version": MODEL_INPUT_CONTRACT_VERSION,
+            "model_input_hash": self.model_input_hash(dataset),
+            "feature_columns": feature_columns,
+            "feature_count": len(feature_columns),
+            "sample_count": dataset.sample_count,
+            "feature_date_min": feature_date_min,
+            "feature_date_max": feature_date_max,
+            "training_date_min": feature_date_min,
+            "training_date_max": feature_date_max,
+            "model_input_source_path": self.model_input_source_path(),
             "source_dataset_row_count": dataset.sample_count,
             "git_commit": self.git_commit(),
+            "model_name": self._experiment_config.model_type,
             "model_type": self._experiment_config.model_type,
             "feature_set": self._experiment_config.feature_set,
             "label_type": self._experiment_config.label_type,
+            "target_label_name": self._experiment_config.label_type,
             "random_seed": self._experiment_config.random_seed,
             "experiment_config": self._experiment_config.to_dict(),
             "validation": {
@@ -231,5 +246,6 @@ class MLArtifactBasicWritersMixin:
                 "purged_train_samples": split.purged_train_samples,
             },
             "research_only": True,
+            "run_status": "complete",
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
