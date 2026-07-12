@@ -86,6 +86,7 @@ def parse_args():
             "ml-stock-alpha-news-readiness-preflight",
             "ml-stock-alpha-news-source-diagnostics",
             "ml-stock-alpha-news-source-setup-check",
+            "ml-stock-alpha-finbert-news-probe",
             "ml-stock-alpha-dev-smoke",
             "ml-stock-alpha-parallelism-audit",
             "ml-stock-alpha-run-status",
