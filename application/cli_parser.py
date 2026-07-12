@@ -57,6 +57,7 @@ def parse_args():
             "ml-stock-level-alpha-benchmark",
             "ml-stock-selector-final-fit",
             "ml-selector-exposure-comparison",
+            "ml-selector-portfolio-promotion",
             "ml-stock-level-target-comparison",
             "ml-stock-level-portfolio-replay",
             "ml-stock-selector-rebalance-dataset",

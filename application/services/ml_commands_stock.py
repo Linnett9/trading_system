@@ -84,6 +84,21 @@ def run_ml_selector_exposure_comparison(config):
     print(f"Summary: {result.comparison_summary_json}")
     print(f"Audit: {result.audit_json}")
 
+def run_ml_selector_portfolio_promotion(config):
+    from core.research.ml.stock_level.selector_portfolio_promotion import (
+        write_selector_portfolio_promotion,
+    )
+
+    result = write_selector_portfolio_promotion(config)
+    print("\nSELECTOR PORTFOLIO PROMOTION EVALUATION")
+    print("mode=research | training_performed=false | trading_impact=none | production_validated=false")
+    print(f"Output dir: {result.output_dir}")
+    print(f"Forecast leaderboard: {result.forecast_leaderboard_csv_path}")
+    print(f"Candidate metrics: {result.candidate_metrics_csv_path}")
+    print(f"Gate results: {result.gate_results_csv_path}")
+    print(f"JSON report: {result.json_path}")
+    print(f"Markdown report: {result.markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,

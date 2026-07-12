@@ -81,6 +81,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-exposure-comparison":
         _commands("ml_commands").run_ml_selector_exposure_comparison(config)
         return
+    if args.mode == "ml-selector-portfolio-promotion":
+        _commands("ml_commands").run_ml_selector_portfolio_promotion(config)
+        return
     if args.mode == "ml-stock-level-target-comparison":
         _commands("ml_commands").run_ml_stock_level_target_comparison(config)
         return
