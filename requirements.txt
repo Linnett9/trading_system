@@ -4,3 +4,7 @@ pyarrow==24.0.0
 PyYAML==6.0.2
 optuna==4.9.0
 torch
+transformers
+tokenizers
+safetensors
+huggingface_hub

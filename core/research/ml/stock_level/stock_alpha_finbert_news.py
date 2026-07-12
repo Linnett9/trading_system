@@ -194,6 +194,48 @@ class DeterministicFinBertFixtureAdapter:
         return [_fixture_prediction(text) for text in texts]
 
 
+def _canonical_finbert_label(raw_label: object) -> str | None:
+    normalized = re.sub(r"[^a-z]+", "_", str(raw_label).strip().lower()).strip("_")
+    parts = set(normalized.split("_"))
+    if normalized in {"positive", "pos"} or "positive" in parts or "pos" in parts:
+        return "positive"
+    if normalized in {"negative", "neg"} or "negative" in parts or "neg" in parts:
+        return "negative"
+    if normalized in {"neutral", "neu"} or "neutral" in parts or "neu" in parts:
+        return "neutral"
+    return None
+
+
+def _resolve_finbert_label_by_index(config: object) -> dict[int, str]:
+    id2label = getattr(config, "id2label", None) or {}
+    label2id = getattr(config, "label2id", None) or {}
+    raw_index_labels: list[tuple[object, object]]
+    if id2label:
+        raw_index_labels = list(id2label.items())
+    else:
+        raw_index_labels = [(index, label) for label, index in label2id.items()]
+
+    label_by_index: dict[int, str] = {}
+    label_counts: dict[str, int] = {"positive": 0, "neutral": 0, "negative": 0}
+    for raw_index, raw_label in raw_index_labels:
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"FinBERT config has non-integer class index {raw_index!r}") from exc
+        canonical_label = _canonical_finbert_label(raw_label)
+        if canonical_label is None:
+            raise RuntimeError(f"FinBERT config label {raw_label!r} cannot be mapped unambiguously")
+        if index in label_by_index:
+            raise RuntimeError(f"FinBERT config repeats class index {index}")
+        label_by_index[index] = canonical_label
+        label_counts[canonical_label] += 1
+
+    expected = {"positive", "neutral", "negative"}
+    if set(label_by_index.values()) != expected or any(count != 1 for count in label_counts.values()):
+        raise RuntimeError("FinBERT config must define exactly one positive, neutral, and negative class")
+    return label_by_index
+
+
 class HuggingFaceFinBertAdapter:
     """Local-files-only HuggingFace FinBERT adapter.
 
@@ -245,6 +287,7 @@ class HuggingFaceFinBertAdapter:
             local_files_only=local_files_only,
             cache_dir=cache_dir,
         ).to(resolved_device)
+        self._label_by_index = _resolve_finbert_label_by_index(getattr(self._model, "config", None))
         self._model.eval()
 
     @property
@@ -252,6 +295,8 @@ class HuggingFaceFinBertAdapter:
         return self._identity
 
     def score_batch(self, texts: Sequence[str]) -> list[FinBertPrediction]:
+        if not texts:
+            return []
         encoded = self._tokenizer(
             list(texts),
             padding=True,
@@ -263,7 +308,12 @@ class HuggingFaceFinBertAdapter:
         with self._torch.no_grad():
             logits = self._model(**encoded).logits
             probabilities = self._torch.softmax(logits, dim=-1).detach().cpu().tolist()
-        labels = [self._label_for_index(index) for index in range(len(probabilities[0]))]
+        labels = []
+        for index in range(len(probabilities[0])):
+            try:
+                labels.append(self._label_by_index[index])
+            except KeyError as exc:
+                raise RuntimeError(f"FinBERT logits include unmapped class index {index}") from exc
         output = []
         for row in probabilities:
             values = {label: float(value) for label, value in zip(labels, row)}
@@ -276,15 +326,6 @@ class HuggingFaceFinBertAdapter:
                 )
             )
         return output
-
-    def _label_for_index(self, index: int) -> str:
-        config = getattr(self._model, "config", None)
-        raw = getattr(config, "id2label", {}).get(index, str(index)).lower()
-        if "pos" in raw:
-            return "positive"
-        if "neg" in raw:
-            return "negative"
-        return "neutral"
 
 
 def select_article_text(row: Mapping[str, Any], *, max_characters: int = 10_000) -> TextSelection:
