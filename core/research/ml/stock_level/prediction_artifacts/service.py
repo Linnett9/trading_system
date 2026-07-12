@@ -79,6 +79,18 @@ def write_stock_level_prediction_artifacts(
         market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
         dataset_workers=settings.dataset_workers,
         inner_thread_limit=settings.dataset_inner_threads,
+        decision_grid_frequency=str(
+            config.get("ml", {}).get("stock_level_decision_frequency", "source")
+        ),
+        decision_grid_start_date=config.get("ml", {}).get("stock_level_decision_start_date"),
+        decision_grid_end_date=config.get("ml", {}).get("stock_level_decision_end_date"),
+        decision_grid_max_sessions=config.get("ml", {}).get("stock_level_decision_max_sessions"),
+        decision_grid_min_history_sessions=int(
+            config.get("ml", {}).get(
+                "stock_level_decision_min_history_sessions",
+                config.get("ml", {}).get("feature_lookback_days", 1),
+            )
+        ),
     )
     paths = StockLevelPredictionArtifactsPaths(
         parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts", config),

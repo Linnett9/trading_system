@@ -18,6 +18,7 @@ CANONICAL_ARTIFACT_FORMAT = "parquet"
 DEFAULT_PARQUET_COMPRESSION = "zstd"
 TIMESTAMP_COLUMNS = {
     "feature_timestamp",
+    "feature_data_cutoff_timestamp",
     "decision_timestamp",
     "target_start_timestamp",
     "label_start_timestamp",

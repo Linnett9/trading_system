@@ -318,6 +318,7 @@ def write_overnight_stock_alpha_experiment(
     summary_started = clock()
     try:
         summary = _build_summary(
+            config=run_config,
             base_output_dir=base_output_dir,
             output_dir=output_dir,
             settings=settings,

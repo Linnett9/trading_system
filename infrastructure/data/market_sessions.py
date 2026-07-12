@@ -35,6 +35,32 @@ def is_trading_session(day: date) -> bool:
     return day.weekday() < 5 and day not in nyse_holidays(day.year)
 
 
+def trading_sessions(start: date, end: date) -> list[date]:
+    if end < start:
+        return []
+    current = start
+    output: list[date] = []
+    while current <= end:
+        if is_trading_session(current):
+            output.append(current)
+        current += timedelta(days=1)
+    return output
+
+
+def previous_trading_session(day: date) -> date:
+    current = day - timedelta(days=1)
+    while not is_trading_session(current):
+        current -= timedelta(days=1)
+    return current
+
+
+def next_trading_session(day: date) -> date:
+    current = day + timedelta(days=1)
+    while not is_trading_session(current):
+        current += timedelta(days=1)
+    return current
+
+
 def rth_close_for_date(day: date) -> time | None:
     if not is_trading_session(day):
         return None

@@ -537,3 +537,24 @@ def test_ticket_7b_full_config_requests_twelve_dataset_workers():
     assert config["ml"]["stock_alpha_run_profile"] == "ticket_7b_large_history_regeneration"
     assert config["ml"]["stock_alpha_run_size"] == "benchmark"
     assert "stock_alpha_artifact_max_symbols" not in config["ml"]
+
+
+def test_ticket_7b3_daily_configs_isolate_probe_and_full_roots():
+    one = load_config("config/config.ticket_7b3_daily_probe_one_worker.yaml")
+    twelve = load_config("config/config.ticket_7b3_daily_probe_twelve_worker.yaml")
+    full = load_config("config/config.ticket_7b3_daily_large_history_regeneration.yaml")
+
+    assert one["ml"]["stock_level_decision_frequency"] == "daily"
+    assert twelve["ml"]["stock_level_decision_frequency"] == "daily"
+    assert full["ml"]["stock_level_decision_frequency"] == "daily"
+    assert one["ml"]["stock_level_dataset_workers"] == 1
+    assert twelve["ml"]["stock_level_dataset_workers"] == 12
+    assert full["ml"]["stock_level_dataset_workers"] == 12
+    assert one["ml"]["stock_alpha_artifact_max_symbols"] == 8
+    assert twelve["ml"]["stock_alpha_artifact_max_symbols"] == 8
+    assert "stock_alpha_artifact_max_symbols" not in full["ml"]
+    assert one["ml"]["stock_level_decision_max_sessions"] == 40
+    assert twelve["ml"]["stock_level_decision_max_sessions"] == 40
+    assert "stock_level_decision_max_sessions" not in full["ml"]
+    assert one["ml"]["output_dir"] != twelve["ml"]["output_dir"]
+    assert "ticket_7b3_daily_large_history" in full["ml"]["output_dir"]

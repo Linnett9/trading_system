@@ -1,0 +1,76 @@
+paper_candidate_id: ranked_top5_monthly_exposure90_v1
+alpaca:
+  api_key: ''
+  secret_key: ''
+ml:
+  enabled: false
+  mode: research
+  stock_alpha_run_size: benchmark
+  stock_alpha_report_root: reports/ml/development/ticket_7b3_daily_probe/one_worker
+  output_dir: reports/ml/development/ticket_7b3_daily_probe/one_worker/benchmark
+  stock_alpha_output_dir_override: true
+  stock_level_artifact_format: parquet
+  stock_level_parquet_compression: zstd
+  stock_level_decision_frequency: daily
+  stock_level_decision_start_date: '2024-01-02'
+  stock_level_decision_end_date: '2024-03-15'
+  stock_level_decision_max_sessions: 40
+  stock_level_decision_min_history_sessions: 20
+  stock_level_dataset_workers: 1
+  stock_level_dataset_inner_threads: 1
+  stock_alpha_allow_legacy_output_paths: false
+  stock_alpha_resume_existing_outputs: false
+  stock_alpha_force_refresh: true
+  stock_alpha_stages:
+    stock_artifact: true
+    alpha_features: true
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: false
+    attribution: false
+  stooq_parquet_dir: data/processed/stooq_parquet
+  stock_ranker_market_symbol: SPY
+  stock_ranker_spy_symbol: SPY
+  stock_alpha_artifact_universe_paths:
+  - data/reference/universes/us_liquid_500.yaml
+  stock_alpha_artifact_max_symbols: 8
+  stock_alpha_artifact_symbol_sample_method: input_order
+  expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
+  stock_alpha_dev_required_symbols:
+  - SPY
+  stock_alpha_run_profile: ticket_7b3_daily_probe_one_worker
+  stock_alpha_feature_n_jobs: 1
+  stock_alpha_overnight_stage_n_jobs: 1
+  stock_ranker_model_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  numpy_num_threads: 1
+  stock_ranker_target_column: actual_forward_return_10d
+  stock_ranker_target_columns:
+  - actual_forward_return_10d
+  - actual_market_residual_return_10d
+  - actual_vol_adjusted_forward_return_10d
+  - actual_rank_normalized_forward_return_10d
+  stock_ranker_target_comparison_enabled: false
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_overnight_run_portfolio_replay: false
+  stock_alpha_overnight_run_portfolio_policy_sweep: false
+  research_years: 10
+  minimum_history_years: 9
+  historical_data_provider: stooq_parquet
+  feature_lookback_days: 252
+  prediction_horizon: 10
+  label_horizon_days: 10
+  sector_reference_path: data/reference/sector_by_symbol.json
+  sector_by_symbol: {}
+  random_seed: 42
+reports:
+  ml_dir: reports/ml/development/ticket_7b3_daily_probe/one_worker
+cache:
+  enabled: true
+  ml_dir: cache/ml/development/ticket_7b3_daily_probe/one_worker
+research:
+  profile: ticket_7b3_daily_probe_one_worker

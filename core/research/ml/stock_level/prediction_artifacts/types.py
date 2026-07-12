@@ -50,9 +50,19 @@ ACTUAL_COLUMNS = (
 )
 TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v1"
 TARGET_PROVENANCE_COLUMNS = (
+    "decision_session_date",
     "target_provenance_contract_version",
     "feature_timestamp",
+    "feature_data_cutoff_timestamp",
     "decision_timestamp",
+    "first_actionable_session",
+    "decision_grid_version",
+    "decision_grid_identity",
+    "exchange_calendar_identity",
+    "decision_frequency",
+    "target_horizon_trading_days",
+    "overlapping_targets",
+    "required_purge_horizon_trading_days",
     "target_horizon",
     "target_observation_count",
     "target_start_timestamp",
@@ -64,6 +74,13 @@ TARGET_PROVENANCE_COLUMNS = (
     "benchmark_label_start_timestamp",
     "benchmark_label_end_timestamp",
     "benchmark_label_available_timestamp",
+    "target_status",
+)
+DECISION_CONTEXT_COLUMNS = (
+    "context_source_timestamp",
+    "context_age_calendar_days",
+    "context_asof_join_direction",
+    "context_asof_join_policy",
 )
 TARGET_TYPES = {
     "actual_forward_return_10d": "raw",

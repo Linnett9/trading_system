@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from infrastructure.data.market_sessions import next_trading_session, trading_sessions
 from core.research.ml.stock_level import stock_level_prediction_artifacts
 from core.research.ml.stock_level.prediction_artifacts.service import (
     build_stock_level_prediction_artifacts,
@@ -372,6 +373,174 @@ def test_worker_task_failure_prevents_canonical_publication(tmp_path, monkeypatc
     assert not list(output_dir.glob("*.worker*.tmp"))
 
 
+def test_daily_exchange_session_grid_generates_consecutive_sessions_with_timing():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 31))
+    ]
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02"), _expanded("2024-01-09")],
+        artifact_rows=[],
+        universe_symbols=["AAA", "BBB"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "BBB": _session_closes(sessions, 50.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-31",
+        decision_grid_max_sessions=5,
+        decision_grid_min_history_sessions=1,
+    )
+
+    dates = sorted({row["rebalance_date"] for row in rows})
+
+    assert dates == sessions[1:6]
+    assert audit["decision_frequency"] == "daily"
+    assert audit["decision_grid"]["overlapping_targets"] is True
+    assert len(rows) == 10
+    assert all(row["decision_session_date"] == row["rebalance_date"] for row in rows)
+    assert all(row["feature_data_cutoff_timestamp"] <= row["decision_timestamp"] for row in rows)
+    assert all(
+        row["first_actionable_session"]
+        == next_trading_session(date.fromisoformat(row["rebalance_date"])).isoformat()
+        for row in rows
+    )
+    assert all(row["context_asof_join_direction"] == "backward" for row in rows)
+    assert rows[0]["context_source_timestamp"] == "2024-01-02"
+
+
+def test_daily_targets_are_ten_trading_days_and_boundary_rows_are_explicit():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 2, 15))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-02-15",
+        decision_grid_min_history_sessions=1,
+    )
+
+    realized = next(row for row in rows if row["target_status"] == "realized")
+    boundary = rows[-1]
+
+    assert realized["target_horizon"] == "10_trading_observations"
+    assert realized["target_observation_count"] == 10
+    assert realized["label_end_timestamp"] == sessions[sessions.index(realized["rebalance_date"]) + 10]
+    assert realized["label_available_timestamp"] == sessions[sessions.index(realized["rebalance_date"]) + 11]
+    assert realized["benchmark_label_end_timestamp"] == realized["label_end_timestamp"]
+    assert (
+        realized["benchmark_label_available_timestamp"]
+        == realized["label_available_timestamp"]
+    )
+    assert boundary["target_status"] == "unrealized_boundary"
+    assert boundary["actual_forward_return_10d"] == ""
+
+
+def test_future_price_and_future_context_mutations_do_not_change_earlier_daily_features():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 2, 15))
+    ]
+    base_context = [_expanded("2024-01-02"), _expanded("2024-01-16")]
+    changed_context = [dict(row) for row in base_context]
+    changed_context.append({**_expanded("2024-02-14"), "breadth_above_sma_200": "0.99"})
+    base_prices = {
+        "AAA": _session_closes(sessions, 100.0),
+        "SPY": _session_closes(sessions, 200.0),
+    }
+    changed_prices = {
+        symbol: {key: dict(value) for key, value in payload.items()}
+        for symbol, payload in base_prices.items()
+    }
+    changed_prices["AAA"]["close"][sessions[-1]] = 99_999.0
+
+    first, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=base_context,
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol=base_prices,
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-02-15",
+        decision_grid_max_sessions=10,
+        decision_grid_min_history_sessions=1,
+    )
+    second, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=changed_context,
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol=changed_prices,
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-02-15",
+        decision_grid_max_sessions=10,
+        decision_grid_min_history_sessions=1,
+    )
+
+    comparable = [
+        "predicted_momentum_20d",
+        "predicted_momentum_60d",
+        "predicted_risk_adjusted_momentum",
+        "average_dollar_volume_21d",
+        "breadth_above_sma_200",
+        "context_source_timestamp",
+    ]
+    assert [{key: row[key] for key in comparable} for row in first] == [
+        {key: row[key] for key in comparable} for row in second
+    ]
+
+
+def test_daily_one_worker_and_twelve_worker_semantic_content_match():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 2, 15))
+    ]
+    kwargs = {
+        "expanded_rows": [_expanded("2024-01-02"), _expanded("2024-01-16")],
+        "artifact_rows": [],
+        "universe_symbols": ["BBB", "AAA"],
+        "closes_by_symbol": {
+            "AAA": _session_closes(sessions, 100.0),
+            "BBB": _session_closes(sessions, 50.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        "decision_grid_frequency": "daily",
+        "decision_grid_start_date": "2024-01-02",
+        "decision_grid_end_date": "2024-02-15",
+        "decision_grid_max_sessions": 12,
+        "decision_grid_min_history_sessions": 1,
+    }
+    one_rows, one_audit = build_stock_level_prediction_artifacts(
+        **kwargs,
+        dataset_workers=1,
+        inner_thread_limit=1,
+    )
+    twelve_rows, twelve_audit = build_stock_level_prediction_artifacts(
+        **kwargs,
+        dataset_workers=12,
+        inner_thread_limit=1,
+        executor_cls=ReversingExecutor,
+    )
+
+    assert twelve_rows == one_rows
+    assert (
+        twelve_audit["decision_grid"]["decision_grid_identity"]
+        == one_audit["decision_grid"]["decision_grid_identity"]
+    )
+    assert twelve_audit["dataset_parallelism"]["effective_workers"] == 2
+    assert twelve_audit["dataset_parallelism"]["worker_execution_mode"] == "process_pool"
+
+
 def test_stock_alpha_artifact_universe_uses_diagnostic_limit_and_required_symbols(tmp_path):
     universe_path = tmp_path / "universe.yaml"
     symbols = ["AAA", "AAPL", "BBB", "CCC", "DDD", "EEE", "SPY", "ZZZ"]
@@ -430,6 +599,20 @@ def _closes(start: float) -> dict[str, dict[str, float]]:
         close[date] = start + index
         dollar_volume[date] = (start + index) * 1_000_000
     return {"close": close, "dollar_volume": dollar_volume}
+
+
+def _session_closes(sessions: list[str], start: float) -> dict[str, dict[str, float]]:
+    close = {
+        session: start + index
+        for index, session in enumerate(sessions)
+    }
+    return {
+        "close": close,
+        "dollar_volume": {
+            session: value * 1_000_000
+            for session, value in close.items()
+        },
+    }
 
 
 def _business_day_closes(start: float) -> dict[str, dict[str, float]]:
