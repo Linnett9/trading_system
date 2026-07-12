@@ -195,6 +195,7 @@ def artifact_identity(
         "resolved_artifact_path": str(path),
         "file_size_bytes": path.stat().st_size,
         "sha256": file_sha256(path),
+        "logical_content_sha256": logical_content_sha256(parsed_rows, column_order),
         "schema_fingerprint": schema_fp,
         "stable_column_order": column_order,
         "row_count": row_count,
@@ -238,6 +239,30 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def logical_content_sha256(
+    rows: Sequence[Mapping[str, Any]],
+    fieldnames: Sequence[str],
+) -> str:
+    payload = [
+        {
+            name: _canonical_json_value(row.get(name))
+            for name in fieldnames
+        }
+        for row in rows
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _canonical_json_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if value == "":
+        return ""
+    return value
 
 
 def write_inspection_sample(

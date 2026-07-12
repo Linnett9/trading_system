@@ -113,6 +113,7 @@ def write_stock_level_alpha_features(
             audit["artifact_format"] = artifact_identity["artifact_format"]
             audit["artifact_path"] = artifact_identity["resolved_artifact_path"]
             audit["artifact_sha256"] = artifact_identity["sha256"]
+            audit["logical_content_sha256"] = artifact_identity["logical_content_sha256"]
             audit["schema_fingerprint"] = artifact_identity["schema_fingerprint"]
             audit["target_contract_version"] = artifact_identity.get("target_contract_version")
             audit["benchmark_contract_version"] = "stock_level_benchmark_return_10d_v1"

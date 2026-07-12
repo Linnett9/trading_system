@@ -525,3 +525,15 @@ def test_load_config_merges_override_file_with_project_config(tmp_path):
     assert config["research"]["dual_momentum"]["champion_id"] == "candidate_a"
     assert "alpaca" in config
     assert "backtest" in config
+
+
+def test_ticket_7b_full_config_requests_twelve_dataset_workers():
+    config = load_config("config/config.ticket_7b_large_history_regeneration.yaml")
+
+    assert config["ml"]["stock_level_artifact_format"] == "parquet"
+    assert config["ml"]["stock_level_parquet_compression"] == "zstd"
+    assert config["ml"]["stock_level_dataset_workers"] == 12
+    assert config["ml"]["stock_level_dataset_inner_threads"] == 1
+    assert config["ml"]["stock_alpha_run_profile"] == "ticket_7b_large_history_regeneration"
+    assert config["ml"]["stock_alpha_run_size"] == "benchmark"
+    assert "stock_alpha_artifact_max_symbols" not in config["ml"]

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.runtime_parallelism import apply_worker_thread_environment
 from core.research.ml.sector_reference import load_sector_by_symbol
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 from core.research.ml.stock_level.prediction_artifacts.io import (
@@ -58,6 +60,8 @@ from core.research.ml.stock_level.stock_level_artifact_io import (
 def write_stock_level_prediction_artifacts(
     config: dict[str, Any],
 ) -> StockLevelPredictionArtifactsPaths:
+    settings = StockLevelResearchConfig.from_mapping(config)
+    apply_worker_thread_environment(settings.dataset_inner_threads)
     output_dir = _output_dir(config)
     output_dir.mkdir(parents=True, exist_ok=True)
     expanded_rows = _read_csv(_expanded_dataset_path(config))
@@ -73,6 +77,8 @@ def write_stock_level_prediction_artifacts(
         closes_by_symbol=_load_closes_by_symbol(config),
         sector_by_symbol=sector_by_symbol,
         market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
+        dataset_workers=settings.dataset_workers,
+        inner_thread_limit=settings.dataset_inner_threads,
     )
     paths = StockLevelPredictionArtifactsPaths(
         parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts", config),
@@ -105,6 +111,7 @@ def write_stock_level_prediction_artifacts(
     audit["artifact_path"] = identity["resolved_artifact_path"]
     audit["schema_fingerprint"] = identity["schema_fingerprint"]
     audit["artifact_sha256"] = identity["sha256"]
+    audit["logical_content_sha256"] = identity["logical_content_sha256"]
     audit["target_contract_version"] = identity.get("target_contract_version")
     audit["benchmark_contract_version"] = identity.get("benchmark_contract_version")
     writer = ResearchArtifactWriter()

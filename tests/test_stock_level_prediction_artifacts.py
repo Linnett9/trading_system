@@ -14,10 +14,12 @@ from core.research.ml.stock_level.prediction_artifacts.service import (
     build_stock_level_prediction_artifacts,
     write_stock_level_prediction_artifacts,
 )
+from core.research.ml.stock_level.prediction_artifacts import service as artifact_service
 from core.research.ml.stock_level.prediction_artifacts.sources import _universe_symbols
 from core.research.ml.stock_level.prediction_artifacts.types import (
     TARGET_PROVENANCE_CONTRACT_VERSION,
 )
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 
 
 def test_stock_level_artifacts_create_one_row_per_symbol_date():
@@ -251,9 +253,123 @@ def test_existing_artifact_level_files_are_preserved(tmp_path):
     assert old_artifact.read_text(encoding="utf-8") == "sentinel\n"
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["existing_artifact_level_files_preserved"] is True
-    with paths.csv_path.open("r", encoding="utf-8", newline="") as handle:
-        artifact_rows = list(csv.DictReader(handle))
+    artifact_rows = read_stock_level_artifact(paths.csv_path)
     assert artifact_rows[0]["benchmark_symbol"] == "SPY"
+
+
+def test_dataset_workers_report_effective_parallelism_and_inner_thread_cap():
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01"), _expanded("2024-01-12")],
+        artifact_rows=[],
+        universe_symbols=["AAA", "BBB"],
+        closes_by_symbol={"AAA": _closes(100.0), "BBB": _closes(50.0), "SPY": _closes(200.0)},
+        dataset_workers=12,
+        inner_thread_limit=1,
+        executor_cls=ReversingExecutor,
+    )
+
+    assert [(row["rebalance_date"], row["symbol"]) for row in rows] == [
+        ("2024-01-01", "AAA"),
+        ("2024-01-01", "BBB"),
+        ("2024-01-12", "AAA"),
+        ("2024-01-12", "BBB"),
+    ]
+    parallelism = audit["dataset_parallelism"]
+    assert parallelism["parallelism_owner"] == "stock_level_prediction_artifacts_symbol_tasks"
+    assert parallelism["requested_workers"] == 12
+    assert parallelism["effective_workers"] == 2
+    assert parallelism["task_count"] == 2
+    assert parallelism["completed_task_count"] == 2
+    assert parallelism["failed_task_count"] == 0
+    assert parallelism["inner_thread_limit"] == 1
+    assert parallelism["nested_parallelism_prevented"] is True
+    assert parallelism["worker_execution_mode"] == "process_pool"
+
+
+def test_one_worker_and_twelve_worker_dataset_builds_are_equivalent():
+    kwargs = {
+        "expanded_rows": [_expanded("2024-01-01"), _expanded("2024-01-12")],
+        "artifact_rows": [],
+        "universe_symbols": ["BBB", "AAA"],
+        "closes_by_symbol": {"AAA": _closes(100.0), "BBB": _closes(50.0), "SPY": _closes(200.0)},
+    }
+    one_rows, one_audit = build_stock_level_prediction_artifacts(
+        **kwargs,
+        dataset_workers=1,
+        inner_thread_limit=1,
+    )
+    twelve_rows, twelve_audit = build_stock_level_prediction_artifacts(
+        **kwargs,
+        dataset_workers=12,
+        inner_thread_limit=1,
+        executor_cls=ReversingExecutor,
+    )
+
+    assert twelve_rows == one_rows
+    assert twelve_audit["row_count"] == one_audit["row_count"]
+    assert twelve_audit["symbol_count"] == one_audit["symbol_count"]
+    assert twelve_audit["rebalance_date_count"] == one_audit["rebalance_date_count"]
+    assert twelve_audit["target_provenance_audit"] == one_audit["target_provenance_audit"]
+
+
+def test_duplicate_worker_results_fail_validation():
+    with pytest.raises(ValueError, match="duplicates=\\['AAA'\\].*missing=\\['BBB'\\]"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA", "BBB"],
+            closes_by_symbol={"AAA": _closes(100.0), "BBB": _closes(50.0)},
+            dataset_workers=2,
+            executor_cls=DuplicateExecutor,
+        )
+
+
+def test_missing_worker_results_fail_validation():
+    with pytest.raises(ValueError, match="missing=\\['BBB'\\]"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA", "BBB"],
+            closes_by_symbol={"AAA": _closes(100.0), "BBB": _closes(50.0)},
+            dataset_workers=2,
+            executor_cls=MissingExecutor,
+        )
+
+
+def test_worker_task_failure_prevents_canonical_publication(tmp_path, monkeypatch):
+    output_dir = tmp_path / "reports" / "meta"
+    cache_dir = tmp_path / "cache"
+    universe_path = tmp_path / "universe.yaml"
+    expanded_path = cache_dir / "expanded_rebalance_dataset.csv"
+    output_dir.mkdir(parents=True)
+    cache_dir.mkdir(parents=True)
+    universe_path.write_text(yaml.safe_dump({"symbols": ["AAA"]}), encoding="utf-8")
+    _write_csv(expanded_path, [_expanded("2024-01-01")])
+    (output_dir / "meta_auxiliary_predictions.csv").write_text(
+        "rebalance_date,feature_id,symbol\n2024-01-01,feature-a,\n",
+        encoding="utf-8",
+    )
+
+    def fail_build(**_kwargs):
+        raise RuntimeError("synthetic worker failure")
+
+    monkeypatch.setattr(artifact_service, "build_stock_level_prediction_artifacts", fail_build)
+    with pytest.raises(RuntimeError, match="synthetic worker failure"):
+        artifact_service.write_stock_level_prediction_artifacts(
+            {
+                "cache": {"ml_dir": str(cache_dir)},
+                "ml": {
+                    "output_dir": str(output_dir),
+                    "expanded_rebalance_dataset_path": str(expanded_path),
+                    "expanded_rebalance_dataset": {"universe_paths": [str(universe_path)]},
+                    "stooq_parquet_dir": str(tmp_path / "missing_parquet"),
+                    "stock_level_dataset_workers": 2,
+                },
+            }
+        )
+
+    assert not (output_dir / "stock_level_prediction_artifacts.parquet").exists()
+    assert not list(output_dir.glob("*.worker*.tmp"))
 
 
 def test_stock_alpha_artifact_universe_uses_diagnostic_limit_and_required_symbols(tmp_path):
@@ -334,6 +450,32 @@ def _business_day_closes(start: float) -> dict[str, dict[str, float]]:
 def _long_closes(start: float, step: float) -> dict[str, dict[str, float]]:
     closes = {(date(2024, 1, 1) + timedelta(days=index)).isoformat(): start + step * index + (index % 3) * .05 for index in range(50)}
     return {"close": closes, "dollar_volume": {key: value * 1_000_000 for key, value in closes.items()}}
+
+
+class ReversingExecutor:
+    def __init__(self, max_workers):
+        self.max_workers = max_workers
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def map(self, fn, tasks):
+        return [fn(task) for task in reversed(list(tasks))]
+
+
+class DuplicateExecutor(ReversingExecutor):
+    def map(self, fn, tasks):
+        task_list = list(tasks)
+        return [fn(task_list[0]), fn(task_list[0])]
+
+
+class MissingExecutor(ReversingExecutor):
+    def map(self, fn, tasks):
+        task_list = list(tasks)
+        return [fn(task_list[0])]
 
 
 def _history_around_rebalance(after_jump: float) -> dict[str, dict[str, float]]:

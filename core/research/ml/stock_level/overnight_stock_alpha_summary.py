@@ -25,6 +25,7 @@ def _build_summary(
     attribution_paths: Any,
     timings: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    stock_artifact = _read_optional_json(getattr(artifact_paths, "json_path", None))
     baseline = JsonRepository().read(Path(baseline_paths.json_path))
     enriched = JsonRepository().read(Path(enriched_paths.json_path))
     portfolio = JsonRepository().read(Path(portfolio_paths.json_path)) if portfolio_paths else {}
@@ -79,7 +80,7 @@ def _build_summary(
         "effective_symbol_count": enriched.get("effective_symbol_count", enriched.get("input_symbol_count")),
         "portfolio_replay": _portfolio_summary(portfolio),
         "portfolio_policy_sweep": _portfolio_sweep_summary(sweep),
-        "parallelism": _parallelism_payload(settings, baseline, enriched),
+        "parallelism": _parallelism_payload(settings, baseline, enriched, stock_artifact),
         **RESEARCH_GUARDRAILS,
     }
 
@@ -87,11 +88,16 @@ def _parallelism_payload(
     settings: StockLevelResearchConfig,
     baseline: dict[str, Any],
     enriched: dict[str, Any],
+    stock_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     enriched_parallelism = dict(enriched.get("parallelism", {}) or {})
     baseline_parallelism = dict(baseline.get("parallelism", {}) or {})
+    dataset_parallelism = dict((stock_artifact or {}).get("dataset_parallelism", {}) or {})
     requested_stage_workers = settings.overnight_stage_n_jobs
     return {
+        "stock_level_dataset": dataset_parallelism,
+        "stock_level_dataset_workers": settings.dataset_workers,
+        "stock_level_dataset_inner_threads": settings.dataset_inner_threads,
         "stock_alpha_feature_n_jobs": settings.alpha_feature_n_jobs,
         "stock_ranker_model_n_jobs": settings.model_n_jobs,
         "sklearn_n_jobs": settings.sklearn_n_jobs,
@@ -107,10 +113,21 @@ def _parallelism_payload(
         "stages": "sequential",
         "stage_parallelism_enabled": False,
         "oversubscription_policy": (
-            "Overnight stages remain sequential by default; alpha feature generation "
-            "and each benchmark use their own bounded worker settings."
+            "Overnight stages remain sequential by default; stock-level dataset "
+            "generation owns symbol-level dataset workers, alpha feature generation "
+            "and each benchmark use their own bounded worker settings, and nested "
+            "native thread pools are capped by the active stage."
         ),
     }
+
+
+def _read_optional_json(path: Any) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    candidate = Path(path)
+    if not candidate.exists():
+        return None
+    return JsonRepository().read(candidate)
 
 def _portfolio_summary(payload: dict[str, Any]) -> dict[str, Any]:
     best = payload.get("winners", {}).get("best_by_net_return_after_costs") or {}

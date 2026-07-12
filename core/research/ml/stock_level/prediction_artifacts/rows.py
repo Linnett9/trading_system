@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import math
+import os
+import time
+from concurrent.futures import ProcessPoolExecutor
 from typing import Any
 
+from core.research.ml.runtime_parallelism import apply_worker_thread_environment
 from core.research.ml.stock_level.prediction_artifacts.math import (
     _average_dollar_volume,
     _trailing_drawdown,
@@ -34,7 +38,15 @@ def build_stock_level_prediction_artifacts(
     closes_by_symbol: dict[str, dict[str, dict[str, float]]],
     sector_by_symbol: dict[str, str] | None = None,
     market_symbol: str = "SPY",
+    dataset_workers: int = 1,
+    inner_thread_limit: int = 1,
+    executor_cls: type | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if dataset_workers < 1:
+        raise ValueError("stock_level_dataset_workers must be at least one")
+    if inner_thread_limit < 1:
+        raise ValueError("stock_level_dataset_inner_threads must be at least one")
+    started = time.perf_counter()
     sector_by_symbol = sector_by_symbol or {}
     dates = _artifact_dates(artifact_rows) or _expanded_dates(expanded_rows)
     context_by_date = _context_by_date(expanded_rows)
@@ -46,56 +58,25 @@ def build_stock_level_prediction_artifacts(
     }
     market_symbol = market_symbol.upper()
     market_data = _prepare_symbol_data(closes_by_symbol.get(market_symbol, {}))
-    rows: list[dict[str, Any]] = []
-    for date in dates:
-        context = context_by_date.get(date, {})
-        for symbol in symbols:
-            source = artifact_by_date_symbol.get((date, symbol), {})
-            symbol_data = prepared_symbol_data.get(symbol, {})
-            row = {
-                "rebalance_date": date,
-                "symbol": symbol,
-                "sector": sector_by_symbol.get(symbol, ""),
-                "average_dollar_volume_21d": _average_dollar_volume(
-                    symbol_data.get("dollar_volume_dates", []),
-                    symbol_data.get("dollar_volume_values", []),
-                    date,
-                    lookback=21,
-                ),
-                "average_dollar_volume_63d": _average_dollar_volume(
-                    symbol_data.get("dollar_volume_dates", []),
-                    symbol_data.get("dollar_volume_values", []),
-                    date,
-                    lookback=63,
-                ),
-                "source": (
-                    "stock_level_prediction_artifact"
-                    if source
-                    else "stock_level_actuals_from_reference_prices"
-                ),
-                "source_feature_id": source.get("feature_id", ""),
-                "source_model_type": source.get("model_type", ""),
-                "source_split": source.get("split", ""),
-                "source_dataset_hash": source.get("dataset_hash", ""),
-                "benchmark_symbol": market_symbol,
-                "true_stock_level_row": True,
-            }
-            for column in PREDICTION_COLUMNS:
-                row[column] = source.get(column, "")
-            row.update(_baseline_predictions(symbol_data, date))
-            row.update(
-                _actual_targets(
-                    symbol_data,
-                    date,
-                    market_data=market_data,
-                    decision_dates=dates,
-                )
-            )
-            for column in CONTEXT_COLUMNS:
-                row[column] = context.get(column, "")
-            rows.append(row)
+    rows, parallelism = _build_dataset_symbol_rows(
+        symbols=symbols,
+        dates=dates,
+        context_by_date=context_by_date,
+        artifact_by_date_symbol=artifact_by_date_symbol,
+        prepared_symbol_data=prepared_symbol_data,
+        market_symbol=market_symbol,
+        market_data=market_data,
+        sector_by_symbol=sector_by_symbol,
+        dataset_workers=dataset_workers,
+        inner_thread_limit=inner_thread_limit,
+        executor_cls=executor_cls or ProcessPoolExecutor,
+    )
     _add_cross_sectional_targets(rows)
     audit = _audit(rows, symbols, dates, artifact_rows)
+    audit["dataset_parallelism"] = {
+        **parallelism,
+        "elapsed_seconds": time.perf_counter() - started,
+    }
     audit["market_residual_label_generation"] = {
         "market_symbol": market_symbol,
         "benchmark_symbol": market_symbol,
@@ -107,6 +88,186 @@ def build_stock_level_prediction_artifacts(
         "computed_before_dev_symbol_filtering": True,
     }
     return rows, audit
+
+
+def _build_dataset_symbol_rows(
+    *,
+    symbols: list[str],
+    dates: list[str],
+    context_by_date: dict[str, dict[str, str]],
+    artifact_by_date_symbol: dict[tuple[str, str], dict[str, str]],
+    prepared_symbol_data: dict[str, dict[str, Any]],
+    market_symbol: str,
+    market_data: dict[str, Any],
+    sector_by_symbol: dict[str, str],
+    dataset_workers: int,
+    inner_thread_limit: int,
+    executor_cls: type,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    tasks = [
+        {
+            "symbol": symbol,
+            "dates": dates,
+            "context_by_date": context_by_date,
+            "artifact_by_date_symbol": {
+                date: artifact_by_date_symbol.get((date, symbol), {})
+                for date in dates
+            },
+            "symbol_data": prepared_symbol_data.get(symbol, {}),
+            "market_symbol": market_symbol,
+            "market_data": market_data,
+            "sector": sector_by_symbol.get(symbol, ""),
+            "inner_thread_limit": inner_thread_limit,
+        }
+        for symbol in symbols
+    ]
+    task_count = len(tasks)
+    effective_workers = min(dataset_workers, task_count) if task_count else 1
+    metadata = {
+        "parallelism_owner": "stock_level_prediction_artifacts_symbol_tasks",
+        "requested_workers": dataset_workers,
+        "effective_workers": effective_workers,
+        "task_count": task_count,
+        "completed_task_count": 0,
+        "failed_task_count": 0,
+        "inner_thread_limit": inner_thread_limit,
+        "nested_parallelism_prevented": inner_thread_limit == 1,
+        "worker_execution_mode": "serial" if effective_workers <= 1 else "process_pool",
+        "worker_process_ids": [],
+        "task_symbols": list(symbols),
+    }
+    if not tasks:
+        metadata["completed_task_count"] = 0
+        return [], metadata
+    results: list[dict[str, Any]] = []
+    try:
+        if effective_workers <= 1:
+            results = [_build_dataset_symbol_task(task) for task in tasks]
+        else:
+            with executor_cls(max_workers=effective_workers) as executor:
+                results = list(executor.map(_build_dataset_symbol_task, tasks))
+    except Exception:
+        metadata["failed_task_count"] = task_count - len(results)
+        raise
+    metadata["completed_task_count"] = len(results)
+    metadata["worker_process_ids"] = sorted({
+        int(result["worker_process_id"]) for result in results if result.get("worker_process_id")
+    })
+    rows = _validate_and_merge_symbol_results(
+        results,
+        expected_symbols=symbols,
+        expected_dates=dates,
+    )
+    return rows, metadata
+
+
+def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
+    apply_worker_thread_environment(int(task.get("inner_thread_limit", 1)))
+    symbol = str(task["symbol"]).upper()
+    symbol_data = task.get("symbol_data", {})
+    market_data = task.get("market_data", {})
+    dates = list(task.get("dates", []))
+    rows = []
+    for date in dates:
+        context = task.get("context_by_date", {}).get(date, {})
+        source = task.get("artifact_by_date_symbol", {}).get(date, {})
+        row = {
+            "rebalance_date": date,
+            "symbol": symbol,
+            "sector": task.get("sector", ""),
+            "average_dollar_volume_21d": _average_dollar_volume(
+                symbol_data.get("dollar_volume_dates", []),
+                symbol_data.get("dollar_volume_values", []),
+                date,
+                lookback=21,
+            ),
+            "average_dollar_volume_63d": _average_dollar_volume(
+                symbol_data.get("dollar_volume_dates", []),
+                symbol_data.get("dollar_volume_values", []),
+                date,
+                lookback=63,
+            ),
+            "source": (
+                "stock_level_prediction_artifact"
+                if source
+                else "stock_level_actuals_from_reference_prices"
+            ),
+            "source_feature_id": source.get("feature_id", ""),
+            "source_model_type": source.get("model_type", ""),
+            "source_split": source.get("split", ""),
+            "source_dataset_hash": source.get("dataset_hash", ""),
+            "benchmark_symbol": task.get("market_symbol", "SPY"),
+            "true_stock_level_row": True,
+        }
+        for column in PREDICTION_COLUMNS:
+            row[column] = source.get(column, "")
+        row.update(_baseline_predictions(symbol_data, date))
+        row.update(
+            _actual_targets(
+                symbol_data,
+                date,
+                market_data=market_data,
+                decision_dates=dates,
+            )
+        )
+        for column in CONTEXT_COLUMNS:
+            row[column] = context.get(column, "")
+        rows.append(row)
+    return {
+        "symbol": symbol,
+        "rows": rows,
+        "row_count": len(rows),
+        "worker_process_id": os.getpid(),
+    }
+
+
+def _validate_and_merge_symbol_results(
+    results: list[dict[str, Any]],
+    *,
+    expected_symbols: list[str],
+    expected_dates: list[str],
+) -> list[dict[str, Any]]:
+    expected_symbol_set = set(expected_symbols)
+    result_symbols = [str(result.get("symbol", "")).upper() for result in results]
+    duplicate_symbols = sorted({
+        symbol for symbol in result_symbols if result_symbols.count(symbol) > 1
+    })
+    missing_symbols = sorted(expected_symbol_set - set(result_symbols))
+    extra_symbols = sorted(set(result_symbols) - expected_symbol_set)
+    if duplicate_symbols or missing_symbols or extra_symbols:
+        raise ValueError(
+            "Invalid stock-level dataset worker results: "
+            f"duplicates={duplicate_symbols} missing={missing_symbols} extra={extra_symbols}"
+        )
+    rows = [
+        row
+        for result in results
+        for row in result.get("rows", [])
+    ]
+    expected_keys = {
+        (date, symbol)
+        for date in expected_dates
+        for symbol in expected_symbols
+    }
+    keys = [
+        (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper())
+        for row in rows
+    ]
+    duplicate_keys = sorted({key for key in keys if keys.count(key) > 1})
+    missing_keys = sorted(expected_keys - set(keys))
+    extra_keys = sorted(set(keys) - expected_keys)
+    if duplicate_keys or missing_keys or extra_keys:
+        raise ValueError(
+            "Invalid stock-level dataset worker row keys: "
+            f"duplicate_keys={duplicate_keys[:5]} missing_keys={missing_keys[:5]} extra_keys={extra_keys[:5]}"
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("decision_timestamp") or row.get("rebalance_date", "")),
+            str(row.get("symbol", "")).upper(),
+        )
+    )
+    return rows
 
 
 def _artifact_by_date_symbol(

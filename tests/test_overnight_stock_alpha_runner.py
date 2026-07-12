@@ -97,6 +97,9 @@ def test_overnight_summary_records_effective_parallelism(tmp_path):
     summary = _run(tmp_path)
 
     assert summary["parallelism"] == {
+        "stock_level_dataset": {},
+        "stock_level_dataset_workers": 1,
+        "stock_level_dataset_inner_threads": 1,
         "stock_alpha_feature_n_jobs": 2,
         "stock_ranker_model_n_jobs": 4,
                     "sklearn_n_jobs": 2,
@@ -106,8 +109,10 @@ def test_overnight_summary_records_effective_parallelism(tmp_path):
         "stages": "sequential",
         "stage_parallelism_enabled": False,
         "oversubscription_policy": (
-            "Overnight stages remain sequential by default; alpha feature generation "
-            "and each benchmark use their own bounded worker settings."
+            "Overnight stages remain sequential by default; stock-level dataset "
+            "generation owns symbol-level dataset workers, alpha feature generation "
+            "and each benchmark use their own bounded worker settings, and nested "
+            "native thread pools are capped by the active stage."
         ),
     }
 

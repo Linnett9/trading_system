@@ -20,6 +20,8 @@ class StockLevelResearchConfig:
     random_seed: int
     sklearn_n_jobs: int
     model_n_jobs: int
+    dataset_workers: int
+    dataset_inner_threads: int
     alpha_feature_n_jobs: int
     overnight_stage_n_jobs: int
     include_sequence_models: bool
@@ -109,6 +111,8 @@ class StockLevelResearchConfig:
             random_seed=int(ml.get("random_seed", 42)),
             sklearn_n_jobs=int(ml.get("sklearn_n_jobs", 1)),
             model_n_jobs=int(ml.get("stock_ranker_model_n_jobs", stock_alpha_default_workers)),
+            dataset_workers=int(ml.get("stock_level_dataset_workers", 1)),
+            dataset_inner_threads=int(ml.get("stock_level_dataset_inner_threads", 1)),
             alpha_feature_n_jobs=int(ml.get("stock_alpha_feature_n_jobs", stock_alpha_default_workers)),
             overnight_stage_n_jobs=int(
                 ml.get("stock_alpha_overnight_stage_n_jobs", 1)
@@ -204,6 +208,8 @@ class StockLevelResearchConfig:
             "stock_ranker_test_window_dates": self.test_window_dates,
             "sklearn_n_jobs": self.sklearn_n_jobs,
             "stock_ranker_model_n_jobs": self.model_n_jobs,
+            "stock_level_dataset_workers": self.dataset_workers,
+            "stock_level_dataset_inner_threads": self.dataset_inner_threads,
             "stock_alpha_feature_n_jobs": self.alpha_feature_n_jobs,
             "stock_alpha_overnight_stage_n_jobs": self.overnight_stage_n_jobs,
             "stock_ranker_sequence_length": self.sequence_length,

@@ -52,6 +52,7 @@ def test_stock_level_artifact_writes_zstd_parquet_and_inspection_sample(tmp_path
     assert identity["compression"] == "zstd"
     assert identity["compression_codecs"] == ["ZSTD"]
     assert identity["stable_column_order"] == fieldnames
+    assert identity["logical_content_sha256"]
     assert identity["row_count"] == 2
     assert identity["symbol_count"] == 2
     assert identity["realized_target_count"] == 1
