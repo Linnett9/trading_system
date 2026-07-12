@@ -22,6 +22,7 @@ from core.research.ml.stock_level.news_risk_overlay_research import (
 )
 from core.research.ml.stock_level.stock_alpha_news_source_diagnostics import write_stock_alpha_news_source_diagnostics
 from core.research.ml.stock_level.stock_alpha_news_source_setup_check import write_stock_alpha_news_source_setup_check
+from core.research.ml.stock_level.stock_alpha_finbert_news import write_finbert_news_probe
 import core.research.ml.stock_level.news_sources.historical_canonical_corpus as historical_canonical_corpus
 
 
@@ -587,6 +588,25 @@ def run_ml_stock_alpha_news_pipeline_inspect(config):
     print("diagnostics_invoked=false")
     print(f"JSON: {result.json_path}")
     print(f"Markdown: {result.markdown_path}")
+
+def run_ml_stock_alpha_finbert_news_probe(config):
+    print("\nSTOCK-ALPHA FINBERT NEWS PROBE")
+    print("mode=research | bounded_fixture=true | trading_impact=none | production_validated=false")
+    result = write_finbert_news_probe(config)
+    import json
+    payload = json.loads(result.summary_json_path.read_text(encoding="utf-8"))
+    print(f"status={payload['status']}")
+    print(f"articles={payload['articles']}")
+    print(f"successful_scores={payload['successful_scores']}")
+    print(f"rejections={payload['rejections']}")
+    print(f"future_exclusions={payload['future_exclusions']}")
+    print(f"selector_joined_rows={payload['selector_joined_rows']}")
+    print(f"exposure_aggregated_rows={payload['exposure_aggregated_rows']}")
+    print("full_corpus_backfill_invoked=false")
+    print("selector_training_invoked=false")
+    print("exposure_training_invoked=false")
+    print(f"Summary JSON: {result.summary_json_path}")
+    print(f"Summary Markdown: {result.summary_markdown_path}")
 
 def run_ml_stock_alpha_dev_smoke(config):
     from core.research.ml.stock_level.stock_alpha_dev_smoke import (

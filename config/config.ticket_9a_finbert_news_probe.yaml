@@ -1,0 +1,29 @@
+ml:
+  stock_alpha_report_root: reports/ml/development/ticket_9a_finbert_news_probe
+  stock_alpha_run_size: dev
+  stock_alpha_finbert_news:
+    output_dir: reports/ml/development/ticket_9a_finbert_news_probe/dev
+    adapter: fixture
+    model_id: ProsusAI/finbert
+    model_revision: local-or-fixture
+    tokenizer_id: ProsusAI/finbert
+    tokenizer_revision: local-or-fixture
+    device: cpu
+    batch_size: 3
+    max_token_length: 128
+    local_files_only: true
+    cache_dir: cache/ml/development/ticket_9a_finbert_news_probe/huggingface
+  stock_ranker_include_finbert_news: false
+  stock_ranker_finbert_feature_path: ""
+  stock_ranker_finbert_feature_contract: stock_alpha_finbert_stock_features.v1
+  stock_ranker_news_missing_policy: zero_with_indicators
+  exposure_include_finbert_news: false
+  exposure_finbert_stock_feature_path: ""
+  exposure_finbert_feature_contract: stock_alpha_finbert_exposure_features.v1
+  exposure_news_missing_policy: zero_with_indicators
+  research_only: true
+  trading_impact: none
+  production_validated: false
+  model_training_invoked: false
+  full_corpus_backfill_invoked: false
+  stock_alpha_news_enable_transformer: false
