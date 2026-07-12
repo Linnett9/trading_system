@@ -66,6 +66,77 @@ def test_future_prices_do_not_change_earlier_features():
     ]
 
 
+def test_market_context_uses_backward_only_benchmark_history():
+    histories = _histories()
+    first, _ = build_stock_level_alpha_features(_rows(), histories)
+    changed = {symbol: [dict(row) for row in history] for symbol, history in histories.items()}
+    changed["SPY"].append(
+        {
+            "date": "2025-12-31",
+            "close": 1_000_000.0,
+            "high": 1_010_000.0,
+            "low": 990_000.0,
+        }
+    )
+    second, _ = build_stock_level_alpha_features(_rows(), changed)
+
+    fields = [
+        "market_momentum_20d",
+        "market_momentum_60d",
+        "market_momentum_120d",
+        "market_volatility_20d",
+        "market_drawdown_60d",
+        "market_distance_from_200d_average",
+        "market_trend_state",
+        "market_volatility_percentile",
+    ]
+    assert [{field: row[field] for field in fields} for row in first] == [
+        {field: row[field] for field in fields} for row in second
+    ]
+    assert all(row["market_context_source_date"] < row["rebalance_date"] for row in first)
+
+
+def test_breadth_is_date_local_and_future_symbols_do_not_change_prior_breadth():
+    first, _ = build_stock_level_alpha_features(_rows(), _histories())
+    future_rows = [
+        *_rows(),
+        {
+            "rebalance_date": "2025-12-31",
+            "symbol": "ZZZ",
+            "sector": "Future",
+            "industry": "Future",
+            "predicted_momentum_120d": "99.0",
+            "sentinel": "future",
+        },
+    ]
+    histories = {**_histories(), "ZZZ": _history(10.0, 0.01, 0.01)}
+    second, _ = build_stock_level_alpha_features(future_rows, histories)
+
+    fields = [
+        "breadth_positive_momentum_20d",
+        "breadth_positive_momentum_60d",
+        "breadth_above_long_term_trend",
+        "breadth_cross_sectional_median_return",
+        "breadth_return_dispersion",
+        "breadth_advance_decline_ratio",
+        "breadth_coverage",
+    ]
+    comparable = [row for row in second if row["rebalance_date"] == "2025-03-01"]
+    assert [{field: row[field] for field in fields} for row in first] == [
+        {field: row[field] for field in fields} for row in comparable
+    ]
+    assert {row["breadth_eligible_symbol_count"] for row in comparable} == {len(_rows())}
+
+
+def test_industry_relative_metadata_is_persisted():
+    rows, audit = build_stock_level_alpha_features(_rows(), _histories())
+
+    assert audit["industry_mapping_contract"]["historical_limitation"]
+    assert all(row["industry_mapping_identity"] for row in rows)
+    assert all(float(row["industry_mapping_available"]) == 1.0 for row in rows)
+    assert all(float(row["industry_peer_count"]) >= 1.0 for row in rows)
+
+
 def test_parallel_feature_generation_matches_single_worker_output():
     single_rows, single_audit = build_stock_level_alpha_features(
         _rows(),

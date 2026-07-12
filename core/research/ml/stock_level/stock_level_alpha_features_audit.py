@@ -5,8 +5,12 @@ from typing import Any
 from core.research.framework.registry import FeatureRegistry
 from core.research.ml.stock_level.stock_level_alpha_features_math import _number
 from core.research.ml.stock_level.stock_level_alpha_features_types import (
+    BREADTH_CONTRACT_VERSION,
     ENGINEERED_FEATURE_COLUMNS,
+    ENRICHMENT_METADATA_COLUMNS,
     FEATURE_DEFINITIONS,
+    INDUSTRY_MAPPING_CONTRACT_VERSION,
+    MARKET_CONTEXT_CONTRACT_VERSION,
     RESEARCH_METADATA,
 )
 
@@ -49,6 +53,7 @@ def _audit(
         "row_count": len(rows),
         "source_column_count": len(source_columns),
         "engineered_feature_count": len(ENGINEERED_FEATURE_COLUMNS),
+        "enrichment_metadata_columns": list(ENRICHMENT_METADATA_COLUMNS),
         "resolved_enriched_columns": populated_features,
         "resolved_enriched_column_count": len(populated_features),
         "enrichment_status": enrichment_status,
@@ -58,6 +63,25 @@ def _audit(
             "cross_sectional_features_after_parallel_assembly": True,
             "uses_history_strictly_before_rebalance": True,
             "n_jobs": n_jobs,
+        },
+        "market_context_contract": {
+            "contract_version": MARKET_CONTEXT_CONTRACT_VERSION,
+            "benchmark_symbol": "SPY",
+            "feature_cutoff_rule": "market observation date < stock rebalance_date via history_before",
+            "lookbacks": ["20", "60", "120", "200"],
+            "missing_session_behaviour": "remain missing; no forward fill from future observations",
+        },
+        "breadth_contract": {
+            "contract_version": BREADTH_CONTRACT_VERSION,
+            "universe_identity": "source artifact decision-date cross-section",
+            "minimum_required_coverage": "reported in breadth_coverage; selector gates decide warn/block",
+            "calculation_rule": "date-local eligible rows only",
+        },
+        "industry_mapping_contract": {
+            "contract_version": INDUSTRY_MAPPING_CONTRACT_VERSION,
+            "mapping_source": "artifact industry column when present; static/current if supplied upstream",
+            "historical_limitation": "not historically versioned by this enrichment stage",
+            "missing_mapping_behaviour": "numeric relative values remain missing",
         },
         "source_columns_preserved": all(
             all(row.get(column) == source_by_key.get(

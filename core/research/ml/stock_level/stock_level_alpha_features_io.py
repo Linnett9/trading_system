@@ -10,7 +10,11 @@ from core.research.ml.stock_level.stock_level_artifact_io import (
     read_stock_level_artifact,
     write_stock_level_artifact,
 )
-from core.research.ml.stock_level.stock_level_alpha_features_types import ENGINEERED_FEATURE_COLUMNS, NOTICE
+from core.research.ml.stock_level.stock_level_alpha_features_types import (
+    ENGINEERED_FEATURE_COLUMNS,
+    ENRICHMENT_METADATA_COLUMNS,
+    NOTICE,
+)
 
 
 def _load_price_histories(
@@ -71,7 +75,7 @@ def _write_enriched_csv(
     hash_phase_name: str | None = None,
 ) -> dict[str, Any] | None:
     source_columns = list(source_rows[0]) if source_rows else []
-    fieldnames = [*source_columns, *ENGINEERED_FEATURE_COLUMNS]
+    fieldnames = [*source_columns, *ENGINEERED_FEATURE_COLUMNS, *ENRICHMENT_METADATA_COLUMNS]
     if path.suffix.lower() == ".parquet":
         return write_stock_level_artifact(
             path,

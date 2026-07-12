@@ -55,8 +55,36 @@ ENGINEERED_FEATURE_FAMILY_COLUMNS = {
     ),
     "market_relative": ("relative_momentum_vs_spy",),
     "sector_relative": ("relative_momentum_vs_sector", "sector_relative_strength"),
-    "industry_relative": ("industry_relative_strength",),
+    "industry_relative": (
+        "relative_momentum_vs_industry",
+        "industry_relative_strength",
+        "industry_momentum_percentile",
+    ),
     "cross_sectional_rank": ("momentum_percentile",),
+    "market_context": (
+        "market_momentum_20d",
+        "market_momentum_60d",
+        "market_momentum_120d",
+        "market_volatility_20d",
+        "market_drawdown_60d",
+        "market_distance_from_200d_average",
+        "market_trend_state",
+        "market_volatility_percentile",
+        "breadth_above_sma_200",
+        "spy_realized_volatility_21d",
+        "spy_realized_volatility_63d",
+        "spy_max_drawdown_63d",
+        "spy_max_drawdown_126d",
+    ),
+    "breadth": (
+        "breadth_positive_momentum_20d",
+        "breadth_positive_momentum_60d",
+        "breadth_above_long_term_trend",
+        "breadth_cross_sectional_median_return",
+        "breadth_return_dispersion",
+        "breadth_advance_decline_ratio",
+        "breadth_coverage",
+    ),
     "drawdown": (
         "predicted_drawdown_60d",
         "distance_from_52_week_high",
@@ -72,7 +100,7 @@ ENGINEERED_FEATURE_FAMILY_COLUMNS = {
         "volatility_regime",
         "ATR_percentile",
     ),
-    "regime_context": ("volatility_regime",),
+    "regime_context": ("volatility_regime", "market_trend_state", "market_volatility_percentile"),
 }
 
 
@@ -94,6 +122,10 @@ class SelectorFeatureAblationPaths:
     family_resolution_path: Path
     feature_set_equivalence_path: Path
     enrichment_contract_path: Path
+    market_context_contract_path: Path
+    breadth_contract_path: Path
+    industry_mapping_audit_path: Path
+    enriched_feature_coverage_path: Path
     pit_audit_path: Path
     enriched_validation_json_path: Path
     enriched_validation_markdown_path: Path
@@ -138,6 +170,10 @@ def write_selector_feature_ablation(config: Mapping[str, Any]) -> SelectorFeatur
         family_resolution_path=output_dir / "selector_feature_family_resolution.csv",
         feature_set_equivalence_path=output_dir / "selector_feature_set_equivalence.csv",
         enrichment_contract_path=output_dir / "selector_enrichment_contract.json",
+        market_context_contract_path=output_dir / "selector_market_context_contract.json",
+        breadth_contract_path=output_dir / "selector_breadth_contract.json",
+        industry_mapping_audit_path=output_dir / "selector_industry_mapping_audit.json",
+        enriched_feature_coverage_path=output_dir / "selector_enriched_feature_coverage.csv",
         pit_audit_path=output_dir / "selector_enriched_feature_pit_audit.json",
         enriched_validation_json_path=output_dir / "selector_enriched_feature_validation_report.json",
         enriched_validation_markdown_path=output_dir / "selector_enriched_feature_validation_report.md",
@@ -166,6 +202,10 @@ def write_selector_feature_ablation(config: Mapping[str, Any]) -> SelectorFeatur
     writer.write_csv(paths.family_resolution_path, payload["family_resolution"], fieldnames=_fields(payload["family_resolution"], ["family_id"]))
     writer.write_csv(paths.feature_set_equivalence_path, payload["feature_set_equivalence"], fieldnames=_fields(payload["feature_set_equivalence"], ["left_feature_set_id", "right_feature_set_id"]))
     writer.write_json(paths.enrichment_contract_path, payload["enrichment_contract"])
+    writer.write_json(paths.market_context_contract_path, payload["market_context_contract"])
+    writer.write_json(paths.breadth_contract_path, payload["breadth_contract"])
+    writer.write_json(paths.industry_mapping_audit_path, payload["industry_mapping_audit"])
+    writer.write_csv(paths.enriched_feature_coverage_path, payload["enriched_feature_coverage"], fieldnames=_fields(payload["enriched_feature_coverage"], ["family_id", "feature"]))
     writer.write_json(paths.pit_audit_path, payload["pit_audit"])
     writer.write_json(paths.enriched_validation_json_path, _enriched_validation_payload(payload))
     writer.write_markdown(paths.enriched_validation_markdown_path, _enriched_validation_markdown(payload))
@@ -201,6 +241,7 @@ def build_selector_feature_ablation(
     availability = availability_report(bounded_rows, feature_sets)
     pit_audit = pit_audit_report(bounded_rows, families)
     enrichment_contract = enrichment_contract_report(bounded_rows, families, source_path)
+    family_coverage = enriched_feature_coverage(bounded_rows, families)
     matched_rows, matched = matched_population(bounded_rows, feature_sets, settings)
     if matched["common_row_count"] == 0:
         raise ValueError("Matched feature population is empty")
@@ -239,6 +280,10 @@ def build_selector_feature_ablation(
         "feature_set_equivalence": equivalence,
         "pit_audit": pit_audit,
         "enrichment_contract": enrichment_contract,
+        "market_context_contract": market_context_contract_report(enrichment_contract, families),
+        "breadth_contract": breadth_contract_report(enrichment_contract, families),
+        "industry_mapping_audit": industry_mapping_audit(bounded_rows, families),
+        "enriched_feature_coverage": family_coverage,
         "availability": availability,
         "leakage_audit": leakage_audit,
         "matched_population": matched,
@@ -372,13 +417,13 @@ def build_feature_family_contracts(
         "volatility": ENGINEERED_FEATURE_FAMILY_COLUMNS["volatility"],
         "drawdown": ENGINEERED_FEATURE_FAMILY_COLUMNS["drawdown"],
         "liquidity": ("predicted_liquidity_score",),
-        "market_context": CONTEXT_COLUMNS,
+        "market_context": ENGINEERED_FEATURE_FAMILY_COLUMNS["market_context"],
         "market_relative": ENGINEERED_FEATURE_FAMILY_COLUMNS["market_relative"],
         "sector_relative": ENGINEERED_FEATURE_FAMILY_COLUMNS["sector_relative"],
         "industry_relative": ENGINEERED_FEATURE_FAMILY_COLUMNS["industry_relative"],
         "cross_sectional_rank": ENGINEERED_FEATURE_FAMILY_COLUMNS["cross_sectional_rank"],
         "regime_context": ENGINEERED_FEATURE_FAMILY_COLUMNS["regime_context"],
-        "breadth": tuple(column for column in CONTEXT_COLUMNS if "breadth" in column),
+        "breadth": ENGINEERED_FEATURE_FAMILY_COLUMNS["breadth"],
         "news": tuple(column for column in ENGINEERED_FEATURE_COLUMNS if ("news" in column or "sentiment" in column)),
     }
     source_columns = set().union(*(row.keys() for row in rows)) if rows else set()
@@ -658,6 +703,99 @@ def enrichment_contract_report(rows: Sequence[Mapping[str, Any]], families: Sequ
     }
 
 
+def enriched_feature_coverage(
+    rows: Sequence[Mapping[str, Any]],
+    families: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    output = []
+    for family in families:
+        for feature in family["expected_columns"]:
+            non_null = [
+                row for row in rows
+                if finite_number(row.get(feature)) is not None
+            ]
+            output.append(
+                {
+                    "family_id": family["family_id"],
+                    "feature": feature,
+                    "row_count": len(rows),
+                    "non_null_count": len(non_null),
+                    "missing_count": len(rows) - len(non_null),
+                    "non_null_fraction": len(non_null) / len(rows) if rows else 0.0,
+                    "all_null": len(non_null) == 0,
+                    "date_coverage": len({str(row.get("rebalance_date")) for row in non_null if row.get("rebalance_date")}),
+                    "symbol_coverage": len({str(row.get("symbol")).upper() for row in non_null if row.get("symbol")}),
+                }
+            )
+    return output
+
+
+def market_context_contract_report(
+    enrichment_contract: Mapping[str, Any],
+    families: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    family = next((item for item in families if item["family_id"] == "market_context"), {})
+    return {
+        "contract_version": "selector_market_context_contract_v1",
+        "benchmark_symbol": "SPY",
+        "source_artifact_identity": enrichment_contract.get("source_dataset_path"),
+        "price_adjustment_semantics": "same adjusted daily bars used by stock-level enrichment",
+        "session_calendar_identity": "source artifact decision calendar",
+        "feature_cutoff_rule": "market observation timestamp <= feature cutoff timestamp",
+        "lookback_definitions": ["20d momentum", "60d momentum", "120d momentum", "20d volatility", "60d drawdown", "200d average distance"],
+        "missing_session_behaviour": "missing remains missing; no future fill",
+        "minimum_history": "200 prior observations for full context",
+        "contract_hash": _hash(family),
+        "resolved_columns": family.get("resolved_ordered_columns", []),
+    }
+
+
+def breadth_contract_report(
+    enrichment_contract: Mapping[str, Any],
+    families: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    family = next((item for item in families if item["family_id"] == "breadth"), {})
+    return {
+        "contract_version": "selector_breadth_contract_v1",
+        "eligible_universe_identity": "source artifact decision-date cross-section",
+        "source_artifact_identity": enrichment_contract.get("source_dataset_path"),
+        "feature_cutoff": "row feature cutoff / rebalance decision timestamp",
+        "breadth_definitions": [
+            "positive 20d momentum fraction",
+            "positive 60d momentum fraction",
+            "above 200d average fraction",
+            "cross-sectional median 20d momentum",
+            "20d momentum dispersion",
+            "advance-decline ratio",
+            "coverage",
+        ],
+        "survivorship_limitation": "bounded artifact uses source artifact symbols; historical delisted membership is not repaired here",
+        "contract_hash": _hash(family),
+        "resolved_columns": family.get("resolved_ordered_columns", []),
+    }
+
+
+def industry_mapping_audit(
+    rows: Sequence[Mapping[str, Any]],
+    families: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    industry_values = [str(row.get("industry") or row.get("industry_id") or "").strip() for row in rows]
+    mapped = [value for value in industry_values if value]
+    family = next((item for item in families if item["family_id"] == "industry_relative"), {})
+    return {
+        "contract_version": "selector_industry_mapping_audit_v1",
+        "mapping_source": "artifact industry column when present",
+        "historically_versioned": False,
+        "limitation": "static/current industry metadata only when supplied upstream; no symbol-change history repair",
+        "row_count": len(rows),
+        "mapped_row_count": len(mapped),
+        "mapping_coverage": len(mapped) / len(rows) if rows else 0.0,
+        "industry_count": len(set(mapped)),
+        "resolved_columns": family.get("resolved_ordered_columns", []),
+        "status": "available" if family.get("resolved_ordered_columns") else "blocked_or_missing",
+    }
+
+
 def train_feature_ablation_candidates(
     prepared: Sequence[Mapping[str, Any]],
     feature_sets: Sequence[Mapping[str, Any]],
@@ -907,6 +1045,7 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "strict_roles": bool(raw.get("strict_roles", True)),
         "empty_family_policy": str(raw.get("empty_family_policy", "fail")).lower(),
         "fail_on_identical_feature_sets": bool(raw.get("fail_on_identical_feature_sets", False)),
+        "enriched_feature_coverage": dict(raw.get("enriched_feature_coverage", {}) or {}),
         "feature_sets": feature_sets,
         "feature_set_ids": [str(item["feature_set_id"]) for item in feature_sets],
         "target_id": target_id,

@@ -301,6 +301,13 @@ ML_DEFAULTS = {
         "strict_roles": True,
         "empty_family_policy": "fail",
         "fail_on_identical_feature_sets": False,
+        "enriched_feature_coverage": {
+            "market_context_minimum_non_null_fraction": 0.95,
+            "breadth_minimum_non_null_fraction": 0.90,
+            "industry_relative_minimum_non_null_fraction": 0.70,
+            "industry_minimum_peer_count": 2,
+            "coverage_action": "warn",
+        },
         "comparison_mode": "strict_feature_intersection",
         "target_id": "raw_return_10d",
         "model_ids": ["ridge", "elastic_net"],

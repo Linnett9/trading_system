@@ -4,7 +4,7 @@ import time
 from bisect import bisect_left
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
-from statistics import mean
+from statistics import mean, median, pstdev
 from typing import Any
 
 from core.research.ml.stock_level.stock_level_alpha_features_audit import _audit
@@ -26,6 +26,11 @@ from core.research.ml.stock_level.stock_level_alpha_features_math import (
     _volatility,
     _volatility_percentile,
     _volatility_regime,
+)
+from core.research.ml.stock_level.stock_level_alpha_features_types import (
+    BREADTH_CONTRACT_VERSION,
+    INDUSTRY_MAPPING_CONTRACT_VERSION,
+    MARKET_CONTEXT_CONTRACT_VERSION,
 )
 
 
@@ -171,6 +176,12 @@ def _time_series_features(
     volatility_20 = _volatility(closes, 20)
     volatility_60 = _volatility(closes, 60)
     volatility_percentile = _volatility_percentile(closes)
+    market_momentum_20 = _trailing_return(spy_closes, 20)
+    market_momentum_60 = _trailing_return(spy_closes, 60)
+    market_momentum_120 = _trailing_return(spy_closes, 120)
+    market_volatility_20 = _volatility(spy_closes, 20)
+    market_distance_200 = _distance_from_average(spy_closes, 200)
+    market_context_source_date = spy_history[-1]["date"] if spy_history else ""
     return {
         "momentum_250d": momentum_250,
         "momentum_acceleration": _slope(
@@ -193,6 +204,38 @@ def _time_series_features(
         "ATR_percentile": _atr_percentile(history),
         "sector_relative_strength": "",
         "industry_relative_strength": "",
+        "market_momentum_20d": market_momentum_20,
+        "market_momentum_60d": market_momentum_60,
+        "market_momentum_120d": market_momentum_120,
+        "market_volatility_20d": market_volatility_20,
+        "market_drawdown_60d": _max_drawdown(spy_closes, 60),
+        "market_distance_from_200d_average": market_distance_200,
+        "market_trend_state": _market_trend_state(market_distance_200, market_momentum_60),
+        "market_volatility_percentile": _volatility_percentile(spy_closes),
+        "market_context_source_date": market_context_source_date,
+        "market_context_availability_timestamp": market_context_source_date,
+        "market_context_status": "available" if market_context_source_date else "missing_benchmark_history",
+        "market_context_contract_identity": MARKET_CONTEXT_CONTRACT_VERSION,
+        "_stock_above_200d_average": _above_average(closes, 200),
+        "breadth_positive_momentum_20d": "",
+        "breadth_positive_momentum_60d": "",
+        "breadth_above_long_term_trend": "",
+        "breadth_cross_sectional_median_return": "",
+        "breadth_return_dispersion": "",
+        "breadth_advance_decline_ratio": "",
+        "breadth_coverage": "",
+        "breadth_eligible_symbol_count": "",
+        "breadth_observed_symbol_count": "",
+        "breadth_contract_identity": BREADTH_CONTRACT_VERSION,
+        "industry_id": "",
+        "industry_mapping_identity": INDUSTRY_MAPPING_CONTRACT_VERSION,
+        "industry_peer_count": "",
+        "industry_mapping_available": "",
+        "industry_relative_status": "",
+        "relative_momentum_vs_industry": "",
+        "industry_momentum_percentile": "",
+        "_stock_momentum_20d": momentum_20,
+        "_stock_momentum_60d": momentum_60,
     }
 def _add_cross_sectional_features(rows: list[dict[str, Any]]) -> None:
     by_date: dict[str, list[dict[str, Any]]] = {}
@@ -218,9 +261,11 @@ def _add_cross_sectional_features(rows: list[dict[str, Any]]) -> None:
             date_rows,
             momentum,
             group_column="industry",
-            difference_column=None,
+            difference_column="relative_momentum_vs_industry",
             percentile_column="industry_relative_strength",
+            extra_percentile_column="industry_momentum_percentile",
         )
+        _add_breadth_features(date_rows)
 def _add_group_relative_features(
     rows: list[dict[str, Any]],
     momentum: dict[int, float | None],
@@ -228,6 +273,7 @@ def _add_group_relative_features(
     group_column: str,
     difference_column: str | None,
     percentile_column: str,
+    extra_percentile_column: str | None = None,
 ) -> None:
     grouped: dict[str, list[float]] = {}
     for row in rows:
@@ -239,14 +285,63 @@ def _add_group_relative_features(
         group = str(row.get(group_column, "")).strip()
         value = momentum[id(row)]
         values = grouped.get(group, [])
+        if group_column == "industry":
+            row["industry_id"] = group
+            row["industry_mapping_available"] = 1.0 if group else 0.0
+            row["industry_peer_count"] = len(values)
+            row["industry_mapping_identity"] = INDUSTRY_MAPPING_CONTRACT_VERSION
         if not group or value is None or not values:
             if difference_column:
                 row[difference_column] = ""
             row[percentile_column] = ""
+            if extra_percentile_column:
+                row[extra_percentile_column] = ""
+            if group_column == "industry":
+                row["industry_relative_status"] = "missing_industry_or_momentum"
             continue
         if difference_column:
             row[difference_column] = value - mean(values)
         row[percentile_column] = _percentile_rank(value, values)
+        if extra_percentile_column:
+            row[extra_percentile_column] = _percentile_rank(value, values)
+        if group_column == "industry":
+            row["industry_relative_status"] = "available" if len(values) >= 2 else "single_peer_neutral"
+
+
+def _add_breadth_features(rows: list[dict[str, Any]]) -> None:
+    eligible = len(rows)
+    momentum_20 = [
+        _number(row.get("predicted_momentum_20d"))
+        if _number(row.get("predicted_momentum_20d")) is not None
+        else _number(row.get("_stock_momentum_20d"))
+        for row in rows
+    ]
+    momentum_60 = [
+        _number(row.get("predicted_momentum_60d"))
+        if _number(row.get("predicted_momentum_60d")) is not None
+        else _number(row.get("_stock_momentum_60d"))
+        for row in rows
+    ]
+    above_trend = [_number(row.get("_stock_above_200d_average")) for row in rows]
+    observed_20 = [value for value in momentum_20 if value is not None]
+    observed_60 = [value for value in momentum_60 if value is not None]
+    observed_trend = [value for value in above_trend if value is not None]
+    positives = sum(value > 0.0 for value in observed_20)
+    negatives = sum(value < 0.0 for value in observed_20)
+    breadth = {
+        "breadth_positive_momentum_20d": _fraction_positive(observed_20),
+        "breadth_positive_momentum_60d": _fraction_positive(observed_60),
+        "breadth_above_long_term_trend": mean(observed_trend) if observed_trend else "",
+        "breadth_cross_sectional_median_return": median(observed_20) if observed_20 else "",
+        "breadth_return_dispersion": pstdev(observed_20) if len(observed_20) >= 2 else 0.0 if observed_20 else "",
+        "breadth_advance_decline_ratio": positives / negatives if negatives else float(positives) if positives else 0.0,
+        "breadth_coverage": len(observed_20) / eligible if eligible else "",
+        "breadth_eligible_symbol_count": eligible,
+        "breadth_observed_symbol_count": len(observed_20),
+        "breadth_contract_identity": BREADTH_CONTRACT_VERSION,
+    }
+    for row in rows:
+        row.update(breadth)
 def _prepare_history(history: list[dict[str, Any]]) -> list[dict[str, float | str]]:
     prepared = []
     for row in history:
@@ -269,6 +364,30 @@ def _history_before(
 ) -> list[dict[str, float | str]]:
     dates = [str(row["date"]) for row in history]
     return history[: bisect_left(dates, rebalance_date)]
+
+
+def _distance_from_average(values: list[float], lookback: int) -> float | str:
+    if len(values) < lookback:
+        return ""
+    average = mean(values[-lookback:])
+    return values[-1] / average - 1.0 if average else ""
+
+
+def _above_average(values: list[float], lookback: int) -> float | str:
+    distance = _distance_from_average(values, lookback)
+    return 1.0 if isinstance(distance, float) and distance > 0.0 else 0.0 if isinstance(distance, float) else ""
+
+
+def _market_trend_state(distance_from_average: Any, momentum_60: Any) -> float | str:
+    distance = _number(distance_from_average)
+    momentum = _number(momentum_60)
+    if distance is None or momentum is None:
+        return ""
+    return 1.0 if distance > 0.0 and momentum > 0.0 else 0.0
+
+
+def _fraction_positive(values: list[float]) -> float | str:
+    return sum(value > 0.0 for value in values) / len(values) if values else ""
 
 
 def _phase_start() -> tuple[float, str]:
