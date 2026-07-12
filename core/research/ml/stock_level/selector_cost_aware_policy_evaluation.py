@@ -110,18 +110,23 @@ def build_selector_cost_aware_policy_evaluation(
         raise ValueError("No strict-OOS prediction rows are available for cost-aware policy evaluation")
     baseline_policy = next(policy for policy in policies if policy["policy_id"] == BASELINE_POLICY_ID)
     signal = "selector_policy_signal"
-    periods, holdings = _replay(
-        bounded,
-        signal,
-        "long_only_top_n_equal_weight",
-        int(baseline_policy["selection"]["target_holdings"]),
-        float(settings["cost_bps"]),
-        float(settings["slippage_bps"]),
-        float(settings["max_position_weight"]),
-        float(settings["min_position_weight"]),
-    )
-    baseline_periods = [_tag_period(row, baseline_policy) for row in periods]
-    baseline_holdings = [_tag_holding(row, baseline_policy) for row in holdings]
+    if _benchmark_available(bounded)["available"]:
+        periods, holdings = _replay(
+            bounded,
+            signal,
+            "long_only_top_n_equal_weight",
+            int(baseline_policy["selection"]["target_holdings"]),
+            float(settings["cost_bps"]),
+            float(settings["slippage_bps"]),
+            float(settings["max_position_weight"]),
+            float(settings["min_position_weight"]),
+        )
+        baseline_periods = [_tag_period(row, baseline_policy) for row in periods]
+        baseline_holdings = [_tag_holding(row, baseline_policy) for row in holdings]
+    else:
+        baseline = _replay_cost_aware_policy(bounded, baseline_policy, settings, [])
+        baseline_periods = baseline["periods"]
+        baseline_holdings = baseline["holdings"]
     baseline_decisions = _baseline_decisions(bounded, baseline_policy, baseline_holdings, settings)
     baseline_trades = _trades_from_holdings(baseline_holdings, baseline_policy)
 
@@ -306,12 +311,15 @@ def _normalize_rows(rows: list[dict[str, Any]], settings: Mapping[str, Any]) -> 
             actual = finite_number(row.get("actual_investable_return_10d"))
         if prediction is None or actual is None or not str(row.get("rebalance_date", "")).strip() or not str(row.get("symbol", "")).strip():
             continue
-        benchmark = finite_number(row.get("actual_benchmark_return_10d"))
         normalized = dict(row)
         normalized["symbol"] = str(row["symbol"]).upper()
         normalized["selector_policy_signal"] = float(prediction)
         normalized[TARGET] = float(actual)
-        normalized["actual_benchmark_return_10d"] = 0.0 if benchmark is None else float(benchmark)
+        benchmark = finite_number(row.get("actual_benchmark_return_10d"))
+        if benchmark is not None:
+            normalized["actual_benchmark_return_10d"] = float(benchmark)
+        else:
+            normalized.pop("actual_benchmark_return_10d", None)
         normalized["fold_id"] = str(row.get("fold_id") or "strict_oos")
         output.append(normalized)
     _reject_duplicate_keys(output)
@@ -352,7 +360,7 @@ def _replay_cost_aware_policy(
         drag = turnover * (float(settings["cost_bps"]) + float(settings["slippage_bps"])) / 10_000.0
         net = gross - drag
         equity *= 1.0 + net
-        benchmark_return = _benchmark_return_for_group(group)
+        benchmark_return = _benchmark_return_for_group(group) if _benchmark_available(group)["available"] else None
         periods.append({
             "rebalance_date": rebalance_date,
             "strategy_id": f"selector_policy_signal|{policy['policy_id']}",
@@ -771,14 +779,27 @@ def _target_identity(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _benchmark_identity(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    values = sorted({round(float(row.get("actual_benchmark_return_10d", 0.0)), 12) for row in rows})
-    return {"benchmark_return_column": "actual_benchmark_return_10d", "unique_period_return_values": values[:10], "value_count": len(values)}
+    availability = _benchmark_available(rows)
+    values = sorted({
+        round(float(row["actual_benchmark_return_10d"]), 12)
+        for row in rows
+        if finite_number(row.get("actual_benchmark_return_10d")) is not None
+    })
+    return {
+        "benchmark_return_column": "actual_benchmark_return_10d",
+        "benchmark_non_null_count": availability["non_null_count"],
+        "benchmark_missing_count": availability["missing_count"],
+        "benchmark_date_coverage": availability["date_coverage"],
+        "benchmark_relative_metrics_available": availability["available"],
+        "unique_period_return_values": values[:10],
+        "value_count": len(values),
+    }
 
 
 def _warnings(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]], settings: Mapping[str, Any]) -> list[str]:
     warnings = ["BOUNDED DIAGNOSTIC ONLY", "NOT POLICY PROMOTION EVIDENCE"]
-    if rows and all(finite_number(row.get("actual_benchmark_return_10d")) == 0.0 for row in rows):
-        warnings.append("benchmark_return_missing_or_zero_filled; comparisons still use identical benchmark values")
+    if not _benchmark_available(rows)["available"]:
+        warnings.append("benchmark_returns_unavailable; benchmark_relative_metrics_disabled")
     if settings.get("development_period") or settings.get("evaluation_period"):
         warnings.append("policy_development_and_evaluation_periods_disclosed; no automatic promotion")
     else:
@@ -788,6 +809,23 @@ def _warnings(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]], set
     else:
         warnings.append("liquidity_sensitive_thresholds_disabled; no reliable configured point-in-time liquidity field")
     return warnings
+
+
+def _benchmark_available(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    dates = sorted({str(row.get("rebalance_date", "")) for row in rows})
+    dates_with_benchmark = {
+        str(row.get("rebalance_date", ""))
+        for row in rows
+        if finite_number(row.get("actual_benchmark_return_10d")) is not None
+    }
+    non_null = sum(1 for row in rows if finite_number(row.get("actual_benchmark_return_10d")) is not None)
+    missing = len(rows) - non_null
+    return {
+        "available": bool(dates) and dates_with_benchmark == set(dates),
+        "non_null_count": non_null,
+        "missing_count": missing,
+        "date_coverage": len(dates_with_benchmark) / len(dates) if dates else 0.0,
+    }
 
 
 def _reject_duplicate_keys(rows: list[dict[str, Any]]) -> None:

@@ -52,6 +52,7 @@ _EXPORTS = {
     "run_ml_selector_portfolio_promotion": ("application.services.ml_commands_stock", "run_ml_selector_portfolio_promotion"),
     "run_ml_selector_target_tournament": ("application.services.ml_commands_stock", "run_ml_selector_target_tournament"),
     "run_ml_selector_cost_aware_policy_evaluation": ("application.services.ml_commands_stock", "run_ml_selector_cost_aware_policy_evaluation"),
+    "run_ml_selector_confidence_ensemble": ("application.services.ml_commands_stock", "run_ml_selector_confidence_ensemble"),
     "run_ml_stock_level_alpha_features": ("application.services.ml_commands_stock", "run_ml_stock_level_alpha_features"),
     "run_ml_stock_level_feature_attribution": ("application.services.ml_commands_stock", "run_ml_stock_level_feature_attribution"),
     "run_ml_stock_level_portfolio_policy_sweep": ("application.services.ml_commands_stock", "run_ml_stock_level_portfolio_policy_sweep"),

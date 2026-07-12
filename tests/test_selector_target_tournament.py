@@ -216,6 +216,7 @@ def test_run_writes_target_aware_predictions_and_integrates_portfolio_promotion(
     assert payload["execution_reconciliation"]["completed_fits"] == payload["fit_count_plan"]["expected_base_fits"]
     assert payload["promotion_results"]["candidate_metrics"]
     assert all(row["actual_investable_return_10d"] != row["actual_selected_target"] or row["target_id"] == "raw_return_10d" for row in payload["oos_predictions"])
+    assert all(row["actual_benchmark_return_10d"] == pytest.approx(0.002) for row in payload["oos_predictions"])
     assert payload["reference_target_deltas"]
 
 

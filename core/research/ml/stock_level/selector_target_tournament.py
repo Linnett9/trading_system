@@ -752,6 +752,7 @@ def _run_tournament(
                         "prediction": prediction,
                         "actual_selected_target": source[contract["target_column"]],
                         "actual_investable_return_10d": source[ECONOMIC_RETURN_COLUMN],
+                        "actual_benchmark_return_10d": source.get(BENCHMARK_RETURN_COLUMN),
                         "target_availability_timestamp": _text_or_none(source.get("label_available_timestamp")),
                     })
                 if any(finite_number(row.get(target_column)) is not None for row in metric_rows):
@@ -1142,6 +1143,7 @@ def _prediction_fields(rows: list[dict[str, Any]]) -> list[str]:
         "prediction",
         "actual_selected_target",
         "actual_investable_return_10d",
+        "actual_benchmark_return_10d",
         "target_availability_timestamp",
         "strict_oos",
         "strict_oos_status",

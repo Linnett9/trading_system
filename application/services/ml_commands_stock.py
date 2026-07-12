@@ -157,6 +157,34 @@ def run_ml_selector_cost_aware_policy_evaluation(config):
     print(f"JSON report: {result.comparison_json_path}")
     print(f"Markdown report: {result.comparison_markdown_path}")
 
+def run_ml_selector_confidence_ensemble(config):
+    from core.research.ml.stock_level.selector_confidence_ensemble import (
+        write_selector_confidence_ensemble,
+    )
+    import json
+
+    result = write_selector_confidence_ensemble(config)
+    payload = json.loads(result.comparison_json_path.read_text(encoding="utf-8"))
+    print("\nSELECTOR CONFIDENCE ENSEMBLE")
+    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT ENSEMBLE PROMOTION EVIDENCE")
+    print(f"Resolved artifact: {payload['source_prediction_artifact_identity'].get('resolved_artifact_path') or payload['source_prediction_artifact_identity'].get('path')}")
+    print(f"Dataset identity: {payload['dataset_identity']}")
+    for contract in payload["ensemble_contracts"]:
+        print(f"ensemble={contract['ensemble_id']} components={contract['component_candidate_ids']}")
+        print(f"normalisation={contract['score_normalisation']} aggregation={contract['aggregation_method']}")
+        print(f"confidence={contract['confidence_definition']} abstention={contract['abstention_definition']}")
+    print(f"Benchmark availability: {payload['benchmark_availability']}")
+    print(f"Contract: {result.contract_path}")
+    print(f"Component manifest: {result.component_manifest_path}")
+    print(f"Predictions: {result.predictions_path}")
+    print(f"Diagnostics: {result.diagnostics_path}")
+    print(f"Forecast metrics: {result.forecast_metrics_path}")
+    print(f"Portfolio metrics: {result.portfolio_metrics_path}")
+    print(f"Abstention metrics: {result.abstention_metrics_path}")
+    print(f"JSON report: {result.comparison_json_path}")
+    print(f"Markdown report: {result.comparison_markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,
