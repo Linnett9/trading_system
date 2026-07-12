@@ -184,11 +184,14 @@ ML_DEFAULTS = {
         "model_ids": ["ridge", "elastic_net"],
         "feature_set_id": "stock_level_default_features",
         "seeds": [42],
+        "allow_csv_fallback": False,
+        "expected_dataset": {},
         "fold_plan": {"reuse_shared_plan": True},
         "output": {
             "write_predictions": True,
             "write_target_summary": True,
             "write_portfolio_promotion_report": True,
+            "write_debug_csv": False,
         },
         "bounded": {
             "maximum_decision_dates": None,

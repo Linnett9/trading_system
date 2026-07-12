@@ -10,6 +10,10 @@ from core.research.ml.stock_level.selector_target_tournament import (
     discover_target_contracts,
     write_selector_target_tournament,
 )
+from core.research.ml.stock_level.stock_level_artifact_io import (
+    read_stock_level_artifact,
+    write_stock_level_artifact,
+)
 
 
 def _rows(date_count=7):
@@ -48,7 +52,7 @@ def _rows(date_count=7):
                     "feature_timestamp": rebalance_date,
                     "feature_data_cutoff_timestamp": rebalance_date,
                     "decision_timestamp": rebalance_date,
-                    "first_actionable_session": rebalance_date,
+                    "first_actionable_session": f"2024-01-{date_index + 2:02d}",
                     "decision_grid_version": "test-grid-v1",
                     "decision_grid_identity": "grid-123",
                     "exchange_calendar_identity": "XNYS-test",
@@ -85,10 +89,13 @@ def _settings(**overrides):
         "seeds": [42],
         "plan_only": False,
         "source_dataset_path": "source.csv",
+        "allow_csv_fallback": False,
+        "expected_dataset": {},
         "output_dir": "unused",
         "write_predictions": True,
         "write_target_summary": True,
         "write_portfolio_promotion_report": True,
+        "write_debug_csv": False,
         "maximum_decision_dates": None,
         "maximum_symbols": None,
         "maximum_folds": 1,
@@ -202,17 +209,19 @@ def test_run_writes_target_aware_predictions_and_integrates_portfolio_promotion(
         settings=_settings(),
     )
     candidate_ids = {row["candidate_id"] for row in payload["oos_predictions"]}
-    assert "raw_return_10d::ridge" in candidate_ids
-    assert "market_residual_return_10d::elastic_net" in candidate_ids
+    assert "raw_return_10d::ridge::seed_42" in candidate_ids
+    assert "market_residual_return_10d::elastic_net::seed_42" in candidate_ids
     assert len(candidate_ids) == 4
+    assert payload["execution_reconciliation"]["status"] == "reconciled"
+    assert payload["execution_reconciliation"]["completed_fits"] == payload["fit_count_plan"]["expected_base_fits"]
     assert payload["promotion_results"]["candidate_metrics"]
     assert all(row["actual_investable_return_10d"] != row["actual_selected_target"] or row["target_id"] == "raw_return_10d" for row in payload["oos_predictions"])
     assert payload["reference_target_deltas"]
 
 
 def test_plan_only_writes_plan_without_predictions(tmp_path):
-    source = tmp_path / "source.csv"
-    _write_csv(source, _rows())
+    source = tmp_path / "source.parquet"
+    _write_parquet(source, _rows())
     paths = write_selector_target_tournament(
         {
             "ml": {
@@ -234,6 +243,82 @@ def test_plan_only_writes_plan_without_predictions(tmp_path):
     report = json.loads(paths.report_json_path.read_text())
     assert report["status"] == "plan_only"
     assert report["training_performed"] is False
+    assert report["real_artifact_audit"]["resolved_absolute_path"] == str(source.resolve())
+
+
+def test_missing_source_dataset_fails_without_legacy_fallback(tmp_path):
+    with pytest.raises(FileNotFoundError, match="No legacy fallback is permitted"):
+        write_selector_target_tournament(
+            {
+                "ml": {
+                    "selector_target_tournament": {
+                        "enabled": True,
+                        "source_dataset_path": str(tmp_path / "missing.parquet"),
+                        "output_dir": str(tmp_path / "out"),
+                        "plan_only": True,
+                    }
+                }
+            }
+        )
+
+
+def test_expected_dataset_assertions_block_training(tmp_path):
+    source = tmp_path / "source.parquet"
+    _write_parquet(source, _rows())
+    payload = build_selector_target_tournament(
+        _rows(),
+        config={"ml": {}},
+        source_path=source,
+        settings=_settings(expected_dataset={"path": str(source), "minimum_rows": 999}),
+    )
+    assert payload["status"] == "blocked"
+    assert "expected_dataset:minimum_rows" in payload["blockers"]
+    assert payload["training_performed"] is False
+
+
+def test_multiple_seeds_create_distinct_candidates_and_reconcile_fits():
+    payload = build_selector_target_tournament(
+        _rows(),
+        config={"ml": {}},
+        source_path=None,
+        settings=_settings(seeds=[11, 22], model_ids=["ridge"], maximum_folds=1),
+    )
+    assert {row["candidate_id"] for row in payload["oos_predictions"]} == {
+        "market_residual_return_10d::ridge::seed_11",
+        "market_residual_return_10d::ridge::seed_22",
+        "raw_return_10d::ridge::seed_11",
+        "raw_return_10d::ridge::seed_22",
+    }
+    assert payload["fit_count_plan"]["expected_base_fits"] == 4
+    assert payload["execution_reconciliation"]["completed_fits"] == 4
+    assert payload["execution_reconciliation"]["all_configured_seeds_executed"] is True
+
+
+def test_write_path_emits_canonical_zstd_parquet_predictions(tmp_path):
+    source = tmp_path / "source.parquet"
+    _write_parquet(source, _rows())
+    paths = write_selector_target_tournament(
+        {
+            "ml": {
+                "selector_target_tournament": {
+                    "enabled": True,
+                    "source_dataset_path": str(source),
+                    "output_dir": str(tmp_path / "out"),
+                    "min_train_dates": 2,
+                    "test_window_dates": 2,
+                    "embargo_dates": 1,
+                    "bounded": {"maximum_folds": 1},
+                }
+            }
+        }
+    )
+    assert paths.predictions_path is not None
+    assert paths.predictions_path.suffix == ".parquet"
+    prediction_rows = read_stock_level_artifact(paths.predictions_path, required_columns={"candidate_id", "strict_oos"})
+    assert prediction_rows
+    report = json.loads(paths.report_json_path.read_text())
+    assert report["prediction_artifact_identity"]["compression"] == "zstd"
+    assert report["promotion_results"]["candidate_metrics"]
 
 
 def test_duplicate_source_rows_fail_closed():
@@ -264,3 +349,12 @@ def _write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_parquet(path, rows):
+    write_stock_level_artifact(
+        path,
+        rows,
+        fieldnames=list(rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )

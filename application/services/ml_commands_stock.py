@@ -103,11 +103,21 @@ def run_ml_selector_target_tournament(config):
     from core.research.ml.stock_level.selector_target_tournament import (
         write_selector_target_tournament,
     )
+    import json
 
     result = write_selector_target_tournament(config)
+    payload = json.loads(result.report_json_path.read_text(encoding="utf-8"))
+    audit = payload.get("real_artifact_audit", {})
+    execution = payload.get("execution_reconciliation", {})
     print("\nSELECTOR TARGET TOURNAMENT")
     print("mode=research | feedless=true | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT PROMOTION EVIDENCE")
     print(f"Output dir: {result.output_dir}")
+    print(f"Resolved dataset: {audit.get('resolved_absolute_path')}")
+    print(f"Dataset rows: {audit.get('row_count')} | symbols: {audit.get('symbol_count')} | decision_dates: {audit.get('decision_date_count')}")
+    print(f"Expected fits: {execution.get('expected_base_fits')} | attempted: {execution.get('attempted_fits')} | completed: {execution.get('completed_fits')}")
+    print(f"Executed seeds: {execution.get('executed_seeds')}")
+    print(f"Artifact audit: {result.real_artifact_audit_json_path}")
     print(f"Contracts: {result.contracts_path}")
     print(f"Plan: {result.plan_path}")
     if result.predictions_path is not None:
