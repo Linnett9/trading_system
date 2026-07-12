@@ -99,6 +99,24 @@ def run_ml_selector_portfolio_promotion(config):
     print(f"JSON report: {result.json_path}")
     print(f"Markdown report: {result.markdown_path}")
 
+def run_ml_selector_target_tournament(config):
+    from core.research.ml.stock_level.selector_target_tournament import (
+        write_selector_target_tournament,
+    )
+
+    result = write_selector_target_tournament(config)
+    print("\nSELECTOR TARGET TOURNAMENT")
+    print("mode=research | feedless=true | trading_impact=none | production_validated=false")
+    print(f"Output dir: {result.output_dir}")
+    print(f"Contracts: {result.contracts_path}")
+    print(f"Plan: {result.plan_path}")
+    if result.predictions_path is not None:
+        print(f"OOS predictions: {result.predictions_path}")
+    print(f"Forecast metrics: {result.forecast_metrics_path}")
+    print(f"Target summary: {result.target_summary_path}")
+    print(f"JSON report: {result.report_json_path}")
+    print(f"Markdown report: {result.report_markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,
