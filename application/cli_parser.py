@@ -61,6 +61,8 @@ def parse_args():
             "ml-selector-target-tournament",
             "ml-selector-cost-aware-policy-evaluation",
             "ml-selector-confidence-ensemble",
+            "ml-selector-feature-ablation",
+            "ml-selector-universe-integrity-audit",
             "ml-stock-level-target-comparison",
             "ml-stock-level-portfolio-replay",
             "ml-stock-selector-rebalance-dataset",

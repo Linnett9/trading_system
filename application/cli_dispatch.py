@@ -93,6 +93,12 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-confidence-ensemble":
         _commands("ml_commands").run_ml_selector_confidence_ensemble(config)
         return
+    if args.mode == "ml-selector-feature-ablation":
+        _commands("ml_commands").run_ml_selector_feature_ablation(config)
+        return
+    if args.mode == "ml-selector-universe-integrity-audit":
+        _commands("ml_commands").run_ml_selector_universe_integrity_audit(config)
+        return
     if args.mode == "ml-stock-level-target-comparison":
         _commands("ml_commands").run_ml_stock_level_target_comparison(config)
         return

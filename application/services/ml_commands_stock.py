@@ -185,6 +185,61 @@ def run_ml_selector_confidence_ensemble(config):
     print(f"JSON report: {result.comparison_json_path}")
     print(f"Markdown report: {result.comparison_markdown_path}")
 
+def run_ml_selector_feature_ablation(config):
+    from core.research.ml.stock_level.selector_feature_ablation import (
+        write_selector_feature_ablation,
+    )
+    import json
+
+    result = write_selector_feature_ablation(config)
+    payload = json.loads(result.report_json_path.read_text(encoding="utf-8"))
+    plan = payload["plan"]
+    print("\nSELECTOR FEATURE ABLATION")
+    print("mode=research | feedless=true | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT FEATURE PROMOTION EVIDENCE")
+    print(f"Resolved dataset: {payload['source_dataset_identity'].get('resolved_artifact_path')}")
+    print(f"Target: {plan['target_id']}")
+    print(f"Feature sets: {plan['feature_set_ids']}")
+    print(f"Common rows: {plan['common_row_count']} | shared folds: {plan['fold_count']} | expected fits: {plan['expected_fits']}")
+    print(f"Plan only: {plan['plan_only']}")
+    print(f"Inventory: {result.inventory_path}")
+    print(f"Family contracts: {result.family_contracts_path}")
+    print(f"Feature-set contracts: {result.feature_set_contracts_path}")
+    print(f"Availability: {result.availability_path}")
+    print(f"Leakage audit: {result.leakage_audit_path}")
+    print(f"Predictions: {result.predictions_path}")
+    print(f"Forecast metrics: {result.forecast_metrics_path}")
+    print(f"Portfolio metrics: {result.portfolio_metrics_path}")
+    print(f"Pairwise comparisons: {result.pairwise_path}")
+    print(f"Redundancy diagnostics: {result.redundancy_path}")
+    print(f"JSON report: {result.report_json_path}")
+    print(f"Markdown report: {result.report_markdown_path}")
+
+def run_ml_selector_universe_integrity_audit(config):
+    from core.research.ml.stock_level.selector_universe_integrity_audit import (
+        write_selector_universe_integrity_audit,
+    )
+    import json
+
+    result = write_selector_universe_integrity_audit(config)
+    payload = json.loads(result.report_json_path.read_text(encoding="utf-8"))
+    print("\nSELECTOR UNIVERSE INTEGRITY AUDIT")
+    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT PROMOTION EVIDENCE")
+    print(f"Resolved artifact: {payload['source_artifact_identity'].get('resolved_artifact_path')}")
+    print(f"Universe classification: {payload['universe_classification']}")
+    print(f"Membership rows: {payload['universe_contract']['membership_row_count']}")
+    print(f"Unknown membership: {payload['universe_contract']['unknown_membership_count']}")
+    print(f"Promotion blockers: {payload['promotion_blockers']}")
+    print(f"Universe contract: {result.universe_contract_path}")
+    print(f"Membership audit: {result.historical_membership_audit_path}")
+    print(f"Security mapping: {result.security_identity_mapping_path}")
+    print(f"Delisting audit: {result.delisting_coverage_audit_path}")
+    print(f"Classification audit: {result.classification_mapping_audit_path}")
+    print(f"Breadth universe coverage: {result.breadth_universe_coverage_path}")
+    print(f"JSON report: {result.report_json_path}")
+    print(f"Markdown report: {result.report_markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,
