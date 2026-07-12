@@ -41,7 +41,10 @@ def _actual_targets(
     dates = symbol_data.get("close_dates", [])
     if rebalance_date not in closes_by_date:
         return _empty_targets(decision_metadata)
-    index = dates.index(rebalance_date)
+    index_by_date = symbol_data.get("close_index_by_date", {})
+    index = index_by_date.get(rebalance_date)
+    if index is None:
+        return _empty_targets(decision_metadata)
     start = closes_by_date[rebalance_date]
     if start <= 0.0:
         return _empty_targets(decision_metadata)
@@ -114,9 +117,12 @@ def _forward_target(
 ) -> ForwardTarget:
     closes_by_date = symbol_data.get("close", {})
     dates = list(symbol_data.get("close_dates", []))
-    if rebalance_date not in closes_by_date or rebalance_date not in dates:
+    if rebalance_date not in closes_by_date:
         return ForwardTarget("", "", "", "", "", horizon)
-    index = dates.index(rebalance_date)
+    index_by_date = symbol_data.get("close_index_by_date", {})
+    index = index_by_date.get(rebalance_date)
+    if index is None:
+        return ForwardTarget("", "", "", "", "", horizon)
     start = closes_by_date[rebalance_date]
     end_index = index + horizon
     if start <= 0.0 or end_index >= len(dates):

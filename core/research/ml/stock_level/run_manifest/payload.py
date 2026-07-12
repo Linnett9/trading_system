@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -170,6 +171,19 @@ def legacy_output_warnings(*, legacy_output_paths_allowed: bool) -> list[dict[st
 def build_command(config: Mapping[str, Any], *, mode: str) -> str:
     config_path = str(config.get("config_path", "config/config.yaml"))
     profile = str(config.get("research", {}).get("profile", ""))
+    if os.name == "nt":
+        pieces = [
+            "$env:PYTHONDONTWRITEBYTECODE='1';",
+            DEFAULT_PYTHON,
+            ".\\main.py",
+            "--mode",
+            mode,
+            "--config",
+            _powershell_path(config_path),
+        ]
+        if profile in {"development", "benchmark"}:
+            pieces.extend(["--profile", profile])
+        return " ".join(pieces)
     pieces = [
         "PYTHONDONTWRITEBYTECODE=1",
         DEFAULT_PYTHON,
@@ -182,3 +196,12 @@ def build_command(config: Mapping[str, Any], *, mode: str) -> str:
     if profile in {"development", "benchmark"}:
         pieces.extend(["--profile", profile])
     return " ".join(pieces)
+
+
+def _powershell_path(path: str) -> str:
+    normalized = path.replace("/", "\\")
+    if not normalized.startswith((".", "\\")) and ":" not in normalized:
+        normalized = f".\\{normalized}"
+    if any(char.isspace() for char in normalized):
+        return f"'{normalized}'"
+    return normalized

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
@@ -63,6 +65,7 @@ from core.research.ml.stock_level.stock_level_alpha_features_types import (
 def write_stock_level_alpha_features(
     config: dict[str, Any],
 ) -> StockLevelAlphaFeaturePaths:
+    phase_timings: list[dict[str, Any]] = []
     settings = StockLevelResearchConfig.from_mapping(config)
     apply_stock_alpha_worker_caps(config)
     output_dir = settings.output_dir
@@ -71,15 +74,32 @@ def write_stock_level_alpha_features(
         raise FileNotFoundError(f"Base stock-level artifact not found: {source_path}")
     logger = ResearchStageLogger("stock_level_alpha_features")
     with logger.stage("loading"):
+        phase_started, phase_start_ts = _phase_start()
         rows = _read_csv(source_path)
         rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
+        _record_phase(
+            phase_timings,
+            "alpha-feature loading",
+            phase_started,
+            phase_start_ts,
+            task_count=len(rows),
+        )
     symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
     spy_symbol = settings.spy_symbol
     with logger.stage("feature_generation"):
+        phase_started, phase_start_ts = _phase_start()
         price_histories = _load_price_histories(
             settings.parquet_dir,
             sorted({*symbols, spy_symbol}),
         )
+        _record_phase(
+            phase_timings,
+            "price-history loading",
+            phase_started,
+            phase_start_ts,
+            task_count=len(price_histories),
+        )
+        phase_started, phase_start_ts = _phase_start()
         enriched_rows, audit = build_stock_level_alpha_features(
             rows,
             price_histories,
@@ -87,6 +107,20 @@ def write_stock_level_alpha_features(
             source_path=str(source_path),
             n_jobs=settings.alpha_feature_n_jobs,
         )
+        _record_phase(
+            phase_timings,
+            "alpha-feature calculation",
+            phase_started,
+            phase_start_ts,
+            requested_workers=settings.alpha_feature_n_jobs,
+            effective_workers=audit.get("parallelism", {}).get("effective_workers", 1),
+            task_count=len(symbols),
+            execution_mode=audit.get("parallelism", {}).get("partition", "symbol"),
+        )
+        audit["phase_timings"] = [
+            *phase_timings,
+            *audit.get("phase_timings", []),
+        ]
         audit.update(run_profile)
         audit.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=source_path))
 
@@ -105,6 +139,10 @@ def write_stock_level_alpha_features(
             enriched_rows,
             config=config,
             sample_path=paths.enriched_sample_csv_path,
+            phase_timings=audit["phase_timings"],
+            write_phase_name="enriched Parquet writing",
+            validation_phase_name="enriched validation",
+            hash_phase_name="logical-content hashing",
         )
         _write_audit_csv(paths.audit_csv_path, audit["features"])
         writer = ResearchArtifactWriter()
@@ -120,3 +158,32 @@ def write_stock_level_alpha_features(
         writer.write_json(paths.audit_json_path, audit)
         writer.write_markdown(paths.audit_markdown_path, _markdown(audit))
     return paths
+
+
+def _phase_start() -> tuple[float, str]:
+    return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _record_phase(
+    timings: list[dict[str, Any]],
+    phase_name: str,
+    started: float,
+    start_timestamp: str,
+    *,
+    requested_workers: int = 1,
+    effective_workers: int = 1,
+    task_count: int | None = None,
+    execution_mode: str = "serial",
+) -> None:
+    timings.append(
+        {
+            "phase_name": phase_name,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.perf_counter() - started),
+            "requested_workers": requested_workers,
+            "effective_workers": effective_workers,
+            "task_count": task_count,
+            "execution_mode": execution_mode,
+        }
+    )

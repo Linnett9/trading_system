@@ -285,6 +285,22 @@ def test_dataset_workers_report_effective_parallelism_and_inner_thread_cap():
     assert parallelism["inner_thread_limit"] == 1
     assert parallelism["nested_parallelism_prevented"] is True
     assert parallelism["worker_execution_mode"] == "process_pool"
+    phase_names = {phase["phase_name"] for phase in audit["phase_timings"]}
+    assert {
+        "daily-grid construction",
+        "symbol-data preparation",
+        "symbol-task dispatch",
+        "symbol-task execution",
+        "worker result collection",
+        "cross-sectional calculation",
+        "deterministic sorting",
+    }.issubset(phase_names)
+    symbol_execution = next(
+        phase for phase in audit["phase_timings"] if phase["phase_name"] == "symbol-task execution"
+    )
+    assert symbol_execution["requested_workers"] == 12
+    assert symbol_execution["effective_workers"] == 2
+    assert symbol_execution["execution_mode"] == "process_pool"
 
 
 def test_one_worker_and_twelve_worker_dataset_builds_are_equivalent():

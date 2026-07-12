@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -58,6 +59,10 @@ def write_stock_level_artifact(
     config: Mapping[str, Any],
     inspection_sample_path: Path | None = None,
     inspection_sample_max_rows: int = 100,
+    phase_timings: list[dict[str, Any]] | None = None,
+    write_phase_name: str | None = None,
+    validation_phase_name: str | None = None,
+    hash_phase_name: str | None = None,
 ) -> dict[str, Any]:
     materialized = [
         {name: row.get(name) for name in fieldnames}
@@ -66,7 +71,16 @@ def write_stock_level_artifact(
     fmt = stock_level_artifact_format(config)
     if fmt == "parquet":
         compression = stock_level_parquet_compression(config)
-        _atomic_write_parquet(path, materialized, fieldnames=fieldnames, compression=compression)
+        identity_rows = [_normalize_row(row, fieldnames) for row in materialized]
+        _atomic_write_parquet(
+            path,
+            materialized,
+            fieldnames=fieldnames,
+            compression=compression,
+            phase_timings=phase_timings,
+            write_phase_name=write_phase_name,
+            validation_phase_name=validation_phase_name,
+        )
         _remove_legacy_full_csv(path, inspection_sample_path)
         sample_payload = None
         if inspection_sample_path is not None:
@@ -77,14 +91,21 @@ def write_stock_level_artifact(
             )
         return artifact_identity(
             path,
-            rows=materialized,
+            rows=identity_rows,
             fieldnames=fieldnames,
             artifact_format="parquet",
             compression=compression,
             inspection_sample=sample_payload,
+            phase_timings=phase_timings,
+            hash_phase_name=hash_phase_name,
         )
     if fmt == "csv":
-        _atomic_write_csv(path, materialized, fieldnames=fieldnames)
+        if write_phase_name and phase_timings is not None:
+            started, start_ts = _phase_start()
+            _atomic_write_csv(path, materialized, fieldnames=fieldnames)
+            _record_phase(phase_timings, write_phase_name, started, start_ts)
+        else:
+            _atomic_write_csv(path, materialized, fieldnames=fieldnames)
         return artifact_identity(
             path,
             rows=materialized,
@@ -92,6 +113,8 @@ def write_stock_level_artifact(
             artifact_format="csv",
             compression=None,
             inspection_sample=None,
+            phase_timings=phase_timings,
+            hash_phase_name=hash_phase_name,
         )
     raise ValueError("ml.stock_level_artifact_format must be parquet or csv")
 
@@ -148,6 +171,8 @@ def artifact_identity(
     artifact_format: str | None = None,
     compression: str | None = None,
     inspection_sample: Mapping[str, Any] | None = None,
+    phase_timings: list[dict[str, Any]] | None = None,
+    hash_phase_name: str | None = None,
 ) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(path)
@@ -189,6 +214,12 @@ def artifact_identity(
         for row in parsed_rows
         if row.get("source_dataset_hash") not in (None, "")
     })
+    if hash_phase_name and phase_timings is not None:
+        hash_started, hash_start_ts = _phase_start()
+        logical_hash = logical_content_sha256(parsed_rows, column_order)
+        _record_phase(phase_timings, hash_phase_name, hash_started, hash_start_ts)
+    else:
+        logical_hash = logical_content_sha256(parsed_rows, column_order)
     identity = {
         "artifact_format": artifact_format or path.suffix.lower().lstrip("."),
         "compression": compression,
@@ -196,7 +227,7 @@ def artifact_identity(
         "resolved_artifact_path": str(path),
         "file_size_bytes": path.stat().st_size,
         "sha256": file_sha256(path),
-        "logical_content_sha256": logical_content_sha256(parsed_rows, column_order),
+        "logical_content_sha256": logical_hash,
         "schema_fingerprint": schema_fp,
         "stable_column_order": column_order,
         "row_count": row_count,
@@ -297,6 +328,9 @@ def _atomic_write_parquet(
     *,
     fieldnames: Sequence[str],
     compression: str,
+    phase_timings: list[dict[str, Any]] | None = None,
+    write_phase_name: str | None = None,
+    validation_phase_name: str | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -307,8 +341,18 @@ def _atomic_write_parquet(
         table = pa.table({name: pa.array([]) for name in fieldnames})
     if fieldnames:
         table = table.select([name for name in fieldnames if name in table.schema.names])
-    pq.write_table(table, tmp, compression=compression)
-    _validate_complete_parquet(tmp)
+    if write_phase_name and phase_timings is not None:
+        started, start_ts = _phase_start()
+        pq.write_table(table, tmp, compression=compression)
+        _record_phase(phase_timings, write_phase_name, started, start_ts)
+    else:
+        pq.write_table(table, tmp, compression=compression)
+    if validation_phase_name and phase_timings is not None:
+        started, start_ts = _phase_start()
+        _validate_complete_parquet(tmp)
+        _record_phase(phase_timings, validation_phase_name, started, start_ts)
+    else:
+        _validate_complete_parquet(tmp)
     os.replace(tmp, path)
 
 
@@ -361,3 +405,32 @@ def _duplicate_symbol_decision_count(rows: Sequence[Mapping[str, Any]]) -> int:
         if row.get("symbol") and (row.get("decision_timestamp") or row.get("rebalance_date"))
     ]
     return len(keys) - len(set(keys))
+
+
+def _phase_start() -> tuple[float, str]:
+    return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _record_phase(
+    timings: list[dict[str, Any]],
+    phase_name: str,
+    started: float,
+    start_timestamp: str,
+    *,
+    requested_workers: int = 1,
+    effective_workers: int = 1,
+    task_count: int | None = None,
+    execution_mode: str = "serial",
+) -> None:
+    timings.append(
+        {
+            "phase_name": phase_name,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.perf_counter() - started),
+            "requested_workers": requested_workers,
+            "effective_workers": effective_workers,
+            "task_count": task_count,
+            "execution_mode": execution_mode,
+        }
+    )

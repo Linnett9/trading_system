@@ -42,7 +42,7 @@ ml:
   stock_alpha_dev_required_symbols:
   - SPY
   stock_alpha_run_profile: ticket_7b3_daily_probe_twelve_worker
-  stock_alpha_feature_n_jobs: 1
+  stock_alpha_feature_n_jobs: 12
   stock_alpha_overnight_stage_n_jobs: 1
   stock_ranker_model_n_jobs: 1
   sklearn_n_jobs: 1

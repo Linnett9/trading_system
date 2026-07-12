@@ -6,7 +6,7 @@ from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import JsonRepository
-from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
+from core.research.ml.stock_level.stock_level_artifact_io import artifact_identity, read_stock_level_artifact
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_model_set
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_target_model_set
 from core.research.ml.stock_level.overnight_stock_alpha_reporting import _path_payload
@@ -75,7 +75,7 @@ def stock_alpha_stage_stale_reason(
     config: dict[str, Any],
 ) -> str | None:
     if stage_name == "stock_artifact":
-        return _stock_artifact_stale_reason(expected.get("json_path"), config)
+        return _stock_artifact_stale_reason(expected, config)
     if stage_name == "alpha_features":
         return _source_path_stale_reason(
             expected.get("audit_json_path"),
@@ -115,13 +115,17 @@ def stock_alpha_stage_stale_reason(
     return None
 
 
-def _stock_artifact_stale_reason(json_path: Path | None, config: dict[str, Any]) -> str | None:
+def _stock_artifact_stale_reason(expected: dict[str, Path], config: dict[str, Any]) -> str | None:
+    json_path = expected.get("json_path")
     if json_path is None or not json_path.exists():
         return None
     try:
         payload = JsonRepository().read(json_path)
     except (OSError, ValueError):
         return "existing stock artifact metadata could not be read"
+    identity_reason = _completed_artifact_identity_mismatch(expected, payload)
+    if identity_reason:
+        return identity_reason
     active = _active_artifact_profile(config)
     if not _has_explicit_artifact_profile(config):
         return None
@@ -139,6 +143,59 @@ def _stock_artifact_stale_reason(json_path: Path | None, config: dict[str, Any])
     mismatches = _profile_mismatches(existing, active)
     if mismatches:
         return "existing stock artifact profile differs from active config: " + "; ".join(mismatches)
+    return None
+
+
+def _completed_artifact_identity_mismatch(
+    expected: dict[str, Path],
+    payload: dict[str, Any],
+) -> str | None:
+    artifact_path = expected.get("parquet_path") or expected.get("csv_path")
+    if artifact_path is None or not artifact_path.exists():
+        return "base stock artifact file is missing"
+    if not expected.get("markdown_path", Path()).exists():
+        return "base stock artifact markdown checkpoint is missing"
+    saved = dict(payload.get("canonical_artifact") or {})
+    if not saved:
+        return "existing base stock artifact metadata is missing canonical identity"
+    if saved.get("completion_status") != "complete":
+        return "existing base stock artifact completion status is not complete"
+    try:
+        rows = read_stock_level_artifact(
+            artifact_path,
+            required_columns={"rebalance_date", "symbol"},
+            expected_schema_fingerprint=saved.get("schema_fingerprint"),
+            allow_csv_fallback=artifact_path.suffix.lower() == ".csv",
+        )
+        current = artifact_identity(
+            artifact_path,
+            rows=rows,
+            fieldnames=saved.get("stable_column_order"),
+            artifact_format=saved.get("artifact_format"),
+            compression=saved.get("compression"),
+        )
+    except (OSError, ValueError) as exc:
+        return f"existing base stock artifact identity could not be verified: {exc}"
+    checks = {
+        "schema_fingerprint": "schema fingerprint",
+        "logical_content_sha256": "logical content hash",
+        "sha256": "file sha256",
+        "row_count": "row count",
+        "target_contract_version": "target contract version",
+        "benchmark_contract_version": "benchmark contract version",
+    }
+    for key, label in checks.items():
+        if saved.get(key) != current.get(key):
+            return f"existing base stock artifact {label} mismatch"
+    if payload.get("schema_fingerprint") and payload.get("schema_fingerprint") != saved.get("schema_fingerprint"):
+        return "base stock artifact schema fingerprint metadata mismatch"
+    if payload.get("logical_content_sha256") and payload.get("logical_content_sha256") != saved.get("logical_content_sha256"):
+        return "base stock artifact logical content hash metadata mismatch"
+    decision_grid = dict(payload.get("decision_grid") or {})
+    if not decision_grid.get("decision_grid_identity"):
+        return "base stock artifact decision-grid identity is missing"
+    if not decision_grid.get("exchange_calendar_identity"):
+        return "base stock artifact exchange-calendar identity is missing"
     return None
 
 

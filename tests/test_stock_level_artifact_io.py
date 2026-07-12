@@ -37,6 +37,7 @@ def test_stock_level_artifact_writes_zstd_parquet_and_inspection_sample(tmp_path
         },
     ]
     fieldnames = list(rows[0])
+    phase_timings = []
 
     identity = write_stock_level_artifact(
         path,
@@ -44,6 +45,10 @@ def test_stock_level_artifact_writes_zstd_parquet_and_inspection_sample(tmp_path
         fieldnames=fieldnames,
         config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
         inspection_sample_path=sample_path,
+        phase_timings=phase_timings,
+        write_phase_name="base Parquet writing",
+        validation_phase_name="base validation",
+        hash_phase_name="logical-content hashing",
     )
 
     assert path.exists()
@@ -59,6 +64,12 @@ def test_stock_level_artifact_writes_zstd_parquet_and_inspection_sample(tmp_path
     assert identity["unrealized_boundary_count"] == 1
     assert identity["duplicate_symbol_decision_keys"] == 0
     assert identity["inspection_sample"]["inspection_only"] is True
+    assert [phase["phase_name"] for phase in phase_timings] == [
+        "base Parquet writing",
+        "base validation",
+        "logical-content hashing",
+    ]
+    assert all("elapsed_seconds" in phase for phase in phase_timings)
 
     loaded = read_stock_level_artifact(path, required_columns={"rebalance_date", "symbol"})
     assert loaded[0]["symbol"] == "AAA"

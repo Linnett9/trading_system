@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from core.research.framework.config import StockLevelResearchConfig
 from core.research.ml.stock_level import stock_alpha_run_manifest
 from core.research.ml.stock_level.overnight_stock_alpha_runner import (
     OvernightStockAlphaStages,
@@ -20,6 +21,10 @@ from core.research.ml.stock_level.run_manifest.service import (
     validate_canonical_output_paths,
     write_stock_alpha_run_status,
 )
+from core.research.ml.stock_level.overnight_stock_alpha_validation import (
+    stock_alpha_stage_stale_reason,
+)
+from core.research.ml.stock_level.stock_level_artifact_io import write_stock_level_artifact
 
 
 @dataclass(frozen=True)
@@ -69,7 +74,7 @@ def test_run_status_detects_completed_missing_and_partial_stages(tmp_path):
     config = _config(tmp_path)
     output_dir = tmp_path / "stock_alpha" / "benchmark"
     expected = expected_stage_output_paths(config, output_dir)
-    _write_outputs(expected["stock_artifact"])
+    _write_base_checkpoint(config, expected["stock_artifact"])
     _write_text(expected["baseline_benchmark"]["json_path"], "{}\n")
 
     status = inspect_stock_alpha_run_status(config)
@@ -90,9 +95,137 @@ def test_run_status_command_writes_inspection_outputs(tmp_path):
     assert paths.json_path == tmp_path / "stock_alpha" / "benchmark" / "stock_alpha_run_status.json"
     assert paths.markdown_path.exists()
     assert payload["mode"] == "ml-stock-alpha-run-status"
-    assert payload["resume_command"].endswith(
-        "main.py --mode ml-overnight-stock-alpha --config config/config.yaml --profile benchmark"
+    assert ".\\main.py --mode ml-overnight-stock-alpha --config .\\config\\config.yaml --profile benchmark" in payload["resume_command"]
+    assert "$env:PYTHONDONTWRITEBYTECODE='1';" in payload["resume_command"]
+
+
+def test_completed_base_checkpoint_identity_allows_resume_from_alpha(tmp_path):
+    config = _config(tmp_path)
+    output_dir = tmp_path / "stock_alpha" / "benchmark"
+    expected = expected_stage_output_paths(config, output_dir)
+    artifact_path = expected["stock_artifact"]["parquet_path"]
+    rows = [
+        {
+            "rebalance_date": "2024-01-02",
+            "symbol": "AAA",
+            "decision_timestamp": "2024-01-02",
+            "actual_forward_return_10d": "0.1",
+            "target_provenance_contract_version": "stock_level_target_provenance_v1",
+            "source_dataset_hash": "source-a",
+        }
+    ]
+    identity = write_stock_level_artifact(
+        artifact_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config=config,
     )
+    _write_text(expected["stock_artifact"]["markdown_path"], "complete\n")
+    _write_text(
+        expected["stock_artifact"]["json_path"],
+        json.dumps(
+            {
+                "canonical_artifact": identity,
+                "schema_fingerprint": identity["schema_fingerprint"],
+                "logical_content_sha256": identity["logical_content_sha256"],
+                "decision_grid": {
+                    "decision_grid_identity": "grid-a",
+                    "exchange_calendar_identity": "calendar-a",
+                },
+                "stock_alpha_artifact_profile": {
+                    "stock_alpha_artifact_universe_paths": [],
+                    "stock_alpha_artifact_max_symbols": None,
+                    "stock_alpha_artifact_symbol_sample_method": "liquidity_ranked",
+                },
+            }
+        ),
+    )
+
+    status = inspect_stock_alpha_run_status(config)
+    reason = stock_alpha_stage_stale_reason(
+        "stock_artifact",
+        expected["stock_artifact"],
+        StockLevelResearchConfig.from_mapping(config),
+        config,
+    )
+
+    assert reason is None
+    assert "stock_artifact" in status["completed_stages"]
+    assert status["next_recommended_stage"] == "alpha_features"
+
+
+def test_partial_base_checkpoint_is_rejected_for_resume(tmp_path):
+    config = _config(tmp_path)
+    output_dir = tmp_path / "stock_alpha" / "benchmark"
+    expected = expected_stage_output_paths(config, output_dir)
+    artifact_path = expected["stock_artifact"]["parquet_path"]
+    rows = [{"rebalance_date": "2024-01-02", "symbol": "AAA"}]
+    identity = write_stock_level_artifact(
+        artifact_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config=config,
+    )
+    _write_text(expected["stock_artifact"]["markdown_path"], "complete\n")
+    identity["completion_status"] = "partial"
+    _write_text(
+        expected["stock_artifact"]["json_path"],
+        json.dumps(
+            {
+                "canonical_artifact": identity,
+                "decision_grid": {
+                    "decision_grid_identity": "grid-a",
+                    "exchange_calendar_identity": "calendar-a",
+                },
+            }
+        ),
+    )
+
+    reason = stock_alpha_stage_stale_reason(
+        "stock_artifact",
+        expected["stock_artifact"],
+        StockLevelResearchConfig.from_mapping(config),
+        config,
+    )
+
+    assert "completion status is not complete" in reason
+
+
+def test_identity_mismatch_base_checkpoint_is_rejected(tmp_path):
+    config = _config(tmp_path)
+    output_dir = tmp_path / "stock_alpha" / "benchmark"
+    expected = expected_stage_output_paths(config, output_dir)
+    artifact_path = expected["stock_artifact"]["parquet_path"]
+    rows = [{"rebalance_date": "2024-01-02", "symbol": "AAA"}]
+    identity = write_stock_level_artifact(
+        artifact_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config=config,
+    )
+    _write_text(expected["stock_artifact"]["markdown_path"], "complete\n")
+    identity["logical_content_sha256"] = "bad"
+    _write_text(
+        expected["stock_artifact"]["json_path"],
+        json.dumps(
+            {
+                "canonical_artifact": identity,
+                "decision_grid": {
+                    "decision_grid_identity": "grid-a",
+                    "exchange_calendar_identity": "calendar-a",
+                },
+            }
+        ),
+    )
+
+    reason = stock_alpha_stage_stale_reason(
+        "stock_artifact",
+        expected["stock_artifact"],
+        StockLevelResearchConfig.from_mapping(config),
+        config,
+    )
+
+    assert "logical content hash mismatch" in reason
 
 
 def test_run_status_reports_legacy_path_warnings_when_disabled(tmp_path, monkeypatch):
@@ -213,6 +346,47 @@ def _write_outputs(paths: dict[str, Path]) -> None:
             _write_text(path, "{}\n")
         else:
             _write_text(path, f"{key}\n")
+
+
+def _write_base_checkpoint(config: dict, paths: dict[str, Path]) -> dict:
+    rows = [
+        {
+            "rebalance_date": "2024-01-02",
+            "symbol": "AAA",
+            "decision_timestamp": "2024-01-02",
+            "actual_forward_return_10d": "0.1",
+            "target_provenance_contract_version": "stock_level_target_provenance_v1",
+            "source_dataset_hash": "source-a",
+        }
+    ]
+    artifact_path = paths["parquet_path"]
+    identity = write_stock_level_artifact(
+        artifact_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config=config,
+    )
+    _write_text(paths["markdown_path"], "complete\n")
+    _write_text(
+        paths["json_path"],
+        json.dumps(
+            {
+                "canonical_artifact": identity,
+                "schema_fingerprint": identity["schema_fingerprint"],
+                "logical_content_sha256": identity["logical_content_sha256"],
+                "decision_grid": {
+                    "decision_grid_identity": "grid-a",
+                    "exchange_calendar_identity": "calendar-a",
+                },
+                "stock_alpha_artifact_profile": {
+                    "stock_alpha_artifact_universe_paths": [],
+                    "stock_alpha_artifact_max_symbols": None,
+                    "stock_alpha_artifact_symbol_sample_method": "liquidity_ranked",
+                },
+            }
+        ),
+    )
+    return identity
 
 
 def _write_text(path: Path, content: str) -> None:

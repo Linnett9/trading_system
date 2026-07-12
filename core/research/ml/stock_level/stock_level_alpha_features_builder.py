@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from bisect import bisect_left
 from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
@@ -40,11 +41,23 @@ def build_stock_level_alpha_features(
     if n_jobs < 1:
         raise ValueError("stock_alpha_feature_n_jobs must be at least one")
     started = time.perf_counter()
+    phase_timings: list[dict[str, Any]] = []
+    phase_started, phase_start_ts = _phase_start()
     prepared_histories = {
         symbol.upper(): _prepare_history(history)
         for symbol, history in price_histories.items()
     }
+    _record_phase(
+        phase_timings,
+        "symbol-data preparation",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(price_histories),
+    )
     spy_history = prepared_histories.get(spy_symbol.upper(), [])
+    phase_started, phase_start_ts = _phase_start()
     enriched_rows = _build_symbol_level_features(
         rows,
         prepared_histories,
@@ -52,16 +65,47 @@ def build_stock_level_alpha_features(
         n_jobs=n_jobs,
         executor_cls=executor_cls or ProcessPoolExecutor,
     )
+    symbol_count = len({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
+    _record_phase(
+        phase_timings,
+        "symbol-task execution",
+        phase_started,
+        phase_start_ts,
+        requested_workers=n_jobs,
+        effective_workers=min(n_jobs, symbol_count) if symbol_count else 1,
+        task_count=symbol_count,
+        execution_mode="serial" if n_jobs == 1 or symbol_count <= 1 else "process_pool",
+    )
+    phase_started, phase_start_ts = _phase_start()
     enriched_rows.sort(
         key=lambda row: (
             str(row.get("rebalance_date", "")),
             str(row.get("symbol", "")).upper(),
         )
     )
+    _record_phase(
+        phase_timings,
+        "deterministic sorting",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(enriched_rows),
+    )
+    phase_started, phase_start_ts = _phase_start()
     _add_cross_sectional_features(enriched_rows)
+    _record_phase(
+        phase_timings,
+        "cross-sectional calculation",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len({str(row.get("rebalance_date", "")) for row in enriched_rows}),
+    )
     audit = _audit(rows, enriched_rows, prepared_histories, source_path, n_jobs)
-    symbol_count = len({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
     audit["parallelism"].update({"requested_workers": n_jobs, "effective_workers": min(n_jobs, symbol_count), "symbol_count": symbol_count, "elapsed_seconds": time.perf_counter() - started})
+    audit["phase_timings"] = phase_timings
     return enriched_rows, audit
 def _build_symbol_level_features(
     rows: list[dict[str, Any]],
@@ -225,3 +269,32 @@ def _history_before(
 ) -> list[dict[str, float | str]]:
     dates = [str(row["date"]) for row in history]
     return history[: bisect_left(dates, rebalance_date)]
+
+
+def _phase_start() -> tuple[float, str]:
+    return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _record_phase(
+    timings: list[dict[str, Any]],
+    phase_name: str,
+    started: float,
+    start_timestamp: str,
+    *,
+    requested_workers: int,
+    effective_workers: int,
+    task_count: int | None = None,
+    execution_mode: str = "serial",
+) -> None:
+    timings.append(
+        {
+            "phase_name": phase_name,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.perf_counter() - started),
+            "requested_workers": requested_workers,
+            "effective_workers": effective_workers,
+            "task_count": task_count,
+            "execution_mode": execution_mode,
+        }
+    )

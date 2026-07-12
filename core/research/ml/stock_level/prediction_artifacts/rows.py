@@ -4,6 +4,7 @@ import math
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 from core.research.ml.runtime_parallelism import apply_worker_thread_environment
@@ -56,15 +57,37 @@ def build_stock_level_prediction_artifacts(
     if inner_thread_limit < 1:
         raise ValueError("stock_level_dataset_inner_threads must be at least one")
     started = time.perf_counter()
+    phase_timings: list[dict[str, Any]] = []
     sector_by_symbol = sector_by_symbol or {}
+    phase_started, phase_start_ts = _phase_start()
     artifact_by_date_symbol = _artifact_by_date_symbol(artifact_rows)
     symbols = sorted({symbol.upper() for symbol in universe_symbols if symbol})
+    _record_phase(
+        phase_timings,
+        "context alignment",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(artifact_rows),
+    )
+    phase_started, phase_start_ts = _phase_start()
     prepared_symbol_data = {
         symbol: _prepare_symbol_data(closes_by_symbol.get(symbol, {}))
         for symbol in symbols
     }
     market_symbol = market_symbol.upper()
     market_data = _prepare_symbol_data(closes_by_symbol.get(market_symbol, {}))
+    _record_phase(
+        phase_timings,
+        "symbol-data preparation",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(symbols),
+    )
+    phase_started, phase_start_ts = _phase_start()
     decision_grid = resolve_decision_grid(
         expanded_rows=expanded_rows,
         artifact_rows=artifact_rows,
@@ -76,6 +99,15 @@ def build_stock_level_prediction_artifacts(
         end_date=decision_grid_end_date,
         max_sessions=decision_grid_max_sessions,
         min_history_sessions=decision_grid_min_history_sessions,
+    )
+    _record_phase(
+        phase_timings,
+        "daily-grid construction",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(symbols),
     )
     dates = decision_grid.dates
     rows, parallelism = _build_dataset_symbol_rows(
@@ -90,15 +122,37 @@ def build_stock_level_prediction_artifacts(
         dataset_workers=dataset_workers,
         inner_thread_limit=inner_thread_limit,
         executor_cls=executor_cls or ProcessPoolExecutor,
+        phase_timings=phase_timings,
     )
+    phase_started, phase_start_ts = _phase_start()
     _add_cross_sectional_targets(rows)
+    _record_phase(
+        phase_timings,
+        "cross-sectional calculation",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(dates),
+    )
+    phase_started, phase_start_ts = _phase_start()
     audit = _audit(rows, symbols, dates, artifact_rows)
+    _record_phase(
+        phase_timings,
+        "base validation",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(rows),
+    )
     audit["decision_grid"] = decision_grid.audit
     audit.update(decision_grid.audit)
     audit["dataset_parallelism"] = {
         **parallelism,
-        "elapsed_seconds": time.perf_counter() - started,
+            "elapsed_seconds": time.perf_counter() - started,
     }
+    audit["phase_timings"] = phase_timings
     audit["market_residual_label_generation"] = {
         "market_symbol": market_symbol,
         "benchmark_symbol": market_symbol,
@@ -125,7 +179,9 @@ def _build_dataset_symbol_rows(
     dataset_workers: int,
     inner_thread_limit: int,
     executor_cls: type,
+    phase_timings: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    phase_started, phase_start_ts = _phase_start()
     tasks = [
         {
             "symbol": symbol,
@@ -145,6 +201,17 @@ def _build_dataset_symbol_rows(
     ]
     task_count = len(tasks)
     effective_workers = min(dataset_workers, task_count) if task_count else 1
+    execution_mode = "serial" if effective_workers <= 1 else "process_pool"
+    _record_phase(
+        phase_timings,
+        "symbol-task dispatch",
+        phase_started,
+        phase_start_ts,
+        requested_workers=dataset_workers,
+        effective_workers=effective_workers,
+        task_count=task_count,
+        execution_mode=execution_mode,
+    )
     metadata = {
         "parallelism_owner": "stock_level_prediction_artifacts_symbol_tasks",
         "requested_workers": dataset_workers,
@@ -154,7 +221,7 @@ def _build_dataset_symbol_rows(
         "failed_task_count": 0,
         "inner_thread_limit": inner_thread_limit,
         "nested_parallelism_prevented": inner_thread_limit == 1,
-        "worker_execution_mode": "serial" if effective_workers <= 1 else "process_pool",
+        "worker_execution_mode": execution_mode,
         "worker_process_ids": [],
         "task_symbols": list(symbols),
     }
@@ -163,22 +230,54 @@ def _build_dataset_symbol_rows(
         return [], metadata
     results: list[dict[str, Any]] = []
     try:
+        phase_started, phase_start_ts = _phase_start()
         if effective_workers <= 1:
             results = [_build_dataset_symbol_task(task) for task in tasks]
         else:
             with executor_cls(max_workers=effective_workers) as executor:
                 results = list(executor.map(_build_dataset_symbol_task, tasks))
+        _record_phase(
+            phase_timings,
+            "symbol-task execution",
+            phase_started,
+            phase_start_ts,
+            requested_workers=dataset_workers,
+            effective_workers=effective_workers,
+            task_count=task_count,
+            execution_mode=execution_mode,
+        )
     except Exception:
         metadata["failed_task_count"] = task_count - len(results)
         raise
+    phase_started, phase_start_ts = _phase_start()
     metadata["completed_task_count"] = len(results)
     metadata["worker_process_ids"] = sorted({
         int(result["worker_process_id"]) for result in results if result.get("worker_process_id")
     })
+    _record_phase(
+        phase_timings,
+        "worker result collection",
+        phase_started,
+        phase_start_ts,
+        requested_workers=dataset_workers,
+        effective_workers=effective_workers,
+        task_count=len(results),
+        execution_mode="coordinator",
+    )
+    phase_started, phase_start_ts = _phase_start()
     rows = _validate_and_merge_symbol_results(
         results,
         expected_symbols=symbols,
         expected_dates=dates,
+    )
+    _record_phase(
+        phase_timings,
+        "deterministic sorting",
+        phase_started,
+        phase_start_ts,
+        requested_workers=1,
+        effective_workers=1,
+        task_count=len(rows),
     )
     return rows, metadata
 
@@ -325,6 +424,7 @@ def _prepare_symbol_data(
         "close": close,
         "dollar_volume": dollar_volume,
         "close_dates": close_dates,
+        "close_index_by_date": {date: index for index, date in enumerate(close_dates)},
         "close_values": [close[date] for date in close_dates],
         "dollar_volume_dates": dollar_volume_dates,
         "dollar_volume_values": [
@@ -487,3 +587,32 @@ def _expanded_dates(rows: list[dict[str, str]]) -> list[str]:
         for row in rows
         if row.get("rebalance_date") or row.get("feature_date")
     })
+
+
+def _phase_start() -> tuple[float, str]:
+    return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _record_phase(
+    timings: list[dict[str, Any]],
+    phase_name: str,
+    started: float,
+    start_timestamp: str,
+    *,
+    requested_workers: int,
+    effective_workers: int,
+    task_count: int | None = None,
+    execution_mode: str = "serial",
+) -> None:
+    timings.append(
+        {
+            "phase_name": phase_name,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.perf_counter() - started),
+            "requested_workers": requested_workers,
+            "effective_workers": effective_workers,
+            "task_count": task_count,
+            "execution_mode": execution_mode,
+        }
+    )

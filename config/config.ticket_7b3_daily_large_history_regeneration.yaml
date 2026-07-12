@@ -16,8 +16,8 @@ ml:
   stock_level_dataset_workers: 12
   stock_level_dataset_inner_threads: 1
   stock_alpha_allow_legacy_output_paths: false
-  stock_alpha_resume_existing_outputs: false
-  stock_alpha_force_refresh: true
+  stock_alpha_resume_existing_outputs: true
+  stock_alpha_force_refresh: false
   stock_alpha_stages:
     stock_artifact: true
     alpha_features: true
@@ -38,7 +38,7 @@ ml:
   stock_alpha_dev_required_symbols:
   - SPY
   stock_alpha_run_profile: ticket_7b3_daily_large_history_regeneration
-  stock_alpha_feature_n_jobs: 1
+  stock_alpha_feature_n_jobs: 12
   stock_alpha_overnight_stage_n_jobs: 1
   stock_ranker_model_n_jobs: 1
   sklearn_n_jobs: 1

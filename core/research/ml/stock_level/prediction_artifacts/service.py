@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
@@ -60,6 +62,8 @@ from core.research.ml.stock_level.stock_level_artifact_io import (
 def write_stock_level_prediction_artifacts(
     config: dict[str, Any],
 ) -> StockLevelPredictionArtifactsPaths:
+    phase_timings: list[dict[str, Any]] = []
+    phase_started, phase_start_ts = _phase_start()
     settings = StockLevelResearchConfig.from_mapping(config)
     apply_worker_thread_environment(settings.dataset_inner_threads)
     output_dir = _output_dir(config)
@@ -70,11 +74,28 @@ def write_stock_level_prediction_artifacts(
         config.get("ml", {}).get("sector_reference_path"),
         inline_mapping=dict(config.get("ml", {}).get("sector_by_symbol", {})),
     )
+    universe_symbols = _universe_symbols(config)
+    _record_phase(
+        phase_timings,
+        "configuration and source loading",
+        phase_started,
+        phase_start_ts,
+        task_count=len(expanded_rows) + len(meta_rows),
+    )
+    phase_started, phase_start_ts = _phase_start()
+    closes_by_symbol = _load_closes_by_symbol(config)
+    _record_phase(
+        phase_timings,
+        "price-history loading",
+        phase_started,
+        phase_start_ts,
+        task_count=len(closes_by_symbol),
+    )
     rows, audit = build_stock_level_prediction_artifacts(
         expanded_rows=expanded_rows,
         artifact_rows=meta_rows,
-        universe_symbols=_universe_symbols(config),
-        closes_by_symbol=_load_closes_by_symbol(config),
+        universe_symbols=universe_symbols,
+        closes_by_symbol=closes_by_symbol,
         sector_by_symbol=sector_by_symbol,
         market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
         dataset_workers=settings.dataset_workers,
@@ -92,6 +113,7 @@ def write_stock_level_prediction_artifacts(
             )
         ),
     )
+    audit["phase_timings"] = [*phase_timings, *audit.get("phase_timings", [])]
     paths = StockLevelPredictionArtifactsPaths(
         parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts", config),
         json_path=output_dir / "stock_level_prediction_artifacts.json",
@@ -105,6 +127,10 @@ def write_stock_level_prediction_artifacts(
         fieldnames=fieldnames,
         config=config,
         inspection_sample_path=paths.sample_csv_path,
+        phase_timings=audit["phase_timings"],
+        write_phase_name="base Parquet writing",
+        validation_phase_name="base validation",
+        hash_phase_name="logical-content hashing",
     )
     audit.update(
         stock_alpha_report_metadata(
@@ -130,3 +156,32 @@ def write_stock_level_prediction_artifacts(
     writer.write_json(paths.json_path, audit)
     writer.write_markdown(paths.markdown_path, _markdown(audit))
     return paths
+
+
+def _phase_start() -> tuple[float, str]:
+    return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _record_phase(
+    timings: list[dict[str, Any]],
+    phase_name: str,
+    started: float,
+    start_timestamp: str,
+    *,
+    requested_workers: int = 1,
+    effective_workers: int = 1,
+    task_count: int | None = None,
+    execution_mode: str = "serial",
+) -> None:
+    timings.append(
+        {
+            "phase_name": phase_name,
+            "start_timestamp": start_timestamp,
+            "end_timestamp": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": max(0.0, time.perf_counter() - started),
+            "requested_workers": requested_workers,
+            "effective_workers": effective_workers,
+            "task_count": task_count,
+            "execution_mode": execution_mode,
+        }
+    )

@@ -65,6 +65,10 @@ def _write_enriched_csv(
     *,
     config: dict[str, Any] | None = None,
     sample_path: Path | None = None,
+    phase_timings: list[dict[str, Any]] | None = None,
+    write_phase_name: str | None = None,
+    validation_phase_name: str | None = None,
+    hash_phase_name: str | None = None,
 ) -> dict[str, Any] | None:
     source_columns = list(source_rows[0]) if source_rows else []
     fieldnames = [*source_columns, *ENGINEERED_FEATURE_COLUMNS]
@@ -75,6 +79,10 @@ def _write_enriched_csv(
             fieldnames=fieldnames,
             config=config or {"ml": {"stock_level_artifact_format": "parquet"}},
             inspection_sample_path=sample_path,
+            phase_timings=phase_timings,
+            write_phase_name=write_phase_name,
+            validation_phase_name=validation_phase_name,
+            hash_phase_name=hash_phase_name,
         )
     ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
     return None
