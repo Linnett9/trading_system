@@ -1,0 +1,11 @@
+name: ticket_7b_probe
+source: ticket_7b_bounded_probe
+symbols:
+  - SPY
+  - QQQ
+  - AAPL
+  - MSFT
+  - NVDA
+  - TSLA
+  - JPM
+  - XOM
