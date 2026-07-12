@@ -87,6 +87,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-target-tournament":
         _commands("ml_commands").run_ml_selector_target_tournament(config)
         return
+    if args.mode == "ml-selector-cost-aware-policy-evaluation":
+        _commands("ml_commands").run_ml_selector_cost_aware_policy_evaluation(config)
+        return
     if args.mode == "ml-stock-level-target-comparison":
         _commands("ml_commands").run_ml_stock_level_target_comparison(config)
         return

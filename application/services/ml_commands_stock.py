@@ -127,6 +127,36 @@ def run_ml_selector_target_tournament(config):
     print(f"JSON report: {result.report_json_path}")
     print(f"Markdown report: {result.report_markdown_path}")
 
+def run_ml_selector_cost_aware_policy_evaluation(config):
+    from core.research.ml.stock_level.selector_cost_aware_policy_evaluation import (
+        write_selector_cost_aware_policy_evaluation,
+    )
+    import json
+
+    result = write_selector_cost_aware_policy_evaluation(config)
+    payload = json.loads(result.comparison_json_path.read_text(encoding="utf-8"))
+    print("\nSELECTOR COST-AWARE POLICY EVALUATION")
+    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT POLICY PROMOTION EVIDENCE")
+    print(f"Resolved prediction artifact: {payload['source_prediction_artifact_identity'].get('resolved_artifact_path') or payload['source_prediction_artifact_identity'].get('path')}")
+    print(f"Candidate identity: {payload['candidate_identity'].get('candidate_id')}")
+    print(f"OOS date range: {payload['evaluation_date_range']['first']}..{payload['evaluation_date_range']['last']}")
+    print(f"Policies compared: {', '.join(row['policy_id'] for row in payload['policy_contracts'])}")
+    print(f"Cost model identity: {payload['cost_model_identity']}")
+    for row in payload["policy_metrics"]:
+        print(
+            f"policy={row['policy_id']} turnover_avoided={row['turnover_avoided_vs_baseline']} "
+            f"costs_avoided={row['costs_avoided_vs_baseline']} trades={row['number_of_trades']} "
+            f"net_return={row['net_cumulative_return']}"
+        )
+    print(f"Metrics: {result.metrics_path}")
+    print(f"Period returns: {result.period_returns_path}")
+    print(f"Holdings: {result.holdings_path}")
+    print(f"Trades: {result.trades_path}")
+    print(f"Decisions: {result.decisions_path}")
+    print(f"JSON report: {result.comparison_json_path}")
+    print(f"Markdown report: {result.comparison_markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,

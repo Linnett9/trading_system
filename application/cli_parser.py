@@ -59,6 +59,7 @@ def parse_args():
             "ml-selector-exposure-comparison",
             "ml-selector-portfolio-promotion",
             "ml-selector-target-tournament",
+            "ml-selector-cost-aware-policy-evaluation",
             "ml-stock-level-target-comparison",
             "ml-stock-level-portfolio-replay",
             "ml-stock-selector-rebalance-dataset",
