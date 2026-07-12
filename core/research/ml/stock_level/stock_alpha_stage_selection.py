@@ -142,8 +142,8 @@ class StockAlphaStageSelector:
         if not raw_path:
             return False
         path = Path(str(raw_path))
-        if path == self.settings.output_dir / "stock_level_prediction_artifacts.csv":
+        if path == self.settings.base_artifact_path:
             return False
-        if path.name != "stock_level_prediction_artifacts_enriched.csv":
+        if path.name not in {"stock_level_prediction_artifacts_enriched.csv", "stock_level_prediction_artifacts_enriched.parquet"}:
             return False
         return path.exists() and path.stat().st_size > 0

@@ -84,6 +84,11 @@ CONTEXT_COLUMNS = (
 
 @dataclass(frozen=True)
 class StockLevelPredictionArtifactsPaths:
-    csv_path: Path
+    parquet_path: Path
     json_path: Path
     markdown_path: Path
+    sample_csv_path: Path | None = None
+
+    @property
+    def csv_path(self) -> Path:
+        return self.parquet_path

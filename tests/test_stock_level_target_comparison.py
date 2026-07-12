@@ -10,7 +10,7 @@ def test_target_with_zero_eligible_dates_is_skipped(tmp_path):
     with artifact.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["rebalance_date", "symbol", "actual_forward_return_10d", "actual_market_residual_return_10d"])
         writer.writeheader(); writer.writerow({"rebalance_date": "2024-01-01", "symbol": "AAA", "actual_forward_return_10d": .1, "actual_market_residual_return_10d": ""})
-    paths = write_stock_level_target_comparison({"ml": {"output_dir": str(tmp_path), "stock_level_prediction_artifacts_path": str(artifact), "stock_alpha_run_size": "dev", "stock_ranker_min_train_dates": 2, "stock_ranker_embargo_dates": 1, "stock_ranker_target_columns": ["actual_market_residual_return_10d"], "stock_ranker_include_sequence_models": False}})
+    paths = write_stock_level_target_comparison({"ml": {"output_dir": str(tmp_path), "stock_level_prediction_artifacts_path": str(artifact), "stock_alpha_run_size": "dev", "stock_ranker_min_train_dates": 2, "stock_ranker_embargo_dates": 1, "stock_ranker_target_columns": ["actual_market_residual_return_10d"], "stock_ranker_include_sequence_models": False, "stock_level_allow_csv_artifact_fallback": True}})
     payload = json.loads(paths.json_path.read_text())
     row = payload["targets"][0]
     assert payload["status"] == "completed_with_skips"
@@ -30,7 +30,7 @@ def test_target_comparison_module_has_no_operational_imports():
 def test_preflight_distinguishes_missing_and_all_null_columns(tmp_path):
     artifact = tmp_path / "artifact.csv"
     artifact.write_text("rebalance_date,symbol,all_null\n2024-01-01,AAA,\n", encoding="utf-8")
-    paths = write_stock_level_target_comparison({"ml": {"output_dir": str(tmp_path), "stock_level_prediction_artifacts_path": str(artifact), "stock_alpha_run_size": "dev", "stock_ranker_min_train_dates": 1, "stock_ranker_embargo_dates": 0, "stock_ranker_target_columns": ["missing", "all_null"], "stock_ranker_include_sequence_models": False}})
+    paths = write_stock_level_target_comparison({"ml": {"output_dir": str(tmp_path), "stock_level_prediction_artifacts_path": str(artifact), "stock_alpha_run_size": "dev", "stock_ranker_min_train_dates": 1, "stock_ranker_embargo_dates": 0, "stock_ranker_target_columns": ["missing", "all_null"], "stock_ranker_include_sequence_models": False, "stock_level_allow_csv_artifact_fallback": True}})
     rows = {row["target_column"]: row for row in json.loads(paths.json_path.read_text())["targets"]}
     assert rows["missing"]["skip_reason_code"] == "column_missing"
     assert rows["missing"]["target_column_present"] is False

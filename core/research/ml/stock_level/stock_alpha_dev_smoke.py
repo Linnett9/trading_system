@@ -47,7 +47,7 @@ def write_stock_alpha_dev_smoke(config: dict[str, Any], *, stages: StockAlphaDev
         print(f"[stock-alpha-dev-smoke] START {name}"); started = time.perf_counter(); result = action(); elapsed = time.perf_counter() - started
         timings[name] = {"status": "executed", "seconds": elapsed}; print(f"[stock-alpha-dev-smoke] END {name} elapsed={elapsed:.3f}s"); return result
 
-    base = Path(ml.get("stock_level_base_prediction_artifacts_path", output / "stock_level_prediction_artifacts.csv"))
+    base = Path(ml.get("stock_level_base_prediction_artifacts_path", settings.base_artifact_path))
     artifact_stale = _artifact_status(smoke, StockLevelResearchConfig.from_mapping(smoke))["refresh_required"] or not _has_required_target_schema(base)
     if not base.exists() or artifact_stale: run("stock-level artifact", lambda: stages.artifact(smoke))
     else: timings["stock-level artifact"] = {"status": "skipped_existing", "seconds": 0.0}

@@ -36,14 +36,16 @@ def expected_stage_output_paths(
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> dict[str, dict[str, Path]]:
+    ml = dict(config.get("ml", {}) or {})
+    artifact_suffix = ".parquet" if str(ml.get("stock_level_artifact_format", "parquet")).lower() == "parquet" else ".csv"
     return {
         "stock_artifact": {
-            "csv_path": output_dir / "stock_level_prediction_artifacts.csv",
+            "parquet_path" if artifact_suffix == ".parquet" else "csv_path": output_dir / f"stock_level_prediction_artifacts{artifact_suffix}",
             "json_path": output_dir / "stock_level_prediction_artifacts.json",
             "markdown_path": output_dir / "stock_level_prediction_artifacts.md",
         },
         "alpha_features": {
-            "enriched_csv_path": output_dir / "stock_level_prediction_artifacts_enriched.csv",
+            "enriched_parquet_path" if artifact_suffix == ".parquet" else "enriched_csv_path": output_dir / f"stock_level_prediction_artifacts_enriched{artifact_suffix}",
             "audit_csv_path": output_dir / "stock_level_alpha_feature_audit.csv",
             "audit_json_path": output_dir / "stock_level_alpha_feature_audit.json",
             "audit_markdown_path": output_dir / "stock_level_alpha_feature_audit.md",
@@ -110,7 +112,7 @@ def validate_canonical_output_paths(
             continue
         is_legacy = LEGACY_OUTPUT_ROOT.as_posix() in path.as_posix()
         if is_legacy and legacy_output_paths_allowed:
-            warnings.append({"path": str(path), "warning": "legacy output path allowed"})
+            warnings.append({"path": path.as_posix(), "warning": "legacy output path allowed"})
             continue
         raise ValueError(
             f"Output-root validation failed for {key}: "

@@ -107,7 +107,9 @@ def stale_output_warnings(
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> list[dict[str, str]]:
-    artifact = output_dir / "stock_level_prediction_artifacts.csv"
+    ml = dict(config.get("ml", {}) or {})
+    suffix = ".parquet" if str(ml.get("stock_level_artifact_format", "parquet")).lower() == "parquet" else ".csv"
+    artifact = output_dir / f"stock_level_prediction_artifacts{suffix}"
     if not artifact.exists():
         return []
     artifact_mtime = artifact.stat().st_mtime
@@ -158,7 +160,7 @@ def legacy_output_warnings(*, legacy_output_paths_allowed: bool) -> list[dict[st
     ][:20]
     return [
         {
-            "path": str(path),
+            "path": path.as_posix(),
             "warning": "legacy stock-alpha output path detected but legacy paths are disabled",
         }
         for path in files

@@ -181,7 +181,7 @@ def test_alpha_feature_stage_reads_canonical_stock_artifact_path(tmp_path):
     _run(tmp_path, root=root, alpha_features=alpha_features)
 
     assert Path(seen["alpha_features"]["stock_level_base_prediction_artifacts_path"]) == (
-        root / "benchmark" / "stock_level_prediction_artifacts.csv"
+        root / "benchmark" / "stock_level_prediction_artifacts.parquet"
     )
 
 
@@ -207,7 +207,7 @@ def test_resume_does_not_use_legacy_ml_output_when_disabled(tmp_path):
 
     summary = _run(tmp_path, root=root)
 
-    assert summary["artifact_status"]["path"] == str(root / "benchmark" / "stock_level_prediction_artifacts.csv")
+    assert summary["artifact_status"]["path"] == str(root / "benchmark" / "stock_level_prediction_artifacts.parquet")
     assert "reports/ml/benchmark/ml" not in json.dumps(summary)
 
 

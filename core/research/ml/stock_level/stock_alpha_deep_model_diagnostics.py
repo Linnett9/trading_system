@@ -28,6 +28,7 @@ from core.research.ml.stock_level_benchmark_types import (
     TARGET_COLUMN,
 )
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 
 GUARDRAILS = {"research_only": True, "trading_impact": "none", "production_validated": False, "promotion_thresholds_changed": False}
 REQUIRED_FIELDS = (
@@ -153,7 +154,11 @@ def write_stock_alpha_deep_model_diagnostics(config: Mapping[str, Any]) -> DeepM
         if model_name not in SEQUENCE_MODEL_NAMES:
             raise ValueError(f"stock_deep_diagnostic_model must be one of: {', '.join(SEQUENCE_MODEL_NAMES)}")
     settings = StockLevelResearchConfig.from_mapping(config); output = stock_alpha_output_dir(config); caps = apply_stock_alpha_worker_caps(dict(config))
-    rows = CsvRowRepository().read(settings.artifact_path); features = _available_feature_columns(rows, include_engineered=settings.include_engineered_features)
+    rows = read_stock_level_artifact(
+        settings.artifact_path,
+        required_columns={"rebalance_date", "symbol"},
+        allow_csv_fallback=bool(ml.get("stock_level_allow_csv_artifact_fallback", False)),
+    ); features = _available_feature_columns(rows, include_engineered=settings.include_engineered_features)
     if target != TARGET_COLUMN: rows = [dict(row, **{TARGET_COLUMN: row.get(target, "")}) for row in rows]
     news_readiness = check_news_transformer_readiness(config, rows)
     if news_readiness.transformer_available:
@@ -230,7 +235,11 @@ def _merge_news_features(config: Mapping[str, Any], rows: list[dict[str, Any]]) 
     path_value = dict(config.get("ml", {}) or {}).get("stock_alpha_news_features_path")
     if not path_value:
         return rows
-    feature_rows = CsvRowRepository().read(Path(str(path_value)))
+    feature_path = Path(str(path_value))
+    feature_rows = read_stock_level_artifact(
+        feature_path,
+        allow_csv_fallback=feature_path.suffix.lower() == ".csv",
+    )
     by_key = {
         (str(row.get("rebalance_date", ""))[:10], str(row.get("symbol", "")).strip().upper()): row
         for row in feature_rows

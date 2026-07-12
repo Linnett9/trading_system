@@ -74,6 +74,7 @@ from core.research.framework.logging import ResearchStageLogger
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 from core.research.ml.stock_level.stock_alpha_news_contract import validate_news_contract
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
 from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, StockAlphaModelSet, resolve_stock_alpha_model_set
@@ -95,7 +96,11 @@ def write_stock_level_model_ranking_benchmark(
 
     logger = ResearchStageLogger("stock_level_alpha_benchmark")
     with logger.stage("loading"):
-        rows = CsvRowRepository().read(source_path)
+        rows = read_stock_level_artifact(
+            source_path,
+            required_columns={"rebalance_date", "symbol"},
+            allow_csv_fallback=bool(config.get("ml", {}).get("stock_level_allow_csv_artifact_fallback", False)),
+        )
         rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
     feature_columns = _available_feature_columns(
         rows,

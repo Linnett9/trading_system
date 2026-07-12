@@ -11,6 +11,8 @@ ml:
   stock_alpha_report_root: "reports/ml/development/ticket_7_large_history/regeneration"
   output_dir: "reports/ml/development/ticket_7_large_history/regeneration/benchmark"
   stock_alpha_output_dir_override: true
+  stock_level_artifact_format: parquet
+  stock_level_parquet_compression: zstd
   stock_alpha_allow_legacy_output_paths: false
   stock_alpha_resume_existing_outputs: false
   stock_alpha_force_refresh: true

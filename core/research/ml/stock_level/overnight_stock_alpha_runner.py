@@ -46,8 +46,8 @@ def write_overnight_stock_alpha_experiment(
         if not expected:
             return False
         dependency_keys = {
-            "stock_artifact": ("csv_path", "json_path"),
-            "alpha_features": ("enriched_csv_path", "audit_json_path"),
+            "stock_artifact": ("parquet_path", "csv_path", "json_path"),
+            "alpha_features": ("enriched_parquet_path", "enriched_csv_path", "audit_json_path"),
             "baseline_benchmark": ("json_path", "predictions_path"),
             "enriched_benchmark": ("json_path", "predictions_path"),
         }
@@ -186,7 +186,8 @@ def write_overnight_stock_alpha_experiment(
         artifact_status["action"] = "generated"
     else:
         artifact_paths = None
-        stock_artifact_outputs = {"csv_path": str(settings.base_artifact_path), "json_path": str(output_dir / "stock_level_prediction_artifacts.json"), "markdown_path": str(output_dir / "stock_level_prediction_artifacts.md")}
+        stock_artifact_key = "parquet_path" if settings.base_artifact_path.suffix.lower() == ".parquet" else "csv_path"
+        stock_artifact_outputs = {stock_artifact_key: str(settings.base_artifact_path), "json_path": str(output_dir / "stock_level_prediction_artifacts.json"), "markdown_path": str(output_dir / "stock_level_prediction_artifacts.md")}
         timings["stock_artifact"] = {"status": "skipped_existing", "seconds": 0.0, "output_paths": stock_artifact_outputs, "validation_passed": True, "skipped": True}
         manifest.mark_skipped(
             "stock_artifact",
@@ -201,25 +202,27 @@ def write_overnight_stock_alpha_experiment(
         output_dir=str(output_dir),
         stock_level_base_prediction_artifacts_path=str(settings.base_artifact_path),
     )
-    feature_expected = {"enriched_csv_path": output_dir / "stock_level_prediction_artifacts_enriched.csv", "audit_json_path": output_dir / "stock_level_alpha_feature_audit.json"}
+    feature_key = "enriched_parquet_path" if settings.base_artifact_path.suffix.lower() == ".parquet" else "enriched_csv_path"
+    feature_expected = {feature_key: output_dir / f"stock_level_prediction_artifacts_enriched{settings.base_artifact_path.suffix}", "audit_json_path": output_dir / "stock_level_alpha_feature_audit.json"}
     if stage_selection.enabled("alpha_features"):
         feature_paths = resumable(
             "alpha_features",
             feature_expected,
-            {"enriched_csv_path": {"rebalance_date", "symbol"}, "audit_json_path": {"features"}},
+            {feature_key: {"rebalance_date", "symbol"}, "audit_json_path": {"features"}},
             lambda: stages.alpha_features(feature_config),
         )
     else:
         mark_disabled("alpha_features")
         configured_artifact = settings.artifact_path
-        if configured_artifact.name == "stock_level_prediction_artifacts_enriched.csv" and configured_artifact.exists():
+        if configured_artifact.name in {"stock_level_prediction_artifacts_enriched.csv", "stock_level_prediction_artifacts_enriched.parquet"} and configured_artifact.exists():
             feature_paths = SimpleNamespace(
+                enriched_parquet_path=configured_artifact,
                 enriched_csv_path=configured_artifact,
                 audit_json_path=feature_expected["audit_json_path"],
             )
         else:
             feature_paths = SimpleNamespace(**feature_expected)
-    enriched_path = Path(feature_paths.enriched_csv_path)
+    enriched_path = Path(getattr(feature_paths, "enriched_parquet_path", None) or getattr(feature_paths, "enriched_csv_path"))
 
     baseline_config = _with_ml_overrides(
         run_config,

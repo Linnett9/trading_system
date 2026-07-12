@@ -6,6 +6,10 @@ from typing import Any
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.stock_level.stock_level_artifact_io import (
+    read_stock_level_artifact,
+    write_stock_level_artifact,
+)
 from core.research.ml.stock_level.stock_level_alpha_features_types import ENGINEERED_FEATURE_COLUMNS, NOTICE
 
 
@@ -46,15 +50,34 @@ def _load_price_histories(
 def _output_dir(config: dict[str, Any]) -> Path:
     return StockLevelResearchConfig.from_mapping(config).output_dir
 def _read_csv(path: Path) -> list[dict[str, str]]:
+    if path.suffix.lower() == ".parquet":
+        return read_stock_level_artifact(
+            path,
+            required_columns={"rebalance_date", "symbol"},
+        )
     return CsvRowRepository().read(path)
+
+
 def _write_enriched_csv(
     path: Path,
     source_rows: list[dict[str, Any]],
     rows: list[dict[str, Any]],
-) -> None:
+    *,
+    config: dict[str, Any] | None = None,
+    sample_path: Path | None = None,
+) -> dict[str, Any] | None:
     source_columns = list(source_rows[0]) if source_rows else []
     fieldnames = [*source_columns, *ENGINEERED_FEATURE_COLUMNS]
+    if path.suffix.lower() == ".parquet":
+        return write_stock_level_artifact(
+            path,
+            rows,
+            fieldnames=fieldnames,
+            config=config or {"ml": {"stock_level_artifact_format": "parquet"}},
+            inspection_sample_path=sample_path,
+        )
     ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
+    return None
 def _write_audit_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "feature",
