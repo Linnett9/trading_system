@@ -288,6 +288,133 @@ def test_disabled_alpha_features_uses_explicit_enriched_artifact_for_enriched_be
     assert seen["enriched"] != str(output_dir / "stock_level_prediction_artifacts_enriched.csv")
 
 
+def test_regeneration_only_summary_writes_daily_grid_and_twelve_worker_gate(tmp_path):
+    root = tmp_path / "stock_alpha"
+    output_dir = root / "benchmark"
+    calls: list[str] = []
+
+    def stock_artifact(config):
+        calls.append("stock_artifact")
+        output = Path(config["ml"]["output_dir"])
+        output.mkdir(parents=True, exist_ok=True)
+        json_path = output / "stock_level_prediction_artifacts.json"
+        json_path.write_text(
+            json.dumps(
+                {
+                    "dataset_parallelism": {
+                        "requested_workers": 12,
+                        "effective_workers": 4,
+                        "task_count": 4,
+                        "completed_task_count": 4,
+                        "failed_task_count": 0,
+                        "inner_thread_limit": 1,
+                    },
+                    "decision_grid": {
+                        "decision_frequency": "daily",
+                        "decision_date_count": 40,
+                        "exchange_calendar_identity": "calendar-v1",
+                        "decision_grid_identity": "daily-grid-v1",
+                    },
+                    "canonical_artifact": {
+                        "completion_status": "complete",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return ArtifactPaths(
+            output / "stock_level_prediction_artifacts.parquet",
+            json_path,
+            output / "stock_level_prediction_artifacts.md",
+        )
+
+    def alpha_features(config):
+        calls.append("alpha_features")
+        output = Path(config["ml"]["output_dir"])
+        return FeaturePaths(
+            output / "stock_level_prediction_artifacts_enriched.parquet",
+            output / "stock_level_alpha_feature_audit.csv",
+            output / "stock_level_alpha_feature_audit.json",
+            output / "stock_level_alpha_feature_audit.md",
+        )
+
+    def benchmark(_config):
+        raise AssertionError("regeneration gate must not train selector benchmarks")
+
+    ticks = iter(float(index) for index in range(20))
+    result = write_overnight_stock_alpha_experiment(
+        {
+            "cache": {"ml_dir": str(tmp_path / "cache")},
+            "research": {"profile": "ticket_7b3_daily_probe_twelve_worker"},
+            "ml": {
+                "stock_alpha_report_root": str(root),
+                "stock_alpha_run_size": "benchmark",
+                "stock_alpha_run_profile": "ticket_7b3_daily_probe_twelve_worker",
+                "stock_level_artifact_format": "parquet",
+                "stock_level_parquet_compression": "zstd",
+                "stock_level_decision_frequency": "daily",
+                "stock_level_dataset_workers": 12,
+                "stock_level_dataset_inner_threads": 1,
+                "stock_alpha_force_refresh": True,
+                "stock_alpha_resume_existing_outputs": False,
+                "stock_alpha_allow_legacy_output_paths": False,
+                "stock_ranker_model_n_jobs": 1,
+                "sklearn_n_jobs": 1,
+                "stock_alpha_feature_n_jobs": 1,
+                "stock_alpha_overnight_stage_n_jobs": 1,
+                "stock_ranker_target_comparison_enabled": False,
+                "stock_alpha_overnight_run_portfolio_replay": False,
+                "stock_alpha_overnight_run_portfolio_policy_sweep": False,
+                "stock_alpha_stages": {
+                    "stock_artifact": True,
+                    "alpha_features": True,
+                    "baseline_benchmark": False,
+                    "enriched_benchmark": False,
+                    "target_comparison": False,
+                    "portfolio_replay": False,
+                    "portfolio_policy_sweep": False,
+                    "experiment_report": False,
+                    "attribution": False,
+                },
+            },
+        },
+        stages=OvernightStockAlphaStages(
+            stock_artifact=stock_artifact,
+            alpha_features=alpha_features,
+            benchmark=benchmark,
+        ),
+        clock=lambda: next(ticks),
+    )
+
+    summary = json.loads(result.json_path.read_text(encoding="utf-8"))
+
+    assert calls == ["stock_artifact", "alpha_features"]
+    assert summary["daily_selector_decision_grid"][0] == {
+        "layer": "daily_selector",
+        "decision": "rank_stock_ownership_candidates",
+        "cadence": "each_eligible_trading_day",
+        "output": "stock_rankings_and_oos_selector_predictions",
+        "target": "actual_forward_return_10d",
+        "intended_holding_period_trading_days": 10,
+        "historical_evaluation_policy": "strict_oos_only",
+        "final_fitted_selector_used_for_historical_evaluation": False,
+    }
+    gate = summary["twelve_worker_regeneration_gate"]
+    assert gate["passed"] is True
+    assert gate["selector_training_invoked"] is False
+    assert gate["news_backfill_invoked"] is False
+    assert gate["portfolio_replay_invoked"] is False
+    assert {check["name"]: check["passed"] for check in gate["checks"]}[
+        "artifact_worker_tasks_completed"
+    ] is True
+    assert {check["name"]: check["passed"] for check in gate["checks"]}[
+        "artifact_decision_frequency_is_daily"
+    ] is True
+    markdown = result.markdown_path.read_text(encoding="utf-8")
+    assert "## Daily Selector Decision Grid" in markdown
+    assert "## Twelve-Worker Regeneration Gate" in markdown
+
+
 def _run(
     tmp_path: Path,
     *,

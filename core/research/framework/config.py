@@ -65,6 +65,9 @@ class StockLevelResearchConfig:
     stock_selector_rebalance_dataset_path: Path
     stock_selector_rebalance_metadata_path: Path
     stock_selector_rebalance_outcome_horizon_days: int
+    artifact_format: str
+    parquet_compression: str
+    run_profile: str
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "StockLevelResearchConfig":
@@ -198,6 +201,18 @@ class StockLevelResearchConfig:
             stock_selector_rebalance_outcome_horizon_days=int(
                 ml.get("stock_selector_rebalance_outcome_horizon_days", 10)
             ),
+            artifact_format=str(
+                ml.get("stock_level_artifact_format", "parquet")
+            ).lower(),
+            parquet_compression=str(
+                ml.get("stock_level_parquet_compression", "zstd")
+            ).lower(),
+            run_profile=str(
+                ml.get(
+                    "stock_alpha_run_profile",
+                    config.get("research", {}).get("profile", run_size),
+                )
+            ),
         )
         instance.validate()
         return instance
@@ -235,6 +250,8 @@ class StockLevelResearchConfig:
             )
         if self.run_size not in {"dev", "benchmark", "full"}:
             raise ValueError("ml.stock_alpha_run_size must be dev, benchmark, or full")
+        if self.artifact_format not in {"parquet", "csv"}:
+            raise ValueError("ml.stock_level_artifact_format must be parquet or csv")
         if self.dev_symbol_sample_method not in {
             "sorted",
             "deterministic_hash",

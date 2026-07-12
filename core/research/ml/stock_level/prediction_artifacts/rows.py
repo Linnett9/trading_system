@@ -18,9 +18,13 @@ from core.research.ml.stock_level.prediction_artifacts.targets import (
     _actual_targets,
     _add_cross_sectional_targets,
 )
+from core.research.ml.stock_level.prediction_artifacts.decision_grid import (
+    resolve_decision_grid,
+)
 from core.research.ml.stock_level.prediction_artifacts.types import (
     ACTUAL_COLUMNS,
     BASELINE_PREDICTION_COLUMNS,
+    DECISION_CONTEXT_COLUMNS,
     CONTEXT_COLUMNS,
     PREDICTION_COLUMNS,
     RESEARCH_METADATA,
@@ -40,6 +44,11 @@ def build_stock_level_prediction_artifacts(
     market_symbol: str = "SPY",
     dataset_workers: int = 1,
     inner_thread_limit: int = 1,
+    decision_grid_frequency: str = "source",
+    decision_grid_start_date: str | None = None,
+    decision_grid_end_date: str | None = None,
+    decision_grid_max_sessions: int | None = None,
+    decision_grid_min_history_sessions: int = 1,
     executor_cls: type | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if dataset_workers < 1:
@@ -48,8 +57,6 @@ def build_stock_level_prediction_artifacts(
         raise ValueError("stock_level_dataset_inner_threads must be at least one")
     started = time.perf_counter()
     sector_by_symbol = sector_by_symbol or {}
-    dates = _artifact_dates(artifact_rows) or _expanded_dates(expanded_rows)
-    context_by_date = _context_by_date(expanded_rows)
     artifact_by_date_symbol = _artifact_by_date_symbol(artifact_rows)
     symbols = sorted({symbol.upper() for symbol in universe_symbols if symbol})
     prepared_symbol_data = {
@@ -58,10 +65,23 @@ def build_stock_level_prediction_artifacts(
     }
     market_symbol = market_symbol.upper()
     market_data = _prepare_symbol_data(closes_by_symbol.get(market_symbol, {}))
+    decision_grid = resolve_decision_grid(
+        expanded_rows=expanded_rows,
+        artifact_rows=artifact_rows,
+        symbols=symbols,
+        prepared_symbol_data=prepared_symbol_data,
+        market_data=market_data,
+        frequency=decision_grid_frequency,
+        start_date=decision_grid_start_date,
+        end_date=decision_grid_end_date,
+        max_sessions=decision_grid_max_sessions,
+        min_history_sessions=decision_grid_min_history_sessions,
+    )
+    dates = decision_grid.dates
     rows, parallelism = _build_dataset_symbol_rows(
         symbols=symbols,
         dates=dates,
-        context_by_date=context_by_date,
+        row_metadata_by_date=decision_grid.row_metadata_by_date,
         artifact_by_date_symbol=artifact_by_date_symbol,
         prepared_symbol_data=prepared_symbol_data,
         market_symbol=market_symbol,
@@ -73,6 +93,8 @@ def build_stock_level_prediction_artifacts(
     )
     _add_cross_sectional_targets(rows)
     audit = _audit(rows, symbols, dates, artifact_rows)
+    audit["decision_grid"] = decision_grid.audit
+    audit.update(decision_grid.audit)
     audit["dataset_parallelism"] = {
         **parallelism,
         "elapsed_seconds": time.perf_counter() - started,
@@ -94,7 +116,7 @@ def _build_dataset_symbol_rows(
     *,
     symbols: list[str],
     dates: list[str],
-    context_by_date: dict[str, dict[str, str]],
+    row_metadata_by_date: dict[str, dict[str, Any]],
     artifact_by_date_symbol: dict[tuple[str, str], dict[str, str]],
     prepared_symbol_data: dict[str, dict[str, Any]],
     market_symbol: str,
@@ -108,7 +130,7 @@ def _build_dataset_symbol_rows(
         {
             "symbol": symbol,
             "dates": dates,
-            "context_by_date": context_by_date,
+            "row_metadata_by_date": row_metadata_by_date,
             "artifact_by_date_symbol": {
                 date: artifact_by_date_symbol.get((date, symbol), {})
                 for date in dates
@@ -169,7 +191,7 @@ def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
     dates = list(task.get("dates", []))
     rows = []
     for date in dates:
-        context = task.get("context_by_date", {}).get(date, {})
+        metadata = task.get("row_metadata_by_date", {}).get(date, {})
         source = task.get("artifact_by_date_symbol", {}).get(date, {})
         row = {
             "rebalance_date": date,
@@ -208,10 +230,19 @@ def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
                 date,
                 market_data=market_data,
                 decision_dates=dates,
+                decision_metadata={
+                    **metadata,
+                    "decision_frequency": metadata.get("decision_frequency", "daily" if metadata else "source"),
+                    "target_horizon_trading_days": 10,
+                    "overlapping_targets": metadata.get("overlapping_targets", True),
+                    "required_purge_horizon_trading_days": 10,
+                },
             )
         )
         for column in CONTEXT_COLUMNS:
-            row[column] = context.get(column, "")
+            row[column] = metadata.get(column, "")
+        for column in DECISION_CONTEXT_COLUMNS:
+            row[column] = metadata.get(column, "")
         rows.append(row)
     return {
         "symbol": symbol,

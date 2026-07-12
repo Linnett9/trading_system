@@ -35,15 +35,16 @@ def _actual_targets(
     *,
     market_data: dict[str, Any] | None = None,
     decision_dates: list[str] | tuple[str, ...] | None = None,
+    decision_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     closes_by_date = symbol_data.get("close", {})
     dates = symbol_data.get("close_dates", [])
     if rebalance_date not in closes_by_date:
-        return _empty_targets()
+        return _empty_targets(decision_metadata)
     index = dates.index(rebalance_date)
     start = closes_by_date[rebalance_date]
     if start <= 0.0:
-        return _empty_targets()
+        return _empty_targets(decision_metadata)
     forward_5d = _forward_target(
         symbol_data,
         rebalance_date,
@@ -100,7 +101,7 @@ def _actual_targets(
         "actual_rank_normalized_forward_return_10d": "",
         "actual_top_decile_label_10d": "",
     }
-    targets.update(_target_provenance(rebalance_date, forward_10d, benchmark_10d))
+    targets.update(_target_provenance(rebalance_date, forward_10d, benchmark_10d, decision_metadata or {}))
     return targets
 
 
@@ -143,13 +144,16 @@ def _target_provenance(
     rebalance_date: str,
     target: ForwardTarget,
     benchmark: ForwardTarget,
+    decision_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     if target.value == "":
-        return {column: "" for column in TARGET_PROVENANCE_COLUMNS}
+        output = {column: "" for column in TARGET_PROVENANCE_COLUMNS}
+        output.update(_decision_contract_fields(decision_metadata))
+        output["target_status"] = "unrealized_boundary"
+        return output
     return {
+        **_decision_contract_fields(decision_metadata),
         "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
-        "feature_timestamp": rebalance_date,
-        "decision_timestamp": rebalance_date,
         "target_horizon": target.horizon_label,
         "target_observation_count": target.horizon,
         "target_start_timestamp": target.start_timestamp,
@@ -161,6 +165,7 @@ def _target_provenance(
         "benchmark_label_start_timestamp": benchmark.label_start_timestamp,
         "benchmark_label_end_timestamp": benchmark.end_timestamp,
         "benchmark_label_available_timestamp": benchmark.available_timestamp,
+        "target_status": "realized",
     }
 
 
@@ -168,10 +173,29 @@ def _first_after(values: list[str], timestamp: str) -> str:
     return next((value for value in values if value > timestamp), "")
 
 
-def _empty_targets() -> dict[str, Any]:
+def _decision_contract_fields(decision_metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "decision_session_date": decision_metadata.get("decision_session_date", ""),
+        "feature_timestamp": decision_metadata.get("decision_session_date", ""),
+        "feature_data_cutoff_timestamp": decision_metadata.get("feature_data_cutoff_timestamp", ""),
+        "decision_timestamp": decision_metadata.get("decision_timestamp", ""),
+        "first_actionable_session": decision_metadata.get("first_actionable_session", ""),
+        "decision_grid_version": decision_metadata.get("decision_grid_version", ""),
+        "decision_grid_identity": decision_metadata.get("decision_grid_identity", ""),
+        "exchange_calendar_identity": decision_metadata.get("exchange_calendar_identity", ""),
+        "decision_frequency": decision_metadata.get("decision_frequency", "source"),
+        "target_horizon_trading_days": decision_metadata.get("target_horizon_trading_days", 10),
+        "overlapping_targets": decision_metadata.get("overlapping_targets", False),
+        "required_purge_horizon_trading_days": decision_metadata.get("required_purge_horizon_trading_days", 10),
+    }
+
+
+def _empty_targets(decision_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         **{column: "" for column in ACTUAL_COLUMNS},
         **{column: "" for column in TARGET_PROVENANCE_COLUMNS},
+        **_decision_contract_fields(decision_metadata or {}),
+        "target_status": "missing_source_price",
     }
 
 def _add_cross_sectional_targets(rows: list[dict[str, Any]]) -> None:

@@ -62,6 +62,39 @@ def _markdown(payload: dict[str, Any]) -> str:
     lines.extend(["", "## Portfolio Policy Sweep"])
     for key, value in sweep.items():
         lines.append(f"- {key}: {value}")
+    lines.extend(["", "## Daily Selector Decision Grid"])
+    lines.append(
+        "| layer | decision | cadence | output | target | holding_days | evaluation |"
+    )
+    lines.append("|---|---|---|---|---|---:|---|")
+    for row in payload.get("daily_selector_decision_grid", []):
+        lines.append(
+            "| {layer} | {decision} | {cadence} | {output} | {target} | {holding} | {evaluation} |".format(
+                layer=row.get("layer", ""),
+                decision=row.get("decision", ""),
+                cadence=row.get("cadence", ""),
+                output=row.get("output", ""),
+                target=row.get("target", ""),
+                holding=_fmt(row.get("intended_holding_period_trading_days")),
+                evaluation=row.get("historical_evaluation_policy", ""),
+            )
+        )
+    gate = payload.get("twelve_worker_regeneration_gate", {})
+    lines.extend(["", "## Twelve-Worker Regeneration Gate"])
+    lines.append(f"- status: {gate.get('status')}")
+    lines.append(f"- scope: {gate.get('scope')}")
+    lines.append(f"- selector_training_invoked: {gate.get('selector_training_invoked')}")
+    lines.append(f"- news_backfill_invoked: {gate.get('news_backfill_invoked')}")
+    lines.append(f"- portfolio_replay_invoked: {gate.get('portfolio_replay_invoked')}")
+    for check in gate.get("checks", []):
+        lines.append(
+            "- {name}: passed={passed} actual={actual} expected={expected}".format(
+                name=check.get("name"),
+                passed=check.get("passed"),
+                actual=check.get("actual"),
+                expected=check.get("expected"),
+            )
+        )
     parallelism = payload.get("parallelism", {})
     lines.extend(["", "## Parallelism"])
     for key in (
