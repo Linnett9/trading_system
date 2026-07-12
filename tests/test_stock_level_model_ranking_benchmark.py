@@ -197,6 +197,7 @@ def test_temporal_audit_artifact_is_written(tmp_path):
                 "stock_ranker_embargo_dates": 1,
                 "stock_ranker_include_sequence_models": False,
                 "stock_ranker_model_set": "standard",
+                "stock_level_allow_csv_artifact_fallback": True,
             }
         }
     )
@@ -417,6 +418,7 @@ def test_writer_respects_stock_ranker_model_n_jobs(tmp_path, monkeypatch):
                 "output_dir": str(tmp_path / "output"),
                 "stock_level_prediction_artifacts_path": str(source_path),
                 "stock_ranker_model_n_jobs": 3,
+                "stock_level_allow_csv_artifact_fallback": True,
             }
         }
     )

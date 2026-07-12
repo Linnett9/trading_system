@@ -6,6 +6,7 @@ from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
 from core.research.framework.data import JsonRepository
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_model_set
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_target_model_set
 from core.research.ml.stock_level.overnight_stock_alpha_reporting import _path_payload
@@ -24,6 +25,9 @@ def _valid_output(path: Path, required_fields: set[str]) -> bool:
             with path.open(newline="", encoding="utf-8") as handle:
                 fields = set(next(csv.reader(handle), []))
             return required_fields.issubset(fields)
+        if path.suffix == ".parquet":
+            read_stock_level_artifact(path, required_columns=required_fields)
+            return True
     except (OSError, ValueError):
         return False
     return True

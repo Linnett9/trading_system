@@ -104,6 +104,8 @@ ML_DEFAULTS = {
     "stock_alpha_feature_n_jobs": 4,
     "stock_ranker_model_n_jobs": 4,
     "stock_alpha_overnight_stage_n_jobs": 1,
+    "stock_level_artifact_format": "parquet",
+    "stock_level_parquet_compression": "zstd",
     "stock_ranker_target_column": "actual_forward_return_10d",
     "stock_ranker_market_symbol": "SPY",
     "stock_alpha_dev_required_symbols": ["SPY"],

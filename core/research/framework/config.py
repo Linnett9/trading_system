@@ -68,19 +68,20 @@ class StockLevelResearchConfig:
     def from_mapping(cls, config: Mapping[str, Any]) -> "StockLevelResearchConfig":
         ml = dict(config.get("ml", {}) or {})
         run_size = str(ml.get("stock_alpha_run_size", "benchmark")).lower()
+        artifact_suffix = ".parquet" if str(ml.get("stock_level_artifact_format", "parquet")).lower() == "parquet" else ".csv"
         stock_alpha_default_workers = 1 if run_size == "dev" else 4
         reports = dict(config.get("reports", {}) or {})
         output_dir = stock_alpha_output_dir(config)
         base_artifact_path = Path(
             ml.get(
                 "stock_level_base_prediction_artifacts_path",
-                output_dir / "stock_level_prediction_artifacts.csv",
+                output_dir / f"stock_level_prediction_artifacts{artifact_suffix}",
             )
         )
         artifact_path = Path(
             ml.get(
                 "stock_level_prediction_artifacts_path",
-                output_dir / "stock_level_prediction_artifacts.csv",
+                output_dir / f"stock_level_prediction_artifacts{artifact_suffix}",
             )
         )
         instance = cls(

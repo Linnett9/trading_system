@@ -8,13 +8,13 @@ import time
 from datetime import datetime, timezone
 
 from core.research.framework.config import StockLevelResearchConfig
-from core.research.framework.data import CsvRowRepository
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_level_model_ranking_benchmark import _factories_for_model_set, build_stock_level_model_ranking_benchmark
 from core.research.ml.stock_level_benchmark_data import _available_feature_columns
 from core.research.ml.stock_level_benchmark_data import _number
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
 from core.research.ml.stock_level.stock_alpha_model_sets import resolve_stock_alpha_target_model_set
 
@@ -32,7 +32,11 @@ def write_stock_level_target_comparison(config: dict[str, Any]) -> StockLevelTar
     stage_started_at = datetime.now(timezone.utc).isoformat(); stage_started = time.perf_counter()
     if not settings.target_comparison_enabled:
         raise ValueError("ml.stock_ranker_target_comparison_enabled is false")
-    rows = CsvRowRepository().read(settings.artifact_path)
+    rows = read_stock_level_artifact(
+        settings.artifact_path,
+        required_columns={"rebalance_date", "symbol"},
+        allow_csv_fallback=bool(config.get("ml", {}).get("stock_level_allow_csv_artifact_fallback", False)),
+    )
     rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
     features = _available_feature_columns(rows, include_engineered=settings.include_engineered_features)
     effective_workers = min(settings.target_comparison_n_jobs, len(settings.target_columns))

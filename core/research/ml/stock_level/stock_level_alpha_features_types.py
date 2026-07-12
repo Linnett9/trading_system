@@ -53,7 +53,12 @@ FEATURE_DEFINITIONS = {
 }
 @dataclass(frozen=True)
 class StockLevelAlphaFeaturePaths:
-    enriched_csv_path: Path
+    enriched_parquet_path: Path
     audit_csv_path: Path
     audit_json_path: Path
     audit_markdown_path: Path
+    enriched_sample_csv_path: Path | None = None
+
+    @property
+    def enriched_csv_path(self) -> Path:
+        return self.enriched_parquet_path

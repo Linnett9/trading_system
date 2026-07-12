@@ -169,7 +169,9 @@ def _locate_price_candidates(config: Mapping[str, Any]) -> Path:
         output / "enriched" / "stock_level_model_oos_predictions.csv",
         output / "baseline" / "stock_level_model_oos_predictions.csv",
         output / "stock_level_model_oos_predictions.csv",
+        output / "stock_level_prediction_artifacts_enriched.parquet",
         output / "stock_level_prediction_artifacts_enriched.csv",
+        output / "stock_level_prediction_artifacts.parquet",
         output / "stock_level_prediction_artifacts.csv",
     ]
     for path in candidates:

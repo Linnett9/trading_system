@@ -7,7 +7,6 @@ from core.research.ml.sector_reference import load_sector_by_symbol
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 from core.research.ml.stock_level.prediction_artifacts.io import (
     _markdown,
-    _write_csv,
 )
 from core.research.ml.stock_level.prediction_artifacts.math import (
     _average_dollar_volume,
@@ -50,6 +49,10 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
     TARGET_TYPES,
     StockLevelPredictionArtifactsPaths,
 )
+from core.research.ml.stock_level.stock_level_artifact_io import (
+    canonical_artifact_path,
+    write_stock_level_artifact,
+)
 
 
 def write_stock_level_prediction_artifacts(
@@ -72,12 +75,38 @@ def write_stock_level_prediction_artifacts(
         market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
     )
     paths = StockLevelPredictionArtifactsPaths(
-        csv_path=output_dir / "stock_level_prediction_artifacts.csv",
+        parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts", config),
         json_path=output_dir / "stock_level_prediction_artifacts.json",
         markdown_path=output_dir / "stock_level_prediction_artifacts.md",
+        sample_csv_path=output_dir / "stock_level_prediction_artifacts_sample.csv",
     )
-    audit.update(stock_alpha_report_metadata(config, output_dir, generated_artifact_paths=[paths.csv_path, paths.json_path, paths.markdown_path]))
-    _write_csv(paths.csv_path, rows)
+    fieldnames = list(rows[0]) if rows else ["rebalance_date", "symbol"]
+    identity = write_stock_level_artifact(
+        paths.parquet_path,
+        rows,
+        fieldnames=fieldnames,
+        config=config,
+        inspection_sample_path=paths.sample_csv_path,
+    )
+    audit.update(
+        stock_alpha_report_metadata(
+            config,
+            output_dir,
+            generated_artifact_paths=[
+                paths.parquet_path,
+                paths.json_path,
+                paths.markdown_path,
+                paths.sample_csv_path,
+            ],
+        )
+    )
+    audit["canonical_artifact"] = identity
+    audit["artifact_format"] = identity["artifact_format"]
+    audit["artifact_path"] = identity["resolved_artifact_path"]
+    audit["schema_fingerprint"] = identity["schema_fingerprint"]
+    audit["artifact_sha256"] = identity["sha256"]
+    audit["target_contract_version"] = identity.get("target_contract_version")
+    audit["benchmark_contract_version"] = identity.get("benchmark_contract_version")
     writer = ResearchArtifactWriter()
     writer.write_json(paths.json_path, audit)
     writer.write_markdown(paths.markdown_path, _markdown(audit))

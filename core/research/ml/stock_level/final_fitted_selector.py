@@ -24,6 +24,7 @@ from core.research.ml.stock_level_benchmark_types import (
     TARGET_PROVENANCE_COLUMNS,
     TARGET_PROVENANCE_CONTRACT_VERSION,
 )
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 
 ARTIFACT_SCHEMA_VERSION = "stock_selector_final_fit_v1"
 TEMPORAL_POLICY_VERSION = 1
@@ -115,7 +116,7 @@ def write_final_fitted_stock_selector(config: dict[str, Any]) -> FinalFittedSele
     source_path = Path(
         ml.get(
             "stock_level_prediction_artifacts_path",
-            selector_output_dir / "stock_level_prediction_artifacts.csv",
+            selector_output_dir / "stock_level_prediction_artifacts.parquet",
         )
     )
     benchmark_path = Path(
@@ -505,6 +506,8 @@ def _equivalent(left: Sequence[float], right: Sequence[float]) -> bool:
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
+    if path.suffix.lower() == ".parquet":
+        return read_stock_level_artifact(path, required_columns={"rebalance_date", "symbol"})
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 

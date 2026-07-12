@@ -45,6 +45,7 @@ from core.research.ml.stock_level.stock_level_model_ranking_benchmark import (
     _prepare_rows,
     _walk_forward_partitions,
 )
+from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 
 
 def write_stock_level_feature_attribution(
@@ -61,7 +62,11 @@ def write_stock_level_feature_attribution(
 
     logger = ResearchStageLogger("stock_level_feature_attribution")
     with logger.stage("loading"):
-        rows = CsvRowRepository().read(source_path)
+        rows = read_stock_level_artifact(
+            source_path,
+            required_columns={"rebalance_date", "symbol"},
+            allow_csv_fallback=bool(config.get("ml", {}).get("stock_level_allow_csv_artifact_fallback", False)),
+        )
         benchmark = JsonRepository().read(benchmark_path)
         existing_predictions = CsvRowRepository().read(predictions_path)
     with logger.stage("evaluation"):

@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from core.research.framework.config import StockLevelResearchConfig
-from core.research.framework.data import CsvRowRepository
 from core.research.framework.logging import ResearchStageLogger
 from core.research.framework.registry import FeatureRegistry
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
+from core.research.ml.stock_level.stock_level_artifact_io import canonical_artifact_path
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_level_alpha_features_audit import (
     _audit,
@@ -70,9 +70,8 @@ def write_stock_level_alpha_features(
     if not source_path.exists():
         raise FileNotFoundError(f"Base stock-level artifact not found: {source_path}")
     logger = ResearchStageLogger("stock_level_alpha_features")
-    repository = CsvRowRepository()
     with logger.stage("loading"):
-        rows = repository.read(source_path)
+        rows = _read_csv(source_path)
         rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
     symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
     spy_symbol = settings.spy_symbol
@@ -93,15 +92,30 @@ def write_stock_level_alpha_features(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = StockLevelAlphaFeaturePaths(
-        enriched_csv_path=output_dir / "stock_level_prediction_artifacts_enriched.csv",
+        enriched_parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts_enriched", config),
         audit_csv_path=output_dir / "stock_level_alpha_feature_audit.csv",
         audit_json_path=output_dir / "stock_level_alpha_feature_audit.json",
         audit_markdown_path=output_dir / "stock_level_alpha_feature_audit.md",
+        enriched_sample_csv_path=output_dir / "stock_level_prediction_artifacts_enriched_sample.csv",
     )
     with logger.stage("report_generation"):
-        _write_enriched_csv(paths.enriched_csv_path, rows, enriched_rows)
+        artifact_identity = _write_enriched_csv(
+            paths.enriched_parquet_path,
+            rows,
+            enriched_rows,
+            config=config,
+            sample_path=paths.enriched_sample_csv_path,
+        )
         _write_audit_csv(paths.audit_csv_path, audit["features"])
         writer = ResearchArtifactWriter()
+        if artifact_identity is not None:
+            audit["canonical_artifact"] = artifact_identity
+            audit["artifact_format"] = artifact_identity["artifact_format"]
+            audit["artifact_path"] = artifact_identity["resolved_artifact_path"]
+            audit["artifact_sha256"] = artifact_identity["sha256"]
+            audit["schema_fingerprint"] = artifact_identity["schema_fingerprint"]
+            audit["target_contract_version"] = artifact_identity.get("target_contract_version")
+            audit["benchmark_contract_version"] = "stock_level_benchmark_return_10d_v1"
         writer.write_json(paths.audit_json_path, audit)
         writer.write_markdown(paths.audit_markdown_path, _markdown(audit))
     return paths
