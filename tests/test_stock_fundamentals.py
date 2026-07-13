@@ -202,7 +202,25 @@ def test_stock_fundamentals_cli_modes_are_feedless_and_dispatch(monkeypatch):
 
 
 def test_preflight_blocks_missing_live_user_agent_but_env_unblocks(monkeypatch, tmp_path):
-    config = {"ml": {"stock_fundamentals": {"enabled": True, "output_dir": str(tmp_path / "out")}}}
+    base_path = tmp_path / "base.parquet"
+    base_rows = [_base_row("2023-06-15", "AAPL")]
+    write_stock_level_artifact(
+        base_path,
+        base_rows,
+        fieldnames=list(base_rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )
+    config = {
+        "ml": {
+            "stock_fundamentals": {
+                "enabled": True,
+                "output_dir": str(tmp_path / "out"),
+                "source_dataset_path": str(base_path),
+                "load_official_sec_company_tickers": True,
+                "collection": {"maximum_entities": 1},
+            }
+        }
+    }
     monkeypatch.delenv("SEC_USER_AGENT", raising=False)
     paths = write_stock_fundamentals_preflight(config)
     payload = json.loads(paths.preflight_path.read_text(encoding="utf-8"))
@@ -215,6 +233,11 @@ def test_preflight_blocks_missing_live_user_agent_but_env_unblocks(monkeypatch, 
     assert payload["status"] == "PASS"
     assert payload["user_agent_configured"] is True
     assert "contact@example.com" not in payload["user_agent_redacted"]
+    assert payload["source_dataset_exists"] is True
+    assert payload["official_mapping_enabled"] is True
+    assert payload["maximum_entities"] == 1
+    assert payload["feedless"] is True
+    assert payload["broker_access_required"] is False
 
 
 def test_stage_separation_collect_normalize_snapshots_enrich(tmp_path):
@@ -242,13 +265,13 @@ def test_stage_separation_collect_normalize_snapshots_enrich(tmp_path):
                 "enabled": True,
                 "source_dataset_path": str(base_path),
                 "output_dir": str(tmp_path / "out"),
-                "symbols": ["AAPL"],
-                "cik_by_symbol": {"AAPL": "320193"},
-                "user_agent": "Fixture Bot contact@example.com",
-                "collection": {"raw_root": str(raw_root), "request_delay_seconds": 0},
+                    "symbols": ["AAPL"],
+                    "cik_by_symbol": {"AAPL": "320193"},
+                    "user_agent": "Fixture Bot contact@example.com",
+                    "collection": {"raw_root": str(raw_root), "request_delay_seconds": 0, "live_collection": False},
+                }
             }
         }
-    }
 
     write_stock_fundamentals_collect(config)
     out = tmp_path / "out"

@@ -1244,22 +1244,50 @@ def _stage_sequence(settings: Mapping[str, Any]) -> list[str]:
 
 def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
     reasons = []
+    source_path = Path(str(settings.get("source_dataset_path") or ""))
     if settings.get("live_collection") and not str(settings.get("user_agent") or "").strip():
         reasons.append(f"missing identifying SEC user agent; set {settings.get('user_agent_env', 'SEC_USER_AGENT')}")
     if int(settings.get("network_concurrency", 1)) > 2:
         reasons.append("SEC network concurrency must remain serial or near-serial")
+    if not source_path.exists():
+        reasons.append(f"source stock artifact does not exist: {source_path}")
+    if settings.get("live_collection") and not bool(settings.get("load_official_sec_company_tickers")):
+        reasons.append("live collection requires load_official_sec_company_tickers=true for official entity mapping")
+    if settings.get("live_collection") and settings.get("maximum_entities") is None:
+        reasons.append("live collection requires bounded collection.maximum_entities")
+    raw_root = Path(str(settings.get("raw_root") or ""))
+    output_dir = Path(str(settings.get("output_dir") or ""))
+    output_writable = True
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        probe = output_dir / ".fundamentals_preflight_write_test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except Exception:
+        output_writable = False
+        reasons.append(f"output directory is not writable: {output_dir}")
     return {
         "schema_version": SCHEMA_VERSION,
         "stage": "preflight",
         "status": "BLOCKED" if reasons else "PASS",
         "blocking_reasons": reasons,
         "provider": str(settings.get("provider")),
+        "provider_supported": str(settings.get("provider")) == "official_sec_companyfacts",
         "user_agent_env": str(settings.get("user_agent_env")),
         "user_agent_configured": bool(str(settings.get("user_agent") or "").strip()),
         "user_agent_redacted": _redacted_user_agent(str(settings.get("user_agent") or "")),
         "live_collection": bool(settings.get("live_collection")),
         "network_concurrency": int(settings.get("network_concurrency", 1)),
         "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
+        "source_dataset_path": str(source_path),
+        "source_dataset_exists": source_path.exists(),
+        "output_dir": str(output_dir),
+        "output_dir_writable": output_writable,
+        "official_mapping_enabled": bool(settings.get("load_official_sec_company_tickers")),
+        "maximum_entities": settings.get("maximum_entities"),
+        "raw_root": str(raw_root),
+        "feedless": True,
+        "broker_access_required": False,
     }
 
 
