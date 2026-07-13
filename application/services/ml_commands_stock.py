@@ -240,6 +240,32 @@ def run_ml_selector_universe_integrity_audit(config):
     print(f"JSON report: {result.report_json_path}")
     print(f"Markdown report: {result.report_markdown_path}")
 
+def run_ml_stock_fundamentals_pipeline(config):
+    from core.research.ml.stock_level.stock_fundamentals import (
+        write_stock_fundamentals_pipeline,
+    )
+    import json
+
+    result = write_stock_fundamentals_pipeline(config)
+    payload = json.loads(result.report_json_path.read_text(encoding="utf-8"))
+    manifest = payload["raw_collection_manifest"]
+    snapshot = payload["snapshot_audit"]
+    print("\nSTOCK FUNDAMENTALS PIPELINE")
+    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
+    print("BOUNDED DIAGNOSTIC ONLY / NOT FEATURE PROMOTION EVIDENCE")
+    print(f"Provider: {payload['provider_selected']}")
+    print(f"Collection status: {manifest['collection_status']}")
+    print(f"Resolved entities: {len(manifest['resolved_entities'])} | failed entities: {len(manifest['failed_entities'])}")
+    print(f"Normalized facts: {payload['normalization_audit']['normalized_row_count']}")
+    print(f"Snapshots: {snapshot['snapshot_count']} | available: {snapshot['available_snapshot_count']} | stale: {snapshot['stale_snapshot_count']}")
+    print(f"Entity mapping: {result.entity_mapping_path}")
+    print(f"Raw manifest: {result.raw_collection_manifest_path}")
+    print(f"Normalized facts: {result.normalized_facts_path}")
+    print(f"Snapshots: {result.snapshots_path}")
+    print(f"Enriched artifact: {result.enriched_artifact_path}")
+    print(f"JSON report: {result.report_json_path}")
+    print(f"Markdown report: {result.report_markdown_path}")
+
 def run_ml_stock_level_target_comparison(config):
     from core.research.ml.stock_level.stock_level_target_comparison import (
         write_stock_level_target_comparison,

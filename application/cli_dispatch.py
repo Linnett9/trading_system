@@ -99,6 +99,15 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-universe-integrity-audit":
         _commands("ml_commands").run_ml_selector_universe_integrity_audit(config)
         return
+    if args.mode in {
+        "ml-stock-fundamentals-collect",
+        "ml-stock-fundamentals-normalize",
+        "ml-stock-fundamentals-audit",
+        "ml-stock-fundamentals-enrich",
+        "ml-stock-fundamentals-pipeline",
+    }:
+        _commands("ml_commands").run_ml_stock_fundamentals_pipeline(config)
+        return
     if args.mode == "ml-stock-level-target-comparison":
         _commands("ml_commands").run_ml_stock_level_target_comparison(config)
         return

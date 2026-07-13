@@ -55,6 +55,7 @@ _EXPORTS = {
     "run_ml_selector_confidence_ensemble": ("application.services.ml_commands_stock", "run_ml_selector_confidence_ensemble"),
     "run_ml_selector_feature_ablation": ("application.services.ml_commands_stock", "run_ml_selector_feature_ablation"),
     "run_ml_selector_universe_integrity_audit": ("application.services.ml_commands_stock", "run_ml_selector_universe_integrity_audit"),
+    "run_ml_stock_fundamentals_pipeline": ("application.services.ml_commands_stock", "run_ml_stock_fundamentals_pipeline"),
     "run_ml_stock_level_alpha_features": ("application.services.ml_commands_stock", "run_ml_stock_level_alpha_features"),
     "run_ml_stock_level_feature_attribution": ("application.services.ml_commands_stock", "run_ml_stock_level_feature_attribution"),
     "run_ml_stock_level_portfolio_policy_sweep": ("application.services.ml_commands_stock", "run_ml_stock_level_portfolio_policy_sweep"),

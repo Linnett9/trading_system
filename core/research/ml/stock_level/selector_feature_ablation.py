@@ -101,6 +101,69 @@ ENGINEERED_FEATURE_FAMILY_COLUMNS = {
         "ATR_percentile",
     ),
     "regime_context": ("volatility_regime", "market_trend_state", "market_volatility_percentile"),
+    "fundamental_growth": (
+        "revenue_growth_yoy",
+        "revenue_growth_qoq",
+        "gross_profit_growth_yoy",
+        "operating_income_growth_yoy",
+        "net_income_growth_yoy",
+        "eps_growth_yoy",
+        "operating_cash_flow_growth_yoy",
+        "asset_growth_yoy",
+        "equity_growth_yoy",
+        "growth_acceleration",
+        "positive_growth_breadth",
+    ),
+    "fundamental_profitability": (
+        "gross_margin",
+        "operating_margin",
+        "net_margin",
+        "return_on_assets",
+        "return_on_equity",
+        "asset_turnover",
+        "operating_cash_flow_to_assets",
+        "free_cash_flow_margin",
+        "cash_conversion",
+    ),
+    "fundamental_quality": (
+        "total_accruals_to_assets",
+        "cash_flow_to_net_income",
+        "working_capital_accruals",
+        "earnings_quality_score",
+        "fundamental_coverage_count",
+        "fundamental_missing_fraction",
+        "restatement_indicator",
+        "entity_mapping_quality",
+    ),
+    "fundamental_balance_sheet": (
+        "debt_to_assets",
+        "debt_to_equity",
+        "net_debt_to_assets",
+        "current_ratio",
+        "cash_to_assets",
+        "interest_coverage",
+        "working_capital_to_assets",
+    ),
+    "fundamental_shareholder_actions": (
+        "share_count_growth_yoy",
+        "dilution_rate",
+        "net_share_issuance",
+        "repurchase_intensity",
+        "dividend_payout",
+    ),
+    "fundamental_valuation": (
+        "earnings_yield",
+        "book_to_market",
+        "sales_to_price",
+        "free_cash_flow_yield",
+    ),
+    "fundamental_freshness": (
+        "filing_recency_score",
+        "fundamental_coverage_count",
+        "fundamental_missing_fraction",
+        "restatement_indicator",
+        "entity_mapping_quality",
+    ),
 }
 
 
@@ -230,6 +293,7 @@ def build_selector_feature_ablation(
         bounded_rows,
         include_engineered=bool(settings.get("include_artifact_enriched_features", settings.get("include_engineered_features", True))),
     )
+    available_features = _with_artifact_resident_features(bounded_rows, available_features)
     roles = build_feature_roles(bounded_rows, available_features)
     inventory = feature_inventory(bounded_rows, roles, available_features)
     families = build_feature_family_contracts(bounded_rows, available_features, settings=settings)
@@ -424,6 +488,13 @@ def build_feature_family_contracts(
         "cross_sectional_rank": ENGINEERED_FEATURE_FAMILY_COLUMNS["cross_sectional_rank"],
         "regime_context": ENGINEERED_FEATURE_FAMILY_COLUMNS["regime_context"],
         "breadth": ENGINEERED_FEATURE_FAMILY_COLUMNS["breadth"],
+        "fundamental_growth": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_growth"],
+        "fundamental_profitability": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_profitability"],
+        "fundamental_quality": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_quality"],
+        "fundamental_balance_sheet": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_balance_sheet"],
+        "fundamental_shareholder_actions": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_shareholder_actions"],
+        "fundamental_valuation": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_valuation"],
+        "fundamental_freshness": ENGINEERED_FEATURE_FAMILY_COLUMNS["fundamental_freshness"],
         "news": tuple(column for column in ENGINEERED_FEATURE_COLUMNS if ("news" in column or "sentiment" in column)),
     }
     source_columns = set().union(*(row.keys() for row in rows)) if rows else set()
@@ -1092,6 +1163,26 @@ def _default_feature_sets() -> list[dict[str, Any]]:
             ],
             "optional_families": ["industry_relative", "market_context", "breadth"],
         },
+        {
+            "feature_set_id": "price_plus_fundamental_quality",
+            "include_families": ["momentum_core", "volatility", "drawdown", "liquidity", "fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_freshness"],
+            "optional_families": ["fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_freshness"],
+        },
+        {
+            "feature_set_id": "price_plus_fundamental_growth",
+            "include_families": ["momentum_core", "volatility", "drawdown", "liquidity", "fundamental_growth", "fundamental_freshness"],
+            "optional_families": ["fundamental_growth", "fundamental_freshness"],
+        },
+        {
+            "feature_set_id": "price_plus_all_fundamentals",
+            "include_families": ["momentum_core", "volatility", "drawdown", "liquidity", "fundamental_growth", "fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_shareholder_actions", "fundamental_valuation", "fundamental_freshness"],
+            "optional_families": ["fundamental_growth", "fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_shareholder_actions", "fundamental_valuation", "fundamental_freshness"],
+        },
+        {
+            "feature_set_id": "full_price_context_fundamentals",
+            "include_families": ["momentum_core", "momentum_extended", "volatility", "drawdown", "liquidity", "market_relative", "sector_relative", "industry_relative", "cross_sectional_rank", "regime_context", "market_context", "breadth", "fundamental_growth", "fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_shareholder_actions", "fundamental_valuation", "fundamental_freshness"],
+            "optional_families": ["industry_relative", "market_context", "breadth", "fundamental_growth", "fundamental_profitability", "fundamental_quality", "fundamental_balance_sheet", "fundamental_shareholder_actions", "fundamental_valuation", "fundamental_freshness"],
+        },
     ]
 
 
@@ -1121,6 +1212,23 @@ def _validate_feature_columns(columns: Sequence[str], roles: Mapping[str, str]) 
             raise ValueError(f"Requested feature column matches defensive leakage denylist: {column}")
 
 
+def _with_artifact_resident_features(
+    rows: Sequence[Mapping[str, Any]],
+    available_features: Sequence[str],
+) -> tuple[str, ...]:
+    available = list(available_features)
+    known_artifact_features = tuple(
+        column
+        for family_id, columns in ENGINEERED_FEATURE_FAMILY_COLUMNS.items()
+        if family_id.startswith("fundamental_")
+        for column in columns
+    )
+    for column in known_artifact_features:
+        if column not in available and any(finite_number(row.get(column)) for row in rows):
+            available.append(column)
+    return tuple(available)
+
+
 def _defensive_outcome_like(column: str) -> bool:
     lowered = column.lower()
     if lowered.startswith("predicted_") or lowered.startswith("news_"):
@@ -1133,6 +1241,8 @@ def _pit_status_for_family(family_id: str | None) -> dict[str, str]:
         return {"status": "BLOCKED", "rule": "requires first-seen and article-availability contract before model input"}
     if family_id in {"market_relative", "sector_relative", "industry_relative", "cross_sectional_rank", "breadth"}:
         return {"status": "SAFE WITH CONDITIONS", "rule": "must be decision-date local and use producer as-of joins only"}
+    if family_id and family_id.startswith("fundamental_"):
+        return {"status": "SAFE WITH CONDITIONS", "rule": "requires stock_fundamentals available_timestamp <= decision_timestamp and explicit entity mapping contract"}
     if family_id in {"momentum_core", "momentum_extended", "volatility", "drawdown", "liquidity", "market_context", "regime_context"}:
         return {"status": "SAFE", "rule": "feature_data_cutoff_timestamp <= decision_timestamp; generated from historical bars/context only"}
     return {"status": "AMBIGUOUS", "rule": "no family producer contract was resolved"}
@@ -1201,6 +1311,8 @@ def _family_producer(family_id: str) -> str:
         return "stock_level_alpha_features_builder"
     if family_id == "news":
         return "stock_alpha_news_contract"
+    if family_id.startswith("fundamental_"):
+        return "stock_fundamentals_pipeline"
     return "stock_level_alpha_features"
 
 
@@ -1215,6 +1327,8 @@ def _family_lookback(family_id: str) -> str:
         return "20/60/120/250 trading-day momentum context"
     if family_id == "market_context":
         return "21/63/126 trading-day market context where present"
+    if family_id.startswith("fundamental_"):
+        return "latest official filing facts available before decision timestamp; YOY features require prior comparable fiscal period"
     return "producer-defined"
 
 
