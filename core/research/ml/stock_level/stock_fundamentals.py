@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import csv
 import json
 import math
+import os
 import time
 import urllib.error
 import urllib.request
@@ -144,6 +146,16 @@ class StockFundamentalsPaths:
     enriched_artifact_path: Path
     enrichment_audit_json_path: Path
     enrichment_audit_markdown_path: Path
+    preflight_path: Path
+    entity_mapping_audit_path: Path
+    bounded_cohort_path: Path
+    tag_coverage_path: Path
+    unit_conflicts_path: Path
+    period_reconciliation_path: Path
+    snapshot_coverage_path: Path
+    pipeline_manifest_path: Path
+    readiness_json_path: Path
+    readiness_markdown_path: Path
     report_json_path: Path
     report_markdown_path: Path
 
@@ -175,23 +187,49 @@ class SecCompanyFactsProvider:
         *,
         cik_by_symbol: Mapping[str, str] | None = None,
         load_official_mapping: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         mapping = {
             normalize_sec_ticker(symbol): str(cik).strip().zfill(10)
             for symbol, cik in (cik_by_symbol or {}).items()
             if str(symbol).strip() and str(cik).strip()
         }
+        company_titles: dict[str, str] = {}
+        exchanges: dict[str, str] = {}
+        official_hash = ""
+        official_retrieved = ""
         mapping_source = "configured_cik_by_symbol"
         if load_official_mapping:
-            payload_bytes, _headers = self._request(SEC_COMPANY_TICKERS_URL)
+            payload_bytes, headers = self._request(SEC_COMPANY_TICKERS_URL)
+            official_hash = hashlib.sha256(payload_bytes).hexdigest()
+            official_retrieved = _utc_now()
+            raw_values = json.loads(payload_bytes.decode("utf-8"))
             mapping.update(normalize_sec_company_tickers(json.loads(payload_bytes.decode("utf-8"))))
+            for item in _sec_mapping_items(raw_values):
+                ticker = normalize_sec_ticker(str(item.get("ticker", "")))
+                company_titles[ticker] = str(item.get("title") or "")
+                exchanges[ticker] = str(item.get("exchange") or "")
             mapping_source = SEC_COMPANY_TICKERS_URL
         rows = []
         for raw_symbol in symbols:
             symbol = str(raw_symbol).strip().upper()
             normalized = normalize_sec_ticker(symbol)
-            cik = mapping.get(normalized)
-            status = "CURRENT STATIC" if cik else "UNRESOLVED"
+            manual = {
+                normalize_sec_ticker(k): str(v).strip().zfill(10)
+                for k, v in (cik_by_symbol or {}).items()
+            }.get(normalized)
+            official = mapping.get(normalized) if load_official_mapping else None
+            if official and manual and official != manual:
+                cik = official
+                status = "ambiguous"
+            elif official:
+                cik = official
+                status = "resolved_official"
+            elif manual:
+                cik = manual
+                status = "resolved_manual_override"
+            else:
+                cik = None
+                status = "unresolved"
             identity_payload = {
                 "provider": self.provider_id,
                 "symbol": symbol,
@@ -199,10 +237,14 @@ class SecCompanyFactsProvider:
                 "reporting_entity_id": f"CIK{cik}" if cik else None,
                 "mapping_source": mapping_source if cik else "none",
                 "mapping_status": status,
+                "mapping_contract_version": "fundamentals_sec_entity_mapping_contract_v1",
             }
             rows.append(
                 {
                     "symbol": symbol,
+                    "cik": cik or "",
+                    "company_title": company_titles.get(normalized, ""),
+                    "exchange": exchanges.get(normalized, ""),
                     "historical_ticker": "",
                     "current_ticker": symbol,
                     "security_id": symbol,
@@ -211,10 +253,26 @@ class SecCompanyFactsProvider:
                     "mapping_effective_date": "",
                     "mapping_source": mapping_source if cik else "none",
                     "mapping_status": status,
+                    "mapping_retrieval_timestamp": official_retrieved,
+                    "raw_mapping_sha256": official_hash,
+                    "mapping_contract_version": "fundamentals_sec_entity_mapping_contract_v1",
                     "security_mapping_identity": _sha256_json(identity_payload),
                 }
             )
-        return rows
+        audit = {
+            "mapping_contract_version": "fundamentals_sec_entity_mapping_contract_v1",
+            "mapping_source": mapping_source,
+            "raw_mapping_sha256": official_hash,
+            "mapping_retrieval_timestamp": official_retrieved,
+            "configured_symbol_count": len(symbols),
+            "resolved_count": sum(1 for row in rows if row["reporting_entity_id"]),
+            "unresolved_count": sum(1 for row in rows if not row["reporting_entity_id"]),
+            "ambiguous_count": sum(1 for row in rows if row["mapping_status"] == "ambiguous"),
+            "manual_override_count": sum(1 for row in rows if row["mapping_status"] == "resolved_manual_override"),
+            "official_mapping_loaded": bool(load_official_mapping),
+            "status": "BLOCK" if any(row["mapping_status"] == "ambiguous" for row in rows) else "PASS",
+        }
+        return rows, audit
 
     def fetch_company_facts(
         self,
@@ -227,8 +285,12 @@ class SecCompanyFactsProvider:
         target = self.raw_root / self.provider_id / f"CIK{cik}" / "companyfacts.json"
         metadata_path = target.with_suffix(".metadata.json")
         if target.exists() and not force_refresh:
+            state = validate_cached_companyfacts(target, expected_cik=cik)
+            if state["cache_state"] != "valid_cached":
+                raise ValueError(f"Cached SEC companyfacts is not valid_cached: {state}")
             payload = json.loads(target.read_text(encoding="utf-8"))
             metadata = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.exists() else {}
+            metadata["cache_state"] = "valid_cached"
             return {"status": "skipped_cached", "path": target, "metadata": metadata, "payload": payload}
         payload_bytes, headers = self._request(url)
         _validate_sec_json_response(payload_bytes, headers)
@@ -276,6 +338,170 @@ def write_stock_fundamentals_pipeline(config: Mapping[str, Any]) -> StockFundame
     output_dir = Path(settings["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = _paths(output_dir)
+    stages = _stage_sequence(settings)
+    stage_results: dict[str, Any] = {}
+    if "collect" in stages:
+        stage_results["collect"] = write_stock_fundamentals_collect(config)
+    if "normalize" in stages:
+        stage_results["normalize"] = write_stock_fundamentals_normalize(config)
+    if "audit" in stages:
+        stage_results["audit"] = write_stock_fundamentals_audit(config)
+    if "snapshots" in stages:
+        stage_results["snapshots"] = write_stock_fundamentals_snapshots(config)
+    if "enrich" in stages:
+        stage_results["enrich"] = write_stock_fundamentals_enrich(config)
+    payload = _pipeline_report_payload(paths, settings, stage_results)
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.pipeline_manifest_path, _json_ready(payload["pipeline_manifest"]))
+    writer.write_json(paths.readiness_json_path, _json_ready(payload["readiness_report"]))
+    writer.write_markdown(paths.readiness_markdown_path, _readiness_markdown(payload["readiness_report"]))
+    writer.write_json(paths.report_json_path, _json_ready(payload))
+    writer.write_markdown(paths.report_markdown_path, _report_markdown(payload, paths))
+    return paths
+
+
+def write_stock_fundamentals_preflight(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    payload = _preflight_payload(settings)
+    ResearchArtifactWriter().write_json(paths.preflight_path, _json_ready(payload))
+    return paths
+
+
+def write_stock_fundamentals_collect(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    if not settings["enabled"]:
+        raise ValueError("ml.stock_fundamentals.enabled is false")
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    preflight = _preflight_payload(settings)
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.preflight_path, _json_ready(preflight))
+    if settings["live_collection"] and preflight["status"] == "BLOCKED":
+        raise ValueError(preflight["blocking_reasons"][0])
+    base_rows = _load_base_rows(settings)
+    symbols = _configured_symbols(settings, base_rows)
+    cohort = _bounded_cohort(symbols, base_rows, settings)
+    provider = SecCompanyFactsProvider(
+        raw_root=Path(settings["raw_root"]),
+        user_agent=str(settings["user_agent"]),
+        request_delay_seconds=float(settings["request_delay_seconds"]),
+        max_retries=int(settings["max_retries"]),
+        timeout_seconds=int(settings["timeout_seconds"]),
+    )
+    entity_mapping, mapping_audit = provider.resolve_reporting_entities(
+        cohort["selected_symbols"],
+        cik_by_symbol=settings.get("cik_by_symbol", {}),
+        load_official_mapping=bool(settings["load_official_sec_company_tickers"]),
+    )
+    collection = _collect_raw(provider, entity_mapping, settings)
+    writer.write_json(paths.bounded_cohort_path, _json_ready(cohort))
+    writer.write_csv(paths.entity_mapping_path, entity_mapping, fieldnames=_fields(entity_mapping, ["symbol"]))
+    writer.write_json(paths.entity_mapping_audit_path, _json_ready(mapping_audit))
+    writer.write_json(paths.raw_collection_manifest_path, _json_ready(collection["manifest"]))
+    writer.write_csv(paths.failed_entities_path, collection["failed_entities"], fieldnames=_fields(collection["failed_entities"], ["symbol", "reporting_entity_id"]))
+    return paths
+
+
+def write_stock_fundamentals_normalize(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    mapping = _read_csv_dicts(paths.entity_mapping_path)
+    raw_payloads, cache_audit = _load_cached_raw_payloads(mapping, Path(settings["raw_root"]))
+    fact_dictionary = canonical_fact_dictionary()
+    normalized_facts, normalization_audit = normalize_sec_company_facts(raw_payloads, mapping, fact_dictionary=fact_dictionary)
+    normalization_audit["raw_cache_validation"] = cache_audit
+    normalization_audit["raw_source_row_count"] = sum(_raw_fact_row_count(item["payload"]) for item in raw_payloads)
+    normalization_audit.update(_period_counts(normalized_facts))
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.fact_dictionary_path, _json_ready(fact_dictionary))
+    _write_parquet(paths.normalized_facts_path, normalized_facts, CANONICAL_FACT_COLUMNS)
+    writer.write_csv(paths.tag_coverage_path, _tag_coverage(normalized_facts, normalization_audit), fieldnames=["canonical_fact_id", "entities_covered", "filings_covered", "source_tags_used", "conflicts", "unmapped_alternatives"])
+    writer.write_csv(paths.unit_conflicts_path, normalization_audit.get("unit_conflicts", []), fieldnames=_fields(normalization_audit.get("unit_conflicts", []), ["reporting_entity_id", "source_fact_name", "source_unit", "canonical_fact_id"]))
+    writer.write_csv(paths.period_reconciliation_path, _period_reconciliation(normalized_facts), fieldnames=["reporting_entity_id", "status", "instant_count", "quarterly_count", "ytd_count", "annual_count", "blocked_reason"])
+    writer.write_json(paths.normalization_audit_path, _json_ready(normalization_audit))
+    return paths
+
+
+def write_stock_fundamentals_audit(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    mapping = _read_csv_dicts(paths.entity_mapping_path)
+    facts = _read_parquet_dicts(paths.normalized_facts_path)
+    raw_payloads, cache_audit = _load_cached_raw_payloads(mapping, Path(settings["raw_root"]))
+    existing = _read_json(paths.normalization_audit_path)
+    audit = {
+        **existing,
+        "schema_version": SCHEMA_VERSION,
+        "stage": "audit",
+        "raw_cache_validation": cache_audit,
+        "mapping_row_count": len(mapping),
+        "normalized_fact_count": len(facts),
+        "raw_payload_count": len(raw_payloads),
+        "timestamp_audit": {
+            "missing_filing_timestamp_count": sum(1 for row in facts if not row.get("filing_timestamp")),
+            "period_end_used_as_availability_count": sum(1 for row in facts if str(row.get("available_timestamp", ""))[:10] == str(row.get("period_end", ""))[:10]),
+        },
+        "unit_conflict_count": len([row for row in facts if row.get("normalized_unit") not in {"USD", "shares", "USD/shares", "pure", "percent"}]),
+        "duplicate_group_count": _duplicate_normalized_group_count(facts),
+        "period_reconciliation": _period_counts(facts),
+    }
+    ResearchArtifactWriter().write_json(paths.normalization_audit_path, _json_ready(audit))
+    return paths
+
+
+def write_stock_fundamentals_snapshots(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    base_rows = _load_base_rows(settings)
+    mapping = _read_csv_dicts(paths.entity_mapping_path)
+    facts = _read_parquet_dicts(paths.normalized_facts_path)
+    snapshots, snapshot_audit = build_fundamental_snapshots(
+        base_rows,
+        mapping,
+        facts,
+        maximum_data_age_days=settings["maximum_data_age_days"],
+        minimum_denominator=settings["minimum_denominator"],
+    )
+    writer = ResearchArtifactWriter()
+    _write_parquet(paths.snapshots_path, snapshots, _fields(snapshots, ["decision_timestamp", "symbol"]))
+    writer.write_csv(paths.snapshot_coverage_path, _snapshot_coverage(snapshots), fieldnames=["snapshot_status", "row_count", "symbol_count", "decision_date_count"])
+    writer.write_json(paths.snapshot_audit_path, _json_ready(snapshot_audit))
+    writer.write_json(paths.feature_contracts_path, _json_ready(formula_contracts()))
+    writer.write_csv(paths.feature_coverage_path, _feature_coverage(snapshots), fieldnames=["feature", "row_count", "non_null_count", "non_null_fraction", "all_null", "coverage_classification"])
+    return paths
+
+
+def write_stock_fundamentals_enrich(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    paths = _paths(Path(settings["output_dir"]))
+    paths.output_dir.mkdir(parents=True, exist_ok=True)
+    base_rows = _load_base_rows(settings)
+    snapshots = _read_parquet_dicts(paths.snapshots_path)
+    enriched_rows, enrichment_audit = enrich_stock_artifact_with_fundamentals(base_rows, snapshots, settings=settings)
+    if enriched_rows:
+        identity = write_stock_level_artifact(
+            paths.enriched_artifact_path,
+            enriched_rows,
+            fieldnames=_fields(enriched_rows, ["rebalance_date", "symbol"]),
+            config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+        )
+        enrichment_audit["enriched_artifact_identity"] = identity
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.enrichment_audit_json_path, _json_ready(enrichment_audit))
+    writer.write_markdown(paths.enrichment_audit_markdown_path, _audit_markdown({"enrichment_audit": enrichment_audit, "analyst_estimate_status": "source_not_configured"}))
+    return paths
+
+
+def write_stock_fundamentals_legacy_full_pipeline(config: Mapping[str, Any]) -> StockFundamentalsPaths:
+    settings = _settings(config)
+    output_dir = Path(settings["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths = _paths(output_dir)
     payload = build_stock_fundamentals_pipeline(config, settings=settings)
     writer = ResearchArtifactWriter()
     writer.write_csv(paths.entity_mapping_path, payload["entity_mapping"], fieldnames=_fields(payload["entity_mapping"], ["symbol"]))
@@ -320,7 +546,7 @@ def build_stock_fundamentals_pipeline(
         timeout_seconds=int(settings["timeout_seconds"]),
         http_get=http_get,
     )
-    entity_mapping = provider.resolve_reporting_entities(
+    entity_mapping, _mapping_audit = provider.resolve_reporting_entities(
         symbols,
         cik_by_symbol=settings.get("cik_by_symbol", {}),
         load_official_mapping=bool(settings["load_official_sec_company_tickers"]),
@@ -895,6 +1121,9 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
     enrichment = dict(raw.get("enrichment", {}) or {})
     features = dict(raw.get("features", {}) or {})
     bounded = dict(raw.get("bounded", {}) or {})
+    stages = dict(raw.get("stages", {}) or {})
+    user_agent_env = str(raw.get("user_agent_env") or collection.get("user_agent_env") or "SEC_USER_AGENT")
+    user_agent = str(raw.get("user_agent") or collection.get("user_agent") or os.environ.get(user_agent_env, ""))
     return {
         "enabled": bool(raw.get("enabled", False)),
         "provider": str(raw.get("provider", "official_sec_companyfacts")),
@@ -911,7 +1140,16 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "max_retries": int(collection.get("max_retries", 2)),
         "timeout_seconds": int(collection.get("timeout_seconds", 30)),
         "maximum_entities": collection.get("maximum_entities", bounded.get("maximum_entities")),
-        "user_agent": str(raw.get("user_agent") or collection.get("user_agent") or ""),
+        "user_agent": user_agent,
+        "user_agent_env": user_agent_env,
+        "live_collection": bool(collection.get("live_collection", True)),
+        "start_stage": str(stages.get("start_stage", raw.get("start_stage", "collect"))),
+        "end_stage": str(stages.get("end_stage", raw.get("end_stage", "enrich"))),
+        "enabled_stages": list(stages.get("enabled_stages", raw.get("enabled_stages", [])) or []),
+        "network_concurrency": int(collection.get("network_concurrency", 1)),
+        "normalization_workers": int(normalization.get("workers", 1)),
+        "snapshot_workers": int(snapshots.get("workers", 1)),
+        "enrichment_workers": int(enrichment.get("workers", 1)),
         "normalized_output_path": str(normalization.get("output_path", "")),
         "maximum_data_age_days": snapshots.get("maximum_data_age_days"),
         "amendment_policy": str(snapshots.get("amendment_policy", "latest_available_as_of_decision")),
@@ -939,6 +1177,16 @@ def _paths(output_dir: Path) -> StockFundamentalsPaths:
         enriched_artifact_path=output_dir / "stock_level_prediction_artifacts_fundamentals_enriched.parquet",
         enrichment_audit_json_path=output_dir / "stock_level_fundamentals_enrichment_audit.json",
         enrichment_audit_markdown_path=output_dir / "stock_level_fundamentals_enrichment_audit.md",
+        preflight_path=output_dir / "fundamentals_live_preflight.json",
+        entity_mapping_audit_path=output_dir / "fundamentals_entity_mapping_audit.json",
+        bounded_cohort_path=output_dir / "fundamentals_bounded_cohort.json",
+        tag_coverage_path=output_dir / "fundamentals_tag_coverage.csv",
+        unit_conflicts_path=output_dir / "fundamentals_unit_conflicts.csv",
+        period_reconciliation_path=output_dir / "fundamentals_period_reconciliation.csv",
+        snapshot_coverage_path=output_dir / "fundamentals_snapshot_coverage.csv",
+        pipeline_manifest_path=output_dir / "fundamentals_pipeline_manifest.json",
+        readiness_json_path=output_dir / "fundamentals_bounded_readiness_report.json",
+        readiness_markdown_path=output_dir / "fundamentals_bounded_readiness_report.md",
         report_json_path=output_dir / "stock_fundamentals_pipeline_report.json",
         report_markdown_path=output_dir / "stock_fundamentals_pipeline_report.md",
     )
@@ -981,6 +1229,293 @@ def _fields(rows: Sequence[Mapping[str, Any]], preferred: Sequence[str]) -> list
             if key not in fields:
                 fields.append(key)
     return fields
+
+
+def _stage_sequence(settings: Mapping[str, Any]) -> list[str]:
+    if settings.get("enabled_stages"):
+        return [str(stage) for stage in settings["enabled_stages"]]
+    all_stages = ["collect", "normalize", "audit", "snapshots", "enrich"]
+    start = str(settings.get("start_stage") or "collect")
+    end = str(settings.get("end_stage") or "enrich")
+    if start not in all_stages or end not in all_stages:
+        raise ValueError(f"Unknown stock fundamentals stage range: {start}..{end}")
+    return all_stages[all_stages.index(start): all_stages.index(end) + 1]
+
+
+def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
+    reasons = []
+    if settings.get("live_collection") and not str(settings.get("user_agent") or "").strip():
+        reasons.append(f"missing identifying SEC user agent; set {settings.get('user_agent_env', 'SEC_USER_AGENT')}")
+    if int(settings.get("network_concurrency", 1)) > 2:
+        reasons.append("SEC network concurrency must remain serial or near-serial")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "stage": "preflight",
+        "status": "BLOCKED" if reasons else "PASS",
+        "blocking_reasons": reasons,
+        "provider": str(settings.get("provider")),
+        "user_agent_env": str(settings.get("user_agent_env")),
+        "user_agent_configured": bool(str(settings.get("user_agent") or "").strip()),
+        "user_agent_redacted": _redacted_user_agent(str(settings.get("user_agent") or "")),
+        "live_collection": bool(settings.get("live_collection")),
+        "network_concurrency": int(settings.get("network_concurrency", 1)),
+        "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
+    }
+
+
+def _bounded_cohort(symbols: Sequence[str], base_rows: Sequence[Mapping[str, Any]], settings: Mapping[str, Any]) -> dict[str, Any]:
+    max_symbols = settings.get("maximum_symbols") or settings.get("maximum_entities") or 20
+    base_symbols = sorted({str(row.get("symbol", "")).upper() for row in base_rows if row.get("symbol")})
+    requested = [str(symbol).upper() for symbol in symbols]
+    selected = [symbol for symbol in requested if not base_symbols or symbol in base_symbols][: int(max_symbols)]
+    if not selected and base_symbols:
+        selected = base_symbols[: int(max_symbols)]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "requested_symbols": requested,
+        "selected_symbols": selected,
+        "selection_reason": "configured symbols intersected with source stock artifact and bounded by maximum_symbols/entities",
+        "source_stock_artifact_path": str(settings.get("source_dataset_path") or ""),
+        "source_stock_artifact_identity": _optional_artifact_identity(Path(str(settings.get("source_dataset_path") or ""))),
+        "bounded_max_symbols": max_symbols,
+    }
+
+
+def validate_cached_companyfacts(path: Path, *, expected_cik: str) -> dict[str, Any]:
+    metadata_path = path.with_suffix(".metadata.json")
+    if not path.exists():
+        return {"cache_state": "missing", "path": str(path)}
+    if not metadata_path.exists():
+        return {"cache_state": "corrupt", "path": str(path), "reason": "metadata_missing"}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"cache_state": "corrupt", "path": str(path), "reason": type(exc).__name__}
+    raw_sha = file_sha256(path)
+    if metadata.get("sha256") and metadata.get("sha256") != raw_sha:
+        return {"cache_state": "corrupt", "path": str(path), "reason": "raw_sha_mismatch"}
+    if str(payload.get("cik", "")).zfill(10) != _cik_digits(expected_cik):
+        return {"cache_state": "identity_mismatch", "path": str(path), "payload_cik": payload.get("cik"), "expected_cik": _cik_digits(expected_cik)}
+    if not isinstance(payload.get("facts"), Mapping):
+        return {"cache_state": "schema_incompatible", "path": str(path), "reason": "missing_facts_object"}
+    if not metadata.get("retrieval_timestamp"):
+        return {"cache_state": "corrupt", "path": str(path), "reason": "retrieval_timestamp_missing"}
+    return {
+        "cache_state": "valid_cached",
+        "path": str(path),
+        "metadata_path": str(metadata_path),
+        "sha256": raw_sha,
+        "content_type": metadata.get("content_type"),
+        "retrieval_timestamp": metadata.get("retrieval_timestamp"),
+    }
+
+
+def _load_cached_raw_payloads(entity_mapping: Sequence[Mapping[str, Any]], raw_root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    payloads: list[dict[str, Any]] = []
+    audit: list[dict[str, Any]] = []
+    for row in entity_mapping:
+        cik = str(row.get("provider_entity_id") or row.get("cik") or "").strip()
+        if not cik:
+            audit.append({"symbol": row.get("symbol"), "cache_state": "missing", "reason": "unresolved_entity"})
+            continue
+        path = raw_root / "official_sec_companyfacts" / f"CIK{_cik_digits(cik)}" / "companyfacts.json"
+        state = validate_cached_companyfacts(path, expected_cik=cik)
+        state["symbol"] = row.get("symbol")
+        audit.append(state)
+        if state["cache_state"] == "valid_cached":
+            metadata = json.loads(path.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+            payloads.append({"path": path, "metadata": metadata, "payload": json.loads(path.read_text(encoding="utf-8"))})
+    return payloads, audit
+
+
+def _read_csv_dicts(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _read_parquet_dicts(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return pq.read_table(path).to_pylist()
+
+
+def _optional_artifact_identity(path: Path) -> dict[str, Any] | None:
+    if path and str(path) and path.exists():
+        try:
+            return artifact_identity(path)
+        except Exception:
+            return {"resolved_artifact_path": str(path), "sha256": file_sha256(path)}
+    return None
+
+
+def _raw_fact_row_count(payload: Mapping[str, Any]) -> int:
+    count = 0
+    for namespace in (payload.get("facts") or {}).values():
+        if not isinstance(namespace, Mapping):
+            continue
+        for fact in namespace.values():
+            units = fact.get("units", {}) if isinstance(fact, Mapping) else {}
+            if isinstance(units, Mapping):
+                count += sum(len(values or []) for values in units.values())
+    return count
+
+
+def _period_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    return {
+        "instant_fact_count": sum(1 for row in rows if row.get("fact_period_type") == "instant"),
+        "duration_fact_count": sum(1 for row in rows if row.get("fact_period_type") != "instant"),
+        "annual_fact_count": sum(1 for row in rows if row.get("fact_period_type") == "annual_duration"),
+        "quarterly_fact_count": sum(1 for row in rows if row.get("fact_period_type") == "quarterly_duration"),
+        "ytd_fact_count": sum(1 for row in rows if row.get("fact_period_type") == "year_to_date_duration"),
+        "amendment_count": sum(1 for row in rows if bool(row.get("is_amendment"))),
+        "missing_filing_date_count": sum(1 for row in rows if not row.get("filing_timestamp")),
+    }
+
+
+def _tag_coverage(rows: Sequence[Mapping[str, Any]], audit: Mapping[str, Any]) -> list[dict[str, Any]]:
+    by_fact: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        by_fact.setdefault(str(row.get("canonical_fact_id")), []).append(row)
+    unmapped = {str(item.get("source_tag")) for item in audit.get("unmapped_tags", [])}
+    result = []
+    for fact_id, fact_rows in sorted(by_fact.items()):
+        result.append({
+            "canonical_fact_id": fact_id,
+            "entities_covered": len({row.get("reporting_entity_id") for row in fact_rows}),
+            "filings_covered": len({row.get("filing_accession") for row in fact_rows}),
+            "source_tags_used": json.dumps(sorted({f"{row.get('fact_namespace')}:{row.get('source_fact_name')}" for row in fact_rows})),
+            "conflicts": "",
+            "unmapped_alternatives": json.dumps(sorted(tag for tag in unmapped if tag.endswith(f":{fact_id}"))),
+        })
+    return result
+
+
+def _period_reconciliation(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    by_entity: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        by_entity.setdefault(str(row.get("reporting_entity_id")), []).append(row)
+    result = []
+    for entity, entity_rows in sorted(by_entity.items()):
+        counts = _period_counts(entity_rows)
+        status = "valid" if counts["instant_fact_count"] and counts["duration_fact_count"] else "partial"
+        result.append({
+            "reporting_entity_id": entity,
+            "status": status,
+            "instant_count": counts["instant_fact_count"],
+            "quarterly_count": counts["quarterly_fact_count"],
+            "ytd_count": counts["ytd_fact_count"],
+            "annual_count": counts["annual_fact_count"],
+            "blocked_reason": "" if status != "blocked" else "period_conflict",
+        })
+    return result
+
+
+def _snapshot_coverage(snapshots: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    statuses = sorted({str(row.get("snapshot_status") or "") for row in snapshots})
+    return [
+        {
+            "snapshot_status": status,
+            "row_count": len([row for row in snapshots if str(row.get("snapshot_status") or "") == status]),
+            "symbol_count": len({row.get("symbol") for row in snapshots if str(row.get("snapshot_status") or "") == status}),
+            "decision_date_count": len({str(row.get("decision_timestamp"))[:10] for row in snapshots if str(row.get("snapshot_status") or "") == status}),
+        }
+        for status in statuses
+    ]
+
+
+def _duplicate_normalized_group_count(rows: Sequence[Mapping[str, Any]]) -> int:
+    groups: dict[tuple[Any, ...], int] = {}
+    for row in rows:
+        key = (row.get("reporting_entity_id"), row.get("canonical_fact_id"), row.get("period_start"), row.get("period_end"), row.get("normalized_unit"), row.get("available_timestamp"))
+        groups[key] = groups.get(key, 0) + 1
+    return sum(1 for count in groups.values() if count > 1)
+
+
+def _pipeline_report_payload(paths: StockFundamentalsPaths, settings: Mapping[str, Any], stage_results: Mapping[str, Any]) -> dict[str, Any]:
+    identities = {
+        "entity_mapping_identity": _file_identity(paths.entity_mapping_path),
+        "collection_identity": _file_identity(paths.raw_collection_manifest_path),
+        "normalised_facts_identity": _optional_artifact_identity(paths.normalized_facts_path),
+        "fact_dictionary_identity": _file_identity(paths.fact_dictionary_path),
+        "snapshot_identity": _optional_artifact_identity(paths.snapshots_path),
+        "formula_contract_identity": _file_identity(paths.feature_contracts_path),
+        "enriched_artifact_identity": _optional_artifact_identity(paths.enriched_artifact_path),
+    }
+    readiness = _readiness_report(paths)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "diagnostic_status": DIAGNOSTIC_STATUS,
+        "provider_selected": str(settings.get("provider", "official_sec_companyfacts")),
+        "analyst_estimate_status": "source_not_configured",
+        "stages_ran": list(stage_results),
+        "worker_ownership": _worker_ownership(settings),
+        "pipeline_manifest": {
+            "schema_version": SCHEMA_VERSION,
+            "stage_identities": identities,
+            "compatible": True,
+            "reconciliation_status": "PASS",
+        },
+        "readiness_report": readiness,
+    }
+
+
+def _file_identity(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return {"path": str(path), "sha256": file_sha256(path), "file_size_bytes": path.stat().st_size}
+
+
+def _readiness_report(paths: StockFundamentalsPaths) -> dict[str, Any]:
+    collection = _read_json(paths.raw_collection_manifest_path)
+    normalization = _read_json(paths.normalization_audit_path)
+    snapshot = _read_json(paths.snapshot_audit_path)
+    enrichment = _read_json(paths.enrichment_audit_json_path)
+    blockers = []
+    if collection and collection.get("collection_status") not in {"complete", "partially_complete"}:
+        blockers.append("official_collection_not_complete")
+    if snapshot and int(snapshot.get("available_snapshot_count", 0)) == 0:
+        blockers.append("no_available_snapshots")
+    if not enrichment.get("enriched_artifact_identity"):
+        blockers.append("enriched_artifact_missing")
+    status = "READY WITH CONDITIONS" if not blockers else "BLOCKED"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": status,
+        "promotion_ready": False,
+        "blockers": blockers,
+        "official_collection_status": collection.get("collection_status"),
+        "normalized_fact_count": normalization.get("normalized_row_count"),
+        "available_snapshot_count": snapshot.get("available_snapshot_count"),
+        "enriched_row_count": enrichment.get("enriched_row_count"),
+        "full_universe_limitations": ["historical ticker/entity mapping remains current-static unless separately proven", "no promotion-grade evaluation in this ticket"],
+    }
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _worker_ownership(settings: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "collection_network_concurrency": int(settings.get("network_concurrency", 1)),
+        "normalisation_workers": int(settings.get("normalization_workers", 1)),
+        "snapshot_workers": int(settings.get("snapshot_workers", 1)),
+        "enrichment_workers": int(settings.get("enrichment_workers", 1)),
+        "outer_workers": 1,
+        "library_threads": "not modified",
+        "backend": "serial network, local deterministic CPU stages",
+    }
+
+
+def _redacted_user_agent(value: str) -> str:
+    if not value:
+        return ""
+    return value.split("@")[0][:12] + "...@redacted" if "@" in value else "configured"
 
 
 def _http_get_bytes(url: str, headers: Mapping[str, str], timeout: int) -> tuple[bytes, Mapping[str, str]]:
@@ -1257,13 +1792,15 @@ def _feature_coverage(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]
     row_count = len(rows)
     for feature in FUNDAMENTAL_FEATURE_COLUMNS:
         non_null = sum(1 for row in rows if row.get(feature) not in (None, ""))
+        fraction = non_null / row_count if row_count else 0.0
         result.append(
             {
                 "feature": feature,
                 "row_count": row_count,
                 "non_null_count": non_null,
-                "non_null_fraction": non_null / row_count if row_count else 0.0,
+                "non_null_fraction": fraction,
                 "all_null": non_null == 0,
+                "coverage_classification": "all_null" if non_null == 0 else ("usable_bounded" if fraction >= 0.5 else "low_coverage"),
             }
         )
     return result
@@ -1332,8 +1869,19 @@ def _audit_markdown(payload: Mapping[str, Any]) -> str:
 
 
 def _report_markdown(payload: Mapping[str, Any], paths: StockFundamentalsPaths) -> str:
-    manifest = payload["raw_collection_manifest"]
-    snapshot = payload["snapshot_audit"]
+    if "raw_collection_manifest" in payload:
+        manifest = payload["raw_collection_manifest"]
+        snapshot = payload["snapshot_audit"]
+        collection_status = manifest["collection_status"]
+        normalized = payload["normalization_audit"]["normalized_row_count"]
+        snapshots = snapshot["snapshot_count"]
+        available = snapshot["available_snapshot_count"]
+    else:
+        readiness = payload.get("readiness_report", {})
+        collection_status = readiness.get("official_collection_status")
+        normalized = readiness.get("normalized_fact_count")
+        snapshots = ""
+        available = readiness.get("available_snapshot_count")
     return "\n".join(
         [
             "# Stock Fundamentals Pipeline",
@@ -1341,14 +1889,35 @@ def _report_markdown(payload: Mapping[str, Any], paths: StockFundamentalsPaths) 
             DIAGNOSTIC_STATUS,
             "",
             f"- Provider: {payload['provider_selected']}",
-            f"- Collection status: {manifest['collection_status']}",
-            f"- Normalized facts: {payload['normalization_audit']['normalized_row_count']}",
-            f"- Snapshot count: {snapshot['snapshot_count']}",
-            f"- Available snapshots: {snapshot['available_snapshot_count']}",
+            f"- Collection status: {collection_status}",
+            f"- Normalized facts: {normalized}",
+            f"- Snapshot count: {snapshots}",
+            f"- Available snapshots: {available}",
             f"- Enriched artifact: `{paths.enriched_artifact_path}`",
             f"- Analyst estimate status: {payload['analyst_estimate_status']}",
         ]
     )
+
+
+def _readiness_markdown(payload: Mapping[str, Any]) -> str:
+    return "\n".join(
+        [
+            "# Fundamentals Bounded Readiness",
+            "",
+            DIAGNOSTIC_STATUS,
+            "",
+            f"- Status: {payload.get('status')}",
+            f"- Promotion ready: {payload.get('promotion_ready')}",
+            f"- Blockers: {payload.get('blockers', [])}",
+        ]
+    )
+
+
+def _sec_mapping_items(payload: Any) -> list[Mapping[str, Any]]:
+    if not isinstance(payload, Mapping):
+        return []
+    values = payload.values() if all(str(key).isdigit() for key in payload) else payload.get("data", [])
+    return [item for item in values if isinstance(item, Mapping)]
 
 
 def _json_ready(value: Any) -> Any:

@@ -13,6 +13,12 @@ from core.research.ml.stock_level.stock_fundamentals import (
     build_stock_fundamentals_pipeline,
     canonical_fact_dictionary,
     normalize_sec_company_facts,
+    validate_cached_companyfacts,
+    write_stock_fundamentals_collect,
+    write_stock_fundamentals_enrich,
+    write_stock_fundamentals_normalize,
+    write_stock_fundamentals_preflight,
+    write_stock_fundamentals_snapshots,
 )
 from core.research.ml.stock_level.stock_level_artifact_io import write_stock_level_artifact
 
@@ -160,9 +166,11 @@ def test_fundamentals_families_resolve_only_non_null_present_columns():
 
 def test_stock_fundamentals_cli_modes_are_feedless_and_dispatch(monkeypatch):
     for mode in [
+        "ml-stock-fundamentals-preflight",
         "ml-stock-fundamentals-collect",
         "ml-stock-fundamentals-normalize",
         "ml-stock-fundamentals-audit",
+        "ml-stock-fundamentals-snapshots",
         "ml-stock-fundamentals-enrich",
         "ml-stock-fundamentals-pipeline",
     ]:
@@ -172,12 +180,104 @@ def test_stock_fundamentals_cli_modes_are_feedless_and_dispatch(monkeypatch):
 
     class Commands:
         @staticmethod
+        def run_ml_stock_fundamentals_preflight(config):
+            captured["mode"] = "preflight"
+
+        @staticmethod
+        def run_ml_stock_fundamentals_collect(config):
+            captured["mode"] = "collect"
+
+        @staticmethod
         def run_ml_stock_fundamentals_pipeline(config):
+            captured["mode"] = "pipeline"
             captured["config"] = config
 
     monkeypatch.setattr(cli_dispatch, "import_module", lambda name: Commands)
+    cli_dispatch.dispatch(SimpleNamespace(mode="ml-stock-fundamentals-preflight"), {"ml": {}}, None)
+    assert captured["mode"] == "preflight"
+    cli_dispatch.dispatch(SimpleNamespace(mode="ml-stock-fundamentals-collect"), {"ml": {}}, None)
+    assert captured["mode"] == "collect"
     cli_dispatch.dispatch(SimpleNamespace(mode="ml-stock-fundamentals-pipeline"), {"ml": {}}, None)
-    assert captured == {"config": {"ml": {}}}
+    assert captured == {"mode": "pipeline", "config": {"ml": {}}}
+
+
+def test_preflight_blocks_missing_live_user_agent_but_env_unblocks(monkeypatch, tmp_path):
+    config = {"ml": {"stock_fundamentals": {"enabled": True, "output_dir": str(tmp_path / "out")}}}
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    paths = write_stock_fundamentals_preflight(config)
+    payload = json.loads(paths.preflight_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "BLOCKED"
+    assert "SEC_USER_AGENT" in payload["blocking_reasons"][0]
+
+    monkeypatch.setenv("SEC_USER_AGENT", "Fixture Bot contact@example.com")
+    paths = write_stock_fundamentals_preflight(config)
+    payload = json.loads(paths.preflight_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "PASS"
+    assert payload["user_agent_configured"] is True
+    assert "contact@example.com" not in payload["user_agent_redacted"]
+
+
+def test_stage_separation_collect_normalize_snapshots_enrich(tmp_path):
+    raw_root = tmp_path / "raw"
+    base_path = tmp_path / "base.parquet"
+    rows = [_base_row("2023-06-15", "AAPL"), _base_row("2023-09-15", "AAPL")]
+    write_stock_level_artifact(
+        base_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )
+    entity_dir = raw_root / "official_sec_companyfacts" / "CIK0000320193"
+    entity_dir.mkdir(parents=True)
+    raw = entity_dir / "companyfacts.json"
+    raw.write_text(json.dumps(_companyfacts_payload()), encoding="utf-8")
+    raw_hash = __import__("hashlib").sha256(raw.read_bytes()).hexdigest()
+    raw.with_suffix(".metadata.json").write_text(
+        json.dumps({"sha256": raw_hash, "retrieval_timestamp": "2024-01-01T00:00:00Z", "content_type": "application/json"}),
+        encoding="utf-8",
+    )
+    config = {
+        "ml": {
+            "stock_fundamentals": {
+                "enabled": True,
+                "source_dataset_path": str(base_path),
+                "output_dir": str(tmp_path / "out"),
+                "symbols": ["AAPL"],
+                "cik_by_symbol": {"AAPL": "320193"},
+                "user_agent": "Fixture Bot contact@example.com",
+                "collection": {"raw_root": str(raw_root), "request_delay_seconds": 0},
+            }
+        }
+    }
+
+    write_stock_fundamentals_collect(config)
+    out = tmp_path / "out"
+    assert (out / "fundamentals_raw_collection_manifest.json").exists()
+    assert not (out / "fundamentals_normalized_facts.parquet").exists()
+
+    write_stock_fundamentals_normalize(config)
+    assert (out / "fundamentals_normalized_facts.parquet").exists()
+    assert not (out / "fundamentals_point_in_time_snapshots.parquet").exists()
+
+    write_stock_fundamentals_snapshots(config)
+    assert (out / "fundamentals_point_in_time_snapshots.parquet").exists()
+    assert not (out / "stock_level_prediction_artifacts_fundamentals_enriched.parquet").exists()
+
+    write_stock_fundamentals_enrich(config)
+    assert (out / "stock_level_prediction_artifacts_fundamentals_enriched.parquet").exists()
+
+
+def test_cache_validation_detects_corrupt_or_identity_mismatch(tmp_path):
+    entity_dir = tmp_path / "official_sec_companyfacts" / "CIK0000320193"
+    entity_dir.mkdir(parents=True)
+    raw = entity_dir / "companyfacts.json"
+    raw.write_text(json.dumps(_companyfacts_payload()), encoding="utf-8")
+    raw_hash = __import__("hashlib").sha256(raw.read_bytes()).hexdigest()
+    raw.with_suffix(".metadata.json").write_text(json.dumps({"sha256": raw_hash, "retrieval_timestamp": "2024-01-01T00:00:00Z"}), encoding="utf-8")
+    assert validate_cached_companyfacts(raw, expected_cik="320193")["cache_state"] == "valid_cached"
+    assert validate_cached_companyfacts(raw, expected_cik="789019")["cache_state"] == "identity_mismatch"
+    raw.write_text("{bad", encoding="utf-8")
+    assert validate_cached_companyfacts(raw, expected_cik="320193")["cache_state"] == "corrupt"
 
 
 def _mapping():

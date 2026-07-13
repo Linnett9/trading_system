@@ -365,21 +365,32 @@ ML_DEFAULTS = {
         "cik_by_symbol": {},
         "load_official_sec_company_tickers": False,
         "user_agent": "",
+        "user_agent_env": "SEC_USER_AGENT",
+        "stages": {
+            "start_stage": "collect",
+            "end_stage": "enrich",
+            "enabled_stages": [],
+        },
         "collection": {
             "raw_root": "data/raw/fundamentals",
             "resume": True,
             "force_refresh": False,
+            "live_collection": True,
+            "user_agent_env": "SEC_USER_AGENT",
             "request_delay_seconds": 0.2,
             "max_retries": 2,
             "timeout_seconds": 30,
             "maximum_entities": None,
+            "network_concurrency": 1,
         },
         "normalization": {
             "output_path": "data/processed/fundamentals/fundamentals_facts.parquet",
+            "workers": 1,
         },
         "snapshots": {
             "maximum_data_age_days": None,
             "amendment_policy": "latest_available_as_of_decision",
+            "workers": 1,
         },
         "features": {
             "minimum_denominator": 1e-09,
@@ -387,6 +398,7 @@ ML_DEFAULTS = {
         "enrichment": {
             "join_mode": "backward_point_in_time",
             "preserve_base_rows": True,
+            "workers": 1,
         },
         "coverage": {
             "entity_mapping_action": "warn",

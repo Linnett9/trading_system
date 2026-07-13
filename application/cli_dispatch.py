@@ -99,13 +99,25 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-universe-integrity-audit":
         _commands("ml_commands").run_ml_selector_universe_integrity_audit(config)
         return
-    if args.mode in {
-        "ml-stock-fundamentals-collect",
-        "ml-stock-fundamentals-normalize",
-        "ml-stock-fundamentals-audit",
-        "ml-stock-fundamentals-enrich",
-        "ml-stock-fundamentals-pipeline",
-    }:
+    if args.mode == "ml-stock-fundamentals-preflight":
+        _commands("ml_commands").run_ml_stock_fundamentals_preflight(config)
+        return
+    if args.mode == "ml-stock-fundamentals-collect":
+        _commands("ml_commands").run_ml_stock_fundamentals_collect(config)
+        return
+    if args.mode == "ml-stock-fundamentals-normalize":
+        _commands("ml_commands").run_ml_stock_fundamentals_normalize(config)
+        return
+    if args.mode == "ml-stock-fundamentals-audit":
+        _commands("ml_commands").run_ml_stock_fundamentals_audit(config)
+        return
+    if args.mode == "ml-stock-fundamentals-snapshots":
+        _commands("ml_commands").run_ml_stock_fundamentals_snapshots(config)
+        return
+    if args.mode == "ml-stock-fundamentals-enrich":
+        _commands("ml_commands").run_ml_stock_fundamentals_enrich(config)
+        return
+    if args.mode == "ml-stock-fundamentals-pipeline":
         _commands("ml_commands").run_ml_stock_fundamentals_pipeline(config)
         return
     if args.mode == "ml-stock-level-target-comparison":

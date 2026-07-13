@@ -240,6 +240,76 @@ def run_ml_selector_universe_integrity_audit(config):
     print(f"JSON report: {result.report_json_path}")
     print(f"Markdown report: {result.report_markdown_path}")
 
+def _print_stock_fundamentals_result(title, result):
+    print(f"\n{title}")
+    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
+    print("BOUNDED OFFICIAL-SOURCE DIAGNOSTIC / NOT FEATURE PROMOTION EVIDENCE")
+    print(f"Output dir: {result.output_dir}")
+
+
+def run_ml_stock_fundamentals_preflight(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_preflight
+    import json
+
+    result = write_stock_fundamentals_preflight(config)
+    payload = json.loads(result.preflight_path.read_text(encoding="utf-8"))
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS PREFLIGHT", result)
+    print(f"Status: {payload['status']} | user_agent_configured={payload['user_agent_configured']}")
+    print(f"Preflight: {result.preflight_path}")
+
+
+def run_ml_stock_fundamentals_collect(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_collect
+    import json
+
+    result = write_stock_fundamentals_collect(config)
+    payload = json.loads(result.raw_collection_manifest_path.read_text(encoding="utf-8"))
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS COLLECT", result)
+    print(f"Collection status: {payload['collection_status']} | requests={payload['request_count']} | skipped={len(payload['skipped_cached_entities'])}")
+    print(f"Raw manifest: {result.raw_collection_manifest_path}")
+
+
+def run_ml_stock_fundamentals_normalize(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_normalize
+    import json
+
+    result = write_stock_fundamentals_normalize(config)
+    payload = json.loads(result.normalization_audit_path.read_text(encoding="utf-8"))
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS NORMALIZE", result)
+    print(f"Normalized facts: {payload.get('normalized_row_count')} | unmapped tags={payload.get('unmapped_tag_count')}")
+    print(f"Normalized facts: {result.normalized_facts_path}")
+
+
+def run_ml_stock_fundamentals_audit(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_audit
+
+    result = write_stock_fundamentals_audit(config)
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS AUDIT", result)
+    print(f"Audit: {result.normalization_audit_path}")
+
+
+def run_ml_stock_fundamentals_snapshots(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_snapshots
+    import json
+
+    result = write_stock_fundamentals_snapshots(config)
+    payload = json.loads(result.snapshot_audit_path.read_text(encoding="utf-8"))
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS SNAPSHOTS", result)
+    print(f"Snapshots: {payload['snapshot_count']} | available={payload['available_snapshot_count']}")
+    print(f"Snapshots: {result.snapshots_path}")
+
+
+def run_ml_stock_fundamentals_enrich(config):
+    from core.research.ml.stock_level.stock_fundamentals import write_stock_fundamentals_enrich
+    import json
+
+    result = write_stock_fundamentals_enrich(config)
+    payload = json.loads(result.enrichment_audit_json_path.read_text(encoding="utf-8"))
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS ENRICH", result)
+    print(f"Rows: {payload['base_row_count']} -> {payload['enriched_row_count']} | joined={payload['joined_snapshot_count']}")
+    print(f"Enriched artifact: {result.enriched_artifact_path}")
+
+
 def run_ml_stock_fundamentals_pipeline(config):
     from core.research.ml.stock_level.stock_fundamentals import (
         write_stock_fundamentals_pipeline,
@@ -248,21 +318,10 @@ def run_ml_stock_fundamentals_pipeline(config):
 
     result = write_stock_fundamentals_pipeline(config)
     payload = json.loads(result.report_json_path.read_text(encoding="utf-8"))
-    manifest = payload["raw_collection_manifest"]
-    snapshot = payload["snapshot_audit"]
-    print("\nSTOCK FUNDAMENTALS PIPELINE")
-    print("mode=research | feedless=true | training_performed=false | trading_impact=none | production_validated=false")
-    print("BOUNDED DIAGNOSTIC ONLY / NOT FEATURE PROMOTION EVIDENCE")
-    print(f"Provider: {payload['provider_selected']}")
-    print(f"Collection status: {manifest['collection_status']}")
-    print(f"Resolved entities: {len(manifest['resolved_entities'])} | failed entities: {len(manifest['failed_entities'])}")
-    print(f"Normalized facts: {payload['normalization_audit']['normalized_row_count']}")
-    print(f"Snapshots: {snapshot['snapshot_count']} | available: {snapshot['available_snapshot_count']} | stale: {snapshot['stale_snapshot_count']}")
-    print(f"Entity mapping: {result.entity_mapping_path}")
-    print(f"Raw manifest: {result.raw_collection_manifest_path}")
-    print(f"Normalized facts: {result.normalized_facts_path}")
-    print(f"Snapshots: {result.snapshots_path}")
-    print(f"Enriched artifact: {result.enriched_artifact_path}")
+    _print_stock_fundamentals_result("STOCK FUNDAMENTALS PIPELINE", result)
+    print(f"Stages ran: {payload['stages_ran']}")
+    print(f"Readiness: {payload['readiness_report']['status']}")
+    print(f"Pipeline manifest: {result.pipeline_manifest_path}")
     print(f"JSON report: {result.report_json_path}")
     print(f"Markdown report: {result.report_markdown_path}")
 
