@@ -9,6 +9,12 @@ from application.cli_runtime import FEEDLESS_MODES
 from core.research.ml.stock_level.selector_feature_ablation import build_feature_family_contracts
 from core.research.ml.stock_level.stock_fundamentals import (
     SecCompanyFactsProvider,
+    _collection_plan,
+    _enrich_mapping_rows,
+    _eligible_mapping_rows,
+    _load_base_rows,
+    _raw_cache_audit,
+    _settings,
     build_fundamental_snapshots,
     build_stock_fundamentals_pipeline,
     canonical_fact_dictionary,
@@ -238,6 +244,76 @@ def test_preflight_blocks_missing_live_user_agent_but_env_unblocks(monkeypatch, 
     assert payload["maximum_entities"] == 1
     assert payload["feedless"] is True
     assert payload["broker_access_required"] is False
+
+
+def test_explicit_fundamentals_symbols_filter_before_bounded_symbol_cap(tmp_path):
+    base_path = tmp_path / "base.parquet"
+    symbols = ["AAPL", "JPM", "MSFT", "NVDA", "QQQ", "SPY", "TSLA", "XOM"]
+    rows = [_base_row("2023-06-15", symbol) for symbol in symbols]
+    write_stock_level_artifact(
+        base_path,
+        rows,
+        fieldnames=list(rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )
+    config = {
+        "ml": {
+            "stock_fundamentals": {
+                "enabled": True,
+                "source_dataset_path": str(base_path),
+                "symbols": ["AAPL", "JPM", "MSFT", "NVDA", "TSLA", "XOM"],
+                "bounded": {"maximum_symbols": 6},
+            }
+        }
+    }
+
+    loaded = _load_base_rows(_settings(config))
+
+    assert sorted({row["symbol"] for row in loaded}) == ["AAPL", "JPM", "MSFT", "NVDA", "TSLA", "XOM"]
+
+
+def test_full_universe_plan_classifies_etfs_and_reconciles_counts(tmp_path):
+    settings = _settings(
+        {
+            "ml": {
+                "stock_fundamentals": {
+                    "enabled": True,
+                    "output_dir": str(tmp_path / "out"),
+                    "collection": {"raw_root": str(tmp_path / "raw"), "chunk_size": 2},
+                }
+            }
+        }
+    )
+    mapping = [
+        {"symbol": "AAPL", "provider_entity_id": "0000320193", "reporting_entity_id": "CIK0000320193", "mapping_status": "resolved_official"},
+        {"symbol": "SPY", "provider_entity_id": "0000884394", "reporting_entity_id": "CIK0000884394", "mapping_status": "resolved_official"},
+        {"symbol": "NOPE", "provider_entity_id": "", "reporting_entity_id": "", "mapping_status": "unresolved"},
+    ]
+    enriched = _enrich_mapping_rows(mapping, settings)
+    provider = SecCompanyFactsProvider(raw_root=tmp_path / "raw", user_agent="Research Bot contact@example.com", request_delay_seconds=0)
+
+    plan = _collection_plan(mapping, enriched, settings, provider)
+
+    assert plan["configured_symbol_count"] == 3
+    assert plan["eligible_entity_count"] == 1
+    assert plan["excluded_entities"] == 1
+    assert plan["unresolved_entities"] == 1
+    assert _eligible_mapping_rows(enriched)[0]["symbol"] == "AAPL"
+
+
+def test_raw_cache_audit_requires_eligible_reconciliation():
+    rows = [
+        {"symbol": "AAPL", "collection_eligibility": "eligible", "official_sec_mapping_status": "resolved_official"},
+        {"symbol": "SPY", "collection_eligibility": "excluded", "official_sec_mapping_status": "excluded_non_company"},
+    ]
+    validation = [{"symbol": "AAPL", "cache_state": "valid_cached"}]
+    manifest = {"failed_entities": [], "request_count": 0, "collection_status": "complete"}
+
+    audit = _raw_cache_audit(validation, manifest, rows)
+
+    assert audit["eligible_reconciliation_status"] == "PASS"
+    assert audit["all_configured_reconciliation_status"] == "PASS"
+    assert audit["cache_state_counts"] == {"valid_cached": 1}
 
 
 def test_stage_separation_collect_normalize_snapshots_enrich(tmp_path):

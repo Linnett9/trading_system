@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import yaml
 
 from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.news_sources.providers import (
@@ -149,6 +150,24 @@ class StockFundamentalsPaths:
     preflight_path: Path
     entity_mapping_audit_path: Path
     bounded_cohort_path: Path
+    full_universe_plan_path: Path
+    full_universe_symbols_path: Path
+    full_collection_preflight_path: Path
+    full_collection_plan_path: Path
+    collection_progress_path: Path
+    unresolved_entities_path: Path
+    raw_cache_validation_path: Path
+    raw_cache_audit_path: Path
+    normalization_progress_path: Path
+    unmapped_tags_path: Path
+    tag_conflicts_path: Path
+    unit_coverage_path: Path
+    unsupported_currencies_path: Path
+    filing_coverage_path: Path
+    amendment_audit_path: Path
+    period_blockers_path: Path
+    full_collection_readiness_json_path: Path
+    full_collection_readiness_markdown_path: Path
     tag_coverage_path: Path
     unit_conflicts_path: Path
     period_reconciliation_path: Path
@@ -395,12 +414,35 @@ def write_stock_fundamentals_collect(config: Mapping[str, Any]) -> StockFundamen
         cik_by_symbol=settings.get("cik_by_symbol", {}),
         load_official_mapping=bool(settings["load_official_sec_company_tickers"]),
     )
-    collection = _collect_raw(provider, entity_mapping, settings)
+    enriched_mapping = _enrich_mapping_rows(entity_mapping, settings)
+    eligible_mapping = _eligible_mapping_rows(entity_mapping)
+    collection_plan = _collection_plan(entity_mapping, enriched_mapping, settings, provider)
+    collection = _collect_raw(provider, eligible_mapping, settings, progress_path=paths.collection_progress_path)
     writer.write_json(paths.bounded_cohort_path, _json_ready(cohort))
-    writer.write_csv(paths.entity_mapping_path, entity_mapping, fieldnames=_fields(entity_mapping, ["symbol"]))
+    writer.write_json(paths.full_universe_plan_path, _json_ready({
+        "schema_version": SCHEMA_VERSION,
+        "universe_identity": _universe_identity(settings),
+        "configured_symbol_count": len(enriched_mapping),
+        "eligible_reporting_companies": len(eligible_mapping),
+        "etf_or_fund_count": sum(1 for row in enriched_mapping if row.get("exclusion_reason") == "excluded_non_company"),
+        "unsupported_count": sum(1 for row in enriched_mapping if row.get("exclusion_reason") == "unsupported_security"),
+        "unresolved_count": sum(1 for row in enriched_mapping if row.get("official_sec_mapping_status") == "unresolved"),
+        "ambiguous_count": sum(1 for row in enriched_mapping if row.get("official_sec_mapping_status") == "ambiguous"),
+        "excluded_security_count": sum(1 for row in enriched_mapping if row.get("collection_eligibility") == "excluded"),
+        "mapping_audit": mapping_audit,
+    }))
+    writer.write_csv(paths.full_universe_symbols_path, enriched_mapping, fieldnames=_fields(enriched_mapping, ["symbol"]))
+    writer.write_json(paths.full_collection_preflight_path, _json_ready(preflight))
+    writer.write_json(paths.full_collection_plan_path, _json_ready(collection_plan))
+    writer.write_csv(paths.entity_mapping_path, enriched_mapping, fieldnames=_fields(enriched_mapping, ["symbol"]))
     writer.write_json(paths.entity_mapping_audit_path, _json_ready(mapping_audit))
     writer.write_json(paths.raw_collection_manifest_path, _json_ready(collection["manifest"]))
     writer.write_csv(paths.failed_entities_path, collection["failed_entities"], fieldnames=_fields(collection["failed_entities"], ["symbol", "reporting_entity_id"]))
+    unresolved_rows = [row for row in enriched_mapping if row.get("official_sec_mapping_status") in {"unresolved", "ambiguous"}]
+    writer.write_csv(paths.unresolved_entities_path, unresolved_rows, fieldnames=_fields(unresolved_rows, ["symbol", "official_sec_mapping_status"]))
+    validation = _raw_cache_validation_rows(enriched_mapping, Path(settings["raw_root"]))
+    writer.write_csv(paths.raw_cache_validation_path, validation, fieldnames=_fields(validation, ["symbol", "reporting_entity_id", "cache_state"]))
+    writer.write_json(paths.raw_cache_audit_path, _json_ready(_raw_cache_audit(validation, collection["manifest"], enriched_mapping)))
     return paths
 
 
@@ -418,9 +460,18 @@ def write_stock_fundamentals_normalize(config: Mapping[str, Any]) -> StockFundam
     writer = ResearchArtifactWriter()
     writer.write_json(paths.fact_dictionary_path, _json_ready(fact_dictionary))
     _write_parquet(paths.normalized_facts_path, normalized_facts, CANONICAL_FACT_COLUMNS)
+    writer.write_json(paths.normalization_progress_path, _json_ready(_normalization_progress(raw_payloads, normalized_facts, settings)))
     writer.write_csv(paths.tag_coverage_path, _tag_coverage(normalized_facts, normalization_audit), fieldnames=["canonical_fact_id", "entities_covered", "filings_covered", "source_tags_used", "conflicts", "unmapped_alternatives"])
+    writer.write_csv(paths.unmapped_tags_path, _unmapped_tag_rows(normalization_audit), fieldnames=["namespace", "tag", "source_tag", "count", "mapping_status"])
+    writer.write_csv(paths.tag_conflicts_path, [], fieldnames=["namespace", "tag", "conflict_type", "details"])
+    writer.write_csv(paths.unit_coverage_path, _unit_coverage(normalized_facts), fieldnames=["normalized_unit", "entity_count", "filing_count", "observation_count", "canonical_fact_count"])
     writer.write_csv(paths.unit_conflicts_path, normalization_audit.get("unit_conflicts", []), fieldnames=_fields(normalization_audit.get("unit_conflicts", []), ["reporting_entity_id", "source_fact_name", "source_unit", "canonical_fact_id"]))
+    writer.write_csv(paths.unsupported_currencies_path, _unsupported_currency_rows(normalization_audit), fieldnames=["reporting_entity_id", "source_fact_name", "source_unit", "canonical_fact_id"])
+    writer.write_csv(paths.filing_coverage_path, _filing_coverage(normalized_facts), fieldnames=["form_type", "entity_count", "filing_count", "observation_count", "missing_filing_timestamp_count"])
+    writer.write_csv(paths.amendment_audit_path, _amendment_audit(normalized_facts), fieldnames=["reporting_entity_id", "form_type", "amendment_observation_count", "accession_count", "pit_policy"])
     writer.write_csv(paths.period_reconciliation_path, _period_reconciliation(normalized_facts), fieldnames=["reporting_entity_id", "status", "instant_count", "quarterly_count", "ytd_count", "annual_count", "blocked_reason"])
+    period_rows = [row for row in _period_reconciliation(normalized_facts) if row.get("status") == "blocked"]
+    writer.write_csv(paths.period_blockers_path, period_rows, fieldnames=["reporting_entity_id", "status", "instant_count", "quarterly_count", "ytd_count", "annual_count", "blocked_reason"])
     writer.write_json(paths.normalization_audit_path, _json_ready(normalization_audit))
     return paths
 
@@ -445,11 +496,15 @@ def write_stock_fundamentals_audit(config: Mapping[str, Any]) -> StockFundamenta
             "missing_filing_timestamp_count": sum(1 for row in facts if not row.get("filing_timestamp")),
             "period_end_used_as_availability_count": sum(1 for row in facts if str(row.get("available_timestamp", ""))[:10] == str(row.get("period_end", ""))[:10]),
         },
-        "unit_conflict_count": len([row for row in facts if row.get("normalized_unit") not in {"USD", "shares", "USD/shares", "pure", "percent"}]),
+        "unit_conflict_count": len(existing.get("unit_conflicts", []) or []),
         "duplicate_group_count": _duplicate_normalized_group_count(facts),
         "period_reconciliation": _period_counts(facts),
     }
-    ResearchArtifactWriter().write_json(paths.normalization_audit_path, _json_ready(audit))
+    writer = ResearchArtifactWriter()
+    writer.write_json(paths.normalization_audit_path, _json_ready(audit))
+    readiness = _full_collection_readiness(paths, settings)
+    writer.write_json(paths.full_collection_readiness_json_path, _json_ready(readiness))
+    writer.write_markdown(paths.full_collection_readiness_markdown_path, _full_readiness_markdown(readiness))
     return paths
 
 
@@ -955,7 +1010,182 @@ def formula_contracts() -> dict[str, Any]:
     return payload
 
 
-def _collect_raw(provider: SecCompanyFactsProvider, entity_mapping: Sequence[Mapping[str, Any]], settings: Mapping[str, Any]) -> dict[str, Any]:
+ETF_OR_FUND_SYMBOLS = {
+    "DIA",
+    "GLD",
+    "IWM",
+    "QQQ",
+    "SPY",
+    "TLT",
+    "VNQ",
+    "XLB",
+    "XLE",
+    "XLF",
+    "XLI",
+    "XLK",
+    "XLP",
+    "XLU",
+    "XLV",
+    "XLY",
+}
+
+
+def _symbols_from_universe_paths(paths: Sequence[Any]) -> list[str]:
+    symbols: list[str] = []
+    for raw_path in paths or []:
+        path = Path(str(raw_path))
+        if not path.exists():
+            continue
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        values = payload.get("symbols") if isinstance(payload, Mapping) else None
+        for value in values or []:
+            symbol = str(value).strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    return symbols
+
+
+def _universe_identity(settings: Mapping[str, Any]) -> dict[str, Any]:
+    identities = []
+    for raw_path in settings.get("universe_paths", []) or []:
+        path = Path(str(raw_path))
+        if path.exists():
+            payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            identities.append(
+                {
+                    "path": str(path),
+                    "sha256": file_sha256(path),
+                    "name": payload.get("name") if isinstance(payload, Mapping) else None,
+                    "available_count": payload.get("available_count") if isinstance(payload, Mapping) else None,
+                    "symbol_count": len(payload.get("symbols") or []) if isinstance(payload, Mapping) else None,
+                }
+            )
+    return {
+        "universe_status": settings.get("universe_status"),
+        "survivorship_status": settings.get("survivorship_status"),
+        "historical_membership_status": settings.get("historical_membership_status"),
+        "delisting_coverage_status": settings.get("delisting_coverage_status"),
+        "ticker_history_status": settings.get("ticker_history_status"),
+        "sources": identities,
+        "identity": _sha256_json(identities),
+    }
+
+
+def _security_type(symbol: str) -> tuple[str, str]:
+    normalized = symbol.upper()
+    if normalized in ETF_OR_FUND_SYMBOLS:
+        return "ETF/fund", "excluded_non_company"
+    if "." in normalized or "/" in normalized:
+        return "unsupported", "unsupported_security"
+    return "ordinary company", ""
+
+
+def _enrich_mapping_rows(entity_mapping: Sequence[Mapping[str, Any]], settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in entity_mapping:
+        symbol = str(row.get("symbol", "")).upper()
+        security_type, exclusion = _security_type(symbol)
+        mapping_status = str(row.get("mapping_status") or "")
+        if exclusion:
+            collection_eligibility = "excluded"
+            output_status = exclusion
+        elif mapping_status in {"resolved_official", "resolved_manual_override"}:
+            collection_eligibility = "eligible"
+            output_status = mapping_status
+        elif mapping_status == "ambiguous":
+            collection_eligibility = "blocked"
+            output_status = "ambiguous"
+        else:
+            collection_eligibility = "blocked"
+            output_status = "unresolved"
+        mapping_confidence = "high_current_official" if output_status == "resolved_official" else "none"
+        rows.append(
+            {
+                **dict(row),
+                "configured_status": "configured",
+                "security_type": security_type,
+                "security_classification": security_type,
+                "official_sec_mapping_status": output_status,
+                "mapping_confidence": mapping_confidence,
+                "manual_override_status": "none" if output_status != "resolved_manual_override" else "active",
+                "collection_eligibility": collection_eligibility,
+                "exclusion_reason": exclusion,
+                "universe_status": settings.get("universe_status"),
+                "survivorship_status": settings.get("survivorship_status"),
+                "historical_membership_status": settings.get("historical_membership_status"),
+                "delisting_coverage_status": settings.get("delisting_coverage_status"),
+                "ticker_history_status": settings.get("ticker_history_status"),
+            }
+        )
+    return rows
+
+
+def _eligible_mapping_rows(entity_mapping: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in entity_mapping
+        if row.get("provider_entity_id")
+        and _security_type(str(row.get("symbol") or ""))[1] == ""
+        and row.get("mapping_status") in {"resolved_official", "resolved_manual_override"}
+    ]
+
+
+def _collection_plan(
+    entity_mapping: Sequence[Mapping[str, Any]],
+    enriched_mapping: Sequence[Mapping[str, Any]],
+    settings: Mapping[str, Any],
+    provider: SecCompanyFactsProvider,
+) -> dict[str, Any]:
+    eligible = _eligible_mapping_rows(entity_mapping)
+    cache_rows = []
+    valid = invalid = 0
+    for row in eligible:
+        path = Path(str(settings["raw_root"])) / provider.provider_id / str(row["reporting_entity_id"]) / "companyfacts.json"
+        state = validate_cached_companyfacts(path, expected_cik=str(row.get("provider_entity_id") or ""))
+        state["symbol"] = row.get("symbol")
+        state["reporting_entity_id"] = row.get("reporting_entity_id")
+        cache_rows.append(state)
+        if state["cache_state"] == "valid_cached":
+            valid += 1
+        elif state["cache_state"] != "missing":
+            invalid += 1
+    excluded = [row for row in enriched_mapping if row.get("collection_eligibility") == "excluded"]
+    unresolved = [row for row in enriched_mapping if row.get("official_sec_mapping_status") == "unresolved"]
+    ambiguous = [row for row in enriched_mapping if row.get("official_sec_mapping_status") == "ambiguous"]
+    plan = {
+        "schema_version": SCHEMA_VERSION,
+        "stage": "full_collection_plan",
+        "universe_identity": _universe_identity(settings),
+        "configured_symbol_count": len(enriched_mapping),
+        "eligible_entity_count": len(eligible),
+        "already_valid_cached_entities": valid,
+        "new_entities_required": sum(1 for row in cache_rows if row["cache_state"] == "missing"),
+        "invalid_cached_entities": invalid,
+        "unresolved_entities": len(unresolved),
+        "ambiguous_entities": len(ambiguous),
+        "excluded_entities": len(excluded),
+        "estimated_request_count": sum(1 for row in cache_rows if row["cache_state"] != "valid_cached"),
+        "network_concurrency": int(settings.get("network_concurrency", 1)),
+        "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
+        "retry_policy": {"max_retries": int(settings.get("max_retries", 0))},
+        "timeout_policy": {"timeout_seconds": int(settings.get("timeout_seconds", 30))},
+        "raw_root": str(settings.get("raw_root")),
+        "resume": bool(settings.get("resume", True)),
+        "collection_chunk_size": int(settings.get("collection_chunk_size", 25)),
+        "collection_contract_identity": "",
+        "cache_validation": cache_rows,
+    }
+    plan["collection_contract_identity"] = _sha256_json({k: v for k, v in plan.items() if k not in {"cache_validation", "collection_contract_identity"}})
+    return plan
+
+
+def _collect_raw(
+    provider: SecCompanyFactsProvider,
+    entity_mapping: Sequence[Mapping[str, Any]],
+    settings: Mapping[str, Any],
+    *,
+    progress_path: Path | None = None,
+) -> dict[str, Any]:
     started = _utc_now()
     raw_payloads = []
     failed = []
@@ -965,15 +1195,90 @@ def _collect_raw(provider: SecCompanyFactsProvider, entity_mapping: Sequence[Map
     resolved = [row for row in entity_mapping if row.get("provider_entity_id")]
     if max_entities is not None:
         resolved = resolved[: int(max_entities)]
-    for row in resolved:
-        try:
-            result = provider.fetch_company_facts(str(row["provider_entity_id"]), force_refresh=bool(settings["force_refresh"]))
-            request_count += 0 if result["status"] == "skipped_cached" else 1
-            if result["status"] == "skipped_cached":
-                skipped.append(str(row["reporting_entity_id"]))
-            raw_payloads.append(result)
-        except Exception as exc:
-            failed.append({"symbol": row["symbol"], "reporting_entity_id": row["reporting_entity_id"], "error_type": type(exc).__name__, "error": str(exc)})
+    chunk_size = max(1, int(settings.get("collection_chunk_size", 25)))
+    chunks: list[dict[str, Any]] = []
+    completed_entities: list[str] = []
+    for chunk_index, start_index in enumerate(range(0, len(resolved), chunk_size), start=1):
+        chunk_rows = resolved[start_index: start_index + chunk_size]
+        chunk = {
+            "chunk_id": f"chunk_{chunk_index:04d}",
+            "entity_ids": [str(row.get("reporting_entity_id")) for row in chunk_rows],
+            "completed_count": 0,
+            "failed_count": 0,
+            "start_timestamp": _utc_now(),
+            "end_timestamp": "",
+            "chunk_status": "running",
+        }
+        for row in chunk_rows:
+            entity_id = str(row["reporting_entity_id"])
+            status = "failed"
+            error = ""
+            cache_state = ""
+            path = ""
+            raw_sha = ""
+            requested = False
+            try:
+                cache_path = provider.raw_root / provider.provider_id / entity_id / "companyfacts.json"
+                before = validate_cached_companyfacts(cache_path, expected_cik=str(row["provider_entity_id"]))
+                result = provider.fetch_company_facts(str(row["provider_entity_id"]), force_refresh=bool(settings["force_refresh"]))
+                requested = result["status"] != "skipped_cached"
+                request_count += 1 if requested else 0
+                if result["status"] == "skipped_cached":
+                    skipped.append(entity_id)
+                    status = "valid_cached"
+                else:
+                    status = "new_success" if before["cache_state"] == "missing" else "retried_success"
+                raw_payloads.append(result)
+                completed_entities.append(entity_id)
+                cache_state = "valid_cached"
+                path = str(result["path"])
+                raw_sha = str(result["metadata"].get("sha256") or "")
+            except Exception as exc:
+                error = str(exc)
+                failed.append({"symbol": row["symbol"], "reporting_entity_id": row["reporting_entity_id"], "error_type": type(exc).__name__, "error": error})
+                chunk["failed_count"] += 1
+            chunk["completed_count"] += 1 if status in {"valid_cached", "new_success", "retried_success"} else 0
+            if progress_path is not None:
+                progress = {
+                    "schema_version": SCHEMA_VERSION,
+                    "started": started,
+                    "last_update_timestamp": _utc_now(),
+                    "network_concurrency": int(settings.get("network_concurrency", 1)),
+                    "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
+                    "chunk_size": chunk_size,
+                    "completed_entities": completed_entities,
+                    "failed_entities": failed,
+                    "current_chunk": chunk,
+                    "chunks": chunks,
+                    "last_entity_status": {
+                        "symbol": row.get("symbol"),
+                        "reporting_entity_id": entity_id,
+                        "status": status,
+                        "cache_state": cache_state,
+                        "request_made": requested,
+                        "path": path,
+                        "raw_sha256": raw_sha,
+                        "error": error,
+                    },
+                }
+                _atomic_write_text(progress_path, json.dumps(_json_ready(progress), indent=2))
+        chunk["end_timestamp"] = _utc_now()
+        chunk["chunk_status"] = "complete" if chunk["failed_count"] == 0 else "partial"
+        chunks.append(chunk)
+        if progress_path is not None:
+            progress = {
+                "schema_version": SCHEMA_VERSION,
+                "started": started,
+                "last_update_timestamp": _utc_now(),
+                "network_concurrency": int(settings.get("network_concurrency", 1)),
+                "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
+                "chunk_size": chunk_size,
+                "completed_entities": completed_entities,
+                "failed_entities": failed,
+                "chunks": chunks,
+                "progress_status": "running",
+            }
+            _atomic_write_text(progress_path, json.dumps(_json_ready(progress), indent=2))
     status = "complete"
     if failed and raw_payloads:
         status = "partially_complete"
@@ -998,8 +1303,22 @@ def _collect_raw(provider: SecCompanyFactsProvider, entity_mapping: Sequence[Map
         "raw_hashes": [item["metadata"].get("sha256") for item in raw_payloads],
         "response_metadata": [item["metadata"] for item in raw_payloads],
         "retry_counts": {row.get("reporting_entity_id"): provider.max_retries for row in failed},
+        "chunks": chunks,
+        "chunk_size": chunk_size,
+        "status_counts": {
+            "valid_cached": len(skipped),
+            "new_or_retried_success": request_count,
+            "failed": len(failed),
+            "unresolved": len([row for row in entity_mapping if not row.get("reporting_entity_id")]),
+            "unsupported": 0,
+        },
         "collection_status": status,
     }
+    if progress_path is not None:
+        progress = _read_json(progress_path)
+        progress["progress_status"] = status
+        progress["last_update_timestamp"] = _utc_now()
+        _atomic_write_text(progress_path, json.dumps(_json_ready(progress), indent=2))
     return {"manifest": manifest, "raw_payloads": raw_payloads, "failed_entities": failed}
 
 
@@ -1140,6 +1459,7 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "max_retries": int(collection.get("max_retries", 2)),
         "timeout_seconds": int(collection.get("timeout_seconds", 30)),
         "maximum_entities": collection.get("maximum_entities", bounded.get("maximum_entities")),
+        "collection_chunk_size": int(collection.get("chunk_size", raw.get("collection_chunk_size", 25))),
         "user_agent": user_agent,
         "user_agent_env": user_agent_env,
         "live_collection": bool(collection.get("live_collection", True)),
@@ -1157,6 +1477,12 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "minimum_denominator": float(features.get("minimum_denominator", 1e-9)),
         "maximum_decision_dates": bounded.get("maximum_decision_dates"),
         "maximum_symbols": bounded.get("maximum_symbols"),
+        "universe_paths": list(raw.get("universe_paths") or ml.get("stock_alpha_artifact_universe_paths") or []),
+        "universe_status": str(raw.get("universe_status") or "CURRENT_STATIC_UNIVERSE"),
+        "survivorship_status": str(raw.get("survivorship_status") or "CURRENT_STATIC_SURVIVORSHIP_BIASED"),
+        "historical_membership_status": str(raw.get("historical_membership_status") or "not_proven_current_static_only"),
+        "delisting_coverage_status": str(raw.get("delisting_coverage_status") or "not_proven"),
+        "ticker_history_status": str(raw.get("ticker_history_status") or "current_static_sec_mapping"),
         "coverage": dict(raw.get("coverage", {}) or {}),
     }
 
@@ -1180,6 +1506,24 @@ def _paths(output_dir: Path) -> StockFundamentalsPaths:
         preflight_path=output_dir / "fundamentals_live_preflight.json",
         entity_mapping_audit_path=output_dir / "fundamentals_entity_mapping_audit.json",
         bounded_cohort_path=output_dir / "fundamentals_bounded_cohort.json",
+        full_universe_plan_path=output_dir / "fundamentals_full_universe_plan.json",
+        full_universe_symbols_path=output_dir / "fundamentals_full_universe_symbols.csv",
+        full_collection_preflight_path=output_dir / "fundamentals_full_collection_preflight.json",
+        full_collection_plan_path=output_dir / "fundamentals_full_collection_plan.json",
+        collection_progress_path=output_dir / "fundamentals_collection_progress.json",
+        unresolved_entities_path=output_dir / "fundamentals_unresolved_entities.csv",
+        raw_cache_validation_path=output_dir / "fundamentals_raw_cache_validation.csv",
+        raw_cache_audit_path=output_dir / "fundamentals_raw_cache_audit.json",
+        normalization_progress_path=output_dir / "fundamentals_normalization_progress.json",
+        unmapped_tags_path=output_dir / "fundamentals_unmapped_tags.csv",
+        tag_conflicts_path=output_dir / "fundamentals_tag_conflicts.csv",
+        unit_coverage_path=output_dir / "fundamentals_unit_coverage.csv",
+        unsupported_currencies_path=output_dir / "fundamentals_unsupported_currencies.csv",
+        filing_coverage_path=output_dir / "fundamentals_filing_coverage.csv",
+        amendment_audit_path=output_dir / "fundamentals_amendment_audit.csv",
+        period_blockers_path=output_dir / "fundamentals_period_blockers.csv",
+        full_collection_readiness_json_path=output_dir / "fundamentals_full_collection_readiness_report.json",
+        full_collection_readiness_markdown_path=output_dir / "fundamentals_full_collection_readiness_report.md",
         tag_coverage_path=output_dir / "fundamentals_tag_coverage.csv",
         unit_conflicts_path=output_dir / "fundamentals_unit_conflicts.csv",
         period_reconciliation_path=output_dir / "fundamentals_period_reconciliation.csv",
@@ -1199,6 +1543,10 @@ def _load_base_rows(settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows = read_stock_level_artifact(Path(source), allow_csv_fallback=bool(settings.get("allow_csv_fallback", False)))
     max_symbols = settings.get("maximum_symbols")
     max_dates = settings.get("maximum_decision_dates")
+    configured_symbols = [str(symbol).upper() for symbol in settings.get("symbols", []) or []]
+    if configured_symbols:
+        configured = set(configured_symbols)
+        rows = [row for row in rows if str(row.get("symbol", "")).upper() in configured]
     if max_symbols is not None:
         symbols = sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})[: int(max_symbols)]
         rows = [row for row in rows if str(row.get("symbol", "")).upper() in symbols]
@@ -1211,6 +1559,9 @@ def _load_base_rows(settings: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _configured_symbols(settings: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> list[str]:
     if settings.get("symbols"):
         return [str(symbol).upper() for symbol in settings["symbols"]]
+    universe_symbols = _symbols_from_universe_paths(settings.get("universe_paths", []))
+    if universe_symbols:
+        return universe_symbols
     return sorted({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")})
 
 
@@ -1245,16 +1596,19 @@ def _stage_sequence(settings: Mapping[str, Any]) -> list[str]:
 def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
     reasons = []
     source_path = Path(str(settings.get("source_dataset_path") or ""))
-    if settings.get("live_collection") and not str(settings.get("user_agent") or "").strip():
+    universe_paths = [Path(str(path)) for path in settings.get("universe_paths", []) or []]
+    universe_exists = bool(universe_paths) and all(path.exists() for path in universe_paths)
+    user_agent = str(settings.get("user_agent") or "").strip()
+    if settings.get("live_collection") and (not user_agent or "@" not in user_agent):
         reasons.append(f"missing identifying SEC user agent; set {settings.get('user_agent_env', 'SEC_USER_AGENT')}")
     if int(settings.get("network_concurrency", 1)) > 2:
         reasons.append("SEC network concurrency must remain serial or near-serial")
-    if not source_path.exists():
-        reasons.append(f"source stock artifact does not exist: {source_path}")
+    if not source_path.exists() and not universe_exists:
+        reasons.append(f"source stock artifact or universe does not exist: {source_path}")
     if settings.get("live_collection") and not bool(settings.get("load_official_sec_company_tickers")):
         reasons.append("live collection requires load_official_sec_company_tickers=true for official entity mapping")
-    if settings.get("live_collection") and settings.get("maximum_entities") is None:
-        reasons.append("live collection requires bounded collection.maximum_entities")
+    if settings.get("live_collection") and settings.get("maximum_entities") is None and not _symbols_from_universe_paths(settings.get("universe_paths", [])):
+        reasons.append("live collection requires bounded collection.maximum_entities or configured universe_paths")
     raw_root = Path(str(settings.get("raw_root") or ""))
     output_dir = Path(str(settings.get("output_dir") or ""))
     output_writable = True
@@ -1281,10 +1635,15 @@ def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
         "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
         "source_dataset_path": str(source_path),
         "source_dataset_exists": source_path.exists(),
+        "source_universe_paths": [str(path) for path in universe_paths],
+        "source_universe_exists": universe_exists,
+        "source_universe_identity": _universe_identity(settings),
         "output_dir": str(output_dir),
         "output_dir_writable": output_writable,
         "official_mapping_enabled": bool(settings.get("load_official_sec_company_tickers")),
         "maximum_entities": settings.get("maximum_entities"),
+        "configured_universe_symbol_count": len(_symbols_from_universe_paths(settings.get("universe_paths", []))),
+        "resume": bool(settings.get("resume", True)),
         "raw_root": str(raw_root),
         "feedless": True,
         "broker_access_required": False,
@@ -1292,7 +1651,7 @@ def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _bounded_cohort(symbols: Sequence[str], base_rows: Sequence[Mapping[str, Any]], settings: Mapping[str, Any]) -> dict[str, Any]:
-    max_symbols = settings.get("maximum_symbols") or settings.get("maximum_entities") or 20
+    max_symbols = settings.get("maximum_symbols") or settings.get("maximum_entities") or len(symbols)
     base_symbols = sorted({str(row.get("symbol", "")).upper() for row in base_rows if row.get("symbol")})
     requested = [str(symbol).upper() for symbol in symbols]
     selected = [symbol for symbol in requested if not base_symbols or symbol in base_symbols][: int(max_symbols)]
@@ -1357,6 +1716,78 @@ def _load_cached_raw_payloads(entity_mapping: Sequence[Mapping[str, Any]], raw_r
     return payloads, audit
 
 
+def _raw_cache_validation_rows(entity_mapping: Sequence[Mapping[str, Any]], raw_root: Path) -> list[dict[str, Any]]:
+    rows = []
+    for row in entity_mapping:
+        symbol = str(row.get("symbol") or "")
+        entity_id = str(row.get("reporting_entity_id") or "")
+        cik = str(row.get("provider_entity_id") or row.get("cik") or "")
+        if not cik or row.get("collection_eligibility") == "excluded":
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "reporting_entity_id": entity_id,
+                    "cache_state": "unsupported" if row.get("collection_eligibility") == "excluded" else "missing",
+                    "validation_status": row.get("official_sec_mapping_status") or "unresolved",
+                    "reason": row.get("exclusion_reason") or "unresolved_or_not_eligible",
+                }
+            )
+            continue
+        path = raw_root / "official_sec_companyfacts" / f"CIK{_cik_digits(cik)}" / "companyfacts.json"
+        state = validate_cached_companyfacts(path, expected_cik=cik)
+        rows.append(
+            {
+                "symbol": symbol,
+                "reporting_entity_id": entity_id,
+                "provider_entity_id": cik,
+                "cache_state": state.get("cache_state"),
+                "validation_status": "valid" if state.get("cache_state") == "valid_cached" else state.get("cache_state"),
+                "reason": state.get("reason", ""),
+                "path": state.get("path", str(path)),
+                "metadata_path": state.get("metadata_path", ""),
+                "sha256": state.get("sha256", ""),
+                "content_type": state.get("content_type", ""),
+                "retrieval_timestamp": state.get("retrieval_timestamp", ""),
+                "atomic_final_filename": path.name == "companyfacts.json",
+            }
+        )
+    return rows
+
+
+def _raw_cache_audit(
+    validation_rows: Sequence[Mapping[str, Any]],
+    manifest: Mapping[str, Any],
+    entity_mapping: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    planned = len([row for row in entity_mapping if row.get("collection_eligibility") == "eligible"])
+    valid = len([row for row in validation_rows if row.get("cache_state") == "valid_cached"])
+    failed = len(manifest.get("failed_entities", []) or [])
+    unresolved = len([row for row in entity_mapping if row.get("official_sec_mapping_status") in {"unresolved", "ambiguous"}])
+    excluded = len([row for row in entity_mapping if row.get("collection_eligibility") == "excluded"])
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "planned_eligible_entities": planned,
+        "valid_cached_entities": valid,
+        "failed_entities": failed,
+        "unresolved_entities": unresolved,
+        "excluded_entities": excluded,
+        "reconciliation_formula": "planned = valid_cached + failed for eligible entities; unresolved/excluded are outside request plan",
+        "eligible_reconciliation_status": "PASS" if planned == valid + failed else "BLOCK",
+        "all_configured_reconciliation_status": "PASS" if len(entity_mapping) == planned + unresolved + excluded else "BLOCK",
+        "cache_state_counts": _count_by(validation_rows, "cache_state"),
+        "collection_request_count": manifest.get("request_count"),
+        "collection_status": manifest.get("collection_status"),
+    }
+
+
+def _count_by(rows: Sequence[Mapping[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or "")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
 def _read_csv_dicts(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -1371,7 +1802,7 @@ def _read_parquet_dicts(path: Path) -> list[dict[str, Any]]:
 
 
 def _optional_artifact_identity(path: Path) -> dict[str, Any] | None:
-    if path and str(path) and path.exists():
+    if path and str(path) and path.exists() and path.is_file():
         try:
             return artifact_identity(path)
         except Exception:
@@ -1418,6 +1849,96 @@ def _tag_coverage(rows: Sequence[Mapping[str, Any]], audit: Mapping[str, Any]) -
             "conflicts": "",
             "unmapped_alternatives": json.dumps(sorted(tag for tag in unmapped if tag.endswith(f":{fact_id}"))),
         })
+    return result
+
+
+def _normalization_progress(raw_payloads: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]], settings: Mapping[str, Any]) -> dict[str, Any]:
+    entity_ids = [f"CIK{_cik_digits(item.get('payload', {}).get('cik'))}" for item in raw_payloads]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "normalisation_workers": int(settings.get("normalization_workers", 1)),
+        "backend": "deterministic serial consolidation",
+        "library_thread_caps": {
+            "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS"),
+            "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
+            "OPENBLAS_NUM_THREADS": os.environ.get("OPENBLAS_NUM_THREADS"),
+        },
+        "entity_partitions": [{"partition_id": entity_id, "status": "complete"} for entity_id in entity_ids],
+        "reused_partitions": 0,
+        "recomputed_partitions": len(entity_ids),
+        "invalidated_partitions": 0,
+        "normalized_row_count": len(rows),
+        "normalisation_contract_identity": _normalisation_identity(canonical_fact_dictionary()),
+        "peak_memory_diagnostics": "not_available",
+    }
+
+
+def _unmapped_tag_rows(audit: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for item in audit.get("unmapped_tags", []) or []:
+        source_tag = str(item.get("source_tag") or "")
+        namespace, _, tag = source_tag.partition(":")
+        rows.append({"namespace": namespace, "tag": tag, "source_tag": source_tag, "count": item.get("count", 0), "mapping_status": "unmapped"})
+    return rows
+
+
+def _unit_coverage(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for unit in sorted({str(row.get("normalized_unit") or "") for row in rows}):
+        unit_rows = [row for row in rows if str(row.get("normalized_unit") or "") == unit]
+        result.append(
+            {
+                "normalized_unit": unit,
+                "entity_count": len({row.get("reporting_entity_id") for row in unit_rows}),
+                "filing_count": len({row.get("filing_accession") for row in unit_rows}),
+                "observation_count": len(unit_rows),
+                "canonical_fact_count": len({row.get("canonical_fact_id") for row in unit_rows}),
+            }
+        )
+    return result
+
+
+def _unsupported_currency_rows(audit: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for row in audit.get("unit_conflicts", []) or []:
+        unit = str(row.get("source_unit") or "")
+        if unit.upper() not in {"USD", "SHARES", "USD/SHARES", "PURE", "PERCENT"}:
+            rows.append(dict(row))
+    return rows
+
+
+def _filing_coverage(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    for form in sorted({str(row.get("form_type") or "") for row in rows}):
+        form_rows = [row for row in rows if str(row.get("form_type") or "") == form]
+        result.append(
+            {
+                "form_type": form,
+                "entity_count": len({row.get("reporting_entity_id") for row in form_rows}),
+                "filing_count": len({row.get("filing_accession") for row in form_rows}),
+                "observation_count": len(form_rows),
+                "missing_filing_timestamp_count": sum(1 for row in form_rows if not row.get("filing_timestamp")),
+            }
+        )
+    return result
+
+
+def _amendment_audit(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result = []
+    amended = [row for row in rows if bool(row.get("is_amendment"))]
+    by_key: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in amended:
+        by_key.setdefault((str(row.get("reporting_entity_id") or ""), str(row.get("form_type") or "")), []).append(row)
+    for (entity_id, form_type), group in sorted(by_key.items()):
+        result.append(
+            {
+                "reporting_entity_id": entity_id,
+                "form_type": form_type,
+                "amendment_observation_count": len(group),
+                "accession_count": len({row.get("filing_accession") for row in group}),
+                "pit_policy": "amendments become eligible only when filed timestamp is <= decision timestamp",
+            }
+        )
     return result
 
 
@@ -1520,6 +2041,81 @@ def _readiness_report(paths: StockFundamentalsPaths) -> dict[str, Any]:
         "enriched_row_count": enrichment.get("enriched_row_count"),
         "full_universe_limitations": ["historical ticker/entity mapping remains current-static unless separately proven", "no promotion-grade evaluation in this ticket"],
     }
+
+
+def _full_collection_readiness(paths: StockFundamentalsPaths, settings: Mapping[str, Any]) -> dict[str, Any]:
+    plan = _read_json(paths.full_collection_plan_path)
+    collection = _read_json(paths.raw_collection_manifest_path)
+    cache = _read_json(paths.raw_cache_audit_path)
+    normalization = _read_json(paths.normalization_audit_path)
+    blockers = []
+    if cache.get("eligible_reconciliation_status") not in {None, "PASS"}:
+        blockers.append("eligible_collection_reconciliation_failed")
+    if collection.get("collection_status") not in {"complete", "partially_complete"}:
+        blockers.append("collection_not_complete")
+    if normalization.get("status") != "PASS":
+        blockers.append("normalisation_not_pass")
+    if int(cache.get("failed_entities", 0) or 0) > 0:
+        blockers.append("failed_entities_remain")
+    limitations = [
+        "historical ticker/entity mapping remains current-static unless separately proven",
+        "survivorship and delisting coverage are not proven by this collection",
+        "not promotion-ready; no selector fitting or trading validation in this ticket",
+    ]
+    if int(plan.get("unresolved_entities", 0) or 0) > 0:
+        limitations.append("unresolved SEC mappings remain excluded")
+    if int(plan.get("excluded_entities", 0) or 0) > 0:
+        limitations.append("ETFs/funds/unsupported securities excluded from CompanyFacts collection")
+    status = "READY FOR LARGE-ARTIFACT ENRICHMENT" if not blockers else ("READY WITH CONDITIONS" if normalization.get("normalized_row_count") else "BLOCKED")
+    if limitations and not blockers:
+        status = "READY WITH CONDITIONS"
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": status,
+        "promotion_ready": False,
+        "blockers": blockers,
+        "limitations": limitations,
+        "configured_symbol_count": plan.get("configured_symbol_count"),
+        "eligible_entity_count": plan.get("eligible_entity_count"),
+        "excluded_entities": plan.get("excluded_entities"),
+        "unresolved_entities": plan.get("unresolved_entities"),
+        "ambiguous_entities": plan.get("ambiguous_entities"),
+        "valid_cached_entities": cache.get("valid_cached_entities"),
+        "failed_entities": cache.get("failed_entities"),
+        "raw_collection_reconciliation": cache.get("eligible_reconciliation_status"),
+        "cache_integrity": cache.get("cache_state_counts"),
+        "normalization_status": normalization.get("status"),
+        "normalized_fact_count": normalization.get("normalized_row_count"),
+        "unmapped_tag_count": normalization.get("unmapped_tag_count"),
+        "unit_conflict_count": normalization.get("unit_conflict_count"),
+        "period_reconciliation": _period_counts(_read_parquet_dicts(paths.normalized_facts_path)) if paths.normalized_facts_path.exists() else {},
+        "survivorship_status": settings.get("survivorship_status"),
+        "historical_membership_status": settings.get("historical_membership_status"),
+        "delisting_coverage_status": settings.get("delisting_coverage_status"),
+        "ticker_history_status": settings.get("ticker_history_status"),
+    }
+
+
+def _full_readiness_markdown(readiness: Mapping[str, Any]) -> str:
+    lines = [
+        "# Fundamentals Full Collection Readiness",
+        "",
+        f"- Status: {readiness.get('status')}",
+        f"- Promotion ready: {readiness.get('promotion_ready')}",
+        f"- Configured symbols: {readiness.get('configured_symbol_count')}",
+        f"- Eligible entities: {readiness.get('eligible_entity_count')}",
+        f"- Valid cached entities: {readiness.get('valid_cached_entities')}",
+        f"- Normalized facts: {readiness.get('normalized_fact_count')}",
+        f"- Historical membership: {readiness.get('historical_membership_status')}",
+        f"- Ticker history: {readiness.get('ticker_history_status')}",
+    ]
+    blockers = readiness.get("blockers") or []
+    if blockers:
+        lines.extend(["", "## Blockers", *[f"- {item}" for item in blockers]])
+    limitations = readiness.get("limitations") or []
+    if limitations:
+        lines.extend(["", "## Conditions", *[f"- {item}" for item in limitations]])
+    return "\n".join(lines) + "\n"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
