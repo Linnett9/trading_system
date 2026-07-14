@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+import infrastructure.data.alpaca_5m_symbol_year_finalizer as finalizer
 from infrastructure.data.alpaca_5m_symbol_year_finalizer import (
     DATASET_VERSION,
     OUTPUT_SCHEMA,
@@ -334,7 +335,192 @@ def test_smoke_configs_are_bounded_by_explicit_source_chunks() -> None:
         assert all(str(path).startswith("data/raw/alpaca/stock_bars/sip/5m/") for path in settings["source_chunk_paths"])
 
 
+def test_multi_worker_matches_one_worker_outputs(tmp_path: Path) -> None:
+    one = _env(tmp_path / "one")
+    multi = _env(tmp_path / "multi")
+    for env in (one, multi):
+        _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+        _write_chunk(env, "SPY", "20260102T143000Z", "20260102T150000Z")
+
+    one_result = finalize_symbol_year_archive(
+        raw_root=one["raw"],
+        parquet_root=one["parquet"],
+        archive_root=one["archive"],
+        report_root=one["report"],
+        collection_manifest_path=one["manifest"],
+        universe_path=one["universe"],
+        symbols=["AAPL", "SPY"],
+        years=[2026],
+        workers=1,
+        dry_run=False,
+    )
+    multi_result = finalize_symbol_year_archive(
+        raw_root=multi["raw"],
+        parquet_root=multi["parquet"],
+        archive_root=multi["archive"],
+        report_root=multi["report"],
+        collection_manifest_path=multi["manifest"],
+        universe_path=multi["universe"],
+        symbols=["AAPL", "SPY"],
+        years=[2026],
+        workers=2,
+        dry_run=False,
+    )
+
+    assert one_result["effective_workers"] == 1
+    assert multi_result["effective_workers"] == 2
+    assert multi_result["partition_processing_backend"] == "process_pool"
+    for symbol in ("AAPL", "SPY"):
+        one_path = one["archive"] / f"symbol={symbol}" / "year=2026" / "bars.parquet"
+        multi_path = multi["archive"] / f"symbol={symbol}" / "year=2026" / "bars.parquet"
+        assert pq.read_table(one_path).schema == pq.read_table(multi_path).schema
+        assert pq.read_table(one_path).to_pylist() == pq.read_table(multi_path).to_pylist()
+        one_manifest = json.loads((one["report"] / "partition_manifests" / f"{symbol}_2026.json").read_text())
+        multi_manifest = json.loads((multi["report"] / "partition_manifests" / f"{symbol}_2026.json").read_text())
+        assert one_manifest["output_file_hash"] == multi_manifest["output_file_hash"]
+
+
+def test_multi_worker_skips_completed_partitions(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+    finalize_symbol_year_archive(
+        raw_root=env["raw"],
+        parquet_root=env["parquet"],
+        archive_root=env["archive"],
+        report_root=env["report"],
+        collection_manifest_path=env["manifest"],
+        universe_path=env["universe"],
+        symbols=["AAPL"],
+        years=[2026],
+        workers=1,
+        dry_run=False,
+    )
+
+    rerun = finalize_symbol_year_archive(
+        raw_root=env["raw"],
+        parquet_root=env["parquet"],
+        archive_root=env["archive"],
+        report_root=env["report"],
+        collection_manifest_path=env["manifest"],
+        universe_path=env["universe"],
+        symbols=["AAPL"],
+        years=[2026],
+        workers=4,
+        dry_run=False,
+    )
+
+    assert rerun["completed_partitions"] == 1
+    assert rerun["partitions_dispatched"] == 0
+    assert rerun["partition_keys_dispatched_unique"] == 0
+
+
+def test_multi_worker_persists_failures_and_retry_only_failed(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+    _write_chunk(env, "ZZZZ", "20260102T143000Z", "20260102T150000Z")
+
+    with pytest.raises(RuntimeError):
+        finalize_symbol_year_archive(
+            raw_root=env["raw"],
+            parquet_root=env["parquet"],
+            archive_root=env["archive"],
+            report_root=env["report"],
+            collection_manifest_path=env["manifest"],
+            universe_path=env["universe"],
+            symbols=["AAPL", "ZZZZ"],
+            years=[2026],
+            workers=2,
+            dry_run=False,
+        )
+
+    assert (env["archive"] / "symbol=AAPL" / "year=2026" / "bars.parquet").exists()
+    failure = json.loads((env["report"] / "partition_failures" / "ZZZZ_2026.json").read_text())
+    assert failure["normalised_failure_signature"].startswith("ValueError: unknown canonical symbol")
+    env["universe"].write_text("AAPL\nSPY\nBRK-B\nZZZZ\n", encoding="utf-8")
+
+    retry = finalize_symbol_year_archive(
+        raw_root=env["raw"],
+        parquet_root=env["parquet"],
+        archive_root=env["archive"],
+        report_root=env["report"],
+        collection_manifest_path=env["manifest"],
+        universe_path=env["universe"],
+        symbols=["AAPL", "ZZZZ"],
+        years=[2026],
+        workers=2,
+        retry_only_failed=True,
+        dry_run=False,
+    )
+
+    assert retry["completed_partitions"] == 1
+    assert retry["partitions_dispatched"] == 1
+    assert (env["archive"] / "symbol=ZZZZ" / "year=2026" / "bars.parquet").exists()
+
+
+def test_multi_worker_conflict_does_not_corrupt_other_partition(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    aapl = _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+    _write_chunk(env, "SPY", "20260102T143000Z", "20260102T150000Z")
+    parquet = env["parquet"] / aapl.relative_to(env["raw"]) / "bars.parquet"
+    rows = pq.read_table(parquet).to_pylist()
+    rows.append({**rows[0], "close": 9.9, "raw_chunk_identifier": "conflict"})
+    pq.write_table(pa.Table.from_pylist(rows), parquet)
+
+    with pytest.raises(RuntimeError):
+        finalize_symbol_year_archive(
+            raw_root=env["raw"],
+            parquet_root=env["parquet"],
+            archive_root=env["archive"],
+            report_root=env["report"],
+            collection_manifest_path=env["manifest"],
+            universe_path=env["universe"],
+            symbols=["AAPL", "SPY"],
+            years=[2026],
+            workers=2,
+            dry_run=False,
+            conflict_root=env["report"] / "conflicts",
+        )
+
+    assert not (env["archive"] / "symbol=AAPL" / "year=2026" / "bars.parquet").exists()
+    assert (env["archive"] / "symbol=SPY" / "year=2026" / "bars.parquet").exists()
+    assert (env["report"] / "conflicts" / "AAPL_2026_conflicts.json").exists()
+    assert not (env["archive"] / "symbol=AAPL" / "year=2026" / "bars.parquet.tmp").exists()
+
+
+def test_multi_worker_source_discovery_occurs_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    chunks = [
+        _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z"),
+        _write_chunk(env, "SPY", "20260102T143000Z", "20260102T150000Z"),
+    ]
+    calls = []
+
+    def fake_raw_chunk_dirs(raw_root: Path):
+        calls.append(raw_root)
+        return list(chunks)
+
+    monkeypatch.setattr(finalizer, "_raw_chunk_dirs", fake_raw_chunk_dirs)
+
+    result = finalize_symbol_year_archive(
+        raw_root=env["raw"],
+        parquet_root=env["parquet"],
+        archive_root=env["archive"],
+        report_root=env["report"],
+        collection_manifest_path=env["manifest"],
+        universe_path=env["universe"],
+        symbols=["AAPL", "SPY"],
+        years=[2026],
+        workers=2,
+        dry_run=False,
+    )
+
+    assert len(calls) == 1
+    assert result["source_discovery_passes"] == 1
+    assert result["partitions_dispatched"] == 2
+
+
 def _env(tmp_path: Path) -> dict[str, Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     root = {
         "raw": tmp_path / "raw",
         "parquet": tmp_path / "parquet",

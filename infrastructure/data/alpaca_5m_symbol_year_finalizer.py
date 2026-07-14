@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import hashlib
 import json
 import os
 import time
+import tracemalloc
 import traceback
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -82,12 +84,14 @@ def run_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
         symbols=[str(symbol).upper() for symbol in settings.get("symbols", [])],
         years=[int(year) for year in settings.get("years", [])],
         max_chunks=int(settings.get("max_chunks", 0) or 0),
+        max_chunks_per_symbol_year=int(settings.get("max_chunks_per_symbol_year", 0) or 0),
         dry_run=bool(settings.get("dry_run", True)),
         retry_only_failed=bool(settings.get("retry_only_failed", False)),
         workers=int(settings.get("workers", 1) or 1),
         source_chunk_paths=[Path(str(path)) for path in settings.get("source_chunk_paths", [])],
         fail_fast_same_signature_threshold=int(settings.get("fail_fast_same_signature_threshold", 3) or 3),
         conflict_root=Path(str(settings.get("conflict_root", "reports/data_quality/alpaca_5m_symbol_year_conflicts"))),
+        max_in_flight_tasks=int(settings.get("max_in_flight_tasks", 0) or 0),
     )
 
 
@@ -102,15 +106,19 @@ def finalize_symbol_year_archive(
     symbols: Sequence[str] = (),
     years: Sequence[int] = (),
     max_chunks: int = 0,
+    max_chunks_per_symbol_year: int = 0,
     dry_run: bool = True,
     retry_only_failed: bool = False,
     workers: int = 1,
     source_chunk_paths: Sequence[Path] = (),
     fail_fast_same_signature_threshold: int = 3,
     conflict_root: Path = Path("reports/data_quality/alpaca_5m_symbol_year_conflicts"),
+    max_in_flight_tasks: int = 0,
 ) -> dict[str, Any]:
     if workers < 1:
         raise ValueError("workers must be >= 1")
+    if max_in_flight_tasks < 0:
+        raise ValueError("max_in_flight_tasks must be >= 0")
     report_root.mkdir(parents=True, exist_ok=True)
     selected_symbols = {normalize_symbol(symbol) for symbol in symbols if symbol}
     selected_years = {int(year) for year in years}
@@ -122,6 +130,7 @@ def finalize_symbol_year_archive(
         symbols=selected_symbols,
         years=selected_years,
         max_chunks=max_chunks,
+        max_chunks_per_symbol_year=max_chunks_per_symbol_year,
         source_chunk_paths=source_chunk_paths,
     )
     _write_json(report_root / "source_chunk_plan.json", selection["report"])
@@ -135,6 +144,7 @@ def finalize_symbol_year_archive(
             "production_chunks": selection["report"]["production_chunks"],
             "excluded_chunks": selection["report"]["excluded_chunks"],
             "planned_partitions": _planned_partition_count(selection["chunks"]),
+            "source_discovery_passes": 1,
             "protected_source_archives_modified": False,
         }
         _write_json(report_root / "finalisation_plan.json", payload)
@@ -148,7 +158,8 @@ def finalize_symbol_year_archive(
     failure_root.mkdir(parents=True, exist_ok=True)
     quarantine_root.mkdir(parents=True, exist_ok=True)
     failed_before = _failed_partition_keys(failure_root) if retry_only_failed else None
-    groups = _group_chunks_by_symbol_year(selection["chunks"], selected_symbols, selected_years)
+    all_groups = _group_chunks_by_symbol_year(selection["chunks"], selected_symbols, selected_years)
+    groups = {key: all_groups[key] for key in sorted(all_groups) if failed_before is None or key in failed_before}
     progress = _progress_payload(len(groups), started=time.perf_counter())
     _write_json(report_root / "progress_manifest.json", progress)
     completed = []
@@ -156,60 +167,96 @@ def finalize_symbol_year_archive(
     started = time.perf_counter()
     failure_signatures: Counter[str] = Counter()
     rows_read = rows_written = exact_duplicates = conflicts = invalid_rows = 0
-    for key, chunks in groups.items():
+    tasks: list[tuple[tuple[str, int], list[SourceChunk]]] = []
+    for key, chunks in sorted(groups.items()):
         symbol, year = key
-        current_partition = f"{symbol}_{year}"
-        _write_json(report_root / "progress_manifest.json", _progress_payload(
-            len(groups), completed=len(completed), failed=len(failed), rows_read=rows_read,
-            rows_written=rows_written, exact_duplicates=exact_duplicates, conflicts=conflicts,
-            invalid_rows=invalid_rows, current_partition=current_partition, started=started,
-        ))
-        if failed_before is not None and key not in failed_before:
-            continue
         manifest_path = manifest_root / f"{symbol}_{year}.json"
         if failed_before is None and _completed_manifest_valid(manifest_path, archive_root):
             completed.append(_read_json(manifest_path))
             continue
-        try:
-            result = finalize_partition(
-                canonical_symbol=symbol,
-                year=year,
-                chunks=chunks,
-                archive_root=archive_root,
-                quarantine_root=quarantine_root,
-                registry=registry,
+        tasks.append((key, list(chunks)))
+    effective_workers = min(workers, len(tasks)) if tasks else 0
+    in_flight_limit = max_in_flight_tasks or max(1, effective_workers * 2)
+    aborted_early = False
+    abort_reason = ""
+    current_partition = ""
+    if effective_workers <= 1:
+        for key, chunks in tasks:
+            current_partition = f"{key[0]}_{key[1]}"
+            _write_json(report_root / "progress_manifest.json", _progress_payload(
+                len(groups), completed=len(completed), failed=len(failed), rows_read=rows_read,
+                rows_written=rows_written, exact_duplicates=exact_duplicates, conflicts=conflicts,
+                invalid_rows=invalid_rows, current_partition=current_partition, started=started,
+                active_workers=1 if tasks else 0, configured_workers=workers, effective_workers=effective_workers,
+            ))
+            payload = _finalize_partition_worker(_worker_payload(key, chunks, archive_root, quarantine_root, registry))
+            failure = _record_worker_payload(
+                payload=payload,
+                manifest_root=manifest_root,
+                failure_root=failure_root,
+                completed=completed,
+                failed=failed,
             )
-            _write_json(manifest_path, result)
-            completed.append(result)
-            rows_read += int(result.get("source_row_count", 0) or 0)
-            rows_written += int(result.get("output_row_count", 0) or 0)
-            exact_duplicates += int(result.get("exact_duplicates_removed", 0) or 0)
-            conflicts += int(result.get("conflicting_duplicate_count", 0) or 0)
-        except Exception as exc:
-            signature = f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}"
-            failure_signatures[signature] += 1
-            payload = {
-                "canonical_symbol": symbol,
-                "year": year,
-                "failure_phase": "partition_finalisation",
-                "status": "FAILED",
-                "exception_type": type(exc).__name__,
-                "exception_message": str(exc),
-                "normalised_failure_signature": signature,
-                "traceback": traceback.format_exc(),
-                "source_chunk_identities": [chunk.chunk_id for chunk in chunks],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            _write_json(failure_root / f"{symbol}_{year}.json", payload)
-            failed.append(payload)
-            if failure_signatures[signature] >= fail_fast_same_signature_threshold:
+            if payload.get("ok"):
+                rows_read, rows_written, exact_duplicates, conflicts, invalid_rows = _accumulate_partition_counts(
+                    payload["result"], rows_read, rows_written, exact_duplicates, conflicts, invalid_rows
+                )
+            elif failure:
+                failure_signatures[str(failure["normalised_failure_signature"])] += 1
+                if failure_signatures[str(failure["normalised_failure_signature"])] >= fail_fast_same_signature_threshold:
+                    aborted_early = True
+                    abort_reason = f"repeated systemic failure: {failure['normalised_failure_signature']}"
+                    break
+    elif tasks:
+        pending = iter(tasks)
+        future_to_key: dict[concurrent.futures.Future[dict[str, Any]], tuple[str, int]] = {}
+        with concurrent.futures.ProcessPoolExecutor(max_workers=effective_workers) as executor:
+            while len(future_to_key) < min(in_flight_limit, len(tasks)):
+                key, chunks = next(pending)
+                future_to_key[executor.submit(_finalize_partition_worker, _worker_payload(key, chunks, archive_root, quarantine_root, registry))] = key
+            exhausted = len(future_to_key) == len(tasks)
+            while future_to_key:
                 _write_json(report_root / "progress_manifest.json", _progress_payload(
                     len(groups), completed=len(completed), failed=len(failed), rows_read=rows_read,
                     rows_written=rows_written, exact_duplicates=exact_duplicates, conflicts=conflicts,
                     invalid_rows=invalid_rows, current_partition=current_partition, started=started,
-                    aborted_early=True, abort_reason=f"repeated systemic failure: {signature}",
+                    active_workers=len(future_to_key), configured_workers=workers, effective_workers=effective_workers,
                 ))
-                break
+                done, _pending_futures = concurrent.futures.wait(
+                    future_to_key,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in sorted(done, key=lambda item: future_to_key[item]):
+                    key = future_to_key.pop(future)
+                    current_partition = f"{key[0]}_{key[1]}"
+                    payload = _future_payload(future, key)
+                    failure = _record_worker_payload(
+                        payload=payload,
+                        manifest_root=manifest_root,
+                        failure_root=failure_root,
+                        completed=completed,
+                        failed=failed,
+                    )
+                    if payload.get("ok"):
+                        rows_read, rows_written, exact_duplicates, conflicts, invalid_rows = _accumulate_partition_counts(
+                            payload["result"], rows_read, rows_written, exact_duplicates, conflicts, invalid_rows
+                        )
+                    elif failure:
+                        failure_signatures[str(failure["normalised_failure_signature"])] += 1
+                        if failure_signatures[str(failure["normalised_failure_signature"])] >= fail_fast_same_signature_threshold:
+                            aborted_early = True
+                            abort_reason = f"repeated systemic failure: {failure['normalised_failure_signature']}"
+                    if not aborted_early and not exhausted:
+                        try:
+                            next_key, next_chunks = next(pending)
+                            future_to_key[executor.submit(
+                                _finalize_partition_worker,
+                                _worker_payload(next_key, next_chunks, archive_root, quarantine_root, registry),
+                            )] = next_key
+                        except StopIteration:
+                            exhausted = True
+                if aborted_early:
+                    exhausted = True
     dataset_manifest = {
         "mode": "alpaca_5m_symbol_year_finalizer",
         "dry_run": False,
@@ -224,7 +271,15 @@ def finalize_symbol_year_archive(
         "years": sorted({int(row.get("year")) for row in completed if row.get("year") is not None}),
         "elapsed_seconds": time.perf_counter() - started,
         "configured_workers": workers,
-        "effective_workers": 1,
+        "effective_workers": effective_workers,
+        "max_in_flight_tasks": in_flight_limit,
+        "source_discovery_passes": 1,
+        "partitions_dispatched": len(tasks),
+        "partition_keys_dispatched_unique": len({(key[0], key[1]) for key, _chunks in tasks}),
+        "partition_processing_backend": "process_pool" if effective_workers > 1 else "inline",
+        "rows_per_second": sum(int(row.get("output_row_count", 0) or 0) for row in completed) / max(0.001, time.perf_counter() - started),
+        "partitions_per_second": len(completed) / max(0.001, time.perf_counter() - started),
+        "approximate_peak_worker_memory_bytes": max((int(row.get("peak_python_memory_bytes") or 0) for row in completed), default=0),
         "retry_only_failed": retry_only_failed,
         "protected_source_archives_modified": False,
     }
@@ -234,12 +289,136 @@ def finalize_symbol_year_archive(
         len(groups), completed=len(completed), failed=len(failed), rows_read=rows_read,
         rows_written=rows_written, exact_duplicates=exact_duplicates, conflicts=conflicts,
         invalid_rows=invalid_rows, current_partition="", started=started,
-        aborted_early=bool(failed and failure_signatures and max(failure_signatures.values()) >= fail_fast_same_signature_threshold),
-        abort_reason="" if not failed else failed[-1].get("normalised_failure_signature", ""),
+        aborted_early=aborted_early,
+        abort_reason=abort_reason,
+        configured_workers=workers,
+        effective_workers=effective_workers,
+        active_workers=0,
     ))
     if failed:
         raise RuntimeError(f"5m symbol/year finalisation failed for {len(failed)} partitions")
     return dataset_manifest
+
+
+def _worker_payload(
+    key: tuple[str, int],
+    chunks: Sequence[SourceChunk],
+    archive_root: Path,
+    quarantine_root: Path,
+    registry: Mapping[str, Mapping[str, str]],
+) -> dict[str, Any]:
+    symbol, year = key
+    return {
+        "canonical_symbol": symbol,
+        "year": year,
+        "chunks": list(chunks),
+        "archive_root": archive_root,
+        "quarantine_root": quarantine_root,
+        "registry": dict(registry),
+    }
+
+
+def _finalize_partition_worker(payload: Mapping[str, Any]) -> dict[str, Any]:
+    symbol = str(payload["canonical_symbol"])
+    year = int(payload["year"])
+    chunks = list(payload["chunks"])
+    started = time.perf_counter()
+    tracemalloc.start()
+    try:
+        result = finalize_partition(
+            canonical_symbol=symbol,
+            year=year,
+            chunks=chunks,
+            archive_root=Path(payload["archive_root"]),
+            quarantine_root=Path(payload["quarantine_root"]),
+            registry=payload["registry"],
+        )
+        _current, peak = tracemalloc.get_traced_memory()
+        result["worker_pid"] = os.getpid()
+        result["peak_python_memory_bytes"] = int(peak)
+        result["worker_elapsed_seconds"] = time.perf_counter() - started
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        _current, peak = tracemalloc.get_traced_memory()
+        signature = f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}"
+        return {
+            "ok": False,
+            "failure": {
+                "canonical_symbol": symbol,
+                "year": year,
+                "failure_phase": "partition_finalisation",
+                "status": "FAILED",
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "normalised_failure_signature": signature,
+                "traceback": traceback.format_exc(),
+                "source_chunk_identities": [chunk.chunk_id for chunk in chunks],
+                "worker_pid": os.getpid(),
+                "peak_python_memory_bytes": int(peak),
+                "worker_elapsed_seconds": time.perf_counter() - started,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+    finally:
+        tracemalloc.stop()
+
+
+def _future_payload(future: concurrent.futures.Future[dict[str, Any]], key: tuple[str, int]) -> dict[str, Any]:
+    try:
+        return future.result()
+    except Exception as exc:
+        signature = f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}"
+        return {
+            "ok": False,
+            "failure": {
+                "canonical_symbol": key[0],
+                "year": key[1],
+                "failure_phase": "partition_worker_future",
+                "status": "FAILED",
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "normalised_failure_signature": signature,
+                "traceback": traceback.format_exc(),
+                "source_chunk_identities": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
+
+def _record_worker_payload(
+    *,
+    payload: Mapping[str, Any],
+    manifest_root: Path,
+    failure_root: Path,
+    completed: list[dict[str, Any]],
+    failed: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if payload.get("ok"):
+        result = dict(payload["result"])
+        _write_json(manifest_root / f"{result['canonical_symbol']}_{result['year']}.json", result)
+        completed.append(result)
+        return None
+    failure = dict(payload["failure"])
+    _write_json(failure_root / f"{failure['canonical_symbol']}_{failure['year']}.json", failure)
+    failed.append(failure)
+    return failure
+
+
+def _accumulate_partition_counts(
+    result: Mapping[str, Any],
+    rows_read: int,
+    rows_written: int,
+    exact_duplicates: int,
+    conflicts: int,
+    invalid_rows: int,
+) -> tuple[int, int, int, int, int]:
+    return (
+        rows_read + int(result.get("source_row_count", 0) or 0),
+        rows_written + int(result.get("output_row_count", 0) or 0),
+        exact_duplicates + int(result.get("exact_duplicates_removed", 0) or 0),
+        conflicts + int(result.get("conflicting_duplicate_count", 0) or 0),
+        invalid_rows + int(result.get("invalid_row_count", 0) or 0),
+    )
 
 
 def select_production_chunks(
@@ -250,6 +429,7 @@ def select_production_chunks(
     symbols: set[str],
     years: set[int],
     max_chunks: int,
+    max_chunks_per_symbol_year: int = 0,
     source_chunk_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
     manifest_payload = _read_json(collection_manifest_path)
@@ -257,6 +437,7 @@ def select_production_chunks(
     chunks: list[SourceChunk] = []
     excluded: list[dict[str, Any]] = []
     candidate_count = 0
+    per_symbol_year_counts: Counter[tuple[str, int]] = Counter()
     raw_dirs = [Path(path) for path in source_chunk_paths] if source_chunk_paths else list(_raw_chunk_dirs(raw_root))
     for chunk_dir in raw_dirs:
         candidate_count += 1
@@ -274,11 +455,29 @@ def select_production_chunks(
         if years and not _chunk_overlaps_years(manifest, years):
             excluded.append({"chunk_id": chunk_id, "source_path": str(chunk_dir), "reason": "outside_requested_years"})
             continue
+        if max_chunks_per_symbol_year and symbols and years:
+            matching_keys = [
+                (symbol, year)
+                for symbol in _canonical_batch(manifest)
+                if symbol in symbols
+                for year in _years_for_chunk(manifest)
+                if year in years
+            ]
+            if not any(per_symbol_year_counts[key] < max_chunks_per_symbol_year for key in matching_keys):
+                excluded.append({"chunk_id": chunk_id, "source_path": str(chunk_dir), "reason": "symbol_year_chunk_limit_reached"})
+                continue
         path = parquet_path(parquet_root, raw_root, chunk_dir)
         if not path.exists():
             excluded.append({"chunk_id": chunk_id, "source_path": str(chunk_dir), "reason": "missing_converted_parquet", "expected_parquet": str(path)})
             continue
         chunks.append(SourceChunk(chunk_id=chunk_id, raw_path=chunk_dir, parquet_path=path, manifest=manifest, reason="production_completed_with_parquet"))
+        for symbol in _canonical_batch(manifest):
+            if symbols and symbol not in symbols:
+                continue
+            for year in _years_for_chunk(manifest):
+                if years and year not in years:
+                    continue
+                per_symbol_year_counts[(symbol, year)] += 1
         if max_chunks and len(chunks) >= max_chunks:
             break
     duplicate_ids = [chunk_id for chunk_id, count in Counter(chunk.chunk_id for chunk in chunks).items() if count > 1]
@@ -294,6 +493,9 @@ def select_production_chunks(
         "missing_converted_chunks": sum(1 for row in excluded if row["reason"] == "missing_converted_parquet"),
         "duplicate_chunk_id_count": len(duplicate_ids),
         "duplicate_chunk_ids": duplicate_ids[:20],
+        "max_chunks_per_symbol_year": max_chunks_per_symbol_year,
+        "selected_chunks_per_symbol_year_min": min(per_symbol_year_counts.values(), default=0),
+        "selected_chunks_per_symbol_year_max": max(per_symbol_year_counts.values(), default=0),
         "symbols_represented": sorted({symbol for chunk in chunks for symbol in _canonical_batch(chunk.manifest)}),
         "date_min": min((str(chunk.manifest.get("requested_start")) for chunk in chunks), default=None),
         "date_max": max((str(chunk.manifest.get("requested_end")) for chunk in chunks), default=None),
@@ -345,6 +547,7 @@ def finalize_partition(
         "output_row_count": len(deduped),
         "exact_duplicates_removed": duplicate_report["exact_duplicates_removed"],
         "conflicting_duplicate_count": duplicate_report["conflicting_duplicate_count"],
+        "invalid_row_count": len(invalid),
         "minimum_timestamp": min((ts.isoformat() for ts in timestamps), default=None),
         "maximum_timestamp": max((ts.isoformat() for ts in timestamps), default=None),
         "session_counts": dict(Counter(row["session_type"] for row in deduped)),
@@ -464,6 +667,7 @@ def production_preflight(
     symbols: Sequence[str] = (),
     years: Sequence[int] = (),
     max_chunks: int = 0,
+    max_chunks_per_symbol_year: int = 0,
     source_chunk_paths: Sequence[Path] = (),
     workers: int = 1,
 ) -> dict[str, Any]:
@@ -476,6 +680,7 @@ def production_preflight(
         symbols=selected_symbols,
         years=selected_years,
         max_chunks=max_chunks,
+        max_chunks_per_symbol_year=max_chunks_per_symbol_year,
         source_chunk_paths=source_chunk_paths,
     )
     registry = _registry(universe_path)
@@ -525,6 +730,10 @@ def production_preflight(
         "estimated_final_disk_requirement_bytes": estimated_final,
         "free_disk_bytes": free,
         "worker_count": workers,
+        "configured_workers": workers,
+        "effective_workers": min(workers, len(groups)) if groups else 0,
+        "source_discovery_passes": 1,
+        "workers_rescan_sources": False,
         "output_root": str(archive_root),
         "report_root": str(report_root),
         "completed_partitions_already_reusable": completed_reusable,
@@ -535,6 +744,8 @@ def production_preflight(
         "source_chunk_paths_explicit": bool(source_chunk_paths),
         "source_chunk_plan": selection["report"],
     }
+    _write_json(report_root / "preflight.json", payload)
+    (report_root / "preflight.md").write_text(_preflight_markdown(payload), encoding="utf-8")
     _write_json(Path("reports/data_quality/alpaca_5m_symbol_year_preflight.json"), payload)
     Path("reports/data_quality/alpaca_5m_symbol_year_preflight.md").write_text(_preflight_markdown(payload), encoding="utf-8")
     if blocking:
@@ -880,6 +1091,9 @@ def _progress_payload(
     invalid_rows: int = 0,
     current_partition: str = "",
     started: float,
+    active_workers: int = 0,
+    configured_workers: int = 1,
+    effective_workers: int = 1,
     aborted_early: bool = False,
     abort_reason: str = "",
 ) -> dict[str, Any]:
@@ -896,6 +1110,10 @@ def _progress_payload(
         "invalid_rows": invalid_rows,
         "elapsed_seconds": elapsed,
         "rows_per_second": rows_written / elapsed,
+        "partitions_per_second": completed / elapsed,
+        "configured_workers": configured_workers,
+        "effective_workers": effective_workers,
+        "active_workers": active_workers,
         "current_partition": current_partition,
         "aborted_early": aborted_early,
         "abort_reason": abort_reason,
@@ -1044,6 +1262,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--validate-archive", action="store_true")
+    parser.add_argument("--workers", type=int)
+    parser.add_argument("--archive-root", type=Path)
+    parser.add_argument("--report-root", type=Path)
     args = parser.parse_args(argv)
     if args.config:
         import yaml
@@ -1056,9 +1277,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings["dry_run"] = True
         if args.retry_only_failed:
             settings["retry_only_failed"] = True
+        if args.workers is not None:
+            settings["workers"] = args.workers
+        if args.archive_root is not None:
+            settings["archive_root"] = str(args.archive_root)
+        if args.report_root is not None:
+            settings["report_root"] = str(args.report_root)
         config["ml"]["alpaca_5m_symbol_year_finalizer"] = settings
     else:
-        config = {"ml": {"alpaca_5m_symbol_year_finalizer": {"dry_run": not args.execute, "retry_only_failed": args.retry_only_failed}}}
+        settings = {"dry_run": not args.execute, "retry_only_failed": args.retry_only_failed}
+        if args.workers is not None:
+            settings["workers"] = args.workers
+        if args.archive_root is not None:
+            settings["archive_root"] = str(args.archive_root)
+        if args.report_root is not None:
+            settings["report_root"] = str(args.report_root)
+        config = {"ml": {"alpaca_5m_symbol_year_finalizer": settings}}
     if args.inventory_only:
         print(json.dumps(write_current_inventory(), indent=2, default=str))
     elif args.preflight:
@@ -1073,6 +1307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             symbols=[str(symbol).upper() for symbol in settings.get("symbols", [])],
             years=[int(year) for year in settings.get("years", [])],
             max_chunks=int(settings.get("max_chunks", 0) or 0),
+            max_chunks_per_symbol_year=int(settings.get("max_chunks_per_symbol_year", 0) or 0),
             source_chunk_paths=[Path(str(path)) for path in settings.get("source_chunk_paths", [])],
             workers=int(settings.get("workers", 1) or 1),
         ), indent=2, default=str))

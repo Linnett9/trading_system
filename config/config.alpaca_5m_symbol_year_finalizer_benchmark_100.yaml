@@ -1,0 +1,36 @@
+ml:
+  alpaca_5m_symbol_year_finalizer:
+    raw_root: data/raw/alpaca/stock_bars
+    parquet_root: data/processed/alpaca/stock_bars_parquet
+    collection_manifest_path: reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full/collection_manifest.json
+    archive_root: reports/data_quality/alpaca_5m_symbol_year_benchmark_100/archive
+    report_root: reports/data_quality/alpaca_5m_symbol_year_benchmark_100
+    universe_path: config/universes/alpaca_514_symbols.txt
+    symbols:
+    - AAPL
+    - SPY
+    - BRK-B
+    - BBW
+    - GE
+    - AMD
+    - TSLA
+    - WMT
+    - XOM
+    - V
+    - MSFT
+    - NVDA
+    - JPM
+    - KO
+    - T
+    - F
+    - NKE
+    - CAT
+    - UNH
+    - XLF
+    years: [2022, 2023, 2024, 2025, 2026]
+    max_chunks: 0
+    max_chunks_per_symbol_year: 2
+    workers: 1
+    max_in_flight_tasks: 24
+    dry_run: false
+    retry_only_failed: false
