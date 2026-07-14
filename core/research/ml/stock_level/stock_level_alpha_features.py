@@ -65,6 +65,12 @@ from core.research.ml.stock_level.stock_level_alpha_features_types import (
 def write_stock_level_alpha_features(
     config: dict[str, Any],
 ) -> StockLevelAlphaFeaturePaths:
+    if config.get("ml", {}).get("stock_alpha_feature_partitioned_resume"):
+        from infrastructure.data.canonical_v2_alpha_enrichment import (
+            write_partitioned_canonical_v2_alpha_features,
+        )
+
+        return write_partitioned_canonical_v2_alpha_features(config)
     phase_timings: list[dict[str, Any]] = []
     settings = StockLevelResearchConfig.from_mapping(config)
     apply_stock_alpha_worker_caps(config)

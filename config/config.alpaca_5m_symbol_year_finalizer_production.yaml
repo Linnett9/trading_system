@@ -1,0 +1,14 @@
+ml:
+  alpaca_5m_symbol_year_finalizer:
+    raw_root: data/raw/alpaca/stock_bars
+    parquet_root: data/processed/alpaca/stock_bars_parquet
+    collection_manifest_path: reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full/collection_manifest.json
+    archive_root: data/processed/alpaca/symbol_bars/sip/5m
+    report_root: reports/data_quality/alpaca_5m_symbol_year_finalisation
+    universe_path: config/universes/alpaca_514_symbols.txt
+    symbols: []
+    years: []
+    max_chunks: 0
+    workers: 1
+    dry_run: false
+    retry_only_failed: false

@@ -20,6 +20,7 @@ from infrastructure.data.historical_bar_providers import (
     free_historical_bar_source_inventory,
 )
 from infrastructure.data.historical_bar_overlap import audit_historical_bar_overlap
+from infrastructure.data.alpaca_daily_preflight import write_daily_archive
 from infrastructure.data.historical_bar_staging import (
     consolidate_staging_chunks,
     coverage_gap_audit,
@@ -180,6 +181,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     write_staging = bool(settings.get("write_normalized_staging", settings.get("staging_write", True)))
     collection_workers = max(1, int(settings.get("collection_workers", 1)))
     max_collect_chunks = int(settings.get("max_collect_chunks", 0) or 0)
+    collect_statuses = _collect_statuses(settings)
+    provider_symbol_map = _provider_symbol_map(settings)
     progress_interval_seconds = float(settings.get("progress_report_interval_seconds", 60.0) or 0.0)
     provider = AlpacaBasicHistoricalBarProvider(
         feed=str(settings.get("feed", "iex")),
@@ -199,12 +202,13 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         adjustment=str(settings.get("adjustment", "all")),
         symbol_batch_size=symbol_batch_size,
         date_window_days=date_window_days,
+        provider_symbol_map=provider_symbol_map,
     )
     manifest = CollectionManifest(output_root / "collection_manifest.json")
     raw_store = ImmutableRawChunkStore(settings.get("raw_root", "data/raw/alpaca/stock_bars"))
     all_rows: list[dict[str, Any]] = []
     chunks = []
-    if dry_run or not auth["can_attempt_authenticated_request"]:
+    if dry_run:
         plan_initialization = manifest.initialize_plan(plan, dry_run=dry_run)
         report = {
             "mode": "historical_bar_backfill_collect",
@@ -216,30 +220,42 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             "manifest_plan_initialization": plan_initialization,
             "planned_symbol_count": len(symbols),
             "observed_metrics": provider.metrics.as_dict(),
-            "blocked_reason": None if dry_run else "Alpaca credentials unavailable",
+            "blocked_reason": None,
         }
         _write_collect_report(output_root, report)
         _print_collect_report(output_root, report)
         return
     plan_initialization = manifest.initialize_plan(plan, dry_run=False)
-    selected_chunk_count = 0
-    pending_requests = []
-    for request in plan:
-        chunk_id = request.raw_chunk_id or ""
-        if resume and not force_refresh and manifest.is_completed(chunk_id):
-            chunks.append(
-                {
-                    "chunk_id": chunk_id,
-                    "status": "skipped_completed",
-                    "rows": 0,
-                    "raw_reload_deferred": bool(write_staging),
-                }
-            )
-            continue
-        if max_collect_chunks > 0 and len(pending_requests) >= max_collect_chunks:
-            break
-        pending_requests.append(request)
-        selected_chunk_count += 1
+    bounded_consolidation_configured = _bounded_consolidation_enabled(settings, output_root)
+    pending_requests, skipped_completed, selected_requests = _select_collect_requests(
+        plan=plan,
+        manifest=manifest,
+        resume=resume,
+        force_refresh=force_refresh,
+        max_collect_chunks=max_collect_chunks,
+        collect_statuses=collect_statuses,
+        write_staging=write_staging,
+        completed_chunks_count_toward_limit=bounded_consolidation_configured,
+    )
+    chunks.extend(skipped_completed)
+    if not auth["can_attempt_authenticated_request"] and pending_requests:
+        report = {
+            "mode": "historical_bar_backfill_collect",
+            "dry_run": False,
+            "canonical_market_data_modified": False,
+            "feed_domain_shift_note": _feed_domain_shift_note(),
+            "credentials": auth,
+            "planned_chunk_count": len(plan),
+            "manifest_plan_initialization": plan_initialization,
+            "planned_symbol_count": len(symbols),
+            "chunk_results": chunks,
+            "observed_metrics": provider.metrics.as_dict(),
+            "blocked_reason": "Alpaca credentials unavailable",
+        }
+        _write_collect_report(output_root, report)
+        _print_collect_report(output_root, report)
+        return
+    selected_chunk_count = len(pending_requests)
     work_chunk_count = selected_chunk_count + len([row for row in chunks if row.get("status") == "skipped_completed"])
     progress = _CollectionProgress(
         total=work_chunk_count,
@@ -284,9 +300,24 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
                 chunks.append(result)
                 progress.record(result, provider.metrics.as_dict())
     staging_deferred_reason = None
+    bounded_consolidation_performed = False
+    bounded_consolidation_eligible = False
     if write_staging:
         if max_collect_chunks > 0:
-            staging_deferred_reason = "max_collect_chunks_bounded_collection"
+            bounded_consolidation_eligible = bounded_consolidation_configured
+            if bounded_consolidation_eligible and selected_requests and _selected_collection_complete(manifest, selected_requests, chunks):
+                all_rows = _load_completed_raw_rows_for_staging(
+                    plan=selected_requests,
+                    manifest=manifest,
+                    raw_store=raw_store,
+                    chunk_results=chunks,
+                )
+                if all_rows:
+                    bounded_consolidation_performed = True
+                else:
+                    staging_deferred_reason = "bounded_collection_completed_raw_rows_missing"
+            else:
+                staging_deferred_reason = "max_collect_chunks_bounded_collection"
         elif _manifest_has_unfinished_collection(manifest, plan):
             staging_deferred_reason = "collection_incomplete"
         else:
@@ -301,6 +332,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     consolidation_report: dict[str, Any] | None = None
     post_validation: dict[str, Any] | None = None
     staging_path = None
+    daily_archive_report = None
     coverage_report = []
     if write_staging and staging_deferred_reason is None and all_rows:
         consolidated_rows, consolidation_report = consolidate_staging_chunks(
@@ -310,6 +342,14 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         post_validation = validate_normalized_bars(consolidated_rows)
         staging_path = output_root / "staging" / str(settings.get("feed", "iex")) / timeframe / "bars.parquet"
         write_staging_parquet(consolidated_rows, staging_path)
+        if timeframe == "1Day" and settings.get("daily_archive_root"):
+            daily_archive_report = write_daily_archive(
+                consolidated_rows,
+                archive_root=Path(str(settings["daily_archive_root"])),
+                asset_registry=Path(str(settings.get("asset_registry", "data/reference/assets/canonical_asset_registry.csv"))),
+                alias_registry=Path(str(settings.get("alias_registry", "data/reference/assets/provider_symbol_aliases.csv"))),
+                dataset_version=str(settings.get("dataset_version", "alpaca_daily_bars_v1")),
+            )
         coverage_report = coverage_gap_audit(
             consolidated_rows,
             timeframe=timeframe,
@@ -318,7 +358,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             provider="alpaca",
             feed=str(settings.get("feed", "iex")),
         )
-    research_view_audit = _research_view_audit(consolidated_rows or all_rows, post_validation or pre_validation, coverage_report)
+    research_view_audit = _research_view_audit(consolidated_rows or all_rows, post_validation or pre_validation, coverage_report, timeframe=timeframe)
     collection_elapsed_seconds = time.monotonic() - collect_started
     report = {
         "mode": "historical_bar_backfill_collect",
@@ -333,6 +373,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "planned_chunk_count": len(plan),
         "collected_plan_chunk_count": work_chunk_count,
         "max_collect_chunks": max_collect_chunks,
+        "collect_statuses": sorted(collect_statuses) if collect_statuses else None,
+        "provider_symbol_map": provider_symbol_map,
         "manifest_plan_initialization": plan_initialization,
         "chunk_results": chunks,
         "collection_workers": collection_workers,
@@ -347,7 +389,10 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "raw_write_enabled": write_raw,
         "staging_write_enabled": write_staging,
         "staging_deferred_reason": staging_deferred_reason,
+        "bounded_consolidation_eligible": bounded_consolidation_eligible,
+        "bounded_consolidation_performed": bounded_consolidation_performed,
         "staging_path": str(staging_path) if staging_path else None,
+        "daily_archive_report": daily_archive_report,
         "pre_consolidation_validation": pre_validation,
         "post_consolidation_validation": post_validation,
         "normalization_validation": post_validation or pre_validation,
@@ -358,6 +403,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "all_session_row_count": research_view_audit["all_session_row_count"],
         "rth_row_count": research_view_audit["rth_row_count"],
         "outside_rth_row_count": research_view_audit["outside_rth_row_count"],
+        "daily_session_row_count": research_view_audit.get("daily_session_row_count"),
+        "intraday_rth_classification_applicable": research_view_audit.get("intraday_rth_classification_applicable"),
         "no_forward_fill": research_view_audit["no_forward_fill"],
         "no_synthetic_5m_bars": research_view_audit["no_synthetic_5m_bars"],
         "no_stale_close_carry": research_view_audit["no_stale_close_carry"],
@@ -515,9 +562,13 @@ def _collect_one_chunk(
     manifest.update(
         chunk_id,
         "in_progress",
-        {"symbols": list(request.symbols), "start": request.start.isoformat(), "end": request.end.isoformat()},
+        _request_manifest_metadata(request),
     )
     manifest_in_progress_seconds = time.perf_counter() - manifest_started
+    failure_phase = "fetch"
+    rows: list[dict[str, Any]] = []
+    chunk: dict[str, Any] = {}
+    chunk_metrics: dict[str, Any] = {}
     try:
         before = provider.metrics.as_dict()
         fetch_started = time.perf_counter()
@@ -533,6 +584,7 @@ def _collect_one_chunk(
         raw_manifest = None
         raw_write_seconds = 0.0
         if write_raw:
+            failure_phase = "raw_chunk_publication"
             raw_started = time.perf_counter()
             raw_manifest = raw_store.write_completed_chunk(
                 request,
@@ -544,8 +596,18 @@ def _collect_one_chunk(
             )
             raw_write_seconds = time.perf_counter() - raw_started
         status = "completed" if rows else "empty_valid_response"
+        failure_phase = "manifest_update"
         manifest_started = time.perf_counter()
-        manifest.update(chunk_id, status, {"rows": len(rows), "pages": chunk.get("pages", 0), "raw_manifest": raw_manifest})
+        manifest.update(
+            chunk_id,
+            status,
+            {
+                **_request_manifest_metadata(request),
+                "rows": len(rows),
+                "pages": chunk.get("pages", 0),
+                "raw_manifest": raw_manifest,
+            },
+        )
         manifest_terminal_seconds = time.perf_counter() - manifest_started
         return {
             "chunk_id": chunk_id,
@@ -563,13 +625,30 @@ def _collect_one_chunk(
     except Exception as exc:
         status = getattr(exc, "classification", "retryable_failure")
         manifest_started = time.perf_counter()
-        manifest.update(chunk_id, status, {"error_type": type(exc).__name__, "error_message": str(exc)})
+        manifest.update(
+            chunk_id,
+            status,
+            {
+                **_failure_manifest_metadata(request, exc),
+                "failure_phase": failure_phase,
+                "rows_returned": len(rows),
+                "page_count": chunk.get("pages", 0),
+                "requests": chunk_metrics.get("requests_attempted", 0),
+                "http_429_count": chunk_metrics.get("http_429_count", 0),
+            },
+        )
         manifest_failure_seconds = time.perf_counter() - manifest_started
         return {
             "chunk_id": chunk_id,
             "status": status,
             "error_type": type(exc).__name__,
             "error_message": str(exc),
+            "error_details": _failure_details(exc),
+            "failure_phase": failure_phase,
+            "rows": len(rows),
+            "pages": chunk.get("pages", 0),
+            "requests": chunk_metrics.get("requests_attempted", 0),
+            "http_429_count": chunk_metrics.get("http_429_count", 0),
             "manifest_update_seconds": manifest_in_progress_seconds + manifest_failure_seconds,
             "rows_data": [],
         }
@@ -619,6 +698,146 @@ def _load_completed_raw_rows_for_staging(
             result["rows"] = len(chunk_rows)
             result["raw_reload_deferred"] = False
     return rows
+
+
+def _select_collect_requests(
+    *,
+    plan: Sequence[HistoricalBarRequest],
+    manifest: CollectionManifest,
+    resume: bool,
+    force_refresh: bool,
+    max_collect_chunks: int,
+    collect_statuses: set[str] | None,
+    write_staging: bool,
+    completed_chunks_count_toward_limit: bool = False,
+) -> tuple[list[HistoricalBarRequest], list[dict[str, Any]], list[HistoricalBarRequest]]:
+    state = manifest.load()
+    chunks = state.get("chunks", {})
+    pending_requests: list[HistoricalBarRequest] = []
+    skipped_completed: list[dict[str, Any]] = []
+    selected_requests: list[HistoricalBarRequest] = []
+    for request in plan:
+        chunk_id = request.raw_chunk_id or ""
+        current_status = chunks.get(chunk_id, {}).get("status")
+        if resume and not force_refresh and manifest.is_completed(chunk_id):
+            if collect_statuses is None:
+                if completed_chunks_count_toward_limit:
+                    if max_collect_chunks > 0 and len(selected_requests) >= max_collect_chunks:
+                        break
+                    selected_requests.append(request)
+                skipped_completed.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "status": "skipped_completed",
+                        "rows": 0,
+                        "raw_reload_deferred": bool(write_staging),
+                    }
+                )
+            continue
+        if collect_statuses is not None and current_status not in collect_statuses:
+            continue
+        if max_collect_chunks > 0 and len(selected_requests) >= max_collect_chunks:
+            break
+        selected_requests.append(request)
+        pending_requests.append(request)
+    return pending_requests, skipped_completed, selected_requests
+
+
+def _bounded_consolidation_enabled(settings: Mapping[str, Any], output_root: Path) -> bool:
+    if not bool(settings.get("allow_bounded_consolidation", False)):
+        return False
+    output_text = str(output_root).replace("\\", "/").lower()
+    if not any(token in output_text for token in ("smoke", "test", "tmp")):
+        return False
+    archive_root = settings.get("daily_archive_root")
+    if archive_root:
+        archive_text = str(archive_root).replace("\\", "/").lower()
+        if archive_text.rstrip("/") == "data/processed/alpaca/symbol_bars/sip/1d":
+            return False
+        if not any(token in archive_text for token in ("smoke", "test", "tmp")):
+            return False
+    return True
+
+
+def _selected_collection_complete(
+    manifest: CollectionManifest,
+    selected_requests: Sequence[HistoricalBarRequest],
+    chunk_results: Sequence[Mapping[str, Any]],
+) -> bool:
+    selected_ids = {request.raw_chunk_id or "" for request in selected_requests}
+    if not selected_ids:
+        return False
+    failed = {
+        str(row.get("chunk_id"))
+        for row in chunk_results
+        if str(row.get("chunk_id")) in selected_ids
+        and row.get("status") not in {"completed", "empty_valid_response", "skipped_completed"}
+    }
+    if failed:
+        return False
+    return all(manifest.is_completed(chunk_id) for chunk_id in selected_ids)
+
+
+def _collect_statuses(settings: Mapping[str, Any]) -> set[str] | None:
+    raw = settings.get("collect_statuses", settings.get("retry_statuses"))
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",")]
+    else:
+        values = [str(item).strip() for item in raw]
+    statuses = {value for value in values if value}
+    unsupported = statuses - CollectionManifest.VALID_STATUSES
+    if unsupported:
+        raise ValueError(f"unsupported collect_statuses: {sorted(unsupported)}")
+    return statuses
+
+
+def _provider_symbol_map(settings: Mapping[str, Any]) -> dict[str, str]:
+    raw = settings.get("provider_symbol_map", settings.get("symbol_remap", {})) or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("provider_symbol_map must be a mapping of canonical symbol to provider symbol")
+    return {str(canonical).upper(): str(provider).upper() for canonical, provider in raw.items()}
+
+
+def _request_manifest_metadata(request: HistoricalBarRequest) -> dict[str, Any]:
+    canonical_symbols = list(request.canonical_symbols or request.symbols)
+    metadata = {
+        "symbols": canonical_symbols,
+        "provider_symbols": list(request.symbols),
+        "start": request.start.isoformat(),
+        "end": request.end.isoformat(),
+    }
+    if request.provider_symbol_by_canonical:
+        metadata["provider_symbol_map"] = dict(request.provider_symbol_by_canonical)
+    return metadata
+
+
+def _failure_manifest_metadata(request: HistoricalBarRequest, exc: Exception) -> dict[str, Any]:
+    return {
+        **_request_manifest_metadata(request),
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "error_details": _failure_details(exc),
+    }
+
+
+def _failure_details(exc: Exception) -> dict[str, Any]:
+    details = {
+        "classification": getattr(exc, "classification", type(exc).__name__),
+        "status_code": getattr(exc, "status_code", None),
+        "retry_after": getattr(exc, "retry_after", None),
+    }
+    response_json = getattr(exc, "response_json", None)
+    response_body = getattr(exc, "response_body", None)
+    if response_json:
+        details["provider_response"] = response_json
+        message = str(response_json.get("message", ""))
+        if message.startswith("invalid symbol:"):
+            details["invalid_symbol"] = message.split(":", 1)[1].strip()
+    elif response_body:
+        details["provider_response_body"] = response_body
+    return {key: value for key, value in details.items() if value is not None}
 
 
 class _CollectionProgress:
@@ -712,10 +931,14 @@ def _plan(
     adjustment: str,
     symbol_batch_size: int,
     date_window_days: int,
+    provider_symbol_map: Mapping[str, str] | None = None,
 ) -> list[HistoricalBarRequest]:
     requests = []
+    symbol_map = {str(key).upper(): str(value).upper() for key, value in (provider_symbol_map or {}).items()}
     for batch_index in range(0, len(symbols), max(1, symbol_batch_size)):
         batch = symbols[batch_index:batch_index + max(1, symbol_batch_size)]
+        provider_batch = tuple(symbol_map.get(symbol, symbol) for symbol in batch)
+        remaps = tuple((symbol, provider_batch[index]) for index, symbol in enumerate(batch) if provider_batch[index] != symbol)
         window_start = start
         while window_start < end:
             window_end_exclusive = min(end, window_start + timedelta(days=max(1, date_window_days)))
@@ -725,13 +948,15 @@ def _plan(
             chunk_id = f"alpaca-{feed}-{timeframe}-{'-'.join(batch)}-{window_start:%Y%m%dT%H%M%SZ}-{request_end:%Y%m%dT%H%M%SZ}"
             requests.append(
                 HistoricalBarRequest(
-                    symbols=batch,
+                    symbols=provider_batch,
                     timeframe=timeframe,
                     start=window_start,
                     end=request_end,
                     feed=feed,
                     adjustment=adjustment,
                     raw_chunk_id=chunk_id,
+                    canonical_symbols=batch,
+                    provider_symbol_by_canonical=remaps,
                 )
             )
             window_start = window_end_exclusive
@@ -773,12 +998,33 @@ def _research_view_audit(
     rows: list[dict[str, Any]],
     validation: Mapping[str, Any],
     coverage_report: list[Mapping[str, Any]],
+    *,
+    timeframe: str,
 ) -> dict[str, Any]:
+    if timeframe == "1Day":
+        return {
+            "all_session_row_count": len(rows),
+            "rth_row_count": None,
+            "outside_rth_row_count": None,
+            "daily_session_row_count": len(rows),
+            "intraday_rth_classification_applicable": False,
+            "research_view": "daily_regular_session_bars",
+            "daily_session_date_semantics": "session_date derived from direct daily bar timestamp date in UTC; original UTC timestamp retained",
+            "raw_and_staging_preserve_all_returned_bars": True,
+            "no_forward_fill": True,
+            "no_synthetic_5m_bars": True,
+            "no_stale_close_carry": True,
+            "duplicate_count": validation.get("duplicate_key_count"),
+            "missing_expected_rth_bars": None,
+            "structurally_valid_staging": validation.get("valid"),
+        }
     rth_rows = [row for row in rows if row.get("session_type") == "rth" or _timestamp_is_rth(row.get("timestamp"))]
     return {
         "all_session_row_count": len(rows),
         "rth_row_count": len(rth_rows),
         "outside_rth_row_count": len(rows) - len(rth_rows),
+        "daily_session_row_count": None,
+        "intraday_rth_classification_applicable": True,
         "research_view": "rth_only",
         "raw_and_staging_preserve_all_returned_bars": True,
         "no_forward_fill": True,

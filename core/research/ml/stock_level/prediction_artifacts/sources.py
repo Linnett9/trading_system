@@ -53,6 +53,9 @@ def _select_symbols(
 
 def _load_closes_by_symbol(config: dict[str, Any]) -> dict[str, dict[str, dict[str, float]]]:
     ml = config.get("ml", {})
+    source = str(ml.get("stock_selector_market_data_source", ml.get("historical_data_provider", "stooq_parquet"))).lower()
+    if source == "canonical_daily_v2":
+        return _load_canonical_daily_v2_closes(config)
     parquet_dir = Path(str(ml.get("stooq_parquet_dir", ml.get("parquet_dir", "data/processed/stooq_parquet"))))
     closes = {}
     required = ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])
@@ -61,6 +64,54 @@ def _load_closes_by_symbol(config: dict[str, Any]) -> dict[str, dict[str, dict[s
         path = _symbol_parquet_path(parquet_dir, symbol)
         if path.exists():
             closes[symbol.upper()] = _read_parquet_closes(path)
+    return closes
+
+
+def _load_canonical_daily_v2_closes(config: dict[str, Any]) -> dict[str, dict[str, dict[str, float]]]:
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise RuntimeError("canonical daily v2 selector source requires pyarrow") from exc
+    ml = config.get("ml", {})
+    root = Path(str(ml.get("canonical_daily_v2_root", "data/processed/market_data/canonical_daily_v2/full")))
+    manifest_path = Path(str(ml.get("canonical_daily_v2_manifest_path", "reports/data_lineage/canonical_daily_v2/build_manifest.json")))
+    if not root.exists():
+        raise FileNotFoundError(f"canonical daily v2 root does not exist: {root}")
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"canonical daily v2 manifest does not exist: {manifest_path}")
+    try:
+        import json
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"could not read canonical daily v2 manifest: {manifest_path}") from exc
+    if manifest.get("status") != "COMPLETE":
+        raise ValueError(f"canonical daily v2 manifest is not COMPLETE: {manifest_path}")
+    required = ml.get("stock_alpha_dev_required_symbols", [ml.get("stock_ranker_market_symbol", "SPY")])
+    symbols = {*_universe_symbols(config), *(str(symbol).upper() for symbol in required)}
+    closes = {}
+    for symbol in sorted(symbols):
+        files = sorted((root / f"symbol={symbol}").glob("year=*/bars.parquet"))
+        if not files:
+            continue
+        symbol_closes: dict[str, float] = {}
+        dollar_volume: dict[str, float] = {}
+        for path in files:
+            table = pq.read_table(path, columns=["session_date", "model_close", "raw_volume", "selector_eligible"])
+            for row in table.to_pylist():
+                if not row.get("selector_eligible"):
+                    continue
+                close = row.get("model_close")
+                if close is None or not math.isfinite(float(close)):
+                    continue
+                date = str(row["session_date"])[:10]
+                symbol_closes[date] = float(close)
+                volume = row.get("raw_volume")
+                if volume is not None and math.isfinite(float(volume)):
+                    dollar_volume[date] = float(close) * float(volume)
+        if symbol_closes:
+            closes[symbol.upper()] = {"close": symbol_closes, "dollar_volume": dollar_volume}
+    if not closes:
+        raise ValueError(f"canonical daily v2 source resolved but no selector-eligible closes were loaded from {root}")
     return closes
 
 

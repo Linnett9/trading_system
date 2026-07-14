@@ -17,6 +17,7 @@ from application.services.historical_bar_backfill_commands import _plan, run_his
 from infrastructure.data.historical_bar_overlap import audit_historical_bar_overlap
 from infrastructure.data.historical_bar_providers import (
     AlpacaBasicHistoricalBarProvider,
+    AlpacaHistoricalBarError,
     BackfillChunkStateStore,
     CollectionManifest,
     HistoricalBarMetrics,
@@ -181,7 +182,7 @@ def test_shared_rate_limiter_budget_is_global_not_per_worker():
     limiter.acquire()
     limiter.release()
 
-    assert sleeps == [60.0]
+    assert sleeps == [30.0, 30.0]
     assert limiter.sleep_time_seconds == 60.0
 
 
@@ -331,6 +332,84 @@ def test_empty_valid_window_can_complete():
     assert chunk["pages"] == 1
 
 
+def test_validation_failure_details_are_persisted_in_manifest(tmp_path):
+    request = HistoricalBarRequest(
+        symbols=("BRK.A",),
+        timeframe="5m",
+        start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+        end=datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
+        feed="sip",
+        raw_chunk_id="chunk-brk-a",
+        canonical_symbols=("BRK-A",),
+        provider_symbol_by_canonical=(("BRK-A", "BRK.A"),),
+    )
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json")
+
+    class InvalidSymbolProvider:
+        name = "alpaca"
+        metrics = HistoricalBarMetrics()
+
+        def fetch_page(self, request):
+            raise AlpacaHistoricalBarError(
+                'Alpaca historical bars request failed (400): {"message":"invalid symbol: BRK.A"}',
+                status_code=400,
+                response_json={"message": "invalid symbol: BRK.A"},
+            )
+
+    result = backfill_commands._collect_one_chunk(
+        provider=InvalidSymbolProvider(),
+        manifest=manifest,
+        raw_store=ImmutableRawChunkStore(tmp_path / "raw"),
+        request=request,
+        max_retries=0,
+        write_raw=True,
+        force_refresh=False,
+    )
+
+    row = manifest.load()["chunks"]["chunk-brk-a"]
+    assert result["status"] == "validation_failure"
+    assert row["symbols"] == ["BRK-A"]
+    assert row["provider_symbols"] == ["BRK.A"]
+    assert row["provider_symbol_map"] == {"BRK-A": "BRK.A"}
+    assert row["error_details"]["status_code"] == 400
+    assert row["error_details"]["provider_response"] == {"message": "invalid symbol: BRK.A"}
+    assert row["error_details"]["invalid_symbol"] == "BRK.A"
+
+
+def test_symbol_remap_normalizes_provider_rows_back_to_canonical_symbol():
+    provider = AlpacaBasicHistoricalBarProvider(
+        api_key="key",
+        secret_key="secret",
+        opener=lambda request, timeout: _Response(
+            {
+                "bars": {
+                    "BRK.B": [
+                        {"t": "2026-01-02T14:30:00Z", "o": 1, "h": 2, "l": 1, "c": 2, "v": 100}
+                    ]
+                },
+                "next_page_token": None,
+            }
+        ),
+    )
+    rows, _ = fetch_chunk_with_retries(
+        provider,
+        HistoricalBarRequest(
+            symbols=("BRK.B",),
+            timeframe="5m",
+            start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
+            feed="sip",
+            raw_chunk_id="chunk-brk-b",
+            canonical_symbols=("BRK-B",),
+            provider_symbol_by_canonical=(("BRK-B", "BRK.B"),),
+        ),
+        max_retries=0,
+    )
+
+    assert rows[0]["symbol"] == "BRK-B"
+    assert rows[0]["provider_symbol"] == "BRK.B"
+
+
 def test_adjacent_5m_chunk_windows_do_not_overlap_or_skip_boundary_bar():
     requests = _plan(
         ("SPY", "AAPL", "MSFT"),
@@ -347,6 +426,26 @@ def test_adjacent_5m_chunk_windows_do_not_overlap_or_skip_boundary_bar():
     assert requests[0].end == datetime(2026, 6, 29, 13, 25, tzinfo=timezone.utc)
     assert requests[1].start == datetime(2026, 6, 29, 13, 30, tzinfo=timezone.utc)
     assert requests[1].start - requests[0].end == timedelta(minutes=5)
+
+
+def test_failed_batch_recovery_can_split_into_one_symbol_requests_with_remap():
+    requests = _plan(
+        ("BOOM", "BP", "BRK-A", "BRK-B"),
+        datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+        datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+        provider_symbol_map={"BRK-A": "BRK.A", "BRK-B": "BRK.B"},
+    )
+
+    assert [request.symbols for request in requests] == [("BOOM",), ("BP",), ("BRK.A",), ("BRK.B",)]
+    assert requests[2].canonical_symbols == ("BRK-A",)
+    assert requests[2].provider_symbol_by_canonical == (("BRK-A", "BRK.A"),)
+    assert "BRK-A" in (requests[2].raw_chunk_id or "")
+    assert "BRK.A" not in (requests[2].raw_chunk_id or "")
 
 
 def test_overlap_audit_compares_without_selecting_or_mixing_canonical_source():
@@ -867,6 +966,109 @@ def test_collect_resume_reloads_completed_raw_chunk_into_staging(tmp_path, monke
     assert (output_root / "staging" / "sip" / "5m" / "bars.parquet").exists()
 
 
+def test_raw_store_shortens_long_symbol_batch_paths_and_preserves_manifest_symbols(tmp_path):
+    symbols = tuple(f"SYM{i:02d}" for i in range(50))
+    request = HistoricalBarRequest(
+        symbols=symbols,
+        timeframe="1Day",
+        start=datetime(2026, 3, 27, tzinfo=timezone.utc),
+        end=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        feed="sip",
+        raw_chunk_id="long-batch",
+    )
+    store = ImmutableRawChunkStore(tmp_path / "raw")
+    chunk_dir = store.chunk_dir(request)
+
+    assert len(chunk_dir.parent.name) <= 120
+    assert chunk_dir.parent.name.startswith("batch-50-SYM00-SYM49-")
+    assert "-".join(symbols) not in str(chunk_dir)
+
+    store.write_completed_chunk(
+        request,
+        rows=[
+            {
+                "symbol": "SYM00",
+                "timestamp": request.start,
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": 100.0,
+            }
+        ],
+        raw_pages=[{"bars": {}}],
+        metrics={"pages": 1},
+    )
+    manifest = json.loads((chunk_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["symbol_batch"] == list(symbols)
+    assert manifest["symbol_batch_path"] == chunk_dir.parent.name
+    assert store.read_completed_chunk(request)[0]["symbol"] == "SYM00"
+
+
+def test_http_success_raw_write_failure_is_retryable_with_failure_phase(tmp_path):
+    request = HistoricalBarRequest(
+        symbols=("AAPL",),
+        timeframe="1Day",
+        start=datetime(2026, 3, 27, tzinfo=timezone.utc),
+        end=datetime(2026, 4, 26, tzinfo=timezone.utc),
+        feed="sip",
+        raw_chunk_id="raw-failure",
+    )
+    manifest = CollectionManifest(tmp_path / "manifest.json")
+
+    class SuccessfulProvider:
+        name = "alpaca"
+
+        def __init__(self):
+            self.metrics = HistoricalBarMetrics()
+
+        def fetch_page(self, request):
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += 1
+            return HistoricalBarPage(
+                bars=[
+                    {
+                        "symbol": "AAPL",
+                        "timestamp": request.start,
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 100.0,
+                    }
+                ],
+                next_page_token=None,
+                raw_payload={"bars": {"AAPL": []}},
+                latency_seconds=0.0,
+            )
+
+    class FailingRawStore:
+        def write_completed_chunk(self, *args, **kwargs):
+            raise FileNotFoundError("simulated raw path failure")
+
+    result = backfill_commands._collect_one_chunk(
+        provider=SuccessfulProvider(),
+        manifest=manifest,
+        raw_store=FailingRawStore(),
+        request=request,
+        max_retries=0,
+        write_raw=True,
+        force_refresh=False,
+    )
+    state = manifest.load()["chunks"]["raw-failure"]
+
+    assert result["status"] == "retryable_failure"
+    assert result["failure_phase"] == "raw_chunk_publication"
+    assert result["rows"] == 1
+    assert result["pages"] == 1
+    assert result["requests"] == 1
+    assert state["failure_phase"] == "raw_chunk_publication"
+    assert state["rows_returned"] == 1
+
+
 def test_collect_resume_does_not_preload_completed_raw_before_bounded_collection(tmp_path, monkeypatch):
     monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
@@ -985,6 +1187,152 @@ def test_collect_resume_does_not_preload_completed_raw_before_bounded_collection
     assert any(row["status"] == "completed" for row in report["chunk_results"])
 
 
+def test_bounded_daily_collection_consolidates_when_explicitly_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports" / "daily_smoke"
+    raw_root = tmp_path / "raw"
+    archive_root = tmp_path / "archive_smoke"
+    assets, aliases = _daily_registry(tmp_path)
+    start = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 24, 23, 59, 59, tzinfo=timezone.utc)
+    calls = []
+
+    class DailyProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {"provider": "alpaca", "feed": "sip", "credentials_available": True, "can_attempt_authenticated_request": True}
+
+        def fetch_page(self, request):
+            calls.append(request.raw_chunk_id)
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += 12
+            rows = []
+            for day in (22, 23, 24):
+                for symbol in request.symbols:
+                    canonical = "BRK-B" if symbol == "BRK.B" else symbol
+                    rows.append(
+                        {
+                            "symbol": canonical,
+                            "provider_symbol": symbol if symbol != canonical else None,
+                            "timestamp": datetime(2026, 6, day, 4, tzinfo=timezone.utc),
+                            "open": 1.0,
+                            "high": 2.0,
+                            "low": 1.0,
+                            "close": 2.0,
+                            "volume": 100.0,
+                            "trade_count": 10,
+                            "vwap": 1.5,
+                            "provider": "alpaca",
+                            "feed": request.feed,
+                            "requested_timeframe": request.timeframe,
+                            "native_timeframe": "1Day",
+                            "adjustment_mode": request.adjustment,
+                            "raw_chunk_identifier": request.raw_chunk_id,
+                        }
+                    )
+            return HistoricalBarPage(bars=rows, next_page_token=None, raw_payload={"bars": {}}, latency_seconds=0.0)
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", DailyProvider)
+
+    config = _daily_collect_config(output_root, raw_root, archive_root, assets, aliases, start, end, allow_bounded=True)
+    run_historical_bar_backfill_collect(config)
+
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+    assert calls == ["alpaca-sip-1Day-AAPL-SPY-BRK-B-ABCB-20260622T000000Z-20260624T235959Z"]
+    assert report["bounded_consolidation_performed"] is True
+    assert report["staging_path"]
+    assert report["daily_archive_report"]["written_rows"] == 12
+    assert report["daily_session_row_count"] == 12
+    assert report["intraday_rth_classification_applicable"] is False
+    assert report["rth_row_count"] is None
+    assert (archive_root / "symbol=BRK-B" / "year=2026" / "bars.parquet").exists()
+
+
+def test_bounded_consolidation_disabled_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports" / "daily_smoke"
+    raw_root = tmp_path / "raw"
+    archive_root = tmp_path / "archive_smoke"
+    assets, aliases = _daily_registry(tmp_path)
+    start = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 24, 23, 59, 59, tzinfo=timezone.utc)
+
+    class EmptyProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {"provider": "alpaca", "feed": "sip", "credentials_available": True, "can_attempt_authenticated_request": True}
+
+        def fetch_page(self, request):
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            return HistoricalBarPage(bars=[], next_page_token=None, raw_payload={"bars": {}}, latency_seconds=0.0)
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", EmptyProvider)
+
+    run_historical_bar_backfill_collect(_daily_collect_config(output_root, raw_root, archive_root, assets, aliases, start, end, allow_bounded=False))
+
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+    assert report["bounded_consolidation_eligible"] is False
+    assert report["staging_deferred_reason"] == "max_collect_chunks_bounded_collection"
+    assert report["staging_path"] is None
+    assert not archive_root.exists()
+
+
+def test_bounded_daily_rerun_reuses_completed_raw_without_api_request(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports" / "daily_smoke"
+    raw_root = tmp_path / "raw"
+    archive_root = tmp_path / "archive_smoke"
+    assets, aliases = _daily_registry(tmp_path)
+    start = datetime(2026, 6, 22, tzinfo=timezone.utc)
+    end = datetime(2026, 6, 24, 23, 59, 59, tzinfo=timezone.utc)
+    request = _plan(("AAPL", "SPY", "BRK-B", "ABCB"), start, end, timeframe="1Day", feed="sip", adjustment="all", symbol_batch_size=4, date_window_days=7, provider_symbol_map={"BRK-B": "BRK.B"})[0]
+    rows = [
+        {"symbol": "AAPL", "timestamp": datetime(2026, 6, 22, 4, tzinfo=timezone.utc), "open": 1.0, "high": 2.0, "low": 1.0, "close": 2.0, "volume": 100.0, "provider": "alpaca", "feed": "sip", "adjustment_mode": "all", "raw_chunk_identifier": request.raw_chunk_id},
+        {"symbol": "BRK-B", "provider_symbol": "BRK.B", "timestamp": datetime(2026, 6, 22, 4, tzinfo=timezone.utc), "open": 1.0, "high": 2.0, "low": 1.0, "close": 2.0, "volume": 100.0, "provider": "alpaca", "feed": "sip", "adjustment_mode": "all", "raw_chunk_identifier": request.raw_chunk_id},
+    ]
+    ImmutableRawChunkStore(raw_root).write_completed_chunk(request, rows=rows, raw_pages=[{"bars": {}}], metrics={"pages": 1})
+    manifest = CollectionManifest(output_root / "collection_manifest.json")
+    manifest.initialize_plan([request], dry_run=False)
+    manifest.update(request.raw_chunk_id or "", "completed", {"rows": 2})
+
+    class NoFetchProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {"provider": "alpaca", "feed": "sip", "credentials_available": True, "can_attempt_authenticated_request": True}
+
+        def fetch_page(self, request):
+            raise AssertionError("completed bounded chunks should be reused")
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", NoFetchProvider)
+
+    run_historical_bar_backfill_collect(_daily_collect_config(output_root, raw_root, archive_root, assets, aliases, start, end, allow_bounded=True))
+
+    report = json.loads((output_root / "historical_bar_collect_report.json").read_text(encoding="utf-8"))
+    assert report["observed_metrics"]["requests_attempted"] == 0
+    assert report["chunk_results"][0]["status"] == "skipped_completed"
+    assert report["chunk_results"][0]["rows"] == 2
+    assert report["daily_archive_report"]["written_rows"] == 2
+
+
 def test_collect_resume_retries_stale_in_progress_chunk(tmp_path, monkeypatch):
     monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
@@ -1073,6 +1421,107 @@ def test_collect_resume_retries_stale_in_progress_chunk(tmp_path, monkeypatch):
 
     assert calls == [planned[0].raw_chunk_id]
     assert CollectionManifest(output_root / "collection_manifest.json").is_completed(planned[0].raw_chunk_id or "")
+
+
+def test_collect_status_filter_retries_only_validation_failures_and_preserves_completed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake-key")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake-secret")
+    output_root = tmp_path / "reports"
+    raw_root = tmp_path / "raw"
+    start = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+    planned = _plan(
+        ("AAPL", "BRK-B", "MSFT"),
+        start,
+        end,
+        timeframe="5m",
+        feed="sip",
+        adjustment="all",
+        symbol_batch_size=1,
+        date_window_days=1,
+        provider_symbol_map={"BRK-B": "BRK.B"},
+    )
+    manifest = CollectionManifest(output_root / "collection_manifest.json")
+    manifest.initialize_plan(planned, dry_run=False)
+    manifest.update(planned[0].raw_chunk_id or "", "completed", {"rows": 1})
+    manifest.update(planned[1].raw_chunk_id or "", "validation_failure", {"error_message": "invalid symbol: BRK-B"})
+    calls = []
+
+    class RetryValidationFailureProvider:
+        name = "alpaca"
+
+        def __init__(self, *args, **kwargs):
+            self.metrics = HistoricalBarMetrics()
+
+        def check_authentication(self):
+            return {
+                "credential_source": "test",
+                "credentials_available": True,
+                "api_key_alias_used": None,
+                "secret_key_alias_used": None,
+                "can_attempt_authenticated_request": True,
+            }
+
+        def fetch_page(self, request):
+            calls.append((request.raw_chunk_id, request.symbols))
+            self.metrics.requests_attempted += 1
+            self.metrics.requests_successful += 1
+            self.metrics.pages_downloaded += 1
+            self.metrics.rows_downloaded += 1
+            return HistoricalBarPage(
+                bars=[
+                    {
+                        "symbol": "BRK-B",
+                        "provider_symbol": "BRK.B",
+                        "timestamp": request.start,
+                        "open": 1.0,
+                        "high": 1.0,
+                        "low": 1.0,
+                        "close": 1.0,
+                        "volume": 100.0,
+                        "provider": "alpaca",
+                        "feed": request.feed,
+                        "raw_chunk_identifier": request.raw_chunk_id,
+                    }
+                ],
+                next_page_token=None,
+                raw_payload={"bars": {"BRK.B": []}},
+                latency_seconds=0.0,
+            )
+
+    monkeypatch.setattr(backfill_commands, "AlpacaBasicHistoricalBarProvider", RetryValidationFailureProvider)
+
+    run_historical_bar_backfill_collect(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["AAPL", "BRK-B", "MSFT"],
+                    "provider_symbol_map": {"BRK-B": "BRK.B"},
+                    "timeframe": "5m",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "output_root": str(output_root),
+                    "raw_root": str(raw_root),
+                    "dry_run": False,
+                    "resume": True,
+                    "write_normalized_staging": True,
+                    "symbol_batch_size": 1,
+                    "date_window_days": 1,
+                    "collect_statuses": ["validation_failure"],
+                    "max_collect_chunks": 1,
+                    "progress_report_interval_seconds": 0,
+                }
+            }
+        }
+    )
+
+    assert calls == [(planned[1].raw_chunk_id, ("BRK.B",))]
+    state = CollectionManifest(output_root / "collection_manifest.json").load()["chunks"]
+    assert state[planned[0].raw_chunk_id or ""]["status"] == "completed"
+    assert state[planned[1].raw_chunk_id or ""]["status"] == "completed"
+    assert state[planned[2].raw_chunk_id or ""]["status"] == "planned"
 
 
 def test_collect_parallel_workers_do_not_collect_same_chunk_twice_and_retry_failures(tmp_path, monkeypatch):
@@ -1198,3 +1647,54 @@ def test_free_source_inventory_rejects_paid_sources_and_keeps_stooq_as_overlap_s
 def test_historical_bar_probe_mode_is_feedless():
     assert "ml-historical-bar-backfill-probe" in FEEDLESS_MODES
     assert "ml-historical-bar-backfill-collect" in FEEDLESS_MODES
+
+
+def _daily_registry(tmp_path):
+    assets = tmp_path / "assets.csv"
+    aliases = tmp_path / "aliases.csv"
+    asset_fields = ["asset_id", "canonical_symbol", "security_name", "security_type", "share_class", "exchange", "currency", "country", "cik", "sector", "industry", "valid_from", "valid_to", "is_active", "collection_universe_514", "registry_version"]
+    alias_fields = ["asset_id", "provider", "provider_symbol", "valid_from", "valid_to", "is_primary", "mapping_reason", "source", "registry_version"]
+    with assets.open("w", encoding="utf-8", newline="") as handle:
+        import csv
+        writer = csv.DictWriter(handle, fieldnames=asset_fields, extrasaction="ignore", lineterminator="\n")
+        writer.writeheader()
+        for symbol in ["AAPL", "SPY", "BRK-B", "ABCB"]:
+            writer.writerow({"asset_id": f"asset_{symbol}", "canonical_symbol": symbol, "security_type": "UNKNOWN", "currency": "USD", "country": "US", "valid_from": "1900-01-01", "is_active": "true", "collection_universe_514": "true", "registry_version": "test"})
+    with aliases.open("w", encoding="utf-8", newline="") as handle:
+        import csv
+        writer = csv.DictWriter(handle, fieldnames=alias_fields, extrasaction="ignore", lineterminator="\n")
+        writer.writeheader()
+        for symbol, provider in [("AAPL", "AAPL"), ("SPY", "SPY"), ("BRK-B", "BRK.B"), ("ABCB", "ABCB")]:
+            writer.writerow({"asset_id": f"asset_{symbol}", "provider": "alpaca", "provider_symbol": provider, "valid_from": "1900-01-01", "is_primary": "true", "mapping_reason": "configured_provider_map" if symbol == "BRK-B" else "identity", "source": "test", "registry_version": "test"})
+    return assets, aliases
+
+
+def _daily_collect_config(output_root, raw_root, archive_root, assets, aliases, start, end, *, allow_bounded):
+    return {
+        "ml": {
+            "historical_bar_backfill": {
+                "provider": "alpaca",
+                "feed": "sip",
+                "symbols": ["AAPL", "SPY", "BRK-B", "ABCB"],
+                "provider_symbol_map": {"BRK-B": "BRK.B"},
+                "timeframe": "1Day",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "symbol_batch_size": 4,
+                "date_window_days": 7,
+                "output_root": str(output_root),
+                "raw_root": str(raw_root),
+                "daily_archive_root": str(archive_root),
+                "asset_registry": str(assets),
+                "alias_registry": str(aliases),
+                "dataset_version": "test_daily_smoke",
+                "dry_run": False,
+                "resume": True,
+                "write_raw": True,
+                "write_normalized_staging": True,
+                "max_collect_chunks": 1,
+                "allow_bounded_consolidation": allow_bounded,
+                "progress_report_interval_seconds": 0,
+            }
+        }
+    }

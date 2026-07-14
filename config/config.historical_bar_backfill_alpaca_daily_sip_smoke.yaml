@@ -1,0 +1,37 @@
+ml:
+  historical_bar_backfill:
+    provider: alpaca
+    feed: sip
+    timeframe: 1Day
+    symbols: [AAPL, SPY, BRK-B, ABCB]
+    provider_symbol_map:
+      BRK-B: BRK.B
+    start: "2026-06-22T00:00:00+00:00"
+    end: "2026-06-24T23:59:59+00:00"
+    symbol_batch_size: 4
+    date_window_days: 7
+    limit: 10000
+    adjustment: all
+    extended_hours: false
+    requests_per_minute: 180
+    max_in_flight_requests: 2
+    collection_workers: 1
+    progress_report_interval_seconds: 0
+    max_retries: 3
+    max_collect_chunks: 1
+    allow_bounded_consolidation: true
+    dry_run: false
+    resume: true
+    force_refresh: false
+    write_raw: true
+    raw_write: true
+    write_normalized_staging: true
+    staging_write: true
+    canonical_market_data_writes_enabled: false
+    canonical_merge: false
+    raw_root: data/raw/alpaca/daily_stock_bars_smoke
+    output_root: reports/market_data/historical_bar_backfill/daily_sip_smoke_abcb
+    daily_archive_root: data/processed/alpaca/symbol_bars/sip/1d_smoke
+    asset_registry: data/reference/assets/canonical_asset_registry.csv
+    alias_registry: data/reference/assets/provider_symbol_aliases.csv
+    dataset_version: alpaca_daily_bars_v1_smoke

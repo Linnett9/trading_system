@@ -164,6 +164,7 @@ def test_dry_run_writes_no_registry_outputs(tmp_path):
     assert not asset_output.exists()
     assert not alias_output.exists()
     assert not parquet_output.exists()
+    assert not (tmp_path / "reports").exists()
 
 
 def test_existing_unrelated_files_remain_unchanged(tmp_path):
@@ -216,4 +217,3 @@ def _alias(asset_id: str, provider: str, provider_symbol: str, valid_from: str, 
         source="test",
         registry_version="test",
     )
-

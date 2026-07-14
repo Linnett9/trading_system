@@ -30,6 +30,24 @@ def _load_price_histories(
         ) from exc
     output = {}
     for symbol in symbols:
+        canonical_files = sorted((parquet_dir / f"symbol={symbol}").glob("year=*/bars.parquet"))
+        if canonical_files:
+            rows = []
+            for canonical_path in canonical_files:
+                table = pq.read_table(canonical_path, columns=["session_date", "model_high", "model_low", "model_close", "selector_eligible"])
+                for row in table.to_pylist():
+                    if not row.get("selector_eligible"):
+                        continue
+                    rows.append(
+                        {
+                            "date": str(row["session_date"])[:10],
+                            "high": row["model_high"],
+                            "low": row["model_low"],
+                            "close": row["model_close"],
+                        }
+                    )
+            output[symbol] = sorted(rows, key=lambda row: row["date"])
+            continue
         path = parquet_dir / f"{symbol}.parquet"
         if not path.exists():
             structured_path = parquet_dir / symbol.upper() / "1Day" / "bars.parquet"

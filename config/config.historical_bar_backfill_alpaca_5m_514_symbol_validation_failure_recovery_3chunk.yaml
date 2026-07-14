@@ -1,0 +1,31 @@
+ml:
+  historical_bar_backfill:
+    provider: alpaca
+    feed: sip
+    timeframe: 5m
+    universe_file: config/universes/alpaca_514_symbols.txt
+    start: "2016-01-04T14:30:00+00:00"
+    end: "2026-06-30T21:00:00+00:00"
+    symbol_batch_size: 10
+    date_window_days: 5
+    requests_per_minute: 60
+    max_in_flight_requests: 1
+    collection_workers: 1
+    progress_report_interval_seconds: 15
+    max_collect_chunks: 3
+    max_retries: 1
+    dry_run: false
+    resume: true
+    force_refresh: false
+    collect_statuses: [validation_failure]
+    provider_symbol_map:
+      BRK-A: BRK.A
+      BRK-B: BRK.B
+    write_raw: true
+    raw_write: true
+    write_normalized_staging: false
+    staging_write: false
+    canonical_market_data_writes_enabled: false
+    canonical_merge: false
+    raw_root: data/raw/alpaca/stock_bars
+    output_root: reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full

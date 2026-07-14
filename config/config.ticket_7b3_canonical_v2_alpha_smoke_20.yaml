@@ -1,0 +1,111 @@
+paper_candidate_id: ranked_top5_monthly_exposure90_v1
+alpaca:
+  api_key: ''
+  secret_key: ''
+ml:
+  enabled: false
+  mode: research
+  stock_alpha_run_size: benchmark
+  stock_alpha_report_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+  output_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/smoke_20/benchmark
+  stock_alpha_output_dir_override: true
+  stock_level_artifact_format: parquet
+  stock_level_parquet_compression: zstd
+  stock_level_decision_frequency: daily
+  stock_level_decision_min_history_sessions: 252
+  stock_level_dataset_workers: 12
+  stock_level_dataset_inner_threads: 1
+  stock_level_dataset_progress_interval_seconds: 30
+  stock_level_dataset_task_timeout_seconds: 1800
+  stock_alpha_allow_legacy_output_paths: false
+  stock_alpha_resume_existing_outputs: true
+  stock_alpha_force_refresh: true
+  stock_alpha_stages:
+    stock_artifact: true
+    alpha_features: false
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: false
+    attribution: false
+  stock_selector_market_data_source: canonical_daily_v2
+  canonical_daily_v2_root: data/processed/market_data/canonical_daily_v2/full
+  canonical_daily_v2_manifest_path: reports/data_lineage/canonical_daily_v2/build_manifest.json
+  historical_data_provider: canonical_daily_v2
+  stooq_parquet_dir: data/processed/market_data/canonical_daily_v2/full
+  stock_level_base_prediction_artifacts_path: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/smoke_20/benchmark/stock_level_prediction_artifacts.parquet
+  stock_level_prediction_artifacts_path: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/smoke_20/benchmark/stock_level_prediction_artifacts_enriched.parquet
+  canonical_v2_labeled_spine_root: reports/ml/readiness/selector_spine_extension/labeled_selector_spine_partitions
+  canonical_v2_labeled_spine_manifest_path: reports/ml/readiness/selector_spine_extension/labeled_spine_manifest.json
+  canonical_v2_inference_spine_manifest_path: reports/ml/readiness/selector_spine_extension/inference_spine_manifest.json
+  canonical_v2_alpha_report_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/alpha_enrichment_smoke_20
+  canonical_v2_base_partition_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/alpha_enrichment_smoke_20/base_partitions
+  stock_alpha_feature_partitioned_resume: true
+  stock_ranker_market_symbol: SPY
+  stock_ranker_spy_symbol: SPY
+  stock_alpha_artifact_universe_paths:
+  - data/reference/universes/us_liquid_500.yaml
+  stock_alpha_artifact_symbol_sample_method: liquidity_ranked
+  expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
+  stock_alpha_dev_required_symbols:
+  - SPY
+  stock_alpha_run_profile: ticket_7b3_daily_large_history_regeneration_canonical_v2
+  stock_alpha_feature_n_jobs: 12
+  stock_alpha_overnight_stage_n_jobs: 1
+  stock_ranker_model_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  numpy_num_threads: 1
+  canonical_v2_alpha_fail_fast:
+    minimum_failures_before_abort: 3
+    abort_when_completed_is_zero: true
+    same_failure_signature_threshold: 3
+    maximum_failure_ratio: 0.25
+  stock_ranker_target_column: actual_forward_return_10d
+  stock_ranker_target_columns:
+  - actual_forward_return_10d
+  - actual_market_residual_return_10d
+  - actual_vol_adjusted_forward_return_10d
+  - actual_rank_normalized_forward_return_10d
+  stock_ranker_target_comparison_enabled: false
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_overnight_run_portfolio_replay: false
+  stock_alpha_overnight_run_portfolio_policy_sweep: false
+  research_years: 10
+  minimum_history_years: 9
+  feature_lookback_days: 252
+  prediction_horizon: 10
+  label_horizon_days: 10
+  sector_reference_path: data/reference/sector_by_symbol.json
+  sector_by_symbol: {}
+  random_seed: 42
+  canonical_v2_alpha_symbols:
+  - AAPL
+  - GE
+  - AMD
+  - TSLA
+  - BBW
+  - SPY
+  - A
+  - AA
+  - WMT
+  - XOM
+  - ADI
+  - ADM
+  - UNH
+  - V
+  - VNQ
+  - AIG
+  - TGT
+  - XLF
+  - XLK
+  - ZION
+reports:
+  ml_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+cache:
+  enabled: true
+  ml_dir: cache/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+research:
+  profile: ticket_7b3_daily_large_history_regeneration_canonical_v2

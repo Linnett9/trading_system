@@ -7,6 +7,8 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 import yaml
 
 from infrastructure.data.market_sessions import next_trading_session, trading_sessions
@@ -303,6 +305,126 @@ def test_dataset_workers_report_effective_parallelism_and_inner_thread_cap():
     assert symbol_execution["execution_mode"] == "process_pool"
 
 
+def test_symbol_task_diagnostics_jsonl_records_lifecycle_events(tmp_path):
+    diagnostics_path = tmp_path / "stock_artifact_symbol_tasks.jsonl"
+
+    rows, audit = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01"), _expanded("2024-01-12")],
+        artifact_rows=[],
+        universe_symbols=["AAA", "BBB"],
+        closes_by_symbol={"AAA": _closes(100.0), "BBB": _closes(50.0), "SPY": _closes(200.0)},
+        dataset_workers=1,
+        inner_thread_limit=1,
+        diagnostics_path=diagnostics_path,
+    )
+
+    events = [
+        json.loads(line)
+        for line in diagnostics_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 4
+    assert audit["dataset_parallelism"]["diagnostics_path"] == str(diagnostics_path)
+    assert {event["event_type"] for event in events} == {
+        "dispatched",
+        "started",
+        "completed",
+    }
+    assert [event["symbol"] for event in events if event["event_type"] == "completed"] == [
+        "AAA",
+        "BBB",
+    ]
+    completed = next(event for event in events if event["event_type"] == "completed")
+    assert completed["pid"]
+    assert completed["rows_read"] == 20
+    assert completed["rows_emitted"] == 2
+    assert completed["date_count"] == 2
+    assert completed["seconds_elapsed"] >= 0.0
+
+
+def test_symbol_partitions_resume_without_recomputing_completed_symbols(tmp_path):
+    partition_dir = tmp_path / "partitions"
+    diagnostics_path = tmp_path / "diagnostics.jsonl"
+    kwargs = {
+        "expanded_rows": [_expanded("2024-01-01"), _expanded("2024-01-12")],
+        "artifact_rows": [],
+        "universe_symbols": ["AAA", "BBB"],
+        "closes_by_symbol": {"AAA": _closes(100.0), "BBB": _closes(50.0), "SPY": _closes(200.0)},
+        "partition_dir": partition_dir,
+        "diagnostics_path": diagnostics_path,
+    }
+
+    first_rows, first_audit = build_stock_level_prediction_artifacts(**kwargs, dataset_workers=1)
+    second_rows, second_audit = build_stock_level_prediction_artifacts(**kwargs, dataset_workers=1)
+
+    assert second_rows == first_rows
+    assert first_audit["dataset_parallelism"]["written_partition_count"] == 2
+    assert second_audit["dataset_parallelism"]["reused_partition_count"] == 2
+    assert second_audit["dataset_parallelism"]["written_partition_count"] == 0
+    events = [json.loads(line) for line in diagnostics_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [event["event_type"] for event in events].count("partition_reused") == 2
+
+
+def test_corrupt_symbol_partition_fails_closed(tmp_path):
+    partition_dir = tmp_path / "partitions"
+    partition_dir.mkdir()
+    (partition_dir / "AAA.json").write_text("{bad", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Corrupt stock-level symbol partition"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA"],
+            closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
+            partition_dir=partition_dir,
+        )
+
+
+def test_duplicate_or_wrong_symbol_partition_is_rejected(tmp_path):
+    partition_dir = tmp_path / "partitions"
+    build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-01")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
+        partition_dir=partition_dir,
+    )
+    payload = json.loads((partition_dir / "AAA.json").read_text(encoding="utf-8"))
+    payload["symbol"] = "BBB"
+    (partition_dir / "AAA.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="symbol mismatch"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA"],
+            closes_by_symbol={"AAA": _closes(100.0), "SPY": _closes(200.0)},
+            partition_dir=partition_dir,
+        )
+
+
+def test_partition_resume_keeps_deterministic_merge_order(tmp_path):
+    partition_dir = tmp_path / "partitions"
+    kwargs = {
+        "expanded_rows": [_expanded("2024-01-01"), _expanded("2024-01-12")],
+        "artifact_rows": [],
+        "universe_symbols": ["BBB", "AAA"],
+        "closes_by_symbol": {"AAA": _closes(100.0), "BBB": _closes(50.0), "SPY": _closes(200.0)},
+        "partition_dir": partition_dir,
+    }
+
+    first_rows, _ = build_stock_level_prediction_artifacts(**kwargs, dataset_workers=12, executor_cls=ReversingExecutor)
+    second_rows, _ = build_stock_level_prediction_artifacts(**kwargs, dataset_workers=1)
+
+    assert second_rows == first_rows
+    assert [(row["rebalance_date"], row["symbol"]) for row in second_rows] == [
+        ("2024-01-01", "AAA"),
+        ("2024-01-01", "BBB"),
+        ("2024-01-12", "AAA"),
+        ("2024-01-12", "BBB"),
+    ]
+
+
 def test_one_worker_and_twelve_worker_dataset_builds_are_equivalent():
     kwargs = {
         "expanded_rows": [_expanded("2024-01-01"), _expanded("2024-01-12")],
@@ -353,6 +475,28 @@ def test_missing_worker_results_fail_validation():
         )
 
 
+def test_symbol_task_timeout_fails_closed_with_pending_symbols(tmp_path):
+    diagnostics_path = tmp_path / "timeout_diagnostics.jsonl"
+    with pytest.raises(TimeoutError, match="pending_symbols=\\['AAA', 'BBB'\\]"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA", "BBB"],
+            closes_by_symbol={"AAA": _closes(100.0), "BBB": _closes(50.0)},
+            dataset_workers=2,
+            task_timeout_seconds=0.01,
+            progress_interval_seconds=1.0,
+            diagnostics_path=diagnostics_path,
+            executor_cls=NeverCompletesExecutor,
+        )
+    events = [
+        json.loads(line)
+        for line in diagnostics_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [event["event_type"] for event in events].count("timeout") == 2
+
+
 def test_worker_task_failure_prevents_canonical_publication(tmp_path, monkeypatch):
     output_dir = tmp_path / "reports" / "meta"
     cache_dir = tmp_path / "cache"
@@ -387,6 +531,47 @@ def test_worker_task_failure_prevents_canonical_publication(tmp_path, monkeypatc
 
     assert not (output_dir / "stock_level_prediction_artifacts.parquet").exists()
     assert not list(output_dir.glob("*.worker*.tmp"))
+
+
+def test_interruption_after_partitions_before_publication_leaves_no_complete_artifact(tmp_path, monkeypatch):
+    output_dir = tmp_path / "reports" / "meta"
+    cache_dir = tmp_path / "cache"
+    universe_path = tmp_path / "universe.yaml"
+    expanded_path = cache_dir / "expanded_rebalance_dataset.csv"
+    parquet_dir = tmp_path / "prices"
+    output_dir.mkdir(parents=True)
+    cache_dir.mkdir(parents=True)
+    universe_path.write_text(yaml.safe_dump({"symbols": ["AAA"]}), encoding="utf-8")
+    _write_csv(expanded_path, [_expanded("2024-01-01"), _expanded("2024-01-12")])
+    (output_dir / "meta_auxiliary_predictions.csv").write_text(
+        "rebalance_date,feature_id,symbol\n2024-01-01,feature-a,\n",
+        encoding="utf-8",
+    )
+    _write_price_parquet(parquet_dir / "AAA.parquet", _closes(100.0))
+    _write_price_parquet(parquet_dir / "SPY.parquet", _closes(200.0))
+
+    def fail_publish(*_args, **_kwargs):
+        raise RuntimeError("synthetic publication interruption")
+
+    monkeypatch.setattr(artifact_service, "write_stock_level_artifact", fail_publish)
+    with pytest.raises(RuntimeError, match="synthetic publication interruption"):
+        artifact_service.write_stock_level_prediction_artifacts(
+            {
+                "cache": {"ml_dir": str(cache_dir)},
+                "ml": {
+                    "output_dir": str(output_dir),
+                    "expanded_rebalance_dataset_path": str(expanded_path),
+                    "expanded_rebalance_dataset": {"universe_paths": [str(universe_path)]},
+                    "stooq_parquet_dir": str(parquet_dir),
+                    "stock_level_artifact_format": "parquet",
+                    "stock_level_dataset_workers": 1,
+                },
+            }
+        )
+
+    assert (output_dir / "stock_artifact_symbol_partitions" / "AAA.json").exists()
+    assert not (output_dir / "stock_level_prediction_artifacts.parquet").exists()
+    assert not (output_dir / "stock_level_prediction_artifacts.json").exists()
 
 
 def test_daily_exchange_session_grid_generates_consecutive_sessions_with_timing():
@@ -677,6 +862,25 @@ class MissingExecutor(ReversingExecutor):
         return [fn(task_list[0])]
 
 
+class NeverCompletesExecutor:
+    def __init__(self, max_workers):
+        self.max_workers = max_workers
+        self.futures = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def submit(self, _fn, _task):
+        from concurrent.futures import Future
+
+        future = Future()
+        self.futures.append(future)
+        return future
+
+
 def _history_around_rebalance(after_jump: float) -> dict[str, dict[str, float]]:
     close = {}
     dollar_volume = {}
@@ -697,3 +901,16 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_price_parquet(path: Path, payload: dict[str, dict[str, float]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "timestamp": date,
+            "close": payload["close"][date],
+            "volume": payload["dollar_volume"][date] / payload["close"][date],
+        }
+        for date in sorted(payload["close"])
+    ]
+    pq.write_table(pa.Table.from_pylist(rows), path)

@@ -47,14 +47,19 @@ def resolve_decision_grid(
         return _daily_grid([], {}, frequency="daily", min_history_sessions=min_history_sessions)
     start = date.fromisoformat(start_date or source_dates[0])
     end = date.fromisoformat(end_date or source_dates[-1])
+    market_close_dates = set(market_data.get("close_dates", []))
+    close_index_by_symbol = {
+        symbol: prepared_symbol_data.get(symbol, {}).get("close_index_by_date", {})
+        for symbol in symbols
+    }
     sessions = [
         session.isoformat()
         for session in trading_sessions(start, end)
         if _eligible_session(
             session.isoformat(),
             symbols=symbols,
-            prepared_symbol_data=prepared_symbol_data,
-            market_data=market_data,
+            close_index_by_symbol=close_index_by_symbol,
+            market_close_dates=market_close_dates,
             min_history_sessions=min_history_sessions,
         )
     ]
@@ -192,20 +197,17 @@ def _eligible_session(
     session: str,
     *,
     symbols: list[str],
-    prepared_symbol_data: dict[str, dict[str, Any]],
-    market_data: dict[str, Any],
+    close_index_by_symbol: dict[str, dict[str, int]],
+    market_close_dates: set[str],
     min_history_sessions: int,
 ) -> bool:
-    if session not in set(market_data.get("close_dates", [])):
+    if session not in market_close_dates:
         return False
-    eligible_symbols = 0
     for symbol in symbols:
-        dates = prepared_symbol_data.get(symbol, {}).get("close_dates", [])
-        if session not in dates:
-            continue
-        if dates.index(session) >= min_history_sessions:
-            eligible_symbols += 1
-    return eligible_symbols > 0
+        index = close_index_by_symbol.get(symbol, {}).get(session)
+        if index is not None and index >= min_history_sessions:
+            return True
+    return False
 
 
 def _context_asof_by_date(

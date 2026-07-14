@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 import os
+import json
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from core.research.ml.runtime_parallelism import apply_worker_thread_environment
@@ -50,6 +52,12 @@ def build_stock_level_prediction_artifacts(
     decision_grid_end_date: str | None = None,
     decision_grid_max_sessions: int | None = None,
     decision_grid_min_history_sessions: int = 1,
+    task_timeout_seconds: float | None = None,
+    progress_interval_seconds: float = 30.0,
+    diagnostics_path: Path | None = None,
+    diagnostic_run_id: str | None = None,
+    partition_dir: Path | None = None,
+    resume_partitions: bool = True,
     executor_cls: type | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if dataset_workers < 1:
@@ -122,6 +130,12 @@ def build_stock_level_prediction_artifacts(
         dataset_workers=dataset_workers,
         inner_thread_limit=inner_thread_limit,
         executor_cls=executor_cls or ProcessPoolExecutor,
+        task_timeout_seconds=task_timeout_seconds,
+        progress_interval_seconds=progress_interval_seconds,
+        diagnostics_path=diagnostics_path,
+        diagnostic_run_id=diagnostic_run_id,
+        partition_dir=partition_dir,
+        resume_partitions=resume_partitions,
         phase_timings=phase_timings,
     )
     phase_started, phase_start_ts = _phase_start()
@@ -179,6 +193,12 @@ def _build_dataset_symbol_rows(
     dataset_workers: int,
     inner_thread_limit: int,
     executor_cls: type,
+    task_timeout_seconds: float | None,
+    progress_interval_seconds: float,
+    diagnostics_path: Path | None,
+    diagnostic_run_id: str | None,
+    partition_dir: Path | None,
+    resume_partitions: bool,
     phase_timings: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     phase_started, phase_start_ts = _phase_start()
@@ -196,6 +216,10 @@ def _build_dataset_symbol_rows(
             "market_data": market_data,
             "sector": sector_by_symbol.get(symbol, ""),
             "inner_thread_limit": inner_thread_limit,
+            "diagnostics_path": str(diagnostics_path) if diagnostics_path else "",
+            "diagnostic_run_id": diagnostic_run_id or "",
+            "partition_dir": str(partition_dir) if partition_dir else "",
+            "resume_partitions": resume_partitions,
         }
         for symbol in symbols
     ]
@@ -224,18 +248,68 @@ def _build_dataset_symbol_rows(
         "worker_execution_mode": execution_mode,
         "worker_process_ids": [],
         "task_symbols": list(symbols),
+        "task_timeout_seconds": task_timeout_seconds,
+        "progress_interval_seconds": progress_interval_seconds,
+        "last_progress_completed_task_count": 0,
+        "last_progress_elapsed_seconds": 0.0,
+        "diagnostics_path": str(diagnostics_path) if diagnostics_path else "",
+        "diagnostic_run_id": diagnostic_run_id,
+        "partition_dir": str(partition_dir) if partition_dir else "",
+        "resume_partitions": bool(resume_partitions),
+        "reused_partition_count": 0,
+        "written_partition_count": 0,
     }
     if not tasks:
         metadata["completed_task_count"] = 0
         return [], metadata
     results: list[dict[str, Any]] = []
+    pending_tasks = tasks
+    if partition_dir is not None and resume_partitions:
+        reused_results, pending_tasks = _load_reusable_partitions(
+            tasks,
+            partition_dir=partition_dir,
+            expected_dates=dates,
+            diagnostics_path=diagnostics_path,
+            diagnostic_run_id=diagnostic_run_id,
+        )
+        results.extend(reused_results)
+        metadata["reused_partition_count"] = len(reused_results)
     try:
         phase_started, phase_start_ts = _phase_start()
-        if effective_workers <= 1:
-            results = [_build_dataset_symbol_task(task) for task in tasks]
+        for task in pending_tasks:
+            _write_task_event(
+                diagnostics_path,
+                "dispatched",
+                symbol=str(task["symbol"]),
+                date_count=len(dates),
+                rows_read=len(task.get("symbol_data", {}).get("close_dates", [])),
+                worker_pid=None,
+                diagnostic_run_id=diagnostic_run_id,
+            )
+        if not pending_tasks:
+            pass
+        elif effective_workers <= 1:
+            results.extend([_build_dataset_symbol_task(task) for task in pending_tasks])
         else:
+            print(
+                "[stock-alpha] stock artifact symbol tasks dispatched "
+                f"tasks={len(pending_tasks)} workers={effective_workers} "
+                f"timeout_seconds={task_timeout_seconds or 'none'}",
+                flush=True,
+            )
             with executor_cls(max_workers=effective_workers) as executor:
-                results = list(executor.map(_build_dataset_symbol_task, tasks))
+                if not hasattr(executor, "submit"):
+                    results.extend(list(executor.map(_build_dataset_symbol_task, pending_tasks)))
+                else:
+                    results.extend(_collect_symbol_task_futures(
+                        executor,
+                        pending_tasks,
+                        task_timeout_seconds=task_timeout_seconds,
+                        progress_interval_seconds=progress_interval_seconds,
+                        metadata=metadata,
+                        diagnostics_path=diagnostics_path,
+                        diagnostic_run_id=diagnostic_run_id,
+                    ))
         _record_phase(
             phase_timings,
             "symbol-task execution",
@@ -243,7 +317,7 @@ def _build_dataset_symbol_rows(
             phase_start_ts,
             requested_workers=dataset_workers,
             effective_workers=effective_workers,
-            task_count=task_count,
+            task_count=len(pending_tasks),
             execution_mode=execution_mode,
         )
     except Exception:
@@ -251,6 +325,7 @@ def _build_dataset_symbol_rows(
         raise
     phase_started, phase_start_ts = _phase_start()
     metadata["completed_task_count"] = len(results)
+    metadata["written_partition_count"] = len([result for result in results if result.get("partition_written")])
     metadata["worker_process_ids"] = sorted({
         int(result["worker_process_id"]) for result in results if result.get("worker_process_id")
     })
@@ -282,72 +357,191 @@ def _build_dataset_symbol_rows(
     return rows, metadata
 
 
+def _collect_symbol_task_futures(
+    executor: Any,
+    tasks: list[dict[str, Any]],
+    *,
+    task_timeout_seconds: float | None,
+    progress_interval_seconds: float,
+    metadata: dict[str, Any],
+    diagnostics_path: Path | None,
+    diagnostic_run_id: str | None,
+) -> list[dict[str, Any]]:
+    futures = {
+        executor.submit(_build_dataset_symbol_task, task): str(task["symbol"]).upper()
+        for task in tasks
+    }
+    pending = set(futures)
+    completed: list[dict[str, Any]] = []
+    started = time.perf_counter()
+    next_progress = started + max(1.0, progress_interval_seconds)
+    while pending:
+        now = time.perf_counter()
+        if task_timeout_seconds is not None and now - started > task_timeout_seconds:
+            for future in pending:
+                future.cancel()
+            pending_symbols = sorted(futures[future] for future in pending)
+            metadata["failed_task_count"] = len(pending)
+            metadata["timed_out_symbols"] = pending_symbols
+            for symbol in pending_symbols:
+                _write_task_event(
+                    diagnostics_path,
+                    "timeout",
+                    symbol=symbol,
+                    exception_summary=f"pending after {task_timeout_seconds:.1f}s",
+                    diagnostic_run_id=diagnostic_run_id,
+                )
+            raise TimeoutError(
+                "stock-level dataset symbol tasks timed out after "
+                f"{task_timeout_seconds:.1f}s; completed={len(completed)} "
+                f"pending={len(pending)} pending_symbols={pending_symbols[:10]}"
+            )
+        done, pending = wait(
+            pending,
+            timeout=max(0.1, min(1.0, next_progress - now)),
+            return_when=FIRST_COMPLETED,
+        )
+        for future in done:
+            symbol = futures[future]
+            try:
+                completed.append(future.result())
+            except Exception as exc:
+                _write_task_event(
+                    diagnostics_path,
+                    "failed",
+                    symbol=symbol,
+                    exception_summary=f"{type(exc).__name__}: {exc}",
+                    diagnostic_run_id=diagnostic_run_id,
+                )
+                raise
+        if time.perf_counter() >= next_progress:
+            elapsed = time.perf_counter() - started
+            metadata["last_progress_completed_task_count"] = len(completed)
+            metadata["last_progress_elapsed_seconds"] = elapsed
+            print(
+                "[stock-alpha] stock artifact symbol task heartbeat "
+                f"completed={len(completed)}/{len(tasks)} "
+                f"pending={len(pending)} elapsed={elapsed:.1f}s",
+                flush=True,
+            )
+            next_progress = time.perf_counter() + max(1.0, progress_interval_seconds)
+    return completed
+
+
 def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
     apply_worker_thread_environment(int(task.get("inner_thread_limit", 1)))
+    task_started = time.perf_counter()
     symbol = str(task["symbol"]).upper()
     symbol_data = task.get("symbol_data", {})
     market_data = task.get("market_data", {})
     dates = list(task.get("dates", []))
+    diagnostics_path = Path(str(task.get("diagnostics_path"))) if task.get("diagnostics_path") else None
+    diagnostic_run_id = str(task.get("diagnostic_run_id") or "")
+    partition_dir = Path(str(task.get("partition_dir"))) if task.get("partition_dir") else None
+    _write_task_event(
+        diagnostics_path,
+        "started",
+        symbol=symbol,
+        worker_pid=os.getpid(),
+        rows_read=len(symbol_data.get("close_dates", [])),
+        date_count=len(dates),
+        memory_estimate_bytes=_task_memory_estimate_bytes(task),
+        diagnostic_run_id=diagnostic_run_id,
+    )
     rows = []
-    for date in dates:
-        metadata = task.get("row_metadata_by_date", {}).get(date, {})
-        source = task.get("artifact_by_date_symbol", {}).get(date, {})
-        row = {
-            "rebalance_date": date,
-            "symbol": symbol,
-            "sector": task.get("sector", ""),
-            "average_dollar_volume_21d": _average_dollar_volume(
-                symbol_data.get("dollar_volume_dates", []),
-                symbol_data.get("dollar_volume_values", []),
-                date,
-                lookback=21,
-            ),
-            "average_dollar_volume_63d": _average_dollar_volume(
-                symbol_data.get("dollar_volume_dates", []),
-                symbol_data.get("dollar_volume_values", []),
-                date,
-                lookback=63,
-            ),
-            "source": (
-                "stock_level_prediction_artifact"
-                if source
-                else "stock_level_actuals_from_reference_prices"
-            ),
-            "source_feature_id": source.get("feature_id", ""),
-            "source_model_type": source.get("model_type", ""),
-            "source_split": source.get("split", ""),
-            "source_dataset_hash": source.get("dataset_hash", ""),
-            "benchmark_symbol": task.get("market_symbol", "SPY"),
-            "true_stock_level_row": True,
-        }
-        for column in PREDICTION_COLUMNS:
-            row[column] = source.get(column, "")
-        row.update(_baseline_predictions(symbol_data, date))
-        row.update(
-            _actual_targets(
-                symbol_data,
-                date,
-                market_data=market_data,
-                decision_dates=dates,
-                decision_metadata={
-                    **metadata,
-                    "decision_frequency": metadata.get("decision_frequency", "daily" if metadata else "source"),
-                    "target_horizon_trading_days": 10,
-                    "overlapping_targets": metadata.get("overlapping_targets", True),
-                    "required_purge_horizon_trading_days": 10,
-                },
+    try:
+        for date in dates:
+            metadata = task.get("row_metadata_by_date", {}).get(date, {})
+            source = task.get("artifact_by_date_symbol", {}).get(date, {})
+            row = {
+                "rebalance_date": date,
+                "symbol": symbol,
+                "sector": task.get("sector", ""),
+                "average_dollar_volume_21d": _average_dollar_volume(
+                    symbol_data.get("dollar_volume_dates", []),
+                    symbol_data.get("dollar_volume_values", []),
+                    date,
+                    lookback=21,
+                ),
+                "average_dollar_volume_63d": _average_dollar_volume(
+                    symbol_data.get("dollar_volume_dates", []),
+                    symbol_data.get("dollar_volume_values", []),
+                    date,
+                    lookback=63,
+                ),
+                "source": (
+                    "stock_level_prediction_artifact"
+                    if source
+                    else "stock_level_actuals_from_reference_prices"
+                ),
+                "source_feature_id": source.get("feature_id", ""),
+                "source_model_type": source.get("model_type", ""),
+                "source_split": source.get("split", ""),
+                "source_dataset_hash": source.get("dataset_hash", ""),
+                "benchmark_symbol": task.get("market_symbol", "SPY"),
+                "true_stock_level_row": True,
+            }
+            for column in PREDICTION_COLUMNS:
+                row[column] = source.get(column, "")
+            row.update(_baseline_predictions(symbol_data, date))
+            row.update(
+                _actual_targets(
+                    symbol_data,
+                    date,
+                    market_data=market_data,
+                    decision_dates=dates,
+                    decision_metadata={
+                        **metadata,
+                        "decision_frequency": metadata.get("decision_frequency", "daily" if metadata else "source"),
+                        "target_horizon_trading_days": 10,
+                        "overlapping_targets": metadata.get("overlapping_targets", True),
+                        "required_purge_horizon_trading_days": 10,
+                    },
+                )
             )
+            for column in CONTEXT_COLUMNS:
+                row[column] = metadata.get(column, "")
+            for column in DECISION_CONTEXT_COLUMNS:
+                row[column] = metadata.get(column, "")
+            rows.append(row)
+    except Exception as exc:
+        _write_task_event(
+            diagnostics_path,
+            "failed",
+            symbol=symbol,
+            worker_pid=os.getpid(),
+            seconds_elapsed=max(0.0, time.perf_counter() - task_started),
+            exception_summary=f"{type(exc).__name__}: {exc}",
+            diagnostic_run_id=diagnostic_run_id,
         )
-        for column in CONTEXT_COLUMNS:
-            row[column] = metadata.get(column, "")
-        for column in DECISION_CONTEXT_COLUMNS:
-            row[column] = metadata.get(column, "")
-        rows.append(row)
+        raise
+    seconds = max(0.0, time.perf_counter() - task_started)
+    partition_path = ""
+    partition_written = False
+    if partition_dir is not None:
+        partition_path = str(_write_symbol_partition(partition_dir, symbol, rows, dates))
+        partition_written = True
+    _write_task_event(
+        diagnostics_path,
+        "completed",
+        symbol=symbol,
+        worker_pid=os.getpid(),
+        rows_read=len(symbol_data.get("close_dates", [])),
+        rows_emitted=len(rows),
+        date_count=len(dates),
+        seconds_elapsed=seconds,
+        output_size_estimate_bytes=_rows_size_estimate_bytes(rows),
+        partition_path=partition_path,
+        diagnostic_run_id=diagnostic_run_id,
+    )
     return {
         "symbol": symbol,
         "rows": rows,
         "row_count": len(rows),
         "worker_process_id": os.getpid(),
+        "seconds_elapsed": seconds,
+        "partition_path": partition_path,
+        "partition_written": partition_written,
     }
 
 
@@ -398,6 +592,212 @@ def _validate_and_merge_symbol_results(
         )
     )
     return rows
+
+
+PARTITION_SCHEMA_VERSION = "stock_level_symbol_partition_v1"
+
+
+def _load_reusable_partitions(
+    tasks: list[dict[str, Any]],
+    *,
+    partition_dir: Path,
+    expected_dates: list[str],
+    diagnostics_path: Path | None,
+    diagnostic_run_id: str | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    reused = []
+    pending = []
+    for task in tasks:
+        symbol = str(task["symbol"]).upper()
+        path = _symbol_partition_path(partition_dir, symbol)
+        if not path.exists():
+            pending.append(task)
+            continue
+        result = _load_symbol_partition(path, symbol=symbol, expected_dates=expected_dates)
+        reused.append(result)
+        _write_task_event(
+            diagnostics_path,
+            "partition_reused",
+            symbol=symbol,
+            rows_emitted=result["row_count"],
+            date_count=len(expected_dates),
+            partition_path=str(path),
+            diagnostic_run_id=diagnostic_run_id,
+        )
+    return reused, pending
+
+
+def _symbol_partition_path(partition_dir: Path, symbol: str) -> Path:
+    safe_symbol = symbol.upper().replace("/", "_").replace("\\", "_")
+    return partition_dir / f"{safe_symbol}.json"
+
+
+def _write_symbol_partition(partition_dir: Path, symbol: str, rows: list[dict[str, Any]], expected_dates: list[str]) -> Path:
+    path = _symbol_partition_path(partition_dir, symbol)
+    payload = _symbol_partition_payload(symbol, rows, expected_dates)
+    if path.exists():
+        existing = _load_symbol_partition(path, symbol=symbol, expected_dates=expected_dates)
+        if _rows_hash(existing["rows"]) != payload["rows_sha256"]:
+            raise ValueError(f"Refusing to overwrite incompatible stock-level symbol partition: {path}")
+        return path
+    partition_dir.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, sort_keys=True, default=str), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def _symbol_partition_payload(symbol: str, rows: list[dict[str, Any]], expected_dates: list[str]) -> dict[str, Any]:
+    _validate_partition_rows(symbol, rows, expected_dates)
+    rows_sha = _rows_hash(rows)
+    payload = {
+        "schema_version": PARTITION_SCHEMA_VERSION,
+        "symbol": symbol.upper(),
+        "row_count": len(rows),
+        "expected_date_count": len(expected_dates),
+        "rows_sha256": rows_sha,
+        "rows": rows,
+    }
+    payload["partition_identity"] = _hash_json({key: value for key, value in payload.items() if key != "rows"})
+    return payload
+
+
+def _load_symbol_partition(path: Path, *, symbol: str, expected_dates: list[str]) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Corrupt stock-level symbol partition: {path}") from exc
+    if payload.get("schema_version") != PARTITION_SCHEMA_VERSION:
+        raise ValueError(f"Incompatible stock-level symbol partition schema: {path}")
+    if str(payload.get("symbol", "")).upper() != symbol.upper():
+        raise ValueError(f"Stock-level symbol partition symbol mismatch: {path}")
+    rows = list(payload.get("rows") or [])
+    _validate_partition_rows(symbol, rows, expected_dates)
+    if payload.get("row_count") != len(rows):
+        raise ValueError(f"Stock-level symbol partition row count mismatch: {path}")
+    if payload.get("rows_sha256") != _rows_hash(rows):
+        raise ValueError(f"Stock-level symbol partition checksum mismatch: {path}")
+    return {
+        "symbol": symbol.upper(),
+        "rows": rows,
+        "row_count": len(rows),
+        "worker_process_id": 0,
+        "partition_path": str(path),
+        "partition_reused": True,
+    }
+
+
+def _validate_partition_rows(symbol: str, rows: list[dict[str, Any]], expected_dates: list[str]) -> None:
+    expected_keys = {(date, symbol.upper()) for date in expected_dates}
+    keys = [
+        (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper())
+        for row in rows
+    ]
+    duplicate_keys = sorted({key for key in keys if keys.count(key) > 1})
+    missing_keys = sorted(expected_keys - set(keys))
+    extra_keys = sorted(set(keys) - expected_keys)
+    if duplicate_keys or missing_keys or extra_keys:
+        raise ValueError(
+            "Invalid stock-level symbol partition rows: "
+            f"symbol={symbol} duplicate_keys={duplicate_keys[:5]} "
+            f"missing_keys={missing_keys[:5]} extra_keys={extra_keys[:5]}"
+        )
+
+
+def _rows_hash(rows: list[dict[str, Any]]) -> str:
+    return _hash_json(rows)
+
+
+def _hash_json(payload: Any) -> str:
+    import hashlib
+
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _write_task_event(
+    diagnostics_path: Path | None,
+    event_type: str,
+    *,
+    symbol: str,
+    worker_pid: int | None = None,
+    rows_read: int | None = None,
+    rows_emitted: int | None = None,
+    date_count: int | None = None,
+    seconds_elapsed: float | None = None,
+    memory_estimate_bytes: int | None = None,
+    output_size_estimate_bytes: int | None = None,
+    partition_path: str | None = None,
+    exception_summary: str | None = None,
+    diagnostic_run_id: str | None = None,
+) -> None:
+    if diagnostics_path is None:
+        return
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "diagnostic_run_id": diagnostic_run_id,
+        "event_type": event_type,
+        "symbol": symbol,
+        "pid": worker_pid,
+        "rows_read": rows_read,
+        "rows_emitted": rows_emitted,
+        "date_count": date_count,
+        "seconds_elapsed": seconds_elapsed,
+        "memory_estimate_bytes": memory_estimate_bytes,
+        "output_size_estimate_bytes": output_size_estimate_bytes,
+        "partition_path": partition_path,
+        "exception_summary": exception_summary,
+    }
+    diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    line = (json.dumps(payload, sort_keys=True, default=str) + "\n").encode("utf-8")
+    with diagnostics_path.open("a+b") as handle:
+        _lock_file(handle)
+        try:
+            handle.seek(0, os.SEEK_END)
+            handle.write(line)
+            handle.flush()
+        finally:
+            _unlock_file(handle)
+
+
+def _lock_file(handle: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(handle: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _task_memory_estimate_bytes(task: dict[str, Any]) -> int:
+    symbol_data = task.get("symbol_data", {})
+    market_data = task.get("market_data", {})
+    symbol_points = len(symbol_data.get("close_dates", [])) + len(symbol_data.get("dollar_volume_dates", []))
+    market_points = len(market_data.get("close_dates", [])) + len(market_data.get("dollar_volume_dates", []))
+    return (symbol_points + market_points) * 32
+
+
+def _rows_size_estimate_bytes(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    return sum(
+        sum(len(str(key)) + len(str(value)) for key, value in row.items())
+        for row in rows
+    )
 
 
 def _artifact_by_date_symbol(

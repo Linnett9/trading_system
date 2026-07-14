@@ -6,23 +6,24 @@ ml:
   enabled: false
   mode: research
   stock_alpha_run_size: benchmark
-  stock_alpha_report_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration
-  output_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration/benchmark
+  stock_alpha_report_root: reports/ml/development/ticket_7b3_stock_artifact_profile/symbols_20
+  output_dir: reports/ml/development/ticket_7b3_stock_artifact_profile/symbols_20/benchmark
   stock_alpha_output_dir_override: true
   stock_level_artifact_format: parquet
   stock_level_parquet_compression: zstd
   stock_level_decision_frequency: daily
   stock_level_decision_min_history_sessions: 252
-  stock_level_dataset_workers: 12
+  stock_level_decision_max_sessions: 60
+  stock_level_dataset_workers: 2
   stock_level_dataset_inner_threads: 1
-  stock_level_dataset_progress_interval_seconds: 30
-  stock_level_dataset_task_timeout_seconds: 1800
+  stock_level_dataset_progress_interval_seconds: 5
+  stock_level_dataset_task_timeout_seconds: 600
   stock_alpha_allow_legacy_output_paths: false
-  stock_alpha_resume_existing_outputs: true
-  stock_alpha_force_refresh: false
+  stock_alpha_resume_existing_outputs: false
+  stock_alpha_force_refresh: true
   stock_alpha_stages:
     stock_artifact: true
-    alpha_features: true
+    alpha_features: false
     baseline_benchmark: false
     enriched_benchmark: false
     target_comparison: false
@@ -36,11 +37,12 @@ ml:
   stock_alpha_artifact_universe_paths:
   - data/reference/universes/us_liquid_500.yaml
   stock_alpha_artifact_symbol_sample_method: liquidity_ranked
+  stock_alpha_artifact_max_symbols: 20
   expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
   stock_alpha_dev_required_symbols:
   - SPY
-  stock_alpha_run_profile: ticket_7b3_daily_large_history_regeneration
-  stock_alpha_feature_n_jobs: 12
+  stock_alpha_run_profile: ticket_7b3_stock_artifact_profile_20
+  stock_alpha_feature_n_jobs: 1
   stock_alpha_overnight_stage_n_jobs: 1
   stock_ranker_model_n_jobs: 1
   sklearn_n_jobs: 1
@@ -49,9 +51,6 @@ ml:
   stock_ranker_target_column: actual_forward_return_10d
   stock_ranker_target_columns:
   - actual_forward_return_10d
-  - actual_market_residual_return_10d
-  - actual_vol_adjusted_forward_return_10d
-  - actual_rank_normalized_forward_return_10d
   stock_ranker_target_comparison_enabled: false
   stock_alpha_overnight_run_attribution: false
   stock_alpha_overnight_run_portfolio_replay: false
@@ -66,9 +65,9 @@ ml:
   sector_by_symbol: {}
   random_seed: 42
 reports:
-  ml_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration
+  ml_dir: reports/ml/development/ticket_7b3_stock_artifact_profile/symbols_20
 cache:
   enabled: true
-  ml_dir: cache/ml/development/ticket_7b3_daily_large_history/regeneration
+  ml_dir: cache/ml/development/ticket_7b3_stock_artifact_profile/symbols_20
 research:
-  profile: ticket_7b3_daily_large_history_regeneration
+  profile: ticket_7b3_stock_artifact_profile_20

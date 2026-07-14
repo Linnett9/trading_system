@@ -8,6 +8,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -41,6 +42,26 @@ SNAPSHOT_CONTRACT_VERSION = "fundamentals_pit_snapshot_contract_v1"
 FEATURE_FORMULA_VERSION = "fundamentals_feature_formula_contract_v1"
 ENRICHMENT_CONTRACT_VERSION = "stock_level_fundamentals_enrichment_contract_v1"
 DIAGNOSTIC_STATUS = "BOUNDED DIAGNOSTIC ONLY / NOT FEATURE PROMOTION EVIDENCE"
+LARGE_SOURCE_GATE_VERSION = "ticket_5b4_large_source_gate_v1"
+PARTITION_MANIFEST_VERSION = "ticket_5b4_fundamentals_partition_v1"
+
+BASE_ROW_KEY_COLUMNS = ("decision_timestamp", "rebalance_date", "symbol")
+TARGET_PROVENANCE_REQUIRED_COLUMNS = (
+    "target_provenance_contract_version",
+    "target_start_timestamp",
+    "label_start_timestamp",
+    "label_end_timestamp",
+    "label_available_timestamp",
+)
+BENCHMARK_REQUIRED_COLUMNS = (
+    "actual_benchmark_return_10d",
+    "benchmark_label_start_timestamp",
+    "benchmark_label_end_timestamp",
+    "benchmark_label_available_timestamp",
+)
+SOURCE_IDENTITY_REQUIRED_COLUMNS = (
+    "decision_grid_identity",
+)
 
 CANONICAL_FACT_COLUMNS = (
     "provider_id",
@@ -515,19 +536,21 @@ def write_stock_fundamentals_snapshots(config: Mapping[str, Any]) -> StockFundam
     base_rows = _load_base_rows(settings)
     mapping = _read_csv_dicts(paths.entity_mapping_path)
     facts = _read_parquet_dicts(paths.normalized_facts_path)
-    snapshots, snapshot_audit = build_fundamental_snapshots(
+    snapshots, snapshot_audit = build_partitioned_fundamental_snapshots(
         base_rows,
         mapping,
         facts,
-        maximum_data_age_days=settings["maximum_data_age_days"],
-        minimum_denominator=settings["minimum_denominator"],
+        settings=settings,
+        output_dir=paths.output_dir,
     )
     writer = ResearchArtifactWriter()
     _write_parquet(paths.snapshots_path, snapshots, _fields(snapshots, ["decision_timestamp", "symbol"]))
-    writer.write_csv(paths.snapshot_coverage_path, _snapshot_coverage(snapshots), fieldnames=["snapshot_status", "row_count", "symbol_count", "decision_date_count"])
+    snapshot_coverage = _snapshot_coverage(snapshots)
+    writer.write_csv(paths.snapshot_coverage_path, snapshot_coverage, fieldnames=_fields(snapshot_coverage, ["coverage_scope", "snapshot_status", "row_count", "symbol_count", "decision_date_count", "symbol", "year", "decision_date"]))
     writer.write_json(paths.snapshot_audit_path, _json_ready(snapshot_audit))
     writer.write_json(paths.feature_contracts_path, _json_ready(formula_contracts()))
-    writer.write_csv(paths.feature_coverage_path, _feature_coverage(snapshots), fieldnames=["feature", "row_count", "non_null_count", "non_null_fraction", "all_null", "coverage_classification"])
+    feature_coverage = _feature_coverage(snapshots)
+    writer.write_csv(paths.feature_coverage_path, feature_coverage, fieldnames=_fields(feature_coverage, ["coverage_scope", "feature_family", "feature", "row_count", "non_null_count", "non_null_fraction", "all_null", "coverage_classification", "symbol", "year", "decision_date"]))
     return paths
 
 
@@ -537,7 +560,12 @@ def write_stock_fundamentals_enrich(config: Mapping[str, Any]) -> StockFundament
     paths.output_dir.mkdir(parents=True, exist_ok=True)
     base_rows = _load_base_rows(settings)
     snapshots = _read_parquet_dicts(paths.snapshots_path)
-    enriched_rows, enrichment_audit = enrich_stock_artifact_with_fundamentals(base_rows, snapshots, settings=settings)
+    enriched_rows, enrichment_audit = enrich_stock_artifact_with_fundamentals_partitioned(
+        base_rows,
+        snapshots,
+        settings=settings,
+        output_dir=paths.output_dir,
+    )
     if enriched_rows:
         identity = write_stock_level_artifact(
             paths.enriched_artifact_path,
@@ -549,6 +577,9 @@ def write_stock_fundamentals_enrich(config: Mapping[str, Any]) -> StockFundament
     writer = ResearchArtifactWriter()
     writer.write_json(paths.enrichment_audit_json_path, _json_ready(enrichment_audit))
     writer.write_markdown(paths.enrichment_audit_markdown_path, _audit_markdown({"enrichment_audit": enrichment_audit, "analyst_estimate_status": "source_not_configured"}))
+    writer.write_json(paths.pipeline_manifest_path, _json_ready(_lineage_manifest(paths, settings, enrichment_audit)))
+    writer.write_json(paths.readiness_json_path, _json_ready(_readiness_report(paths)))
+    writer.write_markdown(paths.readiness_markdown_path, _readiness_markdown(_readiness_report(paths)))
     return paths
 
 
@@ -897,6 +928,104 @@ def enrich_stock_artifact_with_fundamentals(
             "formula_contract_version": FEATURE_FORMULA_VERSION,
         },
     }
+    return enriched, audit
+
+
+def build_partitioned_fundamental_snapshots(
+    base_rows: Sequence[Mapping[str, Any]],
+    entity_mapping: Sequence[Mapping[str, Any]],
+    normalized_facts: Sequence[Mapping[str, Any]],
+    *,
+    settings: Mapping[str, Any],
+    output_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    partition_dir = Path(str(settings.get("snapshot_partition_dir") or output_dir / "fundamentals_snapshot_partitions"))
+    workers = _bounded_workers(settings.get("snapshot_workers"), len({str(row.get("symbol", "")).upper() for row in base_rows}))
+    symbols = sorted({str(row.get("symbol", "")).upper() for row in base_rows if row.get("symbol")})
+    rows_by_symbol = {symbol: [row for row in base_rows if str(row.get("symbol", "")).upper() == symbol] for symbol in symbols}
+    partition_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_symbol(symbol: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+        source_rows = rows_by_symbol[symbol]
+        partition_path = _partition_path(partition_dir, symbol)
+        if bool(settings.get("snapshot_resume_partitions", True)):
+            loaded = _try_load_partition(partition_path, stage="snapshots", symbol=symbol, expected_base_rows=source_rows)
+            if loaded is not None:
+                return symbol, loaded, {"symbol": symbol, "status": "reused", "partition_path": str(partition_path), "row_count": len(loaded), "owner_worker": _owner_worker(symbol, workers)}
+        snapshots, _audit = build_fundamental_snapshots(
+            source_rows,
+            entity_mapping,
+            normalized_facts,
+            maximum_data_age_days=settings["maximum_data_age_days"],
+            minimum_denominator=settings["minimum_denominator"],
+        )
+        _write_partition(partition_path, snapshots, stage="snapshots", symbol=symbol, base_rows=source_rows)
+        return symbol, snapshots, {"symbol": symbol, "status": "written", "partition_path": str(partition_path), "row_count": len(snapshots), "owner_worker": _owner_worker(symbol, workers)}
+
+    results = _run_partition_jobs(symbols, run_symbol, workers)
+    snapshots = _merge_partition_rows_preserving_base_order(base_rows, {symbol: rows for symbol, rows, _ in results}, row_date_column="decision_timestamp")
+    partition_progress = [progress for _symbol, _rows, progress in results]
+    audit = {
+        **_snapshot_audit_from_rows(snapshots, normalized_facts),
+        "partition_manifest_version": PARTITION_MANIFEST_VERSION,
+        "partition_dir": str(partition_dir),
+        "requested_workers": int(settings.get("snapshot_workers", 1)),
+        "effective_workers": workers,
+        "partition_count": len(partition_progress),
+        "partition_status_counts": _count_values(partition_progress, "status"),
+        "partition_progress": partition_progress,
+        "deterministic_ownership": True,
+    }
+    return snapshots, audit
+
+
+def enrich_stock_artifact_with_fundamentals_partitioned(
+    base_rows: Sequence[Mapping[str, Any]],
+    snapshots: Sequence[Mapping[str, Any]],
+    *,
+    settings: Mapping[str, Any],
+    output_dir: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    partition_dir = Path(str(settings.get("enrichment_partition_dir") or output_dir / "fundamentals_enrichment_partitions"))
+    workers = _bounded_workers(settings.get("enrichment_workers"), len({str(row.get("symbol", "")).upper() for row in base_rows}))
+    symbols = sorted({str(row.get("symbol", "")).upper() for row in base_rows if row.get("symbol")})
+    rows_by_symbol = {symbol: [row for row in base_rows if str(row.get("symbol", "")).upper() == symbol] for symbol in symbols}
+    snapshots_by_symbol: dict[str, list[Mapping[str, Any]]] = {}
+    for row in snapshots:
+        snapshots_by_symbol.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
+    partition_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_symbol(symbol: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+        source_rows = rows_by_symbol[symbol]
+        partition_path = _partition_path(partition_dir, symbol)
+        if bool(settings.get("enrichment_resume_partitions", True)):
+            loaded = _try_load_partition(partition_path, stage="enrichment", symbol=symbol, expected_base_rows=source_rows)
+            if loaded is not None:
+                return symbol, loaded, {"symbol": symbol, "status": "reused", "partition_path": str(partition_path), "row_count": len(loaded), "owner_worker": _owner_worker(symbol, workers)}
+        rows, _audit = enrich_stock_artifact_with_fundamentals(source_rows, snapshots_by_symbol.get(symbol, []), settings=settings)
+        _assert_base_rows_preserved(source_rows, rows)
+        _write_partition(partition_path, rows, stage="enrichment", symbol=symbol, base_rows=source_rows)
+        return symbol, rows, {"symbol": symbol, "status": "written", "partition_path": str(partition_path), "row_count": len(rows), "owner_worker": _owner_worker(symbol, workers)}
+
+    results = _run_partition_jobs(symbols, run_symbol, workers)
+    enriched = _merge_partition_rows_preserving_base_order(base_rows, {symbol: rows for symbol, rows, _ in results}, row_date_column="decision_timestamp")
+    _assert_base_rows_preserved(base_rows, enriched)
+    _assert_no_silent_zero_fill(enriched)
+    partition_progress = [progress for _symbol, _rows, progress in results]
+    _base_audit_rows, audit = enrich_stock_artifact_with_fundamentals(base_rows, snapshots, settings=settings)
+    audit.update(
+        {
+            "partition_manifest_version": PARTITION_MANIFEST_VERSION,
+            "partition_dir": str(partition_dir),
+            "requested_workers": int(settings.get("enrichment_workers", 1)),
+            "effective_workers": workers,
+            "partition_count": len(partition_progress),
+            "partition_status_counts": _count_values(partition_progress, "status"),
+            "partition_progress": partition_progress,
+            "deterministic_ownership": True,
+            "row_preservation": _row_preservation_audit(base_rows, enriched),
+        }
+    )
     return enriched, audit
 
 
@@ -1438,6 +1567,7 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
     normalization = dict(raw.get("normalization", {}) or {})
     snapshots = dict(raw.get("snapshots", {}) or {})
     enrichment = dict(raw.get("enrichment", {}) or {})
+    source_gate = dict(raw.get("source_gate", {}) or {})
     features = dict(raw.get("features", {}) or {})
     bounded = dict(raw.get("bounded", {}) or {})
     stages = dict(raw.get("stages", {}) or {})
@@ -1449,6 +1579,11 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "output_dir": str(output_dir),
         "source_dataset_path": raw.get("source_dataset_path") or ml.get("selector_feature_ablation", {}).get("source_dataset_path") or "",
         "allow_csv_fallback": bool(raw.get("allow_csv_fallback", False)),
+        "require_large_source_identity": bool(source_gate.get("require_large_source_identity", raw.get("require_large_source_identity", False))),
+        "expected_source_identity": dict(source_gate.get("expected_identity", raw.get("expected_source_identity", {})) or {}),
+        "expected_source_identity_path": str(source_gate.get("expected_identity_path", raw.get("expected_source_identity_path", "")) or ""),
+        "expected_source_manifest_path": str(source_gate.get("expected_manifest_path", raw.get("expected_source_manifest_path", "")) or ""),
+        "allow_probe_source_fixture": bool(source_gate.get("allow_probe_source_fixture", raw.get("allow_probe_source_fixture", False))),
         "symbols": list(raw.get("symbols", []) or []),
         "cik_by_symbol": dict(raw.get("cik_by_symbol", {}) or {}),
         "load_official_sec_company_tickers": bool(raw.get("load_official_sec_company_tickers", False)),
@@ -1469,7 +1604,12 @@ def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
         "network_concurrency": int(collection.get("network_concurrency", 1)),
         "normalization_workers": int(normalization.get("workers", 1)),
         "snapshot_workers": int(snapshots.get("workers", 1)),
+        "snapshot_partition_dir": str(snapshots.get("partition_dir", "")),
+        "snapshot_resume_partitions": bool(snapshots.get("resume_partitions", raw.get("resume", True))),
         "enrichment_workers": int(enrichment.get("workers", 1)),
+        "enrichment_partition_dir": str(enrichment.get("partition_dir", "")),
+        "enrichment_resume_partitions": bool(enrichment.get("resume_partitions", raw.get("resume", True))),
+        "partition_chunk_size": int(raw.get("partition_chunk_size", snapshots.get("chunk_size", enrichment.get("chunk_size", 1)))),
         "normalized_output_path": str(normalization.get("output_path", "")),
         "maximum_data_age_days": snapshots.get("maximum_data_age_days"),
         "amendment_policy": str(snapshots.get("amendment_policy", "latest_available_as_of_decision")),
@@ -1540,6 +1680,8 @@ def _load_base_rows(settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     source = str(settings.get("source_dataset_path") or "")
     if not source:
         return []
+    if bool(settings.get("require_large_source_identity")):
+        _validate_large_source_gate(settings)
     rows = read_stock_level_artifact(Path(source), allow_csv_fallback=bool(settings.get("allow_csv_fallback", False)))
     max_symbols = settings.get("maximum_symbols")
     max_dates = settings.get("maximum_decision_dates")
@@ -1554,6 +1696,111 @@ def _load_base_rows(settings: Mapping[str, Any]) -> list[dict[str, Any]]:
         dates = sorted({_decision_timestamp(row)[:10] for row in rows})[: int(max_dates)]
         rows = [row for row in rows if _decision_timestamp(row)[:10] in dates]
     return rows
+
+
+def _validate_large_source_gate(settings: Mapping[str, Any]) -> dict[str, Any]:
+    source = Path(str(settings.get("source_dataset_path") or ""))
+    if not source:
+        raise ValueError("Ticket 5B.4 source gate requires ml.stock_fundamentals.source_dataset_path")
+    if source.suffix.lower() != ".parquet":
+        raise ValueError(f"Ticket 5B.4 refuses non-canonical or legacy source artifact: {source}")
+    if not source.exists():
+        raise ValueError(f"Ticket 5B.4 source artifact does not exist: {source}")
+    source_text = str(source).replace("\\", "/").lower()
+    if not bool(settings.get("allow_probe_source_fixture")) and any(token in source_text for token in ("probe", "profile", "symbols_5", "symbols_20", "symbols_50")):
+        raise ValueError(f"Ticket 5B.4 refuses probe/profile source artifact: {source}")
+    expected = _expected_source_identity(settings)
+    if not expected:
+        raise ValueError("Ticket 5B.4 source gate requires expected source identity or manifest path")
+    required = set(BASE_ROW_KEY_COLUMNS) | set(TARGET_PROVENANCE_REQUIRED_COLUMNS) | set(BENCHMARK_REQUIRED_COLUMNS) | set(SOURCE_IDENTITY_REQUIRED_COLUMNS)
+    rows = read_stock_level_artifact(source, required_columns=required)
+    if not rows:
+        raise ValueError(f"Ticket 5B.4 source artifact is empty or incomplete: {source}")
+    fieldnames = _parquet_column_order(source)
+    actual = artifact_identity(source, rows=rows, fieldnames=fieldnames, artifact_format="parquet", compression="zstd")
+    _assert_source_identity_matches(actual, expected)
+    _validate_source_identity_columns(rows, expected)
+    _validate_base_artifact_provenance(rows)
+    return {
+        "schema_version": LARGE_SOURCE_GATE_VERSION,
+        "status": "PASS",
+        "source_path": str(source),
+        "actual_identity": actual,
+        "expected_identity": expected,
+    }
+
+
+def _expected_source_identity(settings: Mapping[str, Any]) -> dict[str, Any]:
+    expected = dict(settings.get("expected_source_identity", {}) or {})
+    identity_path_text = str(settings.get("expected_source_identity_path") or "").strip()
+    identity_path = Path(identity_path_text) if identity_path_text else None
+    if identity_path is not None and identity_path.exists():
+        expected.update(_read_json(identity_path))
+    manifest_path_text = str(settings.get("expected_source_manifest_path") or "").strip()
+    manifest_path = Path(manifest_path_text) if manifest_path_text else None
+    if manifest_path is not None and manifest_path.exists():
+        manifest = _read_json(manifest_path)
+        expected.update(_identity_from_manifest(manifest))
+    return {key: value for key, value in expected.items() if value not in (None, "")}
+
+
+def _identity_from_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    candidates = [
+        manifest.get("stock_artifact"),
+        (manifest.get("stages") or {}).get("stock_artifact") if isinstance(manifest.get("stages"), Mapping) else None,
+        (manifest.get("stage_status") or {}).get("stock_artifact") if isinstance(manifest.get("stage_status"), Mapping) else None,
+        manifest.get("source_artifact_identity"),
+        manifest.get("artifact_identity"),
+    ]
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        for key in ("identity", "artifact_identity", "output_identity", "stock_artifact_identity"):
+            value = candidate.get(key)
+            if isinstance(value, Mapping):
+                return dict(value)
+        if any(name in candidate for name in ("row_count", "sha256", "logical_content_sha256", "schema_fingerprint")):
+            return dict(candidate)
+    return {}
+
+
+def _assert_source_identity_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
+    comparable = (
+        "row_count",
+        "symbol_count",
+        "decision_date_count",
+        "sha256",
+        "logical_content_sha256",
+        "schema_fingerprint",
+    )
+    mismatches = []
+    for key in comparable:
+        if key in expected and str(actual.get(key)) != str(expected.get(key)):
+            mismatches.append({"field": key, "actual": actual.get(key), "expected": expected.get(key)})
+    if mismatches:
+        raise ValueError(f"Ticket 5B.4 source identity mismatch: {mismatches}")
+
+
+def _validate_source_identity_columns(rows: Sequence[Mapping[str, Any]], expected: Mapping[str, Any]) -> None:
+    for column, expected_key in (("decision_grid_identity", "decision_grid_identity"), ("universe_identity", "universe_identity")):
+        values = sorted({str(row.get(column) or "") for row in rows if str(row.get(column) or "").strip()})
+        if expected_key in expected and values != [str(expected[expected_key])]:
+            raise ValueError(f"Ticket 5B.4 {column} mismatch: {values} != {expected[expected_key]}")
+    if "universe_identity" in expected and not any(str(row.get("universe_identity") or "").strip() for row in rows):
+        raise ValueError("Ticket 5B.4 source artifact missing universe_identity column values")
+
+
+def _validate_base_artifact_provenance(rows: Sequence[Mapping[str, Any]]) -> None:
+    missing = []
+    for column in TARGET_PROVENANCE_REQUIRED_COLUMNS + BENCHMARK_REQUIRED_COLUMNS:
+        if any(row.get(column) in (None, "") for row in rows):
+            missing.append(column)
+    if missing:
+        raise ValueError(f"Ticket 5B.4 source artifact has missing target/benchmark provenance columns: {sorted(set(missing))}")
+
+
+def _parquet_column_order(path: Path) -> list[str]:
+    return list(pq.ParquetFile(path).schema_arrow.names)
 
 
 def _configured_symbols(settings: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -1605,6 +1852,13 @@ def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
         reasons.append("SEC network concurrency must remain serial or near-serial")
     if not source_path.exists() and not universe_exists:
         reasons.append(f"source stock artifact or universe does not exist: {source_path}")
+    source_gate = {"required": bool(settings.get("require_large_source_identity")), "status": "NOT_REQUIRED"}
+    if bool(settings.get("require_large_source_identity")):
+        try:
+            source_gate = _validate_large_source_gate(settings)
+        except Exception as exc:
+            source_gate = {"schema_version": LARGE_SOURCE_GATE_VERSION, "required": True, "status": "BLOCKED", "reason": str(exc)}
+            reasons.append(f"large source gate blocked: {exc}")
     if settings.get("live_collection") and not bool(settings.get("load_official_sec_company_tickers")):
         reasons.append("live collection requires load_official_sec_company_tickers=true for official entity mapping")
     if settings.get("live_collection") and settings.get("maximum_entities") is None and not _symbols_from_universe_paths(settings.get("universe_paths", [])):
@@ -1635,6 +1889,7 @@ def _preflight_payload(settings: Mapping[str, Any]) -> dict[str, Any]:
         "request_delay_seconds": float(settings.get("request_delay_seconds", 0.0)),
         "source_dataset_path": str(source_path),
         "source_dataset_exists": source_path.exists(),
+        "large_source_gate": source_gate,
         "source_universe_paths": [str(path) for path in universe_paths],
         "source_universe_exists": universe_exists,
         "source_universe_identity": _universe_identity(settings),
@@ -1963,16 +2218,41 @@ def _period_reconciliation(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, 
 
 
 def _snapshot_coverage(snapshots: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result = []
     statuses = sorted({str(row.get("snapshot_status") or "") for row in snapshots})
-    return [
-        {
-            "snapshot_status": status,
-            "row_count": len([row for row in snapshots if str(row.get("snapshot_status") or "") == status]),
-            "symbol_count": len({row.get("symbol") for row in snapshots if str(row.get("snapshot_status") or "") == status}),
-            "decision_date_count": len({str(row.get("decision_timestamp"))[:10] for row in snapshots if str(row.get("snapshot_status") or "") == status}),
-        }
-        for status in statuses
-    ]
+    for status in statuses:
+        rows = [row for row in snapshots if str(row.get("snapshot_status") or "") == status]
+        result.append(
+            {
+                "coverage_scope": "status",
+                "snapshot_status": status,
+                "row_count": len(rows),
+                "symbol_count": len({row.get("symbol") for row in rows}),
+                "decision_date_count": len({str(row.get("decision_timestamp"))[:10] for row in rows}),
+            }
+        )
+    for scope, key_func in (
+        ("symbol_status", lambda row: (str(row.get("symbol") or ""), str(row.get("snapshot_status") or ""))),
+        ("year_status", lambda row: (str(row.get("decision_timestamp") or "")[:4], str(row.get("snapshot_status") or ""))),
+        ("decision_date_status", lambda row: (str(row.get("decision_timestamp") or "")[:10], str(row.get("snapshot_status") or ""))),
+    ):
+        grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+        for row in snapshots:
+            grouped.setdefault(key_func(row), []).append(row)
+        for (value, status), rows in sorted(grouped.items()):
+            result.append(
+                {
+                    "coverage_scope": scope,
+                    "snapshot_status": status,
+                    "row_count": len(rows),
+                    "symbol_count": len({row.get("symbol") for row in rows}),
+                    "decision_date_count": len({str(row.get("decision_timestamp"))[:10] for row in rows}),
+                    "symbol": value if scope == "symbol_status" else "",
+                    "year": value if scope == "year_status" else "",
+                    "decision_date": value if scope == "decision_date_status" else "",
+                }
+            )
+    return result
 
 
 def _duplicate_normalized_group_count(rows: Sequence[Mapping[str, Any]]) -> int:
@@ -2413,21 +2693,305 @@ def _sha256_json(payload: Any) -> str:
 
 def _feature_coverage(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     result = []
-    row_count = len(rows)
     for feature in FUNDAMENTAL_FEATURE_COLUMNS:
-        non_null = sum(1 for row in rows if row.get(feature) not in (None, ""))
-        fraction = non_null / row_count if row_count else 0.0
-        result.append(
-            {
-                "feature": feature,
-                "row_count": row_count,
-                "non_null_count": non_null,
-                "non_null_fraction": fraction,
-                "all_null": non_null == 0,
-                "coverage_classification": "all_null" if non_null == 0 else ("usable_bounded" if fraction >= 0.5 else "low_coverage"),
-            }
-        )
+        result.append(_coverage_row(rows, feature, coverage_scope="feature"))
+    for family, features in _fundamental_feature_families().items():
+        result.append(_family_coverage_row(rows, family, features, coverage_scope="feature_family"))
+    for symbol in sorted({str(row.get("symbol") or "") for row in rows if row.get("symbol")}):
+        symbol_rows = [row for row in rows if str(row.get("symbol") or "") == symbol]
+        for family, features in _fundamental_feature_families().items():
+            result.append({**_family_coverage_row(symbol_rows, family, features, coverage_scope="symbol_family"), "symbol": symbol})
+    for year in sorted({str(row.get("decision_timestamp") or "")[:4] for row in rows if row.get("decision_timestamp")}):
+        year_rows = [row for row in rows if str(row.get("decision_timestamp") or "").startswith(year)]
+        for family, features in _fundamental_feature_families().items():
+            result.append({**_family_coverage_row(year_rows, family, features, coverage_scope="year_family"), "year": year})
+    for decision_date in sorted({str(row.get("decision_timestamp") or "")[:10] for row in rows if row.get("decision_timestamp")}):
+        date_rows = [row for row in rows if str(row.get("decision_timestamp") or "")[:10] == decision_date]
+        for family, features in _fundamental_feature_families().items():
+            result.append({**_family_coverage_row(date_rows, family, features, coverage_scope="decision_date_family"), "decision_date": decision_date})
     return result
+
+
+def _coverage_row(rows: Sequence[Mapping[str, Any]], feature: str, *, coverage_scope: str) -> dict[str, Any]:
+    row_count = len(rows)
+    non_null = sum(1 for row in rows if row.get(feature) not in (None, ""))
+    fraction = non_null / row_count if row_count else 0.0
+    return {
+        "coverage_scope": coverage_scope,
+        "feature_family": _feature_family(feature),
+        "feature": feature,
+        "row_count": row_count,
+        "non_null_count": non_null,
+        "non_null_fraction": fraction,
+        "all_null": non_null == 0,
+        "coverage_classification": _coverage_classification(non_null, fraction, row_count),
+    }
+
+
+def _family_coverage_row(rows: Sequence[Mapping[str, Any]], family: str, features: Sequence[str], *, coverage_scope: str) -> dict[str, Any]:
+    row_count = len(rows)
+    cells = row_count * len(features)
+    non_null = sum(1 for row in rows for feature in features if row.get(feature) not in (None, ""))
+    fraction = non_null / cells if cells else 0.0
+    return {
+        "coverage_scope": coverage_scope,
+        "feature_family": family,
+        "feature": "*",
+        "row_count": row_count,
+        "non_null_count": non_null,
+        "non_null_fraction": fraction,
+        "all_null": non_null == 0,
+        "coverage_classification": _coverage_classification(non_null, fraction, row_count),
+    }
+
+
+def _coverage_classification(non_null: int, fraction: float, row_count: int) -> str:
+    if row_count == 0:
+        return "blocked"
+    if non_null == 0:
+        return "all_null"
+    return "usable" if fraction >= 0.5 else "low_coverage"
+
+
+def _feature_family(feature: str) -> str:
+    for family, features in _fundamental_feature_families().items():
+        if feature in features:
+            return family
+    return "fundamental_other"
+
+
+def _fundamental_feature_families() -> dict[str, tuple[str, ...]]:
+    return {
+        "fundamental_growth": FUNDAMENTAL_FEATURE_COLUMNS[0:10],
+        "fundamental_profitability": FUNDAMENTAL_FEATURE_COLUMNS[10:20],
+        "fundamental_quality": FUNDAMENTAL_FEATURE_COLUMNS[20:24],
+        "fundamental_balance_sheet": FUNDAMENTAL_FEATURE_COLUMNS[24:31],
+        "fundamental_shareholder_actions": FUNDAMENTAL_FEATURE_COLUMNS[31:36],
+        "fundamental_valuation": FUNDAMENTAL_FEATURE_COLUMNS[36:40],
+        "fundamental_freshness": FUNDAMENTAL_FEATURE_COLUMNS[40:],
+    }
+
+
+def _bounded_workers(raw_workers: Any, task_count: int) -> int:
+    if task_count <= 0:
+        return 1
+    return max(1, min(int(raw_workers or 1), int(task_count), 12))
+
+
+def _run_partition_jobs(
+    symbols: Sequence[str],
+    func: Callable[[str], tuple[str, list[dict[str, Any]], dict[str, Any]]],
+    workers: int,
+) -> list[tuple[str, list[dict[str, Any]], dict[str, Any]]]:
+    ordered = list(symbols)
+    if workers <= 1 or len(ordered) <= 1:
+        return [func(symbol) for symbol in ordered]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="fundamentals-partition") as pool:
+        by_symbol = {symbol: result for symbol, result in zip(ordered, pool.map(func, ordered))}
+    return [by_symbol[symbol] for symbol in ordered]
+
+
+def _partition_path(partition_dir: Path, symbol: str) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in symbol.upper())
+    return partition_dir / f"{safe}.parquet"
+
+
+def _partition_manifest_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".manifest.json")
+
+
+def _try_load_partition(
+    path: Path,
+    *,
+    stage: str,
+    symbol: str,
+    expected_base_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]] | None:
+    if not path.exists() and not _partition_manifest_path(path).exists():
+        return None
+    if not path.exists() or not _partition_manifest_path(path).exists():
+        raise ValueError(f"Corrupt fundamentals partition missing data or manifest: {path}")
+    manifest = _read_json(_partition_manifest_path(path))
+    rows = _read_parquet_dicts(path)
+    expected_key_hash = _row_key_hash(expected_base_rows)
+    checks = {
+        "manifest_version": manifest.get("manifest_version") == PARTITION_MANIFEST_VERSION,
+        "stage": manifest.get("stage") == stage,
+        "symbol": manifest.get("symbol") == symbol,
+        "row_count": int(manifest.get("row_count", -1)) == len(rows) == len(expected_base_rows),
+        "base_key_hash": manifest.get("base_key_hash") == expected_key_hash,
+        "content_hash": manifest.get("content_hash") == _rows_content_hash(rows),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise ValueError(f"Corrupt or incompatible fundamentals partition {path}: {failed}")
+    return rows
+
+
+def _write_partition(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    stage: str,
+    symbol: str,
+    base_rows: Sequence[Mapping[str, Any]],
+) -> None:
+    preferred = ["decision_timestamp", "symbol"] if stage == "snapshots" else ["decision_timestamp", "rebalance_date", "symbol"]
+    _write_parquet(path, rows, _fields(rows, preferred))
+    manifest = {
+        "manifest_version": PARTITION_MANIFEST_VERSION,
+        "stage": stage,
+        "symbol": symbol,
+        "row_count": len(rows),
+        "base_key_hash": _row_key_hash(base_rows),
+        "content_hash": _rows_content_hash(rows),
+        "created_at": _utc_now(),
+        "complete": True,
+    }
+    _atomic_write_json(_partition_manifest_path(path), manifest)
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(_json_ready(payload), indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _merge_partition_rows_preserving_base_order(
+    base_rows: Sequence[Mapping[str, Any]],
+    rows_by_symbol: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    row_date_column: str,
+) -> list[dict[str, Any]]:
+    queues: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for symbol, rows in rows_by_symbol.items():
+        for row in rows:
+            key = (str(row.get(row_date_column) or row.get("rebalance_date") or "")[:10], symbol)
+            queues.setdefault(key, []).append(row)
+    merged = []
+    for base in base_rows:
+        key = (_decision_timestamp(base)[:10], str(base.get("symbol", "")).upper())
+        if not queues.get(key):
+            raise ValueError(f"Missing fundamentals partition row for base key {key}")
+        merged.append(dict(queues[key].pop(0)))
+    leftovers = sum(len(values) for values in queues.values())
+    if leftovers:
+        raise ValueError(f"Unexpected duplicate fundamentals partition rows: {leftovers}")
+    return merged
+
+
+def _row_key_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+    return _sha256_json([_base_row_key(row) for row in rows])
+
+
+def _rows_content_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+    fieldnames = _fields(rows, ["decision_timestamp", "rebalance_date", "symbol"])
+    return _sha256_json([{name: _json_ready(row.get(name)) for name in fieldnames} for row in rows])
+
+
+def _base_row_key(row: Mapping[str, Any]) -> tuple[str, str]:
+    return (_decision_timestamp(row)[:10], str(row.get("symbol", "")).upper())
+
+
+def _owner_worker(symbol: str, workers: int) -> int:
+    return int(hashlib.sha256(symbol.upper().encode("utf-8")).hexdigest()[:8], 16) % max(1, workers)
+
+
+def _snapshot_audit_from_rows(snapshots: Sequence[Mapping[str, Any]], normalized_facts: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "snapshot_contract_version": SNAPSHOT_CONTRACT_VERSION,
+        "snapshot_count": len(snapshots),
+        "available_snapshot_count": sum(1 for row in snapshots if row.get("snapshot_status") == "available"),
+        "stale_snapshot_count": sum(1 for row in snapshots if row.get("snapshot_status") == "stale"),
+        "unresolved_entity_count": sum(1 for row in snapshots if row.get("snapshot_status") == "unresolved_entity"),
+        "no_prior_filing_count": sum(1 for row in snapshots if row.get("snapshot_status") == "no_prior_filing"),
+        "future_filing_exclusion_count": _future_filing_exclusion_count(snapshots, normalized_facts),
+        "amendment_available_snapshot_count": sum(1 for row in snapshots if "10-Q/A" in str(row.get("selected_source_document_identities", ""))),
+        "availability_rule": "facts included only when available_timestamp <= decision_timestamp",
+        "missing_snapshot_policy": "missing snapshots preserve NaN fundamentals and explicit status; no zero fill",
+    }
+
+
+def _future_filing_exclusion_count(snapshots: Sequence[Mapping[str, Any]], normalized_facts: Sequence[Mapping[str, Any]]) -> int:
+    by_entity: dict[str, list[str]] = {}
+    for fact in normalized_facts:
+        by_entity.setdefault(str(fact.get("reporting_entity_id")), []).append(str(fact.get("available_timestamp", "")))
+    count = 0
+    for snap in snapshots:
+        entity = str(snap.get("reporting_entity_id") or "")
+        decision_ts = str(snap.get("decision_timestamp") or "")
+        count += sum(1 for available in by_entity.get(entity, []) if available > decision_ts)
+    return count
+
+
+def _assert_base_rows_preserved(base_rows: Sequence[Mapping[str, Any]], enriched_rows: Sequence[Mapping[str, Any]]) -> None:
+    audit = _row_preservation_audit(base_rows, enriched_rows)
+    if audit["status"] != "PASS":
+        raise ValueError(f"Fundamentals enrichment failed row preservation: {audit}")
+
+
+def _row_preservation_audit(base_rows: Sequence[Mapping[str, Any]], enriched_rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    base_columns = _fields(base_rows, [])
+    changed = []
+    if len(base_rows) != len(enriched_rows):
+        changed.append({"type": "row_count", "base": len(base_rows), "enriched": len(enriched_rows)})
+    for index, (base, enriched) in enumerate(zip(base_rows, enriched_rows)):
+        if _base_row_key(base) != _base_row_key(enriched):
+            changed.append({"type": "row_key", "index": index, "base": _base_row_key(base), "enriched": _base_row_key(enriched)})
+            continue
+        for column in base_columns:
+            if base.get(column) != enriched.get(column):
+                changed.append({"type": "base_column", "index": index, "column": column, "base": base.get(column), "enriched": enriched.get(column)})
+                break
+    return {
+        "status": "PASS" if not changed else "FAIL",
+        "base_row_count": len(base_rows),
+        "enriched_row_count": len(enriched_rows),
+        "base_column_count": len(base_columns),
+        "changed_examples": changed[:20],
+        "target_provenance_columns_preserved": all(column in base_columns for column in TARGET_PROVENANCE_REQUIRED_COLUMNS),
+        "benchmark_columns_preserved": all(column in base_columns for column in BENCHMARK_REQUIRED_COLUMNS),
+    }
+
+
+def _assert_no_silent_zero_fill(rows: Sequence[Mapping[str, Any]]) -> None:
+    blocked_rows = [row for row in rows if row.get("fundamentals_snapshot_status") in {"blocked", "unresolved_entity", "no_prior_filing"}]
+    exempt = {"entity_mapping_quality"}
+    offenders = [
+        (row.get("symbol"), _decision_timestamp(row)[:10], column)
+        for row in blocked_rows
+        for column in FUNDAMENTAL_FEATURE_COLUMNS
+        if column not in exempt and row.get(column) == 0
+    ]
+    if offenders:
+        raise ValueError(f"Fundamentals missing values were zero-filled: {offenders[:10]}")
+
+
+def _count_values(rows: Sequence[Mapping[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or "")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _lineage_manifest(paths: StockFundamentalsPaths, settings: Mapping[str, Any], enrichment_audit: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "lineage_contract_version": "ticket_5b4_fundamentals_lineage_v1",
+        "source_gate_required": bool(settings.get("require_large_source_identity")),
+        "source_identity": _optional_artifact_identity(Path(str(settings.get("source_dataset_path") or ""))),
+        "normalized_facts_identity": _optional_artifact_identity(paths.normalized_facts_path),
+        "snapshot_identity": _optional_artifact_identity(paths.snapshots_path),
+        "enriched_artifact_identity": _optional_artifact_identity(paths.enriched_artifact_path),
+        "enrichment_audit": dict(enrichment_audit),
+        "universe_status": settings.get("universe_status"),
+        "survivorship_status": settings.get("survivorship_status"),
+        "xom_mapping_caveat": "official-current XOM mapping remains conditional unless a dated override contract is supplied",
+        "no_training_or_trading_side_effects": True,
+    }
 
 
 def _coverage_gates(

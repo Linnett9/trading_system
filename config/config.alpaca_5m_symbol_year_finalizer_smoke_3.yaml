@@ -1,0 +1,18 @@
+ml:
+  alpaca_5m_symbol_year_finalizer:
+    raw_root: data/raw/alpaca/stock_bars
+    parquet_root: data/processed/alpaca/stock_bars_parquet
+    collection_manifest_path: reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full/collection_manifest.json
+    archive_root: reports/data_quality/alpaca_5m_symbol_year_smoke_3/archive
+    report_root: reports/data_quality/alpaca_5m_symbol_year_smoke_3
+    universe_path: config/universes/alpaca_514_symbols.txt
+    symbols: [AAPL, SPY, BRK-B]
+    years: [2026]
+    max_chunks: 0
+    source_chunk_paths:
+    - data/raw/alpaca/stock_bars/sip/5m/A-AA-AAON-AAP-AAPL-AB-ABBV-ABCB-ABG-ABM/20260101T143000Z_20260106T142500Z
+    - data/raw/alpaca/stock_bars/sip/5m/SPG-SPGI-SPY-SRE-STT-SWK-SYK-SYY-T-TER/20260101T143000Z_20260106T142500Z
+    - data/raw/alpaca/stock_bars/sip/5m/BOOM-BP-BPOP-BRC-BRK.A-BRK.B-BRKR-BRO-BRW-BSAC/20260101T143000Z_20260106T142500Z
+    workers: 1
+    dry_run: false
+    retry_only_failed: false

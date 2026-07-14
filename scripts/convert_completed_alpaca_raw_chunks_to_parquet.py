@@ -10,17 +10,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 
 RAW_ROOT = Path("data/raw/alpaca/stock_bars")
 PARQUET_ROOT = Path("data/processed/alpaca/stock_bars_parquet")
+COLLECTION_MANIFEST = Path("reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full/collection_manifest.json")
 PAYLOAD_FILES = ("normalized_rows.json", "provider_pages.json")
 REQUIRED_COLUMNS = ("symbol", "timestamp", "open", "high", "low", "close")
 SCHEMA = pa.schema(
     [
         ("symbol", pa.string()),
+        ("provider_symbol", pa.string()),
         ("timestamp", pa.timestamp("us", tz="UTC")),
         ("open", pa.float64()),
         ("high", pa.float64()),
@@ -40,6 +46,8 @@ SCHEMA = pa.schema(
         ("session_type", pa.string()),
         ("raw_chunk_identifier", pa.string()),
         ("normalizer_version", pa.string()),
+        ("source_raw_chunk_path", pa.string()),
+        ("conversion_timestamp", pa.string()),
     ]
 )
 
@@ -50,6 +58,17 @@ def main() -> int:
     )
     parser.add_argument("--raw-root", type=Path, default=RAW_ROOT)
     parser.add_argument("--parquet-root", type=Path, default=PARQUET_ROOT)
+    parser.add_argument(
+        "--collection-manifest",
+        type=Path,
+        default=COLLECTION_MANIFEST,
+        help="Production collection manifest used to exclude pilot chunks when present.",
+    )
+    parser.add_argument(
+        "--include-non-manifest-chunks",
+        action="store_true",
+        help="Also convert chunks that are not listed in the collection manifest.",
+    )
     parser.add_argument("--max-chunks", type=int, default=3)
     parser.add_argument("--row-group-size", type=int, default=64_000)
     parser.add_argument(
@@ -67,7 +86,20 @@ def main() -> int:
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Actually write Parquet and delete validated JSON payloads.",
+        help="Actually write Parquet. JSON payloads are preserved unless the dangerous delete flag is set.",
+    )
+    parser.add_argument(
+        "--preserve-json",
+        action="store_true",
+        default=True,
+        help="Preserve normalized_rows.json and provider_pages.json after conversion. This is the default.",
+    )
+    parser.add_argument(
+        "--delete-source-json-after-validation",
+        "--delete-json-after-validate",
+        dest="delete_source_json_after_validation",
+        action="store_true",
+        help="DANGEROUS: delete JSON payloads only after Parquet validation succeeds.",
     )
     args = parser.parse_args()
     if args.max_chunks < 0:
@@ -77,24 +109,42 @@ def main() -> int:
     if args.execute and args.dry_run:
         raise SystemExit("--execute and --dry-run cannot be combined")
 
-    candidates = find_candidates(args.raw_root, args.parquet_root)
+    manifest_filter = None if args.include_non_manifest_chunks else args.collection_manifest
+    scan = scan_candidates(args.raw_root, args.parquet_root, collection_manifest_path=manifest_filter)
+    candidates = scan["candidates"]
     selected = candidates if args.max_chunks == 0 else candidates[: args.max_chunks]
     results = []
     for candidate in selected:
         if args.dry_run or not args.execute:
             results.append({"status": "dry_run", **candidate})
     if args.execute and not args.dry_run:
-        results = run_conversions(selected, args.row_group_size, args.workers, args.progress)
+        results = run_conversions(
+            selected,
+            args.row_group_size,
+            args.workers,
+            args.progress,
+            delete_json_after_validate=bool(args.delete_source_json_after_validation),
+        )
+    converted_count = sum(1 for row in results if row.get("status") == "converted")
+    source_json_preserved_count = sum(1 for row in results if row.get("json_payloads_preserved") is True)
+    parquet_bytes_written = sum(int(row.get("parquet_bytes", 0) or 0) for row in results)
 
     report = {
         "raw_root": str(args.raw_root),
         "parquet_root": str(args.parquet_root),
         "dry_run": bool(args.dry_run or not args.execute),
+        "collection_manifest": str(manifest_filter) if manifest_filter else None,
+        "include_non_manifest_chunks": bool(args.include_non_manifest_chunks),
+        "delete_source_json_after_validation": bool(args.delete_source_json_after_validation),
         "candidate_count": len(candidates),
+        "converted_count": converted_count,
+        "skipped_existing_count": int(scan["skipped_existing_count"]),
+        "source_json_preserved_count": source_json_preserved_count,
         "processed_count": len(results),
         "results": results,
         "source_bytes_deleted": sum(int(row.get("source_bytes_deleted", 0) or 0) for row in results),
-        "parquet_bytes": sum(int(row.get("parquet_bytes", 0) or 0) for row in results),
+        "parquet_bytes_written": parquet_bytes_written,
+        "parquet_bytes": parquet_bytes_written,
         "space_reclaimed": sum(int(row.get("space_reclaimed", 0) or 0) for row in results),
         "free_bytes_after": shutil.disk_usage(args.raw_root).free if args.raw_root.exists() else None,
     }
@@ -107,11 +157,13 @@ def run_conversions(
     row_group_size: int,
     workers: int,
     progress: bool = False,
+    *,
+    delete_json_after_validate: bool = False,
 ) -> list[dict[str, Any]]:
     if workers == 1 or len(candidates) <= 1:
         results = []
         for index, candidate in enumerate(candidates, start=1):
-            result = convert_one(candidate, row_group_size)
+            result = convert_one(candidate, row_group_size, delete_json_after_validate=delete_json_after_validate)
             results.append(result)
             print_progress(result, index, len(candidates), progress)
         return results
@@ -119,7 +171,15 @@ def run_conversions(
     results = []
     max_workers = min(workers, len(candidates))
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(convert_one, candidate, row_group_size) for candidate in candidates]
+        futures = [
+            executor.submit(
+                convert_one,
+                candidate,
+                row_group_size,
+                delete_json_after_validate=delete_json_after_validate,
+            )
+            for candidate in candidates
+        ]
         for index, future in enumerate(as_completed(futures), start=1):
             result = future.result()
             results.append(result)
@@ -134,8 +194,24 @@ def print_progress(result: Mapping[str, Any], index: int, total: int, enabled: b
     print(f"[{index}/{total}] {result.get('status')}: {source_path}", file=sys.stderr, flush=True)
 
 
-def find_candidates(raw_root: Path, parquet_root: Path) -> list[dict[str, Any]]:
+def find_candidates(
+    raw_root: Path,
+    parquet_root: Path,
+    *,
+    collection_manifest_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    return list(scan_candidates(raw_root, parquet_root, collection_manifest_path=collection_manifest_path)["candidates"])
+
+
+def scan_candidates(
+    raw_root: Path,
+    parquet_root: Path,
+    *,
+    collection_manifest_path: Path | None = None,
+) -> dict[str, Any]:
     candidates = []
+    skipped_existing_count = 0
+    allowed_chunk_ids = load_manifest_chunk_ids(collection_manifest_path)
     for dirpath, _dirnames, filenames in os.walk(raw_root, onerror=lambda _error: None):
         chunk_dir = Path(dirpath)
         if any(part.endswith(".tmp") or part == ".tmp" for part in chunk_dir.parts):
@@ -149,8 +225,12 @@ def find_candidates(raw_root: Path, parquet_root: Path) -> list[dict[str, Any]]:
             continue
         if manifest.get("completion_state") != "completed":
             continue
+        chunk_id = chunk_id_from_manifest(manifest)
+        if allowed_chunk_ids is not None and chunk_id not in allowed_chunk_ids:
+            continue
         final_path = parquet_path(parquet_root, raw_root, chunk_dir)
         if already_converted(chunk_dir, final_path):
+            skipped_existing_count += 1
             continue
         source_bytes = payload_size(chunk_dir)
         candidates.append(
@@ -160,13 +240,22 @@ def find_candidates(raw_root: Path, parquet_root: Path) -> list[dict[str, Any]]:
                 "parquet_path": str(final_path),
                 "manifest_row_count": int(manifest.get("row_count", 0) or 0),
                 "source_bytes": source_bytes,
+                "chunk_id": chunk_id,
                 "manifest": manifest,
             }
         )
-    return sorted(candidates, key=lambda row: (int(row["source_bytes"]), row["source_path"]))
+    return {
+        "candidates": sorted(candidates, key=lambda row: (int(row["source_bytes"]), row["source_path"])),
+        "skipped_existing_count": skipped_existing_count,
+    }
 
 
-def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, Any]:
+def convert_one(
+    candidate: Mapping[str, Any],
+    row_group_size: int,
+    *,
+    delete_json_after_validate: bool = False,
+) -> dict[str, Any]:
     chunk_dir = Path(str(candidate["source_path"]))
     final_path = Path(str(candidate["parquet_path"]))
     tmp_path = final_path.with_suffix(final_path.suffix + f".converter.{os.getpid()}.tmp")
@@ -178,7 +267,13 @@ def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, 
         final_path.parent.mkdir(parents=True, exist_ok=True)
         if tmp_path.exists():
             tmp_path.unlink()
-        written_rows = write_parquet(normalized_path, tmp_path, row_group_size)
+        written_rows = write_parquet(
+            normalized_path,
+            tmp_path,
+            row_group_size,
+            source_raw_chunk_path=str(chunk_dir),
+            conversion_timestamp=started_at,
+        )
         validation = validate_parquet(tmp_path, expected_rows)
         if written_rows != expected_rows:
             validation["errors"].append(f"source_read_row_count_mismatch:{written_rows}!={expected_rows}")
@@ -191,16 +286,23 @@ def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, 
             return failed(candidate, final_validation["errors"])
         deleted = []
         deleted_bytes = 0
-        for name in PAYLOAD_FILES:
-            path = chunk_dir / name
-            if path.exists():
-                deleted_bytes += path.stat().st_size
-                path.unlink()
-                deleted.append(str(path))
+        if delete_json_after_validate:
+            for name in PAYLOAD_FILES:
+                path = chunk_dir / name
+                if path.exists():
+                    deleted_bytes += path.stat().st_size
+                    path.unlink()
+                    deleted.append(str(path))
         parquet_bytes = final_path.stat().st_size
+        manifest = dict(candidate.get("manifest", {}) or {})
         tombstone = {
             "parquet_path": str(final_path),
             "source_path": str(chunk_dir),
+            "source_raw_chunk_path": str(chunk_dir),
+            "chunk_id": candidate.get("chunk_id"),
+            "canonical_symbol_batch": manifest.get("canonical_symbol_batch") or manifest.get("symbol_batch", []),
+            "provider_symbol_batch": manifest.get("symbol_batch", []),
+            "provider_symbol_map": manifest.get("provider_symbol_map", {}),
             "source_row_count": expected_rows,
             "parquet_row_count": final_validation["row_count"],
             "source_bytes": source_bytes,
@@ -208,10 +310,11 @@ def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, 
             "parquet_bytes": parquet_bytes,
             "validation_result": "passed",
             "validation_errors": [],
+            "json_payloads_preserved": not delete_json_after_validate,
             "deleted_payload_files": deleted,
             "converted_at": started_at,
             "validated_at": utc_now(),
-            "deletion_timestamp": utc_now(),
+            "deletion_timestamp": utc_now() if delete_json_after_validate else None,
         }
         atomic_write_json(chunk_dir / "parquet_conversion.json", tombstone)
         return {
@@ -224,6 +327,7 @@ def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, 
             "source_bytes_deleted": deleted_bytes,
             "parquet_bytes": parquet_bytes,
             "space_reclaimed": deleted_bytes - parquet_bytes,
+            "json_payloads_preserved": not delete_json_after_validate,
             "deleted_payload_files": deleted,
         }
     except Exception as exc:
@@ -231,13 +335,26 @@ def convert_one(candidate: Mapping[str, Any], row_group_size: int) -> dict[str, 
         return failed(candidate, [f"{type(exc).__name__}: {exc}"])
 
 
-def write_parquet(normalized_path: Path, tmp_path: Path, row_group_size: int) -> int:
+def write_parquet(
+    normalized_path: Path,
+    tmp_path: Path,
+    row_group_size: int,
+    *,
+    source_raw_chunk_path: str,
+    conversion_timestamp: str,
+) -> int:
     writer: pq.ParquetWriter | None = None
     batch: list[dict[str, Any]] = []
     rows = 0
     try:
         for raw in iter_json_array(normalized_path):
-            batch.append(normalize_row(raw))
+            batch.append(
+                normalize_row(
+                    raw,
+                    source_raw_chunk_path=source_raw_chunk_path,
+                    conversion_timestamp=conversion_timestamp,
+                )
+            )
             rows += 1
             if len(batch) >= row_group_size:
                 writer = write_batch(writer, tmp_path, batch, row_group_size)
@@ -325,10 +442,38 @@ def iter_json_array(path: Path) -> Iterator[dict[str, Any]]:
                 return
 
 
-def normalize_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_row(row: Mapping[str, Any], *, source_raw_chunk_path: str, conversion_timestamp: str) -> dict[str, Any]:
     output = {name: row.get(name) for name in SCHEMA.names}
     output["timestamp"] = parse_datetime(output["timestamp"])
+    output["source_raw_chunk_path"] = source_raw_chunk_path
+    output["conversion_timestamp"] = conversion_timestamp
     return output
+
+
+def load_manifest_chunk_ids(path: Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    journal_path = path.with_suffix(path.suffix + ".events.jsonl")
+    if not path.exists() and not journal_path.exists():
+        return None
+    from infrastructure.data.historical_bar_providers import CollectionManifest
+
+    payload = CollectionManifest(path).load()
+    return set((payload.get("chunks", {}) or {}).keys())
+
+
+def chunk_id_from_manifest(manifest: Mapping[str, Any]) -> str:
+    symbols = manifest.get("canonical_symbol_batch") or manifest.get("symbol_batch") or []
+    return (
+        f"alpaca-{manifest.get('feed', 'sip')}-{manifest.get('timeframe_requested', '5m')}-"
+        f"{'-'.join(str(symbol) for symbol in symbols)}-"
+        f"{chunk_timestamp(manifest.get('requested_start'))}-"
+        f"{chunk_timestamp(manifest.get('requested_end'))}"
+    )
+
+
+def chunk_timestamp(value: Any) -> str:
+    return parse_datetime(value).strftime("%Y%m%dT%H%M%SZ")
 
 
 def parquet_path(parquet_root: Path, raw_root: Path, chunk_dir: Path) -> Path:

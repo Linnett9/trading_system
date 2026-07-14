@@ -541,7 +541,8 @@ def build_and_audit(
         if not dry_run:
             write_registry_outputs(assets, aliases, asset_output=registry_output, alias_output=alias_output, parquet_output=parquet_output)
     audit = audit_registry(assets, aliases, universe_path=universe_path, repo_root=repo_root)
-    write_audit_reports(audit, report_dir=report_dir)
+    if not dry_run:
+        write_audit_reports(audit, report_dir=report_dir)
     return audit
 
 

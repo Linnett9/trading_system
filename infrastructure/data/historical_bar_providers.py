@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import random
 import shutil
@@ -21,6 +22,7 @@ NORMALIZER_VERSION = "historical_bar_provider_v1"
 ALPACA_API_KEY_ALIASES = ("ALPACA_API_KEY", "APCA_API_KEY_ID")
 ALPACA_SECRET_KEY_ALIASES = ("ALPACA_SECRET_KEY", "ALPACA_SECRET", "APCA_API_SECRET_KEY")
 _ATOMIC_WRITE_LOCK = threading.Lock()
+_MAX_RAW_BATCH_PATH_PART_LENGTH = 120
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,8 @@ class HistoricalBarRequest:
     page_token: str | None = None
     limit: int = 10_000
     raw_chunk_id: str | None = None
+    canonical_symbols: tuple[str, ...] | None = None
+    provider_symbol_by_canonical: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,8 @@ class HistoricalBarMetrics:
     throttle_sleep_time_seconds: float = 0.0
     response_latency_seconds: list[float] = field(default_factory=list)
     started_monotonic: float = field(default_factory=time.monotonic)
+    configured_requests_per_minute: int | None = None
+    current_requests_per_minute: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         elapsed = max(0.000001, time.monotonic() - self.started_monotonic)
@@ -78,6 +84,8 @@ class HistoricalBarMetrics:
             "requests_retried": self.requests_retried,
             "http_429_count": self.http_429_count,
             "effective_requests_per_minute": self.requests_attempted / elapsed * 60.0,
+            "configured_requests_per_minute": self.configured_requests_per_minute,
+            "current_requests_per_minute": self.current_requests_per_minute,
             "average_response_latency": (
                 sum(self.response_latency_seconds) / len(self.response_latency_seconds)
                 if self.response_latency_seconds
@@ -183,12 +191,14 @@ class SharedRateLimiter:
         if max_in_flight_requests < 1:
             raise ValueError("max_in_flight_requests must be positive")
         self.requests_per_minute = int(requests_per_minute)
+        self.configured_requests_per_minute = int(requests_per_minute)
         self.max_in_flight_requests = int(max_in_flight_requests)
         self._sleeper = sleeper
         self._clock = clock
         self._lock = threading.Lock()
         self._semaphore = threading.BoundedSemaphore(max_in_flight_requests)
         self._request_times: list[float] = []
+        self._next_allowed_request_time = 0.0
         self.sleep_time_seconds = 0.0
 
     def acquire(self) -> None:
@@ -197,16 +207,21 @@ class SharedRateLimiter:
             now = self._clock()
             window_start = now - 60.0
             self._request_times = [value for value in self._request_times if value > window_start]
+            sleep_for_window = 0.0
             if len(self._request_times) >= self.requests_per_minute:
-                sleep_for = max(0.0, 60.0 - (now - self._request_times[0]))
-                if sleep_for:
-                    self.sleep_time_seconds += sleep_for
-                    self._sleeper(sleep_for)
-                    now = self._clock()
-                    self._request_times = [
-                        value for value in self._request_times if value > now - 60.0
-                    ]
+                sleep_for_window = max(0.0, 60.0 - (now - self._request_times[0]))
+            min_interval_seconds = 60.0 / float(self.requests_per_minute)
+            sleep_for_pacing = max(0.0, self._next_allowed_request_time - now)
+            sleep_for = max(sleep_for_window, sleep_for_pacing)
+            if sleep_for:
+                self.sleep_time_seconds += sleep_for
+                self._sleeper(sleep_for)
+                now = self._clock()
+                self._request_times = [
+                    value for value in self._request_times if value > now - 60.0
+                ]
             self._request_times.append(now)
+            self._next_allowed_request_time = now + min_interval_seconds
 
     def release(self) -> None:
         self._semaphore.release()
@@ -252,6 +267,8 @@ class AlpacaBasicHistoricalBarProvider:
         self._opener = opener
         self._timeout_seconds = timeout_seconds
         self.metrics = metrics or HistoricalBarMetrics()
+        self.metrics.configured_requests_per_minute = self.rate_limiter.configured_requests_per_minute
+        self.metrics.current_requests_per_minute = self.rate_limiter.requests_per_minute
         self._metrics_lock = threading.Lock()
 
     def capabilities(self) -> HistoricalBarProviderCapabilities:
@@ -313,10 +330,11 @@ class AlpacaBasicHistoricalBarProvider:
         except HTTPError as exc:
             with self._metrics_lock:
                 self.metrics.requests_failed += 1
-                if exc.code == 429:
-                    self.metrics.http_429_count += 1
+            if exc.code == 429:
+                self.metrics.http_429_count += 1
             if exc.code == 429:
                 self.rate_limiter.reduce_pressure_after_429()
+                self.metrics.current_requests_per_minute = self.rate_limiter.requests_per_minute
             raise AlpacaHistoricalBarError.from_http_error(exc) from exc
         finally:
             self.rate_limiter.release()
@@ -328,6 +346,7 @@ class AlpacaBasicHistoricalBarProvider:
             self.metrics.pages_downloaded += 1
             self.metrics.rows_downloaded += len(bars)
             self.metrics.throttle_sleep_time_seconds = self.rate_limiter.sleep_time_seconds
+            self.metrics.current_requests_per_minute = self.rate_limiter.requests_per_minute
         return HistoricalBarPage(
             bars=bars,
             next_page_token=payload.get("next_page_token"),
@@ -337,10 +356,20 @@ class AlpacaBasicHistoricalBarProvider:
 
 
 class AlpacaHistoricalBarError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, retry_after: float | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+        response_body: str | None = None,
+        response_json: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.retry_after = retry_after
+        self.response_body = response_body
+        self.response_json = dict(response_json or {})
 
     @property
     def classification(self) -> str:
@@ -361,6 +390,13 @@ class AlpacaHistoricalBarError(RuntimeError):
     @classmethod
     def from_http_error(cls, error: HTTPError) -> "AlpacaHistoricalBarError":
         details = error.read().decode("utf-8", errors="replace")
+        response_json = None
+        try:
+            parsed = json.loads(details)
+            if isinstance(parsed, dict):
+                response_json = parsed
+        except json.JSONDecodeError:
+            response_json = None
         retry_after = None
         raw_retry_after = error.headers.get("Retry-After") if error.headers else None
         if raw_retry_after:
@@ -372,6 +408,8 @@ class AlpacaHistoricalBarError(RuntimeError):
             f"Alpaca historical bars request failed ({error.code}): {details}",
             status_code=error.code,
             retry_after=retry_after,
+            response_body=details,
+            response_json=response_json,
         )
 
 
@@ -563,7 +601,7 @@ class ImmutableRawChunkStore:
         self.root = Path(root)
 
     def chunk_dir(self, request: HistoricalBarRequest) -> Path:
-        batch = _safe_path_part("-".join(request.symbols))
+        batch = _raw_batch_path_part(request.symbols)
         window = _safe_path_part(f"{request.start:%Y%m%dT%H%M%SZ}_{request.end:%Y%m%dT%H%M%SZ}")
         return self.root / request.feed / request.timeframe / batch / window
 
@@ -595,6 +633,10 @@ class ImmutableRawChunkStore:
             "timeframe_requested": request.timeframe,
             "native_timeframe": _alpaca_timeframe(request.timeframe),
             "symbol_batch": list(request.symbols),
+            "symbol_batch_path": _raw_batch_path_part(request.symbols),
+            "symbol_batch_path_schema": "plain-or-hashed-v2",
+            "canonical_symbol_batch": list(request.canonical_symbols or request.symbols),
+            "provider_symbol_map": dict(request.provider_symbol_by_canonical),
             "requested_start": request.start.isoformat(),
             "requested_end": request.end.isoformat(),
             "actual_earliest_timestamp": min(timestamps).isoformat() if timestamps else None,
@@ -662,6 +704,8 @@ def fetch_chunk_with_retries(
             page_token=next_token,
             limit=request.limit,
             raw_chunk_id=chunk_id,
+            canonical_symbols=request.canonical_symbols,
+            provider_symbol_by_canonical=request.provider_symbol_by_canonical,
         )
         attempt = 0
         while True:
@@ -764,31 +808,34 @@ def _normalize_alpaca_bars(payload: Mapping[str, Any], request: HistoricalBarReq
     output: list[dict[str, Any]] = []
     bars_by_symbol = payload.get("bars", {}) or {}
     for symbol, bars in bars_by_symbol.items():
+        canonical_symbol = _canonical_symbol_for_provider(request, str(symbol).upper())
         for bar in bars or []:
-            output.append(
-                {
-                    "symbol": str(symbol).upper(),
-                    "timestamp": datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")),
-                    "open": float(bar["o"]),
-                    "high": float(bar["h"]),
-                    "low": float(bar["l"]),
-                    "close": float(bar["c"]),
-                    "volume": float(bar.get("v", 0) or 0),
-                    "trade_count": bar.get("n"),
-                    "vwap": bar.get("vw"),
-                    "provider": "alpaca",
-                    "feed": request.feed,
-                    "collection_timestamp": collected_at,
-                    "requested_timeframe": request.timeframe,
-                    "native_timeframe": _alpaca_timeframe(request.timeframe),
-                    "adjustment_mode": request.adjustment,
-                    "extended_hours": request.extended_hours,
-                    "session_policy": "all_returned_bars_preserved",
-                    "session_type": session_type(datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00"))),
-                    "raw_chunk_identifier": request.raw_chunk_id or _chunk_id(request),
-                    "normalizer_version": NORMALIZER_VERSION,
-                }
-            )
+            timestamp = datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00"))
+            row = {
+                "symbol": canonical_symbol,
+                "timestamp": timestamp,
+                "open": float(bar["o"]),
+                "high": float(bar["h"]),
+                "low": float(bar["l"]),
+                "close": float(bar["c"]),
+                "volume": float(bar.get("v", 0) or 0),
+                "trade_count": bar.get("n"),
+                "vwap": bar.get("vw"),
+                "provider": "alpaca",
+                "feed": request.feed,
+                "collection_timestamp": collected_at,
+                "requested_timeframe": request.timeframe,
+                "native_timeframe": _alpaca_timeframe(request.timeframe),
+                "adjustment_mode": request.adjustment,
+                "extended_hours": request.extended_hours,
+                "session_policy": "all_returned_bars_preserved",
+                "session_type": session_type(timestamp),
+                "raw_chunk_identifier": request.raw_chunk_id or _chunk_id(request),
+                "normalizer_version": NORMALIZER_VERSION,
+            }
+            if canonical_symbol != str(symbol).upper():
+                row["provider_symbol"] = str(symbol).upper()
+            output.append(row)
     output.sort(key=lambda row: (row["symbol"], row["timestamp"]))
     return output
 
@@ -796,6 +843,11 @@ def _normalize_alpaca_bars(payload: Mapping[str, Any], request: HistoricalBarReq
 def _alpaca_timeframe(timeframe: str) -> str:
     aliases = {"5m": "5Min", "1h": "1Hour", "1Day": "1Day"}
     return aliases.get(timeframe, timeframe)
+
+
+def _canonical_symbol_for_provider(request: HistoricalBarRequest, provider_symbol: str) -> str:
+    reverse = {provider.upper(): canonical.upper() for canonical, provider in request.provider_symbol_by_canonical}
+    return reverse.get(provider_symbol.upper(), provider_symbol.upper())
 
 
 def _utc_z(value: datetime) -> str:
@@ -891,3 +943,13 @@ def _remove_tree(path: Path) -> None:
 
 def _safe_path_part(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
+
+
+def _raw_batch_path_part(symbols: Sequence[str]) -> str:
+    plain = _safe_path_part("-".join(symbols))
+    if len(plain) <= _MAX_RAW_BATCH_PATH_PART_LENGTH:
+        return plain
+    digest = hashlib.sha256(plain.encode("utf-8")).hexdigest()[:16]
+    first = _safe_path_part(str(symbols[0]))[:16] if symbols else "empty"
+    last = _safe_path_part(str(symbols[-1]))[:16] if symbols else "empty"
+    return f"batch-{len(symbols)}-{first}-{last}-{digest}"
