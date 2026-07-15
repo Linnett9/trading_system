@@ -1,0 +1,17 @@
+{
+  "evaluation_contract_version":"selector_multi_regime_evaluation_v1",
+  "eligible_selector_artifact_kinds":["BOUNDED_SELECTOR_PREDICTION","ORDINARY_SELECTOR_PREDICTION"],
+  "promotion_strict_oos_status":"VERIFIED_STRICT_OOS",
+  "target_horizon_sessions":10,
+  "portfolio_policies":["daily_top_k_equal_weight_v1","staggered_10_session_cohorts_v1","top_k_rank_hysteresis_v1","long_only_rank_percentile_weighted_v1"],
+  "top_k_values":[10,20,40],
+  "cost_contract":{"id":"selector_traded_notional_costs_v1","basis_points":[5,10,25,50],"basis":"traded_notional","capacity_adv_fractions":[0.01,0.025,0.05],"missing_adv_policy":"UNVERIFIED"},
+  "benchmark_identity":"configured point-in-time benchmark return contract",
+  "annualisation":{"periods":252,"risk_free_rate":0.0},
+  "overlap":{"warning":"Ten-session outcomes may overlap and are not independent observations.","ordinary_standard_errors":false},
+  "model_panel":["momentum_120d","risk_adjusted_momentum","ridge","elastic_net","ordered_logit_ranker"],
+  "aggregation":"validate all component manifests before atomic aggregate publication",
+  "comparison":"matched dates and row IDs are authoritative; unmatched results remain descriptive",
+  "operational_panel":{"panel_id":"selector_operational_panel_v1","requested_dates":["2024-03-15","2024-09-16","2025-03-17","2025-09-15","2026-03-16"]},
+  "multi_regime_panel":{"panel_id":"selector_multi_regime_panel_v1","requested_dates":["2008-03-17","2008-06-16","2008-09-15","2008-12-15","2009-03-16","2009-06-15","2009-09-15","2009-12-15","2011-03-15","2011-06-15","2011-09-15","2011-12-15","2015-03-16","2015-06-15","2015-09-15","2015-12-15","2016-03-15","2016-06-15","2016-09-15","2016-12-15","2018-03-15","2018-06-15","2018-09-17","2018-12-17","2020-03-16","2020-06-15","2020-09-15","2020-12-15","2022-03-15","2022-06-15","2022-09-15","2022-12-15","2024-03-15","2024-06-17","2024-09-16","2024-12-16","2025-03-17","2025-06-16","2025-09-15","2025-12-15","2026-01-15","2026-02-17","2026-03-16","2026-04-15","2026-05-15","2026-06-15"]}
+}
