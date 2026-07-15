@@ -1,0 +1,20 @@
+ml:
+  stock_selector_dataset_root: reports/ml/readiness/canonical_v2_selector_dataset_v1/bounded_smoke
+  stock_ranker_include_engineered_features: false
+  random_seed: 42
+  sklearn_n_jobs: 1
+  stock_selector_bounded:
+    dataset_root: reports/ml/readiness/canonical_v2_selector_dataset_v1/bounded_smoke
+    output_root: reports/ml/readiness/canonical_v2_selector_bounded_runner/tiny_validation
+    oos_start_date: '2026-06-23'
+    oos_end_date: '2026-06-25'
+    max_oos_dates: 3
+    model_allowlist:
+    - ridge
+    - elastic_net
+    baseline_allowlist:
+    - momentum_120d
+    - risk_adjusted_momentum
+    include_engineered_features: false
+    resume: true
+    overwrite_incomplete_dates: true

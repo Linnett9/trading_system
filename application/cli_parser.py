@@ -55,6 +55,7 @@ def parse_args():
             "ml-benchmark-return-audit",
             "ml-refresh-adjusted-prices",
             "ml-stock-level-alpha-benchmark",
+            "ml-stock-selector-bounded",
             "ml-stock-selector-final-fit",
             "ml-selector-exposure-comparison",
             "ml-selector-portfolio-promotion",
@@ -187,6 +188,14 @@ def parse_args():
     parser.add_argument("--model-threads", type=int, default=None)
     parser.add_argument("--torch-num-threads", type=int, default=None)
     parser.add_argument("--sklearn-n-jobs", type=int, default=None)
+    parser.add_argument("--oos-start-date", default=None)
+    parser.add_argument("--oos-end-date", default=None)
+    parser.add_argument("--max-oos-dates", type=int, default=None)
+    parser.add_argument("--model-allowlist", nargs="+", default=None)
+    parser.add_argument("--baseline-allowlist", nargs="+", default=None)
+    parser.add_argument("--bounded-output-root", default=None)
+    parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--no-overwrite-incomplete-dates", action="store_true")
     parser.add_argument("--news-risk-parallel", action="store_true")
     parser.add_argument("--news-risk-workers", type=int, default=None)
     parser.add_argument(

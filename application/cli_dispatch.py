@@ -75,6 +75,9 @@ def dispatch(args, config, feed):
     if args.mode == "ml-stock-level-alpha-benchmark":
         _commands("ml_commands").run_ml_stock_level_alpha_benchmark(config)
         return
+    if args.mode == "ml-stock-selector-bounded":
+        _commands("ml_commands").run_ml_stock_selector_bounded(config, args)
+        return
     if args.mode == "ml-stock-selector-final-fit":
         _commands("ml_commands").run_ml_stock_selector_final_fit(config)
         return

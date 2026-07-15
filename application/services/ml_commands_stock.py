@@ -58,6 +58,28 @@ def run_ml_stock_level_alpha_benchmark(config):
     print(f"Leaderboard Markdown: {result.markdown_path}")
     print(f"OOS predictions: {result.predictions_path}")
 
+
+def run_ml_stock_selector_bounded(config, args):
+    from core.research.ml.stock_level.bounded_selector_runner import run_bounded_selector
+
+    overrides = {
+        "oos_start_date": args.oos_start_date,
+        "oos_end_date": args.oos_end_date,
+        "max_oos_dates": args.max_oos_dates,
+        "model_allowlist": args.model_allowlist,
+        "baseline_allowlist": args.baseline_allowlist,
+        "output_root": args.bounded_output_root,
+        "resume": False if args.no_resume else None,
+        "overwrite_incomplete_dates": False if args.no_overwrite_incomplete_dates else None,
+    }
+    result = run_bounded_selector(config, overrides)
+    print("\nBOUNDED DAILY STOCK SELECTOR")
+    print(f"output_root={result['output_root']}")
+    print(f"feature_count={result['feature_count']}")
+    print(f"features={','.join(result['feature_columns'])}")
+    for row in result["dates"]:
+        print(f"date={row['decision_date']} status={row['status']}")
+
 def run_ml_stock_selector_final_fit(config):
     from core.research.ml.stock_level.final_fitted_selector import (
         write_final_fitted_stock_selector,

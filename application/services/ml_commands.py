@@ -47,6 +47,7 @@ _EXPORTS = {
     "run_ml_stock_alpha_parallelism_audit": ("application.services.ml_commands_stock", "run_ml_stock_alpha_parallelism_audit"),
     "run_ml_stock_alpha_run_status": ("application.services.ml_commands_stock", "run_ml_stock_alpha_run_status"),
     "run_ml_stock_level_alpha_benchmark": ("application.services.ml_commands_stock", "run_ml_stock_level_alpha_benchmark"),
+    "run_ml_stock_selector_bounded": ("application.services.ml_commands_stock", "run_ml_stock_selector_bounded"),
     "run_ml_stock_selector_final_fit": ("application.services.ml_commands_stock", "run_ml_stock_selector_final_fit"),
     "run_ml_selector_exposure_comparison": ("application.services.ml_commands_stock", "run_ml_selector_exposure_comparison"),
     "run_ml_selector_portfolio_promotion": ("application.services.ml_commands_stock", "run_ml_selector_portfolio_promotion"),

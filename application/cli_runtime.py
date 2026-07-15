@@ -30,6 +30,7 @@ FEEDLESS_MODES = {
         "ml-online-intraday-benchmark",
         "ml-dual-momentum-stock-score-comparison",
         "ml-stock-level-alpha-benchmark",
+        "ml-stock-selector-bounded",
         "ml-selector-portfolio-promotion",
         "ml-selector-target-tournament",
         "ml-selector-cost-aware-policy-evaluation",

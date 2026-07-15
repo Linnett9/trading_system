@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import shutil
+import subprocess
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping
+
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
+
+from core.research.ml.stock_level.selector_dataset import BASELINE_CANDIDATES, DETERMINISTIC_SIGNAL_COLUMNS
+from core.research.ml.stock_level.stock_level_alpha_features import ENGINEERED_FEATURE_COLUMNS
+from core.research.ml.stock_level_benchmark_models import _build_tabular_model
+from core.research.ml.stock_level_benchmark_types import TARGET_OUTPUT_COLUMNS
+
+CONTRACT_VERSION = "bounded_daily_selector_v1"
+SUPPORTED_MODELS = ("ridge", "elastic_net", "random_forest", "gradient_boosting")
+SUPPORTED_BASELINES = tuple(BASELINE_CANDIDATES)
+OUTCOME_PREFIX = "actual_"
+
+
+@dataclass(frozen=True)
+class BoundedSelectorSettings:
+    dataset_root: Path
+    output_root: Path
+    oos_start_date: str | None
+    oos_end_date: str | None
+    max_oos_dates: int | None
+    model_allowlist: tuple[str, ...]
+    baseline_allowlist: tuple[str, ...]
+    include_engineered_features: bool
+    resume: bool
+    overwrite_incomplete_dates: bool
+    random_seed: int
+    sklearn_n_jobs: int
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> "BoundedSelectorSettings":
+        ml = dict(config.get("ml", {}) or {})
+        raw = dict(ml.get("stock_selector_bounded", {}) or {})
+        raw.update({k: v for k, v in dict(overrides or {}).items() if v is not None})
+        settings = cls(
+            dataset_root=Path(raw.get("dataset_root", ml.get("stock_selector_dataset_root", ""))),
+            output_root=Path(raw.get("output_root", "reports/ml/readiness/canonical_v2_selector_bounded")),
+            oos_start_date=_text(raw.get("oos_start_date")), oos_end_date=_text(raw.get("oos_end_date")),
+            max_oos_dates=int(raw["max_oos_dates"]) if raw.get("max_oos_dates") is not None else None,
+            model_allowlist=tuple(raw.get("model_allowlist", ("ridge", "elastic_net"))),
+            baseline_allowlist=tuple(raw.get("baseline_allowlist", SUPPORTED_BASELINES)),
+            include_engineered_features=bool(raw.get("include_engineered_features", ml.get("stock_ranker_include_engineered_features", False))),
+            resume=bool(raw.get("resume", True)), overwrite_incomplete_dates=bool(raw.get("overwrite_incomplete_dates", True)),
+            random_seed=int(raw.get("random_seed", ml.get("random_seed", 42))),
+            sklearn_n_jobs=int(raw.get("sklearn_n_jobs", ml.get("sklearn_n_jobs", 1))),
+        )
+        settings.validate()
+        return settings
+
+    def validate(self) -> None:
+        if not self.oos_end_date and self.max_oos_dates is None:
+            raise ValueError("Bounded selector mode requires oos_end_date or max_oos_dates")
+        if self.max_oos_dates is not None and self.max_oos_dates < 1:
+            raise ValueError("max_oos_dates must be positive")
+        if self.oos_start_date and self.oos_end_date and self.oos_start_date > self.oos_end_date:
+            raise ValueError("oos_start_date cannot exceed oos_end_date")
+        unknown_models = sorted(set(self.model_allowlist) - set(SUPPORTED_MODELS))
+        unknown_baselines = sorted(set(self.baseline_allowlist) - set(SUPPORTED_BASELINES))
+        if unknown_models or unknown_baselines:
+            raise ValueError(f"Unsupported bounded candidates: models={unknown_models}; baselines={unknown_baselines}")
+
+
+def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    settings = BoundedSelectorSettings.from_config(config, overrides)
+    manifest = _read_json(settings.dataset_root / "manifest.json")
+    rows_path = settings.dataset_root / "rows.parquet"
+    scores_path = settings.dataset_root / "baseline_scores.parquet"
+    if not rows_path.exists() or not scores_path.exists():
+        raise FileNotFoundError("Frozen selector rows and baseline sidecar are required")
+    feature_columns = _resolve_features(rows_path, settings.include_engineered_features)
+    selected_dates = _select_dates(rows_path, settings)
+    run_identity = _run_identity(settings, manifest, feature_columns)
+    settings.output_root.mkdir(parents=True, exist_ok=True)
+    results = []
+    for decision_date in selected_dates:
+        destination = settings.output_root / f"date={decision_date}"
+        if settings.resume and _valid_completed_date(destination, decision_date, run_identity, rows_path):
+            results.append({"decision_date": decision_date, "status": "skipped_complete"})
+            continue
+        if destination.exists():
+            if not settings.overwrite_incomplete_dates:
+                raise RuntimeError(f"Incomplete/incompatible date exists and overwrite is disabled: {destination}")
+            _remove_date_dir(destination, settings.output_root)
+        results.append(_run_date(settings, manifest, rows_path, scores_path, decision_date, feature_columns, run_identity))
+    summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), "include_engineered_features": settings.include_engineered_features, "output_root": str(settings.output_root)}
+    _atomic_json(settings.output_root / "run_summary.json", summary)
+    return summary
+
+
+def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date, feature_columns, run_identity):
+    started = time.perf_counter()
+    rows_ds, scores_ds = ds.dataset(rows_path, format="parquet"), ds.dataset(scores_path, format="parquet")
+    oos_filter = (ds.field("decision_session_date") == decision_date) & (ds.field("selector_eligible") == True)
+    source_columns = [name for name in _source_columns(feature_columns) if name in rows_ds.schema.names]
+    oos_source = rows_ds.to_table(columns=source_columns, filter=oos_filter)
+    if not oos_source.num_rows:
+        raise RuntimeError(f"No eligible OOS rows for {decision_date}")
+    decision_timestamp = str(oos_source["decision_timestamp"][0].as_py())
+    train_filter = (ds.field("decision_timestamp") < decision_timestamp) & (ds.field("label_available_timestamp") <= decision_timestamp) & (ds.field("selector_eligible") == True) & (ds.field("target_status") == "realized")
+    train_source = rows_ds.to_table(columns=source_columns, filter=train_filter)
+    score_columns = ["row_id", *DETERMINISTIC_SIGNAL_COLUMNS]
+    train_scores = scores_ds.to_table(columns=score_columns, filter=ds.field("decision_timestamp") < decision_timestamp)
+    oos_scores = scores_ds.to_table(columns=score_columns, filter=ds.field("decision_timestamp") == decision_timestamp)
+    train = train_source.join(train_scores, keys="row_id", join_type="inner")
+    oos = oos_source.join(oos_scores, keys="row_id", join_type="inner")
+    if train.num_rows != train_source.num_rows or oos.num_rows != oos_source.num_rows:
+        raise RuntimeError("Frozen rows and baseline sidecar populations do not match")
+    training_decision_max = str(pc.max(train["decision_timestamp"]).as_py())
+    training_label_max = str(pc.max(train["label_available_timestamp"]).as_py())
+    if training_decision_max >= decision_timestamp or training_label_max > decision_timestamp:
+        raise RuntimeError("Bounded selector temporal training guard failed")
+    _validate_features(train, feature_columns)
+    x_train = _matrix(train, feature_columns); y_train = _float_array(train["actual_forward_return_10d"])
+    x_oos = _matrix(oos, feature_columns)
+    prediction_columns: dict[str, pa.Array] = {}
+    statuses, timings = {}, {}
+    for model_id in settings.model_allowlist:
+        model_started = time.perf_counter()
+        model = _build_tabular_model(model_id, settings.random_seed, settings.sklearn_n_jobs)
+        model.fit(x_train, y_train)
+        values = [float(value) for value in model.predict(x_oos)]
+        column = f"stock_level_predicted_forward_return_10d_{model_id}"
+        prediction_columns[column] = pa.array(values, type=pa.float64())
+        timings[model_id] = time.perf_counter() - model_started; statuses[model_id] = "complete"
+    for baseline_id in settings.baseline_allowlist:
+        column = BASELINE_CANDIDATES[baseline_id]
+        prediction_columns[column] = oos[column]
+        statuses[baseline_id] = "complete"; timings[baseline_id] = 0.0
+    keep = [name for name in ("row_id", "asset_id", "symbol", "rebalance_date", "decision_timestamp", "decision_session_date", "label_available_timestamp", "actual_forward_return_10d", *TARGET_OUTPUT_COLUMNS) if name in oos.schema.names]
+    predictions = oos.select(keep)
+    for name, values in prediction_columns.items(): predictions = predictions.append_column(name, values)
+    _validate_predictions(predictions, decision_date, tuple(prediction_columns))
+    temp_dir = settings.output_root / f".date={decision_date}.{uuid.uuid4().hex}.tmp"
+    temp_dir.mkdir(parents=True)
+    prediction_path = temp_dir / "predictions.parquet"
+    pq.write_table(predictions, prediction_path, compression="zstd")
+    checksum = _sha256(prediction_path)
+    metrics = {"decision_date": decision_date, "training_row_count": train.num_rows, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "model_timings_seconds": timings}
+    _atomic_json(temp_dir / "metrics.json", metrics)
+    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": train.num_rows, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
+    _atomic_json(temp_dir / "manifest.json", manifest)
+    os.replace(temp_dir, settings.output_root / f"date={decision_date}")
+    return {"decision_date": decision_date, "status": "complete", **metrics, "elapsed_seconds": manifest["elapsed_seconds"]}
+
+
+def _valid_completed_date(path: Path, decision_date: str, identity: Mapping[str, Any], rows_path: Path) -> bool:
+    try:
+        manifest = _read_json(path / "manifest.json")
+        if manifest.get("completion_status") != "complete" or manifest.get("decision_date") != decision_date:
+            return False
+        if not manifest.get("training_decision_timestamp_max") or not manifest.get("training_label_available_timestamp_max"):
+            return False
+        if any(manifest.get(key) != value for key, value in identity.items()): return False
+        predictions_path = path / "predictions.parquet"
+        if _sha256(predictions_path) != manifest.get("prediction_checksum"): return False
+        table = pq.read_table(predictions_path)
+        candidates = tuple(f"stock_level_predicted_forward_return_10d_{name}" for name in identity["model_allowlist"]) + tuple(BASELINE_CANDIDATES[name] for name in identity["baseline_allowlist"])
+        _validate_predictions(table, decision_date, candidates)
+        source_ids = set(ds.dataset(rows_path, format="parquet").to_table(columns=["row_id"], filter=ds.field("decision_session_date") == decision_date)["row_id"].to_pylist())
+        return set(table["row_id"].to_pylist()) <= source_ids
+    except Exception:
+        return False
+
+
+def _select_dates(rows_path: Path, settings: BoundedSelectorSettings) -> list[str]:
+    filt = None
+    if settings.oos_start_date: filt = ds.field("decision_session_date") >= settings.oos_start_date
+    if settings.oos_end_date:
+        end = ds.field("decision_session_date") <= settings.oos_end_date
+        filt = end if filt is None else filt & end
+    table = ds.dataset(rows_path, format="parquet").to_table(columns=["decision_session_date"], filter=filt)
+    dates = sorted(set(table["decision_session_date"].to_pylist()))
+    if settings.max_oos_dates is not None: dates = dates[:settings.max_oos_dates] if settings.oos_start_date else dates[-settings.max_oos_dates:]
+    if not dates: raise RuntimeError("Bounded selector date selection is empty")
+    return dates
+
+
+def _resolve_features(rows_path: Path, include_engineered: bool) -> tuple[str, ...]:
+    names = set(pq.ParquetFile(rows_path).schema_arrow.names)
+    engineered = tuple(name for name in ENGINEERED_FEATURE_COLUMNS if name in names) if include_engineered else ()
+    features = (*DETERMINISTIC_SIGNAL_COLUMNS, *engineered)
+    missing = sorted(set(engineered) - names)
+    if missing: raise RuntimeError(f"Requested engineered features are missing: {missing}")
+    if any(name.startswith(OUTCOME_PREFIX) for name in features): raise RuntimeError("Outcome columns cannot be selector features")
+    return features
+
+
+def _source_columns(features):
+    base = ["row_id", "asset_id", "symbol", "rebalance_date", "decision_timestamp", "decision_session_date", "label_available_timestamp", "selector_eligible", "target_status", "actual_forward_return_10d", *TARGET_OUTPUT_COLUMNS]
+    return list(dict.fromkeys([*base, *(name for name in features if name not in DETERMINISTIC_SIGNAL_COLUMNS)]))
+
+
+def _matrix(table: pa.Table, features):
+    import numpy as np
+    return np.column_stack([pc.cast(table[name], pa.float64()).to_numpy(zero_copy_only=False) for name in features])
+
+
+def _float_array(column): return pc.cast(column, pa.float64()).to_numpy(zero_copy_only=False)
+
+
+def _validate_features(table, features):
+    for name in features:
+        if name not in table.schema.names or table[name].null_count == table.num_rows:
+            raise RuntimeError(f"Requested selector feature is missing or entirely null: {name}")
+
+
+def _validate_predictions(table, decision_date, candidates):
+    ids = table["row_id"].to_pylist()
+    if len(ids) != len(set(ids)): raise RuntimeError("Prediction row IDs are not unique")
+    if set(table["decision_session_date"].to_pylist()) != {decision_date}: raise RuntimeError("Prediction rows contain an unexpected decision date")
+    for name in candidates:
+        if name not in table.schema.names: raise RuntimeError(f"Missing candidate prediction: {name}")
+        if any(value is None or not math.isfinite(float(value)) for value in table[name].to_pylist()): raise RuntimeError(f"Candidate contains non-finite predictions: {name}")
+
+
+def _run_identity(settings, manifest, features):
+    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "runner_contract_version": CONTRACT_VERSION}
+    payload["config_hash"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return payload
+
+
+def _remove_date_dir(path, root):
+    if path.parent.resolve() != root.resolve(): raise RuntimeError("Unsafe bounded date path")
+    shutil.rmtree(path)
+
+
+def _atomic_json(path, payload):
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp"); tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8"); os.replace(tmp, path)
+
+
+def _read_json(path): return json.loads(path.read_text(encoding="utf-8"))
+def _sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""): digest.update(chunk)
+    return digest.hexdigest().upper()
+def _git_commit(): return subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+def _text(value): return str(value).strip() if value not in (None, "") else None
