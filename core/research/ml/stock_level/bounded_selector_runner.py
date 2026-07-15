@@ -24,10 +24,21 @@ from core.research.ml.stock_level.selector_feature_schema import load_feature_sc
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
 from core.research.ml.stock_level_benchmark_types import TARGET_OUTPUT_COLUMNS
 
-CONTRACT_VERSION = "bounded_daily_selector_v1"
+CONTRACT_VERSION = "bounded_daily_selector_v2"
+PREDICTION_QUALITY_CONTRACT_VERSION = "fitted_candidate_prediction_quality_v1"
+MIN_PREDICTION_STANDARD_DEVIATION = 1e-12
+MIN_PREDICTION_RANGE = 1e-12
+PREDICTION_QUANTILES = (0.0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1.0)
 SUPPORTED_MODELS = ("ridge", "elastic_net", "random_forest", "gradient_boosting")
 SUPPORTED_BASELINES = tuple(BASELINE_CANDIDATES)
 OUTCOME_PREFIX = "actual_"
+
+
+class PredictionQualityError(RuntimeError):
+    def __init__(self, reasons: list[str], metrics: Mapping[str, Any]):
+        self.reasons = reasons
+        self.metrics = dict(metrics)
+        super().__init__("; ".join(reasons))
 
 
 @dataclass(frozen=True)
@@ -110,7 +121,7 @@ def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any]
                 raise RuntimeError(f"Incomplete/incompatible date exists and overwrite is disabled: {destination}")
             _remove_date_dir(destination, settings.output_root)
         results.append(_run_date(settings, manifest, rows_path, scores_path, decision_date, feature_columns, run_identity))
-    summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), "include_engineered_features": settings.include_engineered_features, "selected_feature_schema": selected_schema, "output_root": str(settings.output_root)}
+    summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), **_feature_selection_reporting(settings, feature_columns, selected_schema), "output_root": str(settings.output_root)}
     _atomic_json(settings.output_root / "run_summary.json", summary)
     return summary
 
@@ -156,21 +167,27 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
         print(f"date={decision_date} model={model_id} status=starting rows={training_row_count} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
         try:
             fit_started = time.perf_counter(); model.fit(x_train, y_train); fit_elapsed = time.perf_counter() - fit_started
-            predict_started = time.perf_counter(); values = [float(value) for value in model.predict(x_oos)]; predict_elapsed = time.perf_counter() - predict_started
+            predict_started = time.perf_counter(); raw_values = model.predict(x_oos); predict_elapsed = time.perf_counter() - predict_started
+            quality = _prediction_quality(raw_values, oos.num_rows, require_dispersion=True)
+            values = quality.pop("values")
         except BaseException as exc:
             statuses[model_id] = "failed"
             print(f"date={decision_date} model={model_id} status=failed error={type(exc).__name__}:{exc}")
+            if isinstance(exc, PredictionQualityError):
+                _atomic_json(settings.output_root / f"date={decision_date}.model={model_id}.failure.json", {"decision_date": decision_date, "model_id": model_id, "status": "rejected", "prediction_quality_contract": _prediction_quality_contract(), "prediction_quality": exc.metrics, "rejection_reasons": exc.reasons})
             raise
         column = f"stock_level_predicted_forward_return_10d_{model_id}"; prediction_columns[column] = pa.array(values, type=pa.float64())
         timings[model_id] = {"fit_seconds": fit_elapsed, "prediction_seconds": predict_elapsed, "total_seconds": fit_elapsed + predict_elapsed}
-        model_details[model_id] = {"status": "complete", "parameters": parameters, "prediction_coverage": len(values) / oos.num_rows, "prediction_dispersion": float(pc.stddev(prediction_columns[column]).as_py()) if len(values) > 1 else 0.0, **timings[model_id]}
+        model_details[model_id] = {"status": "complete", "parameters": parameters, "prediction_quality": quality, "prediction_coverage": quality["coverage"], "prediction_dispersion": quality["standard_deviation"], **timings[model_id]}
         statuses[model_id] = "complete"
         print(f"date={decision_date} model={model_id} status=complete fit_seconds={fit_elapsed:.6f} prediction_seconds={predict_elapsed:.6f}")
     for baseline_id in settings.baseline_allowlist:
         column = BASELINE_CANDIDATES[baseline_id]
         prediction_columns[column] = oos[column]
+        baseline_quality = _prediction_quality(oos[column].to_numpy(zero_copy_only=False), oos.num_rows, require_dispersion=False)
+        baseline_quality.pop("values")
         statuses[baseline_id] = "complete"; timings[baseline_id] = {"fit_seconds": 0.0, "prediction_seconds": 0.0, "total_seconds": 0.0}
-        model_details[baseline_id] = {"status": "complete", "parameters": {"trainable": False}, **timings[baseline_id]}
+        model_details[baseline_id] = {"status": "complete", "parameters": {"trainable": False}, "prediction_quality": baseline_quality, **timings[baseline_id]}
     keep = [name for name in ("row_id", "asset_id", "symbol", "rebalance_date", "decision_timestamp", "decision_session_date", "label_available_timestamp", "actual_forward_return_10d", *TARGET_OUTPUT_COLUMNS) if name in oos.schema.names]
     predictions = oos.select(keep)
     for name, values in prediction_columns.items(): predictions = predictions.append_column(name, values)
@@ -180,11 +197,13 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     prediction_path = temp_dir / "predictions.parquet"
     pq.write_table(predictions, prediction_path, compression="zstd")
     checksum = _sha256(prediction_path)
-    metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
+    metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "prediction_quality_contract": _prediction_quality_contract(), "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
     _atomic_json(temp_dir / "metrics.json", metrics)
     manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
     _atomic_json(temp_dir / "manifest.json", manifest)
     os.replace(temp_dir, settings.output_root / f"date={decision_date}")
+    for model_id in settings.model_allowlist:
+        (settings.output_root / f"date={decision_date}.model={model_id}.failure.json").unlink(missing_ok=True)
     return {"decision_date": decision_date, "status": "complete", **metrics, "elapsed_seconds": manifest["elapsed_seconds"]}
 
 
@@ -201,6 +220,10 @@ def _valid_completed_date(path: Path, decision_date: str, identity: Mapping[str,
         table = pq.read_table(predictions_path)
         candidates = tuple(f"stock_level_predicted_forward_return_10d_{name}" for name in identity["model_allowlist"]) + tuple(BASELINE_CANDIDATES[name] for name in identity["baseline_allowlist"])
         _validate_predictions(table, decision_date, candidates)
+        for model_id in identity["model_allowlist"]:
+            _prediction_quality(table[f"stock_level_predicted_forward_return_10d_{model_id}"].to_numpy(zero_copy_only=False), table.num_rows, require_dispersion=True)
+        for baseline_id in identity["baseline_allowlist"]:
+            _prediction_quality(table[BASELINE_CANDIDATES[baseline_id]].to_numpy(zero_copy_only=False), table.num_rows, require_dispersion=False)
         source_ids = set(ds.dataset(rows_path, format="parquet").to_table(columns=["row_id"], filter=ds.field("decision_session_date") == decision_date)["row_id"].to_pylist())
         return set(table["row_id"].to_pylist()) <= source_ids
     except Exception:
@@ -273,8 +296,85 @@ def _validate_predictions(table, decision_date, candidates):
         if any(value is None or not math.isfinite(float(value)) for value in table[name].to_pylist()): raise RuntimeError(f"Candidate contains non-finite predictions: {name}")
 
 
+def _prediction_quality(values: Any, expected_count: int, *, require_dispersion: bool) -> dict[str, Any]:
+    import numpy as np
+    array = np.asarray(values)
+    reasons: list[str] = []
+    if array.ndim != 1:
+        reasons.append(f"prediction_output_must_be_one_dimensional: ndim={array.ndim}")
+        flat = array.reshape(-1)
+    else:
+        flat = array
+    try:
+        numeric = flat.astype(np.float64, copy=False)
+    except (TypeError, ValueError) as exc:
+        raise PredictionQualityError([f"predictions_are_not_numeric: {exc}"], {"prediction_count": int(flat.size), "expected_count": expected_count}) from exc
+    count = int(numeric.size)
+    finite_mask = np.isfinite(numeric)
+    finite = numeric[finite_mask]
+    finite_count = int(finite.size)
+    coverage = finite_count / expected_count if expected_count else 0.0
+    unique_count = int(np.unique(finite).size)
+    minimum = float(np.min(finite)) if finite_count else None
+    maximum = float(np.max(finite)) if finite_count else None
+    mean = float(np.mean(finite)) if finite_count else None
+    standard_deviation = float(np.std(finite, ddof=0)) if finite_count else None
+    value_range = maximum - minimum if finite_count else None
+    quantiles = {f"q{int(q * 100):03d}": float(np.quantile(finite, q)) for q in PREDICTION_QUANTILES} if finite_count else {}
+    metrics = {
+        "contract_version": PREDICTION_QUALITY_CONTRACT_VERSION,
+        "validation_scope": "fitted_candidate" if require_dispersion else "direct_baseline",
+        "prediction_count": count,
+        "expected_count": expected_count,
+        "finite_count": finite_count,
+        "coverage": coverage,
+        "unique_finite_value_count": unique_count,
+        "minimum": minimum,
+        "maximum": maximum,
+        "mean": mean,
+        "standard_deviation": standard_deviation,
+        "range": value_range,
+        "quantiles": quantiles,
+        "distinct_rank_count": unique_count,
+        "dispersion_requirement_applied": require_dispersion,
+    }
+    if count != expected_count:
+        reasons.append(f"prediction_count_mismatch: expected={expected_count} actual={count}")
+    if finite_count != count:
+        reasons.append(f"non_finite_predictions: count={count - finite_count}")
+    if coverage < 1.0:
+        reasons.append(f"prediction_coverage_below_one: coverage={coverage}")
+    if require_dispersion:
+        if unique_count < 2:
+            reasons.append(f"unique_finite_prediction_count_below_two: actual={unique_count}")
+        if standard_deviation is None or standard_deviation < MIN_PREDICTION_STANDARD_DEVIATION:
+            reasons.append(f"prediction_standard_deviation_below_tolerance: actual={standard_deviation} tolerance={MIN_PREDICTION_STANDARD_DEVIATION}")
+        if value_range is None or value_range < MIN_PREDICTION_RANGE:
+            reasons.append(f"prediction_range_below_tolerance: actual={value_range} tolerance={MIN_PREDICTION_RANGE}")
+    if reasons:
+        metrics["status"] = "rejected"; metrics["rejection_reasons"] = reasons
+        raise PredictionQualityError(reasons, metrics)
+    metrics["status"] = "accepted"
+    metrics["values"] = [float(value) for value in numeric]
+    return metrics
+
+
+def _prediction_quality_contract() -> dict[str, Any]:
+    return {
+        "contract_version": PREDICTION_QUALITY_CONTRACT_VERSION,
+        "fitted_candidate_requirements": {"finite": True, "coverage": 1.0, "minimum_unique_finite_values": 2, "minimum_standard_deviation": MIN_PREDICTION_STANDARD_DEVIATION, "minimum_range": MIN_PREDICTION_RANGE},
+        "direct_baseline_dispersion_requirement": False,
+        "quantiles": list(PREDICTION_QUANTILES),
+    }
+
+
+def _feature_selection_reporting(settings: BoundedSelectorSettings, features, selected_schema) -> dict[str, Any]:
+    mode = "explicit_versioned_schema" if selected_schema else "legacy_engineered_flag" if settings.include_engineered_features else "compatibility_signals_only"
+    return {"feature_selection_mode": mode, "selected_feature_count": len(features), "selected_feature_schema": selected_schema, "legacy_include_engineered_features_flag": settings.include_engineered_features}
+
+
 def _run_identity(settings, manifest, features, selected_schema):
-    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "selected_feature_schema": selected_schema, "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
+    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), **_feature_selection_reporting(settings, features, selected_schema), "prediction_quality_contract": _prediction_quality_contract(), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
     payload["config_hash"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return payload
 

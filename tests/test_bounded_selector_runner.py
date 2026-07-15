@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from core.research.ml.stock_level.bounded_selector_runner import BoundedSelectorSettings, run_bounded_selector
+from core.research.ml.stock_level.bounded_selector_runner import BoundedSelectorSettings, PredictionQualityError, _prediction_quality, run_bounded_selector
 from core.research.ml.stock_level.selector_dataset import DETERMINISTIC_SIGNAL_COLUMNS
 from core.research.ml.stock_level.selector_feature_schema import schema_hash
 
@@ -19,11 +19,11 @@ def _dataset(tmp_path: Path) -> Path:
     start = date(2024, 1, 1)
     for index in range(14):
         day = (start + timedelta(days=index)).isoformat()
-        for symbol_index, symbol in enumerate(("AAA", "BBB")):
+        for symbol_index, symbol in enumerate(("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")):
             row_id = f"{day}-{symbol}"
-            rows.append({"row_id": row_id, "asset_id": symbol, "symbol": symbol, "rebalance_date": day, "decision_session_date": day, "decision_timestamp": f"{day} 20:05:00+00:00", "label_available_timestamp": f"{(start + timedelta(days=index + 2)).isoformat()} 20:05:00+00:00", "selector_eligible": True, "target_status": "realized", "actual_forward_return_10d": 0.01 * (index + symbol_index + 1), "actual_benchmark_return_10d": 0.005})
+            rows.append({"row_id": row_id, "asset_id": symbol, "symbol": symbol, "rebalance_date": day, "decision_session_date": day, "decision_timestamp": f"{day} 20:05:00+00:00", "label_available_timestamp": f"{(start + timedelta(days=index + 2)).isoformat()} 20:05:00+00:00", "selector_eligible": True, "target_status": "realized", "actual_forward_return_10d": 0.01 * (symbol_index + 1) + 0.0001 * index, "actual_benchmark_return_10d": 0.005})
             score = {"row_id": row_id, "decision_timestamp": f"{day} 20:05:00+00:00"}
-            score.update({name: 0.01 * (index + symbol_index + offset + 1) for offset, name in enumerate(DETERMINISTIC_SIGNAL_COLUMNS)})
+            score.update({name: symbol_index + 0.01 * index + 0.001 * offset for offset, name in enumerate(DETERMINISTIC_SIGNAL_COLUMNS)})
             scores.append(score)
     pq.write_table(pa.Table.from_pylist(rows), root / "rows.parquet")
     pq.write_table(pa.Table.from_pylist(scores), root / "baseline_scores.parquet")
@@ -51,17 +51,20 @@ def test_explicit_range_and_max_dates_write_atomic_unique_populations(tmp_path: 
     for day in ("2024-01-10", "2024-01-11"):
         partition = output / f"date={day}"
         manifest = json.loads((partition / "manifest.json").read_text())
+        metrics = json.loads((partition / "metrics.json").read_text())
         predictions = pq.read_table(partition / "predictions.parquet")
         assert manifest["completion_status"] == "complete"
-        assert manifest["oos_row_count"] == 2
-        assert manifest["training_row_count"] < 28
+        assert manifest["oos_row_count"] == 6
+        assert manifest["training_row_count"] < 84
         assert manifest["training_decision_timestamp_max"] < manifest["label_availability_cutoff"]
         assert manifest["training_label_available_timestamp_max"] <= manifest["label_availability_cutoff"]
-        assert len(set(predictions["row_id"].to_pylist())) == 2
+        assert len(set(predictions["row_id"].to_pylist())) == 6
         assert set(predictions["decision_session_date"].to_pylist()) == {day}
         assert all(not name.startswith("actual_") for name in result["feature_columns"])
         for candidate in ("predicted_momentum_120d", "predicted_risk_adjusted_momentum", "stock_level_predicted_forward_return_10d_ridge", "stock_level_predicted_forward_return_10d_elastic_net"):
             assert predictions[candidate].null_count == 0
+        assert metrics["model_details"]["momentum_120d"]["prediction_quality"]["dispersion_requirement_applied"] is False
+        assert metrics["model_details"]["risk_adjusted_momentum"]["prediction_quality"]["coverage"] == 1.0
 
 
 def test_resume_skips_only_valid_complete_date(tmp_path: Path):
@@ -69,6 +72,8 @@ def test_resume_skips_only_valid_complete_date(tmp_path: Path):
     first = run_bounded_selector(config); second = run_bounded_selector(config)
     assert first["dates"][0]["status"] == "complete"
     assert second["dates"][0]["status"] == "skipped_complete"
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    assert manifest["prediction_quality_contract"]["contract_version"] == "fitted_candidate_prediction_quality_v1"
 
 
 def test_changed_explicit_feature_schema_identity_reruns(tmp_path: Path):
@@ -84,6 +89,9 @@ def test_changed_explicit_feature_schema_identity_reruns(tmp_path: Path):
     assert second["dates"][0]["status"] == "complete"
     manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
     assert manifest["selected_feature_schema"]["schema_hash"] == json.loads(paths[1].read_text())["schema_hash"]
+    assert manifest["feature_selection_mode"] == "explicit_versioned_schema"
+    assert manifest["selected_feature_count"] == len(DETERMINISTIC_SIGNAL_COLUMNS)
+    assert manifest["legacy_include_engineered_features_flag"] is False
 
 
 @pytest.mark.parametrize("damage", ["incomplete", "corrupt", "config_mismatch"])
@@ -131,8 +139,8 @@ def test_isolated_tree_smoke_completes_and_reports_parameters(tmp_path: Path, mo
 
 def test_changed_tree_override_reruns_completed_date(tmp_path: Path):
     root = _dataset(tmp_path); output = tmp_path / "tree"
-    first = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 2})
-    second = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 3})
+    first = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 2, "random_forest_min_samples_leaf": 2})
+    second = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 3, "random_forest_min_samples_leaf": 2})
     run_bounded_selector(first)
     result = run_bounded_selector(second)
     manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
@@ -152,3 +160,46 @@ def test_failed_candidate_never_creates_complete_date(tmp_path: Path, monkeypatc
     with pytest.raises(KeyboardInterrupt):
         run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"]))
     assert not (output / "date=2024-01-10" / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("values", [[0.01, 0.01, 0.01], [0.01, 0.01 + 1e-15, 0.01 + 2e-15]])
+def test_constant_and_numerically_constant_predictions_are_rejected(values):
+    with pytest.raises(PredictionQualityError, match="below_tolerance"):
+        _prediction_quality(values, len(values), require_dispersion=True)
+
+
+def test_genuinely_varying_small_predictions_are_accepted():
+    quality = _prediction_quality([-2e-8, 0.0, 2e-8], 3, require_dispersion=True)
+    assert quality["status"] == "accepted"
+    assert quality["unique_finite_value_count"] == 3
+
+
+def test_non_finite_and_scalar_predictions_are_rejected():
+    with pytest.raises(PredictionQualityError, match="non_finite_predictions"):
+        _prediction_quality([0.0, float("nan")], 2, require_dispersion=True)
+    with pytest.raises(PredictionQualityError, match="one_dimensional"):
+        _prediction_quality(0.01, 2, require_dispersion=True)
+
+
+def test_degenerate_candidate_records_failure_without_complete_manifest(tmp_path: Path, monkeypatch):
+    import core.research.ml.stock_level.bounded_selector_runner as runner
+    root = _dataset(tmp_path); output = tmp_path / "degenerate"
+
+    class ConstantModel:
+        def get_params(self): return {}
+        def fit(self, x, y): return self
+        def predict(self, x): return [0.01] * len(x)
+
+    monkeypatch.setattr(runner, "_bounded_model", lambda *args: ConstantModel())
+    with pytest.raises(PredictionQualityError, match="unique_finite_prediction_count_below_two"):
+        run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["ridge"], baseline_allowlist=[]))
+    assert not (output / "date=2024-01-10" / "manifest.json").exists()
+    failure = json.loads((output / "date=2024-01-10.model=ridge.failure.json").read_text())
+    assert failure["status"] == "rejected"
+    assert failure["prediction_quality"]["unique_finite_value_count"] == 1
+
+
+def test_constant_direct_baseline_is_not_subject_to_dispersion_gate():
+    quality = _prediction_quality([0.5, 0.5, 0.5], 3, require_dispersion=False)
+    assert quality["status"] == "accepted"
+    assert quality["dispersion_requirement_applied"] is False
