@@ -42,6 +42,11 @@ def parse_args():
             "ml-run-inventory",
             "ml-clean-incomplete-runs",
             "ml-validate-artifacts",
+            "ml-artifact-lineage-verify",
+            "ml-registry-verify",
+            "ml-selector-evaluation-preflight",
+            "ml-selector-panel-resolve",
+            "ml-legacy-artifact-evidence-import",
             "ml-smoke-test",
             "ml-data-inventory",
             "ml-historical-bar-backfill-probe",
@@ -219,6 +224,21 @@ def parse_args():
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", action="store_true", dest="json_output")
     parser.add_argument("--artifact-list", action="store_true")
+    parser.add_argument("--artifact-manifest", default=None)
+    parser.add_argument("--expected-artifact-kind", default=None)
+    parser.add_argument("--require-promotion-grade", action="store_true")
+    parser.add_argument("--verification-output", default=None)
+    parser.add_argument("--frozen-panel", default=None)
+    parser.add_argument("--evaluation-output-root", default=None)
+    parser.add_argument("--selector-manifest-root", nargs="+", default=None)
+    parser.add_argument("--panel-config", default=None)
+    parser.add_argument("--panel-output-root", default=None)
+    parser.add_argument("--expected-decision-date", default=None)
+    parser.add_argument("--expected-replay-link", default=None)
+    parser.add_argument("--legacy-manifest", default=None)
+    parser.add_argument("--ordinary-selector-output-root", default=None)
+    parser.add_argument("--ordinary-selector-manifest-root", default=None)
+    parser.add_argument("--exposure-dataset-manifest-root", default=None)
     parser.add_argument(
         "--strategies",
         nargs="+",

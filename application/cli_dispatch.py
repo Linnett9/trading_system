@@ -66,6 +66,21 @@ def dispatch(args, config, feed):
     if args.mode == "ml-validate-artifacts":
         _commands("ml_commands").run_ml_validate_artifacts(config)
         return
+    if args.mode == "ml-artifact-lineage-verify":
+        _commands("ml_lineage_commands").run_artifact_lineage_verify(config, args)
+        return
+    if args.mode == "ml-registry-verify":
+        _commands("ml_lineage_commands").run_registry_verify(config, args)
+        return
+    if args.mode == "ml-selector-evaluation-preflight":
+        _commands("selector_evaluation_commands").run_selector_evaluation_preflight(config, args)
+        return
+    if args.mode == "ml-selector-panel-resolve":
+        _commands("selector_evaluation_commands").run_selector_panel_resolve(config, args)
+        return
+    if args.mode == "ml-legacy-artifact-evidence-import":
+        _commands("ml_lineage_commands").run_legacy_evidence_import(config, args)
+        return
     if args.mode == "ml-meta-ensemble":
         _commands("ml_commands").run_ml_meta_ensemble(config)
         return
