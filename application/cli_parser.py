@@ -196,6 +196,13 @@ def parse_args():
     parser.add_argument("--bounded-output-root", default=None)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--no-overwrite-incomplete-dates", action="store_true")
+    parser.add_argument("--rf-estimators", type=int, default=None)
+    parser.add_argument("--rf-max-depth", type=int, default=None)
+    parser.add_argument("--rf-min-samples-leaf", type=int, default=None)
+    parser.add_argument("--gb-estimators", type=int, default=None)
+    parser.add_argument("--gb-max-depth", type=int, default=None)
+    parser.add_argument("--gb-learning-rate", type=float, default=None)
+    parser.add_argument("--training-row-cap", type=int, default=None)
     parser.add_argument("--news-risk-parallel", action="store_true")
     parser.add_argument("--news-risk-workers", type=int, default=None)
     parser.add_argument(

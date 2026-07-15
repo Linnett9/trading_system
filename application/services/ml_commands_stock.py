@@ -62,6 +62,15 @@ def run_ml_stock_level_alpha_benchmark(config):
 def run_ml_stock_selector_bounded(config, args):
     from core.research.ml.stock_level.bounded_selector_runner import run_bounded_selector
 
+    smoke_overrides = {
+        "random_forest_n_estimators": args.rf_estimators,
+        "random_forest_max_depth": args.rf_max_depth,
+        "random_forest_min_samples_leaf": args.rf_min_samples_leaf,
+        "gradient_boosting_n_estimators": args.gb_estimators,
+        "gradient_boosting_max_depth": args.gb_max_depth,
+        "gradient_boosting_learning_rate": args.gb_learning_rate,
+        "training_row_cap": args.training_row_cap,
+    }
     overrides = {
         "oos_start_date": args.oos_start_date,
         "oos_end_date": args.oos_end_date,
@@ -71,6 +80,7 @@ def run_ml_stock_selector_bounded(config, args):
         "output_root": args.bounded_output_root,
         "resume": False if args.no_resume else None,
         "overwrite_incomplete_dates": False if args.no_overwrite_incomplete_dates else None,
+        "smoke_overrides": smoke_overrides if any(value is not None for value in smoke_overrides.values()) else None,
     }
     result = run_bounded_selector(config, overrides)
     print("\nBOUNDED DAILY STOCK SELECTOR")

@@ -42,6 +42,7 @@ class BoundedSelectorSettings:
     overwrite_incomplete_dates: bool
     random_seed: int
     sklearn_n_jobs: int
+    smoke_overrides: Mapping[str, Any]
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> "BoundedSelectorSettings":
@@ -59,6 +60,7 @@ class BoundedSelectorSettings:
             resume=bool(raw.get("resume", True)), overwrite_incomplete_dates=bool(raw.get("overwrite_incomplete_dates", True)),
             random_seed=int(raw.get("random_seed", ml.get("random_seed", 42))),
             sklearn_n_jobs=int(raw.get("sklearn_n_jobs", ml.get("sklearn_n_jobs", 1))),
+            smoke_overrides={k: v for k, v in dict(raw.get("smoke_overrides", {}) or {}).items() if v is not None},
         )
         settings.validate()
         return settings
@@ -74,6 +76,12 @@ class BoundedSelectorSettings:
         unknown_baselines = sorted(set(self.baseline_allowlist) - set(SUPPORTED_BASELINES))
         if unknown_models or unknown_baselines:
             raise ValueError(f"Unsupported bounded candidates: models={unknown_models}; baselines={unknown_baselines}")
+        allowed_overrides = {"random_forest_n_estimators", "random_forest_max_depth", "random_forest_min_samples_leaf", "gradient_boosting_n_estimators", "gradient_boosting_max_depth", "gradient_boosting_learning_rate", "training_row_cap"}
+        unknown_overrides = sorted(set(self.smoke_overrides) - allowed_overrides)
+        if unknown_overrides:
+            raise ValueError(f"Unsupported bounded smoke overrides: {unknown_overrides}")
+        if any(float(value) <= 0 for value in self.smoke_overrides.values()):
+            raise ValueError("Bounded smoke override values must be positive")
 
 
 def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -121,6 +129,10 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     oos = oos_source.join(oos_scores, keys="row_id", join_type="inner")
     if train.num_rows != train_source.num_rows or oos.num_rows != oos_source.num_rows:
         raise RuntimeError("Frozen rows and baseline sidecar populations do not match")
+    training_row_count_before_cap = train.num_rows
+    row_cap = settings.smoke_overrides.get("training_row_cap")
+    if row_cap is not None and train.num_rows > int(row_cap):
+        train = train.sort_by([("decision_timestamp", "ascending"), ("row_id", "ascending")]).slice(train.num_rows - int(row_cap))
     training_decision_max = str(pc.max(train["decision_timestamp"]).as_py())
     training_label_max = str(pc.max(train["label_available_timestamp"]).as_py())
     if training_decision_max >= decision_timestamp or training_label_max > decision_timestamp:
@@ -129,19 +141,28 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     x_train = _matrix(train, feature_columns); y_train = _float_array(train["actual_forward_return_10d"])
     x_oos = _matrix(oos, feature_columns)
     prediction_columns: dict[str, pa.Array] = {}
-    statuses, timings = {}, {}
+    statuses, timings, model_details = {}, {}, {}
     for model_id in settings.model_allowlist:
-        model_started = time.perf_counter()
-        model = _build_tabular_model(model_id, settings.random_seed, settings.sklearn_n_jobs)
-        model.fit(x_train, y_train)
-        values = [float(value) for value in model.predict(x_oos)]
-        column = f"stock_level_predicted_forward_return_10d_{model_id}"
-        prediction_columns[column] = pa.array(values, type=pa.float64())
-        timings[model_id] = time.perf_counter() - model_started; statuses[model_id] = "complete"
+        model = _bounded_model(model_id, settings)
+        parameters = _reported_parameters(model_id, model)
+        print(f"date={decision_date} model={model_id} status=starting rows={train.num_rows} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
+        try:
+            fit_started = time.perf_counter(); model.fit(x_train, y_train); fit_elapsed = time.perf_counter() - fit_started
+            predict_started = time.perf_counter(); values = [float(value) for value in model.predict(x_oos)]; predict_elapsed = time.perf_counter() - predict_started
+        except BaseException as exc:
+            statuses[model_id] = "failed"
+            print(f"date={decision_date} model={model_id} status=failed error={type(exc).__name__}:{exc}")
+            raise
+        column = f"stock_level_predicted_forward_return_10d_{model_id}"; prediction_columns[column] = pa.array(values, type=pa.float64())
+        timings[model_id] = {"fit_seconds": fit_elapsed, "prediction_seconds": predict_elapsed, "total_seconds": fit_elapsed + predict_elapsed}
+        model_details[model_id] = {"status": "complete", "parameters": parameters, **timings[model_id]}
+        statuses[model_id] = "complete"
+        print(f"date={decision_date} model={model_id} status=complete fit_seconds={fit_elapsed:.6f} prediction_seconds={predict_elapsed:.6f}")
     for baseline_id in settings.baseline_allowlist:
         column = BASELINE_CANDIDATES[baseline_id]
         prediction_columns[column] = oos[column]
-        statuses[baseline_id] = "complete"; timings[baseline_id] = 0.0
+        statuses[baseline_id] = "complete"; timings[baseline_id] = {"fit_seconds": 0.0, "prediction_seconds": 0.0, "total_seconds": 0.0}
+        model_details[baseline_id] = {"status": "complete", "parameters": {"trainable": False}, **timings[baseline_id]}
     keep = [name for name in ("row_id", "asset_id", "symbol", "rebalance_date", "decision_timestamp", "decision_session_date", "label_available_timestamp", "actual_forward_return_10d", *TARGET_OUTPUT_COLUMNS) if name in oos.schema.names]
     predictions = oos.select(keep)
     for name, values in prediction_columns.items(): predictions = predictions.append_column(name, values)
@@ -151,9 +172,9 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     prediction_path = temp_dir / "predictions.parquet"
     pq.write_table(predictions, prediction_path, compression="zstd")
     checksum = _sha256(prediction_path)
-    metrics = {"decision_date": decision_date, "training_row_count": train.num_rows, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "model_timings_seconds": timings}
+    metrics = {"decision_date": decision_date, "training_row_count": train.num_rows, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
     _atomic_json(temp_dir / "metrics.json", metrics)
-    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": train.num_rows, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
+    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": train.num_rows, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
     _atomic_json(temp_dir / "manifest.json", manifest)
     os.replace(temp_dir, settings.output_root / f"date={decision_date}")
     return {"decision_date": decision_date, "status": "complete", **metrics, "elapsed_seconds": manifest["elapsed_seconds"]}
@@ -230,7 +251,7 @@ def _validate_predictions(table, decision_date, candidates):
 
 
 def _run_identity(settings, manifest, features):
-    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "runner_contract_version": CONTRACT_VERSION}
+    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
     payload["config_hash"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return payload
 
@@ -252,3 +273,30 @@ def _sha256(path):
     return digest.hexdigest().upper()
 def _git_commit(): return subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
 def _text(value): return str(value).strip() if value not in (None, "") else None
+
+
+def _bounded_model(model_id: str, settings: BoundedSelectorSettings):
+    model = _build_tabular_model(model_id, settings.random_seed, settings.sklearn_n_jobs)
+    override_keys = {
+        "random_forest": {"random_forest_n_estimators": "randomforestregressor__n_estimators", "random_forest_max_depth": "randomforestregressor__max_depth", "random_forest_min_samples_leaf": "randomforestregressor__min_samples_leaf"},
+        "gradient_boosting": {"gradient_boosting_n_estimators": "gradientboostingregressor__n_estimators", "gradient_boosting_max_depth": "gradientboostingregressor__max_depth", "gradient_boosting_learning_rate": "gradientboostingregressor__learning_rate"},
+    }.get(model_id, {})
+    parameters = {target: settings.smoke_overrides[source] for source, target in override_keys.items() if source in settings.smoke_overrides}
+    if parameters:
+        model.set_params(**parameters)
+    return model
+
+
+def _reported_parameters(model_id: str, model: Any) -> dict[str, Any]:
+    params = model.get_params()
+    if model_id == "random_forest":
+        prefix = "randomforestregressor__"
+        return {"estimator_count": params[prefix + "n_estimators"], "max_depth": params[prefix + "max_depth"], "min_samples_leaf": params[prefix + "min_samples_leaf"], "max_features": params[prefix + "max_features"], "bootstrap": params[prefix + "bootstrap"], "max_samples": params.get(prefix + "max_samples"), "subsampling": None, "learning_rate": None, "random_seed": params[prefix + "random_state"], "workers": params[prefix + "n_jobs"], "sample_weighting": None, "preprocessing": "SimpleImputer(strategy=median)"}
+    if model_id == "gradient_boosting":
+        prefix = "gradientboostingregressor__"
+        return {"estimator_count": params[prefix + "n_estimators"], "max_depth": params[prefix + "max_depth"], "min_samples_leaf": params[prefix + "min_samples_leaf"], "max_features": params[prefix + "max_features"], "subsampling": params[prefix + "subsample"], "learning_rate": params[prefix + "learning_rate"], "loss": params[prefix + "loss"], "random_seed": params[prefix + "random_state"], "workers": 1, "sample_weighting": None, "preprocessing": "SimpleImputer(strategy=median)"}
+    return {"random_seed": params.get("regressor__random_state", params.get("random_state", settings_random_seed(model))), "workers": 1, "sample_weighting": None, "preprocessing": "embedded sklearn imputer/scaler pipeline"}
+
+
+def settings_random_seed(model: Any) -> Any:
+    return next((value for key, value in model.get_params().items() if key.endswith("random_state") and value is not None), None)

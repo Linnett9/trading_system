@@ -90,3 +90,49 @@ def test_no_broker_or_trading_state_owner_is_imported():
     source = inspect.getsource(runner)
     assert "broker" not in source.lower()
     assert "paper_trading" not in source.lower()
+
+
+@pytest.mark.parametrize(
+    "model,overrides,expected",
+    [
+        ("random_forest", {"random_forest_n_estimators": 3, "random_forest_max_depth": 2, "random_forest_min_samples_leaf": 2}, {"estimator_count": 3, "max_depth": 2, "min_samples_leaf": 2}),
+        ("gradient_boosting", {"gradient_boosting_n_estimators": 3, "gradient_boosting_max_depth": 1, "gradient_boosting_learning_rate": 0.1}, {"estimator_count": 3, "max_depth": 1, "learning_rate": 0.1}),
+    ],
+)
+def test_isolated_tree_smoke_completes_and_reports_parameters(tmp_path: Path, model: str, overrides: dict, expected: dict):
+    root = _dataset(tmp_path); output = tmp_path / model
+    config = _config(root, output, oos_end_date="2024-01-10", model_allowlist=[model], smoke_overrides=overrides)
+    result = run_bounded_selector(config)
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    metrics = json.loads((output / "date=2024-01-10" / "metrics.json").read_text())
+    assert result["dates"][0]["status"] == "complete"
+    assert manifest["non_production_smoke"] is True
+    assert manifest["smoke_overrides"] == overrides
+    assert metrics["model_details"][model]["parameters"] | expected == metrics["model_details"][model]["parameters"]
+    assert metrics["model_details"][model]["fit_seconds"] >= 0
+    assert metrics["model_details"][model]["prediction_seconds"] >= 0
+
+
+def test_changed_tree_override_reruns_completed_date(tmp_path: Path):
+    root = _dataset(tmp_path); output = tmp_path / "tree"
+    first = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 2})
+    second = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"], smoke_overrides={"random_forest_n_estimators": 3})
+    run_bounded_selector(first)
+    result = run_bounded_selector(second)
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    assert result["dates"][0]["status"] == "complete"
+    assert manifest["smoke_overrides"]["random_forest_n_estimators"] == 3
+
+
+def test_failed_candidate_never_creates_complete_date(tmp_path: Path, monkeypatch):
+    import core.research.ml.stock_level.bounded_selector_runner as runner
+    root = _dataset(tmp_path); output = tmp_path / "failed"
+
+    class BrokenModel:
+        def get_params(self): return {"randomforestregressor__n_estimators": 1, "randomforestregressor__max_depth": 1, "randomforestregressor__min_samples_leaf": 1, "randomforestregressor__max_features": 1.0, "randomforestregressor__bootstrap": True, "randomforestregressor__random_state": 42, "randomforestregressor__n_jobs": 1}
+        def fit(self, x, y): raise KeyboardInterrupt()
+
+    monkeypatch.setattr(runner, "_bounded_model", lambda *args: BrokenModel())
+    with pytest.raises(KeyboardInterrupt):
+        run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["random_forest"]))
+    assert not (output / "date=2024-01-10" / "manifest.json").exists()
