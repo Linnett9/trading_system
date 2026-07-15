@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import math
 import os
@@ -19,6 +20,7 @@ import pyarrow.parquet as pq
 
 from core.research.ml.stock_level.selector_dataset import BASELINE_CANDIDATES, DETERMINISTIC_SIGNAL_COLUMNS
 from core.research.ml.stock_level.stock_level_alpha_features import ENGINEERED_FEATURE_COLUMNS
+from core.research.ml.stock_level.selector_feature_schema import load_feature_schema
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
 from core.research.ml.stock_level_benchmark_types import TARGET_OUTPUT_COLUMNS
 
@@ -38,6 +40,7 @@ class BoundedSelectorSettings:
     model_allowlist: tuple[str, ...]
     baseline_allowlist: tuple[str, ...]
     include_engineered_features: bool
+    feature_schema_path: Path | None
     resume: bool
     overwrite_incomplete_dates: bool
     random_seed: int
@@ -57,6 +60,7 @@ class BoundedSelectorSettings:
             model_allowlist=tuple(raw.get("model_allowlist", ("ridge", "elastic_net"))),
             baseline_allowlist=tuple(raw.get("baseline_allowlist", SUPPORTED_BASELINES)),
             include_engineered_features=bool(raw.get("include_engineered_features", ml.get("stock_ranker_include_engineered_features", False))),
+            feature_schema_path=Path(raw["feature_schema_path"]) if raw.get("feature_schema_path") else None,
             resume=bool(raw.get("resume", True)), overwrite_incomplete_dates=bool(raw.get("overwrite_incomplete_dates", True)),
             random_seed=int(raw.get("random_seed", ml.get("random_seed", 42))),
             sklearn_n_jobs=int(raw.get("sklearn_n_jobs", ml.get("sklearn_n_jobs", 1))),
@@ -91,9 +95,9 @@ def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any]
     scores_path = settings.dataset_root / "baseline_scores.parquet"
     if not rows_path.exists() or not scores_path.exists():
         raise FileNotFoundError("Frozen selector rows and baseline sidecar are required")
-    feature_columns = _resolve_features(rows_path, settings.include_engineered_features)
+    feature_columns, selected_schema = _resolve_features(rows_path, settings.include_engineered_features, settings.feature_schema_path)
     selected_dates = _select_dates(rows_path, settings)
-    run_identity = _run_identity(settings, manifest, feature_columns)
+    run_identity = _run_identity(settings, manifest, feature_columns, selected_schema)
     settings.output_root.mkdir(parents=True, exist_ok=True)
     results = []
     for decision_date in selected_dates:
@@ -106,7 +110,7 @@ def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any]
                 raise RuntimeError(f"Incomplete/incompatible date exists and overwrite is disabled: {destination}")
             _remove_date_dir(destination, settings.output_root)
         results.append(_run_date(settings, manifest, rows_path, scores_path, decision_date, feature_columns, run_identity))
-    summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), "include_engineered_features": settings.include_engineered_features, "output_root": str(settings.output_root)}
+    summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), "include_engineered_features": settings.include_engineered_features, "selected_feature_schema": selected_schema, "output_root": str(settings.output_root)}
     _atomic_json(settings.output_root / "run_summary.json", summary)
     return summary
 
@@ -138,14 +142,18 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     if training_decision_max >= decision_timestamp or training_label_max > decision_timestamp:
         raise RuntimeError("Bounded selector temporal training guard failed")
     _validate_features(train, feature_columns)
+    training_row_count = train.num_rows
+    feature_missingness = {name: {"training": train[name].null_count / train.num_rows, "oos": oos[name].null_count / oos.num_rows} for name in feature_columns}
     x_train = _matrix(train, feature_columns); y_train = _float_array(train["actual_forward_return_10d"])
     x_oos = _matrix(oos, feature_columns)
+    del train, train_source, train_scores, oos_source, oos_scores
+    gc.collect()
     prediction_columns: dict[str, pa.Array] = {}
     statuses, timings, model_details = {}, {}, {}
     for model_id in settings.model_allowlist:
         model = _bounded_model(model_id, settings)
         parameters = _reported_parameters(model_id, model)
-        print(f"date={decision_date} model={model_id} status=starting rows={train.num_rows} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
+        print(f"date={decision_date} model={model_id} status=starting rows={training_row_count} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
         try:
             fit_started = time.perf_counter(); model.fit(x_train, y_train); fit_elapsed = time.perf_counter() - fit_started
             predict_started = time.perf_counter(); values = [float(value) for value in model.predict(x_oos)]; predict_elapsed = time.perf_counter() - predict_started
@@ -155,7 +163,7 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
             raise
         column = f"stock_level_predicted_forward_return_10d_{model_id}"; prediction_columns[column] = pa.array(values, type=pa.float64())
         timings[model_id] = {"fit_seconds": fit_elapsed, "prediction_seconds": predict_elapsed, "total_seconds": fit_elapsed + predict_elapsed}
-        model_details[model_id] = {"status": "complete", "parameters": parameters, **timings[model_id]}
+        model_details[model_id] = {"status": "complete", "parameters": parameters, "prediction_coverage": len(values) / oos.num_rows, "prediction_dispersion": float(pc.stddev(prediction_columns[column]).as_py()) if len(values) > 1 else 0.0, **timings[model_id]}
         statuses[model_id] = "complete"
         print(f"date={decision_date} model={model_id} status=complete fit_seconds={fit_elapsed:.6f} prediction_seconds={predict_elapsed:.6f}")
     for baseline_id in settings.baseline_allowlist:
@@ -172,9 +180,9 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     prediction_path = temp_dir / "predictions.parquet"
     pq.write_table(predictions, prediction_path, compression="zstd")
     checksum = _sha256(prediction_path)
-    metrics = {"decision_date": decision_date, "training_row_count": train.num_rows, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
+    metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
     _atomic_json(temp_dir / "metrics.json", metrics)
-    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": train.num_rows, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
+    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
     _atomic_json(temp_dir / "manifest.json", manifest)
     os.replace(temp_dir, settings.output_root / f"date={decision_date}")
     return {"decision_date": decision_date, "status": "complete", **metrics, "elapsed_seconds": manifest["elapsed_seconds"]}
@@ -212,14 +220,29 @@ def _select_dates(rows_path: Path, settings: BoundedSelectorSettings) -> list[st
     return dates
 
 
-def _resolve_features(rows_path: Path, include_engineered: bool) -> tuple[str, ...]:
-    names = set(pq.ParquetFile(rows_path).schema_arrow.names)
+def _resolve_features(rows_path: Path, include_engineered: bool, feature_schema_path: Path | None = None) -> tuple[tuple[str, ...], dict[str, Any] | None]:
+    parquet_schema = pq.ParquetFile(rows_path).schema_arrow
+    names = set(parquet_schema.names)
+    if feature_schema_path is not None:
+        schema = load_feature_schema(feature_schema_path)
+        features = tuple(row["name"] for row in schema["features"])
+        missing = sorted(set(features) - names - set(DETERMINISTIC_SIGNAL_COLUMNS))
+        if missing:
+            raise RuntimeError(f"Requested selector features are missing: {missing}")
+        type_mismatches = []
+        for row in schema["features"]:
+            name = row["name"]
+            if name in names and str(parquet_schema.field(name).type) != row["data_type"]:
+                type_mismatches.append(f"{name}: expected={row['data_type']} actual={parquet_schema.field(name).type}")
+        if type_mismatches:
+            raise RuntimeError(f"Selector feature schema type mismatch: {type_mismatches}")
+        return features, {"path": str(feature_schema_path), "contract_version": schema["contract_version"], "schema_hash": schema["schema_hash"]}
     engineered = tuple(name for name in ENGINEERED_FEATURE_COLUMNS if name in names) if include_engineered else ()
     features = (*DETERMINISTIC_SIGNAL_COLUMNS, *engineered)
     missing = sorted(set(engineered) - names)
     if missing: raise RuntimeError(f"Requested engineered features are missing: {missing}")
     if any(name.startswith(OUTCOME_PREFIX) for name in features): raise RuntimeError("Outcome columns cannot be selector features")
-    return features
+    return features, None
 
 
 def _source_columns(features):
@@ -250,8 +273,8 @@ def _validate_predictions(table, decision_date, candidates):
         if any(value is None or not math.isfinite(float(value)) for value in table[name].to_pylist()): raise RuntimeError(f"Candidate contains non-finite predictions: {name}")
 
 
-def _run_identity(settings, manifest, features):
-    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
+def _run_identity(settings, manifest, features, selected_schema):
+    payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), "selected_feature_schema": selected_schema, "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "include_engineered_features": settings.include_engineered_features, "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
     payload["config_hash"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     return payload
 

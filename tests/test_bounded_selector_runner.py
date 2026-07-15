@@ -10,6 +10,7 @@ import pytest
 
 from core.research.ml.stock_level.bounded_selector_runner import BoundedSelectorSettings, run_bounded_selector
 from core.research.ml.stock_level.selector_dataset import DETERMINISTIC_SIGNAL_COLUMNS
+from core.research.ml.stock_level.selector_feature_schema import schema_hash
 
 
 def _dataset(tmp_path: Path) -> Path:
@@ -68,6 +69,21 @@ def test_resume_skips_only_valid_complete_date(tmp_path: Path):
     first = run_bounded_selector(config); second = run_bounded_selector(config)
     assert first["dates"][0]["status"] == "complete"
     assert second["dates"][0]["status"] == "skipped_complete"
+
+
+def test_changed_explicit_feature_schema_identity_reruns(tmp_path: Path):
+    root = _dataset(tmp_path); output = tmp_path / "schema-out"
+    paths = []
+    for index, rule in enumerate(("strictly prior", "strictly prior and published")):
+        payload = {"contract_version": "test_v1", "features": [{"name": name, "data_type": "double", "availability_rule": rule} for name in DETERMINISTIC_SIGNAL_COLUMNS]}
+        payload["schema_hash"] = schema_hash(payload)
+        path = tmp_path / f"schema-{index}.json"; path.write_text(json.dumps(payload), encoding="utf-8"); paths.append(path)
+    first = run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", feature_schema_path=str(paths[0])))
+    second = run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", feature_schema_path=str(paths[1])))
+    assert first["dates"][0]["status"] == "complete"
+    assert second["dates"][0]["status"] == "complete"
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    assert manifest["selected_feature_schema"]["schema_hash"] == json.loads(paths[1].read_text())["schema_hash"]
 
 
 @pytest.mark.parametrize("damage", ["incomplete", "corrupt", "config_mismatch"])

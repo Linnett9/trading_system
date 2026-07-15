@@ -1,0 +1,241 @@
+{
+  "contract_version": "canonical_v2_daily_tabular_features_v1",
+  "description": "Explicit ordered point-in-time-safe and non-all-null daily selector feature allowlist.",
+  "feature_ordering": "exactly_as_listed",
+  "default_selected": false,
+  "features": [
+    {
+      "name": "predicted_momentum_20d",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_momentum_60d",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_momentum_120d",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_volatility_20d",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_drawdown_60d",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_liquidity_score",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "predicted_risk_adjusted_momentum",
+      "data_type": "double",
+      "availability_rule": "Computed only from price/volume observations with session_date strictly before decision_session_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.selector_dataset",
+      "feature_family": "compatibility_signal"
+    },
+    {
+      "name": "momentum_250d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "momentum_acceleration",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "momentum_persistence",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "momentum_consistency",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "relative_momentum_vs_spy",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "distance_from_52_week_high",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "drawdown_recovery_days",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "rolling_max_drawdown_120d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "ulcer_index",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "downside_deviation",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "volatility_percentile",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "volatility_trend",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "volatility_regime",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "ATR_percentile",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_momentum_20d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_momentum_60d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_momentum_120d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_volatility_20d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_drawdown_60d",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_distance_from_200d_average",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_trend_state",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    },
+    {
+      "name": "market_volatility_percentile",
+      "data_type": "double",
+      "availability_rule": "Computed from observations strictly before rebalance_date.",
+      "missing_value_policy": "median_imputation_fitted_on_training_rows_only",
+      "source_owner": "core.research.ml.stock_level.stock_level_alpha_features_builder",
+      "feature_family": "engineered_daily"
+    }
+  ],
+  "schema_hash": "F4902193B51CCB7230A586C54C16577893FC7C0FC556A3F8D4E6DD5FE4F14C40"
+}

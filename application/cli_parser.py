@@ -194,6 +194,7 @@ def parse_args():
     parser.add_argument("--model-allowlist", nargs="+", default=None)
     parser.add_argument("--baseline-allowlist", nargs="+", default=None)
     parser.add_argument("--bounded-output-root", default=None)
+    parser.add_argument("--selector-feature-schema", default=None)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--no-overwrite-incomplete-dates", action="store_true")
     parser.add_argument("--rf-estimators", type=int, default=None)

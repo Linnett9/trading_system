@@ -78,6 +78,7 @@ def run_ml_stock_selector_bounded(config, args):
         "model_allowlist": args.model_allowlist,
         "baseline_allowlist": args.baseline_allowlist,
         "output_root": args.bounded_output_root,
+        "feature_schema_path": args.selector_feature_schema,
         "resume": False if args.no_resume else None,
         "overwrite_incomplete_dates": False if args.no_overwrite_incomplete_dates else None,
         "smoke_overrides": smoke_overrides if any(value is not None for value in smoke_overrides.values()) else None,
