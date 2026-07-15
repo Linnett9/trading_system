@@ -14,6 +14,7 @@ from core.research.ml.stock_level.stock_level_model_ranking_benchmark import (
     build_stock_level_model_ranking_benchmark,
 )
 from core.research.ml.stock_level_benchmark_reporting import _prediction_columns
+from core.research.ml.stock_level_benchmark_data import _stable_selector_row_id
 from core.research.ml.stock_level_benchmark_types import (
     TARGET_PROVENANCE_CONTRACT_VERSION,
 )
@@ -43,6 +44,45 @@ class FailingRegressor:
 
     def predict(self, features):
         return []
+
+
+def test_daily_retrain_strict_uses_one_date_per_fold_and_stable_row_ids():
+    predictions, payload = build_stock_level_model_ranking_benchmark(
+        _rows(), min_train_dates=3, embargo_dates=1, test_window_dates=1,
+        walk_forward_mode="daily_retrain_strict", include_sequence_models=False,
+        model_factories={"ridge": MomentumRegressor},
+    )
+    assert payload["walk_forward"]["mode"] == "daily_retrain_strict"
+    assert all(fold["test_date_count"] == 1 for fold in payload["walk_forward"]["folds"])
+    assert all(row["row_id"] == _stable_selector_row_id(row["asset_id"], row["decision_timestamp"]) for row in predictions)
+    assert len({row["row_id"] for row in predictions}) == len(predictions)
+
+
+def test_daily_retrain_strict_rejects_block_test_window():
+    try:
+        build_stock_level_model_ranking_benchmark(
+            _rows(), min_train_dates=3, embargo_dates=1, test_window_dates=2,
+            walk_forward_mode="daily_retrain_strict", include_sequence_models=False,
+            model_factories={"ridge": MomentumRegressor},
+        )
+    except ValueError as exc:
+        assert "one-date OOS" in str(exc)
+    else:
+        raise AssertionError("daily strict mode accepted a block OOS window")
+
+
+def test_unintegrated_checkpoint_mode_fails_closed():
+    try:
+        build_stock_level_model_ranking_benchmark(
+            _rows(), min_train_dates=3, embargo_dates=0, test_window_dates=1,
+            walk_forward_mode="daily_retrain_strict",
+            operating_mode="daily_checkpoint_update",
+            include_sequence_models=False, model_factories={"ridge": MomentumRegressor},
+        )
+    except NotImplementedError as exc:
+        assert "refusing to masquerade" in str(exc)
+    else:
+        raise AssertionError("unintegrated checkpoint mode ran as a cold refit")
 
 
 def test_walk_forward_never_trains_on_future_dates():

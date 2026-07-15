@@ -16,6 +16,8 @@ class StockLevelResearchConfig:
     parquet_dir: Path
     min_train_dates: int
     test_window_dates: int
+    walk_forward_mode: str
+    selector_operating_mode: str
     embargo_dates: int
     random_seed: int
     sklearn_n_jobs: int
@@ -110,6 +112,8 @@ class StockLevelResearchConfig:
             ),
             min_train_dates=int(ml.get("stock_ranker_min_train_dates", 52)),
             test_window_dates=int(ml.get("stock_ranker_test_window_dates", 13)),
+            walk_forward_mode=str(ml.get("stock_ranker_walk_forward_mode", "block_retrain_research")).strip().lower(),
+            selector_operating_mode=str(ml.get("stock_ranker_operating_mode", "daily_cold_refit_strict")).strip().lower(),
             embargo_dates=int(ml.get("stock_ranker_embargo_dates", 2)),
             random_seed=int(ml.get("random_seed", 42)),
             sklearn_n_jobs=int(ml.get("sklearn_n_jobs", 1)),
@@ -244,6 +248,12 @@ class StockLevelResearchConfig:
                 raise ValueError(f"ml.{name} must be at least one")
         if self.embargo_dates < 0:
             raise ValueError("ml.stock_ranker_embargo_dates cannot be negative")
+        if self.walk_forward_mode not in {"daily_retrain_strict", "block_retrain_research"}:
+            raise ValueError("ml.stock_ranker_walk_forward_mode must be daily_retrain_strict or block_retrain_research")
+        if self.walk_forward_mode == "daily_retrain_strict" and self.test_window_dates != 1:
+            raise ValueError("ml.stock_ranker_test_window_dates must be 1 for daily_retrain_strict")
+        if self.selector_operating_mode not in {"daily_cold_refit_strict", "daily_checkpoint_update", "daily_score_periodic_refit"}:
+            raise ValueError("ml.stock_ranker_operating_mode is invalid")
         if self.permutation_repeats < 0:
             raise ValueError(
                 "ml.stock_ranker_permutation_importance_repeats cannot be negative"

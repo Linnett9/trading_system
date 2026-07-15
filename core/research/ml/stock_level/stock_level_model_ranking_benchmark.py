@@ -75,6 +75,7 @@ from core.research.framework.reporting import ResearchArtifactWriter
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
 from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
+from core.research.ml.stock_level.selector_dataset import read_selector_dataset_rows
 from core.research.ml.stock_level.stock_alpha_news_contract import validate_news_contract
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
 from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, StockAlphaModelSet, resolve_stock_alpha_model_set
@@ -90,16 +91,21 @@ def write_stock_level_model_ranking_benchmark(
     thread_caps = apply_stock_alpha_worker_caps(config)
     started_at = datetime.now(timezone.utc).isoformat(); started = time.perf_counter()
     output_dir = settings.output_dir
-    source_path = settings.artifact_path
+    selector_dataset_root = Path(str(config.get("ml", {}).get("stock_selector_dataset_root", "")).strip()) if str(config.get("ml", {}).get("stock_selector_dataset_root", "")).strip() else None
+    source_path = selector_dataset_root / "rows.parquet" if selector_dataset_root else settings.artifact_path
     if not source_path.exists():
         raise FileNotFoundError(f"Stock-level prediction artifact not found: {source_path}")
 
     logger = ResearchStageLogger("stock_level_alpha_benchmark")
     with logger.stage("loading"):
-        rows = read_stock_level_artifact(
-            source_path,
-            required_columns={"rebalance_date", "symbol"},
-            allow_csv_fallback=bool(config.get("ml", {}).get("stock_level_allow_csv_artifact_fallback", False)),
+        rows = (
+            read_selector_dataset_rows(selector_dataset_root)
+            if selector_dataset_root
+            else read_stock_level_artifact(
+                source_path,
+                required_columns={"rebalance_date", "symbol"},
+                allow_csv_fallback=bool(config.get("ml", {}).get("stock_level_allow_csv_artifact_fallback", False)),
+            )
         )
         rows, run_profile = apply_stock_alpha_run_profile(rows, settings)
     feature_columns = _available_feature_columns(
@@ -117,6 +123,8 @@ def write_stock_level_model_ranking_benchmark(
             config_path=str(config.get("config_path", "config/config.yaml")),
             min_train_dates=settings.min_train_dates,
             test_window_dates=settings.test_window_dates,
+            walk_forward_mode=settings.walk_forward_mode,
+            operating_mode=settings.selector_operating_mode,
             embargo_dates=settings.embargo_dates,
             random_seed=settings.random_seed,
             sklearn_n_jobs=settings.sklearn_n_jobs,
@@ -251,6 +259,8 @@ def build_stock_level_model_ranking_benchmark(
     config_path: str | None = None,
     min_train_dates: int = 52,
     test_window_dates: int = 13,
+    walk_forward_mode: str = "block_retrain_research",
+    operating_mode: str = "daily_cold_refit_strict",
     embargo_dates: int = 2,
     random_seed: int = 42,
     sklearn_n_jobs: int = 1,
@@ -269,6 +279,17 @@ def build_stock_level_model_ranking_benchmark(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Create expanding-window predictions and an OOS ranking leaderboard."""
     _validate_split_settings(min_train_dates, test_window_dates, embargo_dates)
+    if walk_forward_mode not in {"daily_retrain_strict", "block_retrain_research"}:
+        raise ValueError("Unknown stock selector walk-forward mode")
+    if walk_forward_mode == "daily_retrain_strict" and test_window_dates != 1:
+        raise ValueError("daily_retrain_strict requires one-date OOS test slices")
+    if operating_mode not in {"daily_cold_refit_strict", "daily_checkpoint_update", "daily_score_periodic_refit"}:
+        raise ValueError("Unknown stock selector operating mode")
+    if operating_mode != "daily_cold_refit_strict":
+        raise NotImplementedError(
+            f"{operating_mode} is declared but not integrated with selector estimators; "
+            "refusing to masquerade as daily_cold_refit_strict"
+        )
     if model_n_jobs < 1:
         raise ValueError("stock_ranker_model_n_jobs must be at least one")
     if target_column != TARGET_COLUMN:
@@ -291,6 +312,12 @@ def build_stock_level_model_ranking_benchmark(
             "For dev runs, reduce ml.stock_ranker_min_train_dates, "
             "ml.stock_ranker_test_window_dates, or ml.stock_ranker_embargo_dates, "
             "or use benchmark/full data."
+        )
+    absent_features = [column for column in feature_columns if not any(row.get(column) not in {None, ""} for row in rows)]
+    if absent_features:
+        raise ValueError(
+            "Stock selector feature contract is missing required columns; "
+            f"missing_or_all_null={absent_features}. Build/join the frozen selector derivative."
         )
 
     effective_sklearn_n_jobs = 1 if model_n_jobs > 1 else sklearn_n_jobs
@@ -444,6 +471,11 @@ def build_stock_level_model_ranking_benchmark(
         },
         "model_timings": model_timings,
         "walk_forward": {
+            "operating_mode": operating_mode,
+            "mode": walk_forward_mode,
+            "retraining_frequency": "daily" if walk_forward_mode == "daily_retrain_strict" else "per_block",
+            "portfolio_target_refresh_frequency": "daily",
+            "prediction_horizon_trading_sessions": 10,
             "method": "chronological_expanding_window",
             "min_train_dates": min_train_dates,
             "test_window_dates": test_window_dates,

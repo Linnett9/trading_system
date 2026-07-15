@@ -50,8 +50,10 @@ def _leaderboard_columns() -> list[str]:
 
 def _prediction_columns(model_names: list[str]) -> list[str]:
     return [
+        "row_id",
         "rebalance_date",
         "symbol",
+        "asset_id",
         "benchmark_symbol",
         "fold_id",
         *TARGET_PROVENANCE_COLUMNS,

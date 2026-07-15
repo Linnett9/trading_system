@@ -12,6 +12,13 @@ ml:
   stock_level_artifact_format: parquet
   stock_level_parquet_compression: zstd
   stock_level_decision_frequency: daily
+  stock_ranker_walk_forward_mode: daily_retrain_strict
+  stock_ranker_operating_mode: daily_cold_refit_strict
+  stock_ranker_test_window_dates: 1
+  stock_ranker_embargo_dates: 0
+  stock_ranker_model_set: full
+  stock_ranker_include_sequence_models: true
+  stock_selector_dataset_root: reports/ml/readiness/canonical_v2_selector_dataset_v1/frozen
   stock_level_decision_min_history_sessions: 252
   stock_level_dataset_workers: 12
   stock_level_dataset_inner_threads: 1

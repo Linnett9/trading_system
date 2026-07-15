@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from statistics import mean
 from typing import Any
@@ -86,6 +87,7 @@ def _prepare_rows(
     for source in rows:
         date = str(source.get("rebalance_date", "")).strip()
         symbol = str(source.get("symbol", "")).strip().upper()
+        asset_id = str(source.get("asset_id", symbol)).strip().upper()
         benchmark_symbol = str(source.get("benchmark_symbol", "")).strip().upper()
         numbers = {column: _number(source.get(column)) for column in required[2:]}
         if not date or not symbol or any(value is None for value in numbers.values()):
@@ -126,9 +128,11 @@ def _prepare_rows(
         provenance["label_available_timestamp"] = label_available
         _validate_target_provenance(provenance, date, symbol)
         prepared.append({
+            "row_id": _stable_selector_row_id(asset_id, provenance["decision_timestamp"]),
             "rebalance_date": date,
             **provenance,
             "symbol": symbol,
+            "asset_id": asset_id,
             "benchmark_symbol": benchmark_symbol,
             **{column: float(value) for column, value in numbers.items()},
             **{
@@ -165,8 +169,10 @@ def _available_feature_columns(
 
 def _base_prediction_row(row: dict[str, Any], fold_id: int) -> dict[str, Any]:
     return {
+        "row_id": row["row_id"],
         "rebalance_date": row["rebalance_date"],
         "symbol": row["symbol"],
+        "asset_id": row["asset_id"],
         "benchmark_symbol": row.get("benchmark_symbol", ""),
         "fold_id": fold_id,
         **{column: row.get(column, "") for column in TARGET_PROVENANCE_COLUMNS},
@@ -248,6 +254,22 @@ def _validate_target_provenance(
             f"provenance; missing_columns={missing}; rebalance_date={rebalance_date}; "
             f"symbol={symbol}"
         )
+    if provenance["feature_timestamp"] > provenance["decision_timestamp"]:
+        raise ValueError(
+            "Stock-level features must be available by the decision timestamp; "
+            f"feature_timestamp={provenance['feature_timestamp']}; "
+            f"decision_timestamp={provenance['decision_timestamp']}; symbol={symbol}"
+        )
+
+
+SELECTOR_ROW_ID_CONTRACT_VERSION = "stock_selector_row_id_v1"
+
+
+def _stable_selector_row_id(asset_id: str, decision_timestamp: str) -> str:
+    identity = "|".join(
+        (SELECTOR_ROW_ID_CONTRACT_VERSION, "canonical_daily_v2", asset_id, decision_timestamp)
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 def _sort_value(value: Any) -> float:
