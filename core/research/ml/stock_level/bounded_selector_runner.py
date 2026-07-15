@@ -23,8 +23,13 @@ from core.research.ml.stock_level.stock_level_alpha_features import ENGINEERED_F
 from core.research.ml.stock_level.selector_feature_schema import load_feature_schema
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
 from core.research.ml.stock_level_benchmark_types import TARGET_OUTPUT_COLUMNS
+from core.research.ml.experiment_ledger import (
+    append_ledger_event, experiment_spec_hash, new_experiment_run_id,
+)
+from core.research.ml.registries import RegistryResolver, load_registry_bundle
 
 CONTRACT_VERSION = "bounded_daily_selector_v2"
+IDENTITY_VERSION = "bounded_selector_identity_v3_registry"
 PREDICTION_QUALITY_CONTRACT_VERSION = "fitted_candidate_prediction_quality_v1"
 MIN_PREDICTION_STANDARD_DEVIATION = 1e-12
 MIN_PREDICTION_RANGE = 1e-12
@@ -57,18 +62,26 @@ class BoundedSelectorSettings:
     random_seed: int
     sklearn_n_jobs: int
     smoke_overrides: Mapping[str, Any]
+    requested_model_allowlist: tuple[str, ...]
+    ledger_path: Path
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> "BoundedSelectorSettings":
         ml = dict(config.get("ml", {}) or {})
         raw = dict(ml.get("stock_selector_bounded", {}) or {})
         raw.update({k: v for k, v in dict(overrides or {}).items() if v is not None})
+        requested_models = tuple(raw.get("model_allowlist", ("ridge", "elastic_net")))
+        resolver = RegistryResolver(load_registry_bundle())
+        resolved_models = tuple(
+            resolver.resolve("selector_models", model_id, role="selector").canonical_id
+            for model_id in requested_models
+        )
         settings = cls(
             dataset_root=Path(raw.get("dataset_root", ml.get("stock_selector_dataset_root", ""))),
             output_root=Path(raw.get("output_root", "reports/ml/readiness/canonical_v2_selector_bounded")),
             oos_start_date=_text(raw.get("oos_start_date")), oos_end_date=_text(raw.get("oos_end_date")),
             max_oos_dates=int(raw["max_oos_dates"]) if raw.get("max_oos_dates") is not None else None,
-            model_allowlist=tuple(raw.get("model_allowlist", ("ridge", "elastic_net"))),
+            model_allowlist=resolved_models,
             baseline_allowlist=tuple(raw.get("baseline_allowlist", SUPPORTED_BASELINES)),
             include_engineered_features=bool(raw.get("include_engineered_features", ml.get("stock_ranker_include_engineered_features", False))),
             feature_schema_path=Path(raw["feature_schema_path"]) if raw.get("feature_schema_path") else None,
@@ -76,6 +89,8 @@ class BoundedSelectorSettings:
             random_seed=int(raw.get("random_seed", ml.get("random_seed", 42))),
             sklearn_n_jobs=int(raw.get("sklearn_n_jobs", ml.get("sklearn_n_jobs", 1))),
             smoke_overrides={k: v for k, v in dict(raw.get("smoke_overrides", {}) or {}).items() if v is not None},
+            requested_model_allowlist=requested_models,
+            ledger_path=Path(raw.get("experiment_ledger_path", "reports/ml/experiments/experiment_ledger.jsonl")),
         )
         settings.validate()
         return settings
@@ -108,25 +123,27 @@ def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any]
         raise FileNotFoundError("Frozen selector rows and baseline sidecar are required")
     feature_columns, selected_schema = _resolve_features(rows_path, settings.include_engineered_features, settings.feature_schema_path)
     selected_dates = _select_dates(rows_path, settings)
-    run_identity = _run_identity(settings, manifest, feature_columns, selected_schema)
+    registry_context = _registry_context(settings)
+    run_identity = _run_identity(settings, manifest, feature_columns, selected_schema, registry_context)
     settings.output_root.mkdir(parents=True, exist_ok=True)
     results = []
     for decision_date in selected_dates:
         destination = settings.output_root / f"date={decision_date}"
         if settings.resume and _valid_completed_date(destination, decision_date, run_identity, rows_path):
+            _ledger_events(settings, manifest, run_identity, registry_context, decision_date, "SKIPPED_COMPLETE", (str(destination),))
             results.append({"decision_date": decision_date, "status": "skipped_complete"})
             continue
         if destination.exists():
             if not settings.overwrite_incomplete_dates:
                 raise RuntimeError(f"Incomplete/incompatible date exists and overwrite is disabled: {destination}")
             _remove_date_dir(destination, settings.output_root)
-        results.append(_run_date(settings, manifest, rows_path, scores_path, decision_date, feature_columns, run_identity))
+        results.append(_run_date(settings, manifest, rows_path, scores_path, decision_date, feature_columns, run_identity, registry_context))
     summary = {"contract_version": CONTRACT_VERSION, "dataset_id": manifest["dataset_id"], "dates": results, "feature_count": len(feature_columns), "feature_columns": list(feature_columns), **_feature_selection_reporting(settings, feature_columns, selected_schema), "output_root": str(settings.output_root)}
     _atomic_json(settings.output_root / "run_summary.json", summary)
     return summary
 
 
-def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date, feature_columns, run_identity):
+def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date, feature_columns, run_identity, registry_context):
     started = time.perf_counter()
     rows_ds, scores_ds = ds.dataset(rows_path, format="parquet"), ds.dataset(scores_path, format="parquet")
     oos_filter = (ds.field("decision_session_date") == decision_date) & (ds.field("selector_eligible") == True)
@@ -162,6 +179,7 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     prediction_columns: dict[str, pa.Array] = {}
     statuses, timings, model_details = {}, {}, {}
     for model_id in settings.model_allowlist:
+        _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "STARTED", only_model=model_id)
         model = _bounded_model(model_id, settings)
         parameters = _reported_parameters(model_id, model)
         print(f"date={decision_date} model={model_id} status=starting rows={training_row_count} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
@@ -175,6 +193,9 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
             print(f"date={decision_date} model={model_id} status=failed error={type(exc).__name__}:{exc}")
             if isinstance(exc, PredictionQualityError):
                 _atomic_json(settings.output_root / f"date={decision_date}.model={model_id}.failure.json", {"decision_date": decision_date, "model_id": model_id, "status": "rejected", "prediction_quality_contract": _prediction_quality_contract(), "prediction_quality": exc.metrics, "rejection_reasons": exc.reasons})
+                _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "REJECTED", (str(settings.output_root / f"date={decision_date}.model={model_id}.failure.json"),), rejection_summary="; ".join(exc.reasons), only_model=model_id)
+            else:
+                _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "FAILED", error_summary=f"{type(exc).__name__}: {exc}", only_model=model_id)
             raise
         column = f"stock_level_predicted_forward_return_10d_{model_id}"; prediction_columns[column] = pa.array(values, type=pa.float64())
         timings[model_id] = {"fit_seconds": fit_elapsed, "prediction_seconds": predict_elapsed, "total_seconds": fit_elapsed + predict_elapsed}
@@ -200,8 +221,13 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "prediction_quality_contract": _prediction_quality_contract(), "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
     _atomic_json(temp_dir / "metrics.json", metrics)
     manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
+    manifest["experiments"] = [
+        value for (date_key, _), value in registry_context["_experiment_metadata"].items()
+        if date_key == decision_date
+    ]
     _atomic_json(temp_dir / "manifest.json", manifest)
     os.replace(temp_dir, settings.output_root / f"date={decision_date}")
+    _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "COMPLETED", (str(settings.output_root / f"date={decision_date}"),))
     for model_id in settings.model_allowlist:
         (settings.output_root / f"date={decision_date}.model={model_id}.failure.json").unlink(missing_ok=True)
     return {"decision_date": decision_date, "status": "complete", **metrics, "elapsed_seconds": manifest["elapsed_seconds"]}
@@ -214,7 +240,11 @@ def _valid_completed_date(path: Path, decision_date: str, identity: Mapping[str,
             return False
         if not manifest.get("training_decision_timestamp_max") or not manifest.get("training_label_available_timestamp_max"):
             return False
-        if any(manifest.get(key) != value for key, value in identity.items()): return False
+        if manifest.get("identity_version") == IDENTITY_VERSION:
+            if any(manifest.get(key) != value for key, value in identity.items()): return False
+        else:
+            legacy_keys = set(identity) - {"identity_version", "registry_contract_version", "registry_set_hash", "selector_registry_hash", "model_registry_entries", "target_identity"}
+            if any(manifest.get(key) != identity[key] for key in legacy_keys): return False
         predictions_path = path / "predictions.parquet"
         if _sha256(predictions_path) != manifest.get("prediction_checksum"): return False
         table = pq.read_table(predictions_path)
@@ -373,10 +403,69 @@ def _feature_selection_reporting(settings: BoundedSelectorSettings, features, se
     return {"feature_selection_mode": mode, "selected_feature_count": len(features), "selected_feature_schema": selected_schema, "legacy_include_engineered_features_flag": settings.include_engineered_features}
 
 
-def _run_identity(settings, manifest, features, selected_schema):
+def _run_identity(settings, manifest, features, selected_schema, registry_context=None):
     payload = {"dataset_id": manifest["dataset_id"], "source_dataset_checksum": manifest["source_sha256"], "rows_checksum": manifest.get("checksums", {}).get("rows.parquet"), "baseline_checksum": manifest.get("checksums", {}).get("baseline_scores.parquet"), "feature_schema_hash": _sha256(settings.dataset_root / "feature_schema.json"), **_feature_selection_reporting(settings, features, selected_schema), "prediction_quality_contract": _prediction_quality_contract(), "target_field": "actual_forward_return_10d", "model_allowlist": list(settings.model_allowlist), "baseline_allowlist": list(settings.baseline_allowlist), "feature_columns": list(features), "random_seed": settings.random_seed, "sklearn_n_jobs": settings.sklearn_n_jobs, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "runner_contract_version": CONTRACT_VERSION}
     payload["config_hash"] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    if registry_context:
+        payload.update({
+            "identity_version": IDENTITY_VERSION,
+            "registry_contract_version": "ml_registry_set_v1",
+            "registry_set_hash": registry_context["registry_set_hash"],
+            "selector_registry_hash": registry_context["selector_registry_hash"],
+            "model_registry_entries": registry_context["models"],
+            "target_identity": {"target_field": "actual_forward_return_10d", "target_contract": "stock_level_target_provenance_v4"},
+        })
     return payload
+
+
+def _registry_context(settings: BoundedSelectorSettings) -> dict[str, Any]:
+    bundle = load_registry_bundle()
+    resolver = RegistryResolver(bundle)
+    models = []
+    for requested, canonical in zip(settings.requested_model_allowlist, settings.model_allowlist):
+        resolution = resolver.resolve("selector_models", requested, role="selector")
+        if resolution.canonical_id != canonical or not resolution.entry.payload["bounded_runner_support"]:
+            raise ValueError(f"Registry model is not bounded-runnable: {requested}")
+        models.append({"requested_model_id": requested, "canonical_model_id": canonical, "model_entry_hash": resolution.entry.entry_hash})
+    return {
+        "registry_set_hash": bundle.registry_set_hash,
+        "selector_registry_hash": bundle.documents["selector_models"].registry_hash,
+        "models": models, "_run_ids": {}, "_experiment_metadata": {},
+    }
+
+
+def _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, status, artifact_paths=(), error_summary=None, rejection_summary=None, only_model=None):
+    for model in registry_context["models"]:
+        if only_model is not None and model["canonical_model_id"] != only_model:
+            continue
+        specification = {
+            "canonical_model_id": model["canonical_model_id"], "requested_model_id": model["requested_model_id"],
+            "model_entry_hash": model["model_entry_hash"], "dataset_id": dataset_manifest["dataset_id"],
+            "feature_schema_hash": run_identity["feature_schema_hash"], "selected_feature_schema": run_identity.get("selected_feature_schema"),
+            "target_identity": run_identity["target_identity"], "hyperparameters": run_identity["smoke_overrides"],
+            "seed": run_identity["random_seed"], "decision_date_range": [decision_date, decision_date],
+            "source_commit": _git_commit(), "config_hash": run_identity["config_hash"],
+        }
+        spec_hash = experiment_spec_hash(specification)
+        run_key = (decision_date, model["canonical_model_id"])
+        if status == "STARTED" or run_key not in registry_context["_run_ids"]:
+            registry_context["_run_ids"][run_key] = new_experiment_run_id(spec_hash)
+        run_id = registry_context["_run_ids"][run_key]
+        registry_context["_experiment_metadata"][run_key] = {
+            "requested_model_id": model["requested_model_id"],
+            "canonical_model_id": model["canonical_model_id"],
+            "model_entry_hash": model["model_entry_hash"],
+            "experiment_spec_hash": spec_hash,
+            "experiment_run_id": run_id,
+            "artifact_kind": "MODEL_EXPERIMENT",
+        }
+        append_ledger_event(
+            settings.ledger_path, experiment_spec_hash_value=spec_hash, experiment_run_id=run_id,
+            event_status=status, artifact_kind="MODEL_EXPERIMENT", canonical_model_id=model["canonical_model_id"],
+            requested_model_id=model["requested_model_id"], registry_hashes={"model_entry_hash": model["model_entry_hash"], "selector_registry_hash": registry_context["selector_registry_hash"], "registry_set_hash": registry_context["registry_set_hash"]},
+            source_commit=_git_commit(), artifact_paths=artifact_paths, error_summary=error_summary,
+            rejection_summary=rejection_summary, metadata={"decision_date": decision_date, "config_hash": run_identity["config_hash"]},
+        )
 
 
 def _remove_date_dir(path, root):

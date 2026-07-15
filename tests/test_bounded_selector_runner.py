@@ -11,6 +11,7 @@ import pytest
 from core.research.ml.stock_level.bounded_selector_runner import BoundedSelectorSettings, PredictionQualityError, _prediction_quality, run_bounded_selector
 from core.research.ml.stock_level.selector_dataset import DETERMINISTIC_SIGNAL_COLUMNS
 from core.research.ml.stock_level.selector_feature_schema import schema_hash
+from core.research.ml.experiment_ledger import read_ledger
 
 
 def _dataset(tmp_path: Path) -> Path:
@@ -203,3 +204,57 @@ def test_constant_direct_baseline_is_not_subject_to_dispersion_gate():
     quality = _prediction_quality([0.5, 0.5, 0.5], 3, require_dispersion=False)
     assert quality["status"] == "accepted"
     assert quality["dispersion_requirement_applied"] is False
+
+
+def test_registry_identity_and_ledger_enter_bounded_manifest(tmp_path: Path):
+    root = _dataset(tmp_path); output = tmp_path / "registry"; ledger = tmp_path / "ledger.jsonl"
+    config = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["rf"], baseline_allowlist=[], smoke_overrides={"random_forest_n_estimators": 2, "random_forest_min_samples_leaf": 2}, experiment_ledger_path=str(ledger))
+    result = run_bounded_selector(config)
+    assert result["dates"][0]["status"] == "complete"
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    assert manifest["identity_version"] == "bounded_selector_identity_v3_registry"
+    assert manifest["model_registry_entries"][0]["requested_model_id"] == "rf"
+    assert manifest["model_registry_entries"][0]["canonical_model_id"] == "random_forest"
+    assert manifest["model_registry_entries"][0]["model_entry_hash"]
+    assert manifest["registry_set_hash"] and manifest["selector_registry_hash"]
+    assert manifest["experiments"][0]["experiment_spec_hash"]
+    assert manifest["experiments"][0]["experiment_run_id"]
+    assert [row["event_status"] for row in read_ledger(ledger)] == ["STARTED", "COMPLETED"]
+
+
+def test_registry_rejection_is_retained_in_ledger(tmp_path: Path, monkeypatch):
+    import core.research.ml.stock_level.bounded_selector_runner as runner
+    root = _dataset(tmp_path); output = tmp_path / "rejected"; ledger = tmp_path / "ledger.jsonl"
+    class ConstantModel:
+        def get_params(self): return {}
+        def fit(self, x, y): return self
+        def predict(self, x): return [0.01] * len(x)
+    monkeypatch.setattr(runner, "_bounded_model", lambda *args: ConstantModel())
+    with pytest.raises(PredictionQualityError):
+        run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["ridge"], baseline_allowlist=[], experiment_ledger_path=str(ledger)))
+    assert [row["event_status"] for row in read_ledger(ledger)] == ["STARTED", "REJECTED"]
+
+
+def test_registry_entry_mismatch_prevents_resume_and_skip_is_ledgered(tmp_path: Path):
+    root = _dataset(tmp_path); output = tmp_path / "identity"; ledger = tmp_path / "ledger.jsonl"
+    config = _config(root, output, oos_end_date="2024-01-10", model_allowlist=["ridge"], baseline_allowlist=[], experiment_ledger_path=str(ledger))
+    run_bounded_selector(config)
+    manifest_path = output / "date=2024-01-10" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["model_registry_entries"][0]["model_entry_hash"] = "incompatible"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert run_bounded_selector(config)["dates"][0]["status"] == "complete"
+    assert run_bounded_selector(config)["dates"][0]["status"] == "skipped_complete"
+    assert read_ledger(ledger)[-1]["event_status"] == "SKIPPED_COMPLETE"
+
+
+def test_registry_failure_is_retained_in_ledger(tmp_path: Path, monkeypatch):
+    import core.research.ml.stock_level.bounded_selector_runner as runner
+    root = _dataset(tmp_path); output = tmp_path / "failed-ledger"; ledger = tmp_path / "ledger.jsonl"
+    class BrokenModel:
+        def get_params(self): return {}
+        def fit(self, x, y): raise RuntimeError("synthetic failure")
+    monkeypatch.setattr(runner, "_bounded_model", lambda *args: BrokenModel())
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["ridge"], baseline_allowlist=[], experiment_ledger_path=str(ledger)))
+    assert [row["event_status"] for row in read_ledger(ledger)] == ["STARTED", "FAILED"]

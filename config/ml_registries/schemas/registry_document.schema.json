@@ -1,0 +1,14 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"ml_registry_document_v1",
+  "type":"object",
+  "required":["registry_contract_version","registry_kind","entries"],
+  "properties":{
+    "registry_contract_version":{"const":"ml_registry_document_v1"},
+    "registry_kind":{"enum":["equations","indicators","selector_models","exposure","portfolio_policies"]},
+    "entry_defaults":{"type":"object"},
+    "entries":{"type":"array","items":{"$ref":"#/$defs/entry"}}
+  },
+  "additionalProperties":false,
+  "$defs":{"entry":{"type":"object","required":["canonical_id","display_name","implementation_owner"],"properties":{"canonical_id":{"type":"string","minLength":1},"aliases":{"type":"array","items":{"type":"string"},"uniqueItems":true},"display_name":{"type":"string","minLength":1},"implementation_owner":{"type":["string","null"]}},"additionalProperties":true}}
+}
