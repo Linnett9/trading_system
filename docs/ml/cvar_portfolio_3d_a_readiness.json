@@ -1,0 +1,59 @@
+{
+  "ticket": "3D-A",
+  "component": "cvar_portfolio_foundation",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_RESEARCH_INTEGRATION",
+  "contracts": {
+    "input": "cvar_portfolio_input_v1",
+    "result": "cvar_portfolio_result_v1",
+    "confidence_panel": "cvar_confidence_panel_v1",
+    "comparison": "cvar_ex_ante_comparison_v1"
+  },
+  "registered_confidence_levels": [
+    0.95,
+    0.975
+  ],
+  "solver": {
+    "identity": "scipy.optimize.SLSQP",
+    "solver_tolerance": 1e-10,
+    "constraint_tolerance": 1e-7,
+    "maximum_iterations": 2000,
+    "independent_verification_required": true,
+    "heuristic_success_fallback": false
+  },
+  "scenario_policy": {
+    "current_data": "synthetic_only",
+    "probabilities": "strictly_positive_uniform_or_supplied_and_normalised",
+    "loss_orientation": "loss=-scenario_return_dot_weights",
+    "scenario_horizon_required": true,
+    "future_information_permitted": false
+  },
+  "constraints": [
+    "long_only",
+    "exact_requested_exposure",
+    "optional_cash_residual",
+    "stock_floors_and_caps",
+    "sector_caps",
+    "liquidity_eligibility",
+    "gross_turnover_limit",
+    "nonnegative_excess_loss"
+  ],
+  "verification": {
+    "population_checksums": true,
+    "scenario_return_checksum": true,
+    "scenario_probability_checksum": true,
+    "scenario_losses": true,
+    "cvar_and_penalties": true,
+    "constraints": true,
+    "logical_result_checksum": true
+  },
+  "focused_tests": {
+    "file": "tests/test_cvar_portfolio.py",
+    "result": "28 passed",
+    "historical_data_used": false
+  },
+  "adv_capacity": "UNVERIFIED",
+  "orders_generated": false,
+  "promotion_decision": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
+

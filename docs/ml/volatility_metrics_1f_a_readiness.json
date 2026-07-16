@@ -1,0 +1,51 @@
+{
+  "ticket": "1F-A",
+  "component": "volatility_forecast_and_targeting_metrics_foundation",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_RESEARCH_INTEGRATION",
+  "contracts": {
+    "input": "volatility_metric_input_v1",
+    "conversion": "volatility_representation_conversion_v1",
+    "result": "volatility_metric_result_v1",
+    "comparison": "volatility_metric_comparison_v1",
+    "verification": "volatility_metric_verification_v1"
+  },
+  "representations": [
+    "variance",
+    "volatility",
+    "annualised_variance",
+    "annualised_volatility"
+  ],
+  "annualisation": {
+    "volatility": "daily_volatility * sqrt(A)",
+    "variance": "daily_variance * A",
+    "factor_must_be_explicit_and_positive": true,
+    "implicit_conversion": false
+  },
+  "qlike": {
+    "formula": "realised_variance / forecast_variance - log(realised_variance / forecast_variance) - 1",
+    "forecast_variance": "strictly_positive_or_explicit_versioned_floor",
+    "zero_realised_variance": "rejected_for_ratio_form",
+    "lower_is_better": true
+  },
+  "target_error": {
+    "orientation": "realised_portfolio_volatility_minus_target_volatility",
+    "target_must_be_positive": true,
+    "tolerance_bands_are_explicit": true,
+    "exposure_values_change_metrics": false
+  },
+  "matched_comparison_gates": [
+    "population",
+    "horizon",
+    "forecast_representation",
+    "realised_representation",
+    "value_unit",
+    "annualisation_factor",
+    "availability_and_maturity_timing"
+  ],
+  "statistical_significance_performed": false,
+  "later_inference_owner": "Ticket 1D-A",
+  "data_policy": "synthetic_only",
+  "focused_test_file": "tests/test_volatility_metrics.py",
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION, SELECTOR COMPONENT, AND FIVE-MINUTE ARCHIVE WORK FINISHES"
+}
+
