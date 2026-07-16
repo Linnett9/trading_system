@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -27,14 +28,17 @@ from core.research.ml.experiment_ledger import (
     append_ledger_event, experiment_spec_hash, new_experiment_run_id,
 )
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
+from core.research.ml.artifact_lineage import build_artifact_link, verify_selector_artifact
+from core.research.ml.registries.io import canonical_hash
 
 CONTRACT_VERSION = "bounded_daily_selector_v2"
 IDENTITY_VERSION = "bounded_selector_identity_v3_registry"
+COMPONENT_SCHEMA_VERSION = "authoritative_selector_component_v1"
 PREDICTION_QUALITY_CONTRACT_VERSION = "fitted_candidate_prediction_quality_v1"
 MIN_PREDICTION_STANDARD_DEVIATION = 1e-12
 MIN_PREDICTION_RANGE = 1e-12
 PREDICTION_QUANTILES = (0.0, 0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99, 1.0)
-SUPPORTED_MODELS = ("ridge", "elastic_net", "random_forest", "gradient_boosting")
+SUPPORTED_MODELS = ("ridge", "elastic_net", "random_forest", "gradient_boosting", "ordered_logit_ranker")
 SUPPORTED_BASELINES = tuple(BASELINE_CANDIDATES)
 OUTCOME_PREFIX = "actual_"
 
@@ -122,6 +126,8 @@ def run_bounded_selector(config: Mapping[str, Any], overrides: Mapping[str, Any]
     if not rows_path.exists() or not scores_path.exists():
         raise FileNotFoundError("Frozen selector rows and baseline sidecar are required")
     feature_columns, selected_schema = _resolve_features(rows_path, settings.include_engineered_features, settings.feature_schema_path)
+    if "ordered_logit_ranker" in settings.model_allowlist and (not selected_schema or selected_schema.get("contract_version") != "canonical_v2_daily_tree_cross_sectional_features_v1" or len(feature_columns) != 21):
+        raise ValueError("ordered_logit_ranker requires the explicit 21-feature canonical_v2_daily_tree_cross_sectional_v1 schema")
     selected_dates = _select_dates(rows_path, settings)
     registry_context = _registry_context(settings)
     run_identity = _run_identity(settings, manifest, feature_columns, selected_schema, registry_context)
@@ -165,15 +171,19 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     row_cap = settings.smoke_overrides.get("training_row_cap")
     if row_cap is not None and train.num_rows > int(row_cap):
         train = train.sort_by([("decision_timestamp", "ascending"), ("row_id", "ascending")]).slice(train.num_rows - int(row_cap))
+    training_decision_min = str(pc.min(train["decision_timestamp"]).as_py())
     training_decision_max = str(pc.max(train["decision_timestamp"]).as_py())
     training_label_max = str(pc.max(train["label_available_timestamp"]).as_py())
     if training_decision_max >= decision_timestamp or training_label_max > decision_timestamp:
         raise RuntimeError("Bounded selector temporal training guard failed")
     _validate_features(train, feature_columns)
+    _validate_features(oos, feature_columns, require_finite=True)
     training_row_count = train.num_rows
     feature_missingness = {name: {"training": train[name].null_count / train.num_rows, "oos": oos[name].null_count / oos.num_rows} for name in feature_columns}
     x_train = _matrix(train, feature_columns); y_train = _float_array(train["actual_forward_return_10d"])
     x_oos = _matrix(oos, feature_columns)
+    training_groups = [str(value) for value in train["decision_timestamp"].to_pylist()]
+    training_row_ids = [str(value) for value in train["row_id"].to_pylist()]
     del train, train_source, train_scores, oos_source, oos_scores
     gc.collect()
     prediction_columns: dict[str, pa.Array] = {}
@@ -184,8 +194,13 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
         parameters = _reported_parameters(model_id, model)
         print(f"date={decision_date} model={model_id} status=starting rows={training_row_count} features={len(feature_columns)} parameters={json.dumps(parameters, sort_keys=True)} workers={parameters.get('workers', 1)}")
         try:
-            fit_started = time.perf_counter(); model.fit(x_train, y_train); fit_elapsed = time.perf_counter() - fit_started
-            predict_started = time.perf_counter(); raw_values = model.predict(x_oos); predict_elapsed = time.perf_counter() - predict_started
+            fit_started = time.perf_counter()
+            if model_id == "ordered_logit_ranker": model.fit(x_train, y_train, groups=training_groups, row_ids=training_row_ids)
+            else: model.fit(x_train, y_train)
+            fit_elapsed = time.perf_counter() - fit_started
+            predict_started = time.perf_counter(); raw_values = model.predict(x_oos)
+            ordered_probabilities = model.predict_proba(x_oos) if model_id == "ordered_logit_ranker" else None
+            predict_elapsed = time.perf_counter() - predict_started
             quality = _prediction_quality(raw_values, oos.num_rows, require_dispersion=True)
             values = quality.pop("values")
         except BaseException as exc:
@@ -198,8 +213,20 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
                 _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "FAILED", error_summary=f"{type(exc).__name__}: {exc}", only_model=model_id)
             raise
         column = f"stock_level_predicted_forward_return_10d_{model_id}"; prediction_columns[column] = pa.array(values, type=pa.float64())
+        if model_id == "ordered_logit_ranker":
+            import numpy as np
+            probabilities=np.asarray(ordered_probabilities,dtype=float)
+            if probabilities.shape != (oos.num_rows,5) or not np.isfinite(probabilities).all() or not np.allclose(probabilities.sum(axis=1),1.0,atol=1e-7): raise RuntimeError("ordered_logit_ranker produced invalid class probabilities")
+            asset_ids=np.asarray([str(value) for value in oos["asset_id"].to_pylist()])
+            order=np.lexsort((asset_ids,-np.asarray(values)))
+            ranks=np.empty(oos.num_rows,dtype=int); ranks[order]=np.arange(1,oos.num_rows+1)
+            prediction_columns["ordered_logit_predicted_relevance_class"] = pa.array(np.argmax(probabilities,axis=1),type=pa.int64())
+            for class_index in range(5): prediction_columns[f"ordered_logit_probability_{class_index}"]=pa.array(probabilities[:,class_index],type=pa.float64())
+            prediction_columns["ordered_logit_cross_sectional_rank"]=pa.array(ranks,type=pa.int64())
+            prediction_columns["ordered_logit_rank_percentile"]=pa.array((ranks-1)/max(oos.num_rows-1,1),type=pa.float64())
         timings[model_id] = {"fit_seconds": fit_elapsed, "prediction_seconds": predict_elapsed, "total_seconds": fit_elapsed + predict_elapsed}
         model_details[model_id] = {"status": "complete", "parameters": parameters, "prediction_quality": quality, "prediction_coverage": quality["coverage"], "prediction_dispersion": quality["standard_deviation"], **timings[model_id]}
+        if model_id == "ordered_logit_ranker": model_details[model_id]["ordered_logit_diagnostics"] = model.diagnostics
         statuses[model_id] = "complete"
         print(f"date={decision_date} model={model_id} status=complete fit_seconds={fit_elapsed:.6f} prediction_seconds={predict_elapsed:.6f}")
     for baseline_id in settings.baseline_allowlist:
@@ -218,13 +245,47 @@ def _run_date(settings, dataset_manifest, rows_path, scores_path, decision_date,
     prediction_path = temp_dir / "predictions.parquet"
     pq.write_table(predictions, prediction_path, compression="zstd")
     checksum = _sha256(prediction_path)
-    metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "prediction_quality_contract": _prediction_quality_contract(), "model_timings_seconds": timings, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
+    ranking_evaluation = None
+    if "ordered_logit_ranker" in settings.model_allowlist:
+        from core.research.ml.ranking import ranking_metrics, relevance_labels
+        ranking_rows = predictions.to_pylist(); relevance = relevance_labels(ranking_rows, bins=5)
+        for row in ranking_rows: row["ordered_logit_relevance"] = relevance["labels_by_row_id"][str(row["row_id"])]
+        ranking_evaluation = {"relevance": relevance, "metrics": ranking_metrics(ranking_rows, score_field="stock_level_predicted_forward_return_10d_ordered_logit_ranker", relevance_field="ordered_logit_relevance")}
+    metrics = {"decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "oos_row_count": oos.num_rows, "oos_symbol_count": len(set(oos["symbol"].to_pylist())), "feature_missingness": feature_missingness, "peak_memory_bytes": None, "prediction_quality_contract": _prediction_quality_contract(), "model_timings_seconds": timings, "model_details": model_details, "ranking_evaluation": ranking_evaluation, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides)}
     _atomic_json(temp_dir / "metrics.json", metrics)
-    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "decision_date": decision_date, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_label_available_timestamp_max": training_label_max, "oos_row_count": oos.num_rows, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
+    single_model = registry_context["models"][0] if len(registry_context["models"]) == 1 else None
+    row_population_hash = canonical_hash(sorted(str(value) for value in predictions["row_id"].to_pylist()))
+    fold_identity = canonical_hash({"training_start": training_decision_min, "training_cutoff": training_decision_max, "maximum_label_available": training_label_max, "prediction_date": decision_timestamp, "dataset_checksum": run_identity["source_dataset_checksum"], "row_population_hash": row_population_hash})
+    manifest = {**run_identity, "contract_version": CONTRACT_VERSION, "component_schema_version": COMPONENT_SCHEMA_VERSION if single_model else None, "decision_date": decision_date, "prediction_date": decision_date, "training_start": training_decision_min, "training_row_count": training_row_count, "training_row_count_before_cap": training_row_count_before_cap, "training_decision_timestamp_max": training_decision_max, "training_cutoff": training_decision_max, "training_label_available_timestamp_max": training_label_max, "fold_identity": fold_identity, "oos_row_count": oos.num_rows, "prediction_row_count": oos.num_rows, "prediction_population_checksum": row_population_hash, "oos_symbol_count": metrics["oos_symbol_count"], "label_availability_cutoff": decision_timestamp, "model_fit_statuses": statuses, "model_details": model_details, "selector_model_identity": single_model["canonical_model_id"] if single_model else None, "selector_model_version": single_model["model_entry_hash"] if single_model else None, "frozen_selector_dataset_identity": {"dataset_id": run_identity["dataset_id"], "dataset_checksum": run_identity["source_dataset_checksum"], "manifest_path": str(settings.dataset_root / "manifest.json")}, "daily_stock_spine_identity": dataset_manifest.get("daily_stock_spine_identity"), "symbol_registry_identity": dataset_manifest.get("symbol_registry_identity"), "feature_contract_version": (run_identity.get("selected_feature_schema") or {}).get("contract_version") or run_identity.get("feature_schema_hash"), "target_contract_version": registry_context.get("target_identity", {}).get("canonical_target_id"), "ranking_contract_version": (single_model or {}).get("ranking_problem_contract") or "ranking_metric_contract_v1", "parent_run_identity": canonical_hash(run_identity), "publication_status": "complete", "validation_status": "PENDING_ARTIFACT_LINK_VERIFICATION", "creation_timestamp": datetime.now(timezone.utc).isoformat(), "smoke_overrides": dict(settings.smoke_overrides), "non_production_smoke": bool(settings.smoke_overrides), "prediction_artifact_path": str(settings.output_root / f"date={decision_date}" / "predictions.parquet"), "prediction_checksum": checksum, "completion_status": "complete", "git_commit": _git_commit(), "elapsed_seconds": time.perf_counter() - started}
     manifest["experiments"] = [
         value for (date_key, _), value in registry_context["_experiment_metadata"].items()
         if date_key == decision_date
     ]
+    artifact_link = build_artifact_link(
+        artifact_kind="BOUNDED_SELECTOR_PREDICTION",
+        artifact_id=f"bounded-selector:{run_identity['config_hash']}:{decision_date}",
+        artifact_manifest_path=settings.output_root / f"date={decision_date}" / "manifest.json",
+        artifact_path=settings.output_root / f"date={decision_date}" / "predictions.parquet",
+        artifact_checksum=checksum,
+        experiment_spec_hash=canonical_hash(sorted(row["experiment_spec_hash"] for row in manifest["experiments"])),
+        experiment_run_id=canonical_hash(sorted(row["experiment_run_id"] for row in manifest["experiments"])),
+        source_commit=manifest["git_commit"], registry_identity_version=IDENTITY_VERSION,
+        requested_model_or_policy_id=",".join(row["requested_model_id"] for row in registry_context["models"]),
+        canonical_model_or_policy_id=",".join(row["canonical_model_id"] for row in registry_context["models"]),
+        model_or_policy_entry_hash=canonical_hash(sorted(row["model_entry_hash"] for row in registry_context["models"])),
+        dataset_id=run_identity["dataset_id"], dataset_checksum=run_identity["source_dataset_checksum"],
+        row_population_hash=row_population_hash,
+        feature_schema_hash=run_identity["feature_schema_hash"],
+        target_contract_hash=registry_context["target_entry_hash"], decision_start=decision_timestamp,
+        decision_end=decision_timestamp, training_cutoff=training_decision_max,
+        maximum_label_available_timestamp=training_label_max, strict_oos_claim=True,
+        strict_oos_evidence={"prediction_quality_passed": all(value == "complete" for value in statuses.values()), "row_population_verified": True, "temporal_legality_checked": True},
+        completion_status="complete",
+    )
+    verification = verify_selector_artifact(artifact_link)
+    artifact_link.update(verification.to_dict())
+    manifest["artifact_link"] = artifact_link
+    manifest["validation_status"] = verification.status
     _atomic_json(temp_dir / "manifest.json", manifest)
     os.replace(temp_dir, settings.output_root / f"date={decision_date}")
     _ledger_events(settings, dataset_manifest, run_identity, registry_context, decision_date, "COMPLETED", (str(settings.output_root / f"date={decision_date}"),))
@@ -311,10 +372,15 @@ def _matrix(table: pa.Table, features):
 def _float_array(column): return pc.cast(column, pa.float64()).to_numpy(zero_copy_only=False)
 
 
-def _validate_features(table, features):
+def _validate_features(table, features, *, require_finite=False):
     for name in features:
         if name not in table.schema.names or table[name].null_count == table.num_rows:
             raise RuntimeError(f"Requested selector feature is missing or entirely null: {name}")
+        if require_finite and any(
+            value is None or not math.isfinite(float(value))
+            for value in table[name].to_pylist()
+        ):
+            raise RuntimeError(f"Requested selector feature contains non-finite OOS values: {name}")
 
 
 def _validate_predictions(table, decision_date, candidates):
@@ -413,7 +479,11 @@ def _run_identity(settings, manifest, features, selected_schema, registry_contex
             "registry_set_hash": registry_context["registry_set_hash"],
             "selector_registry_hash": registry_context["selector_registry_hash"],
             "model_registry_entries": registry_context["models"],
-            "target_identity": {"target_field": "actual_forward_return_10d", "target_contract": "stock_level_target_provenance_v4"},
+            "target_identity": {
+                "target_field": "actual_forward_return_10d",
+                "target_contract": registry_context["target_identity"]["canonical_target_id"],
+                "target_entry_hash": registry_context["target_identity"]["target_entry_hash"],
+            },
         })
     return payload
 
@@ -426,11 +496,23 @@ def _registry_context(settings: BoundedSelectorSettings) -> dict[str, Any]:
         resolution = resolver.resolve("selector_models", requested, role="selector")
         if resolution.canonical_id != canonical or not resolution.entry.payload["bounded_runner_support"]:
             raise ValueError(f"Registry model is not bounded-runnable: {requested}")
-        models.append({"requested_model_id": requested, "canonical_model_id": canonical, "model_entry_hash": resolution.entry.entry_hash})
+        row={"requested_model_id": requested, "canonical_model_id": canonical, "model_entry_hash": resolution.entry.entry_hash}
+        if canonical == "ordered_logit_ranker":
+            problem=resolver.resolve("ranking_contracts","daily_cross_sectional_ranking_problem_v1")
+            relevance=resolver.resolve("ranking_contracts","within_date_quintile_relevance_v1")
+            row.update({"ranking_problem_contract":problem.canonical_id,"ranking_problem_contract_hash":problem.entry.entry_hash,"relevance_contract":relevance.canonical_id,"relevance_contract_hash":relevance.entry.entry_hash})
+        models.append(row)
+    target = resolver.resolve("target_contracts", "forward_return_10d", role="selector")
     return {
         "registry_set_hash": bundle.registry_set_hash,
         "selector_registry_hash": bundle.documents["selector_models"].registry_hash,
-        "models": models, "_run_ids": {}, "_experiment_metadata": {},
+        "models": models,
+        "target_entry_hash": target.entry.entry_hash,
+        "target_identity": {
+            "canonical_target_id": target.canonical_id,
+            "target_entry_hash": target.entry.entry_hash,
+        },
+        "_run_ids": {}, "_experiment_metadata": {},
     }
 
 
@@ -501,6 +583,7 @@ def _bounded_model(model_id: str, settings: BoundedSelectorSettings):
 
 def _reported_parameters(model_id: str, model: Any) -> dict[str, Any]:
     params = model.get_params()
+    if model_id == "ordered_logit_ranker": return {**params, "workers": 1, "feature_schema": "canonical_v2_daily_tree_cross_sectional_v1", "relevance_contract": "within_date_quintile_relevance_v1", "ranking_problem_contract": "daily_cross_sectional_ranking_problem_v1", "preprocessing": "training median imputation and standard scaling"}
     if model_id == "random_forest":
         prefix = "randomforestregressor__"
         return {"estimator_count": params[prefix + "n_estimators"], "max_depth": params[prefix + "max_depth"], "min_samples_leaf": params[prefix + "min_samples_leaf"], "max_features": params[prefix + "max_features"], "bootstrap": params[prefix + "bootstrap"], "max_samples": params.get(prefix + "max_samples"), "subsampling": None, "learning_rate": None, "random_seed": params[prefix + "random_state"], "workers": params[prefix + "n_jobs"], "sample_weighting": None, "preprocessing": "SimpleImputer(strategy=median)"}

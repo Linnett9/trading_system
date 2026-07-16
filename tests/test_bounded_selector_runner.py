@@ -14,15 +14,22 @@ from core.research.ml.stock_level.selector_feature_schema import schema_hash
 from core.research.ml.experiment_ledger import read_ledger
 
 
-def _dataset(tmp_path: Path) -> Path:
+def _dataset(tmp_path: Path, *, tree_schema: bool = False) -> Path:
     root = tmp_path / "dataset"; root.mkdir()
     rows, scores = [], []
+    tree_contract = (
+        json.loads(Path("config/selector_features/canonical_v2_daily_tree_cross_sectional_v1.json").read_text())
+        if tree_schema else None
+    )
+    tree_features = [entry["name"] for entry in tree_contract["features"]] if tree_contract else []
     start = date(2024, 1, 1)
     for index in range(14):
         day = (start + timedelta(days=index)).isoformat()
         for symbol_index, symbol in enumerate(("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")):
             row_id = f"{day}-{symbol}"
-            rows.append({"row_id": row_id, "asset_id": symbol, "symbol": symbol, "rebalance_date": day, "decision_session_date": day, "decision_timestamp": f"{day} 20:05:00+00:00", "label_available_timestamp": f"{(start + timedelta(days=index + 2)).isoformat()} 20:05:00+00:00", "selector_eligible": True, "target_status": "realized", "actual_forward_return_10d": 0.01 * (symbol_index + 1) + 0.0001 * index, "actual_benchmark_return_10d": 0.005})
+            row = {"row_id": row_id, "asset_id": symbol, "symbol": symbol, "rebalance_date": day, "decision_session_date": day, "decision_timestamp": f"{day} 20:05:00+00:00", "label_available_timestamp": f"{(start + timedelta(days=index + 2)).isoformat()} 20:05:00+00:00", "selector_eligible": True, "target_status": "realized", "actual_forward_return_10d": 0.01 * (symbol_index + 1) + 0.0001 * index, "actual_benchmark_return_10d": 0.005}
+            row.update({name: symbol_index + 0.01 * index + 0.0001 * offset for offset, name in enumerate(tree_features) if name not in DETERMINISTIC_SIGNAL_COLUMNS})
+            rows.append(row)
             score = {"row_id": row_id, "decision_timestamp": f"{day} 20:05:00+00:00"}
             score.update({name: symbol_index + 0.01 * index + 0.001 * offset for offset, name in enumerate(DETERMINISTIC_SIGNAL_COLUMNS)})
             scores.append(score)
@@ -31,6 +38,10 @@ def _dataset(tmp_path: Path) -> Path:
     (root / "feature_schema.json").write_text(json.dumps({"features": list(DETERMINISTIC_SIGNAL_COLUMNS)}), encoding="utf-8")
     (root / "manifest.json").write_text(json.dumps({"dataset_id": "tiny", "source_sha256": "source-a"}), encoding="utf-8")
     return root
+
+
+def _tree_schema_path() -> str:
+    return "config/selector_features/canonical_v2_daily_tree_cross_sectional_v1.json"
 
 
 def _config(root: Path, output: Path, **bounded):
@@ -219,6 +230,14 @@ def test_registry_identity_and_ledger_enter_bounded_manifest(tmp_path: Path):
     assert manifest["registry_set_hash"] and manifest["selector_registry_hash"]
     assert manifest["experiments"][0]["experiment_spec_hash"]
     assert manifest["experiments"][0]["experiment_run_id"]
+    assert manifest["component_schema_version"] == "authoritative_selector_component_v1"
+    assert manifest["selector_model_identity"] == "random_forest"
+    assert manifest["selector_model_version"]
+    assert manifest["training_start"] < manifest["training_cutoff"] < manifest["label_availability_cutoff"]
+    assert manifest["fold_identity"] and manifest["prediction_population_checksum"]
+    assert manifest["prediction_row_count"] == manifest["oos_row_count"]
+    assert manifest["publication_status"] == "complete"
+    assert manifest["validation_status"] == "VERIFIED_STRICT_OOS"
     assert [row["event_status"] for row in read_ledger(ledger)] == ["STARTED", "COMPLETED"]
 
 
@@ -233,6 +252,43 @@ def test_registry_rejection_is_retained_in_ledger(tmp_path: Path, monkeypatch):
     with pytest.raises(PredictionQualityError):
         run_bounded_selector(_config(root, output, oos_end_date="2024-01-10", model_allowlist=["ridge"], baseline_allowlist=[], experiment_ledger_path=str(ledger)))
     assert [row["event_status"] for row in read_ledger(ledger)] == ["STARTED", "REJECTED"]
+
+
+def test_ordered_logit_bounded_predictions_are_complete_and_ranked(tmp_path: Path):
+    root = _dataset(tmp_path, tree_schema=True); output = tmp_path / "ordered"
+    result = run_bounded_selector(_config(
+        root, output, oos_end_date="2024-01-10",
+        model_allowlist=["ordered_logit_ranker"], baseline_allowlist=[],
+        feature_schema_path=_tree_schema_path(),
+    ))
+    assert result["dates"][0]["status"] == "complete"
+    predictions = pq.read_table(output / "date=2024-01-10" / "predictions.parquet")
+    probabilities = [
+        predictions[f"ordered_logit_probability_{index}"].to_pylist()
+        for index in range(5)
+    ]
+    assert all(sum(values) == pytest.approx(1.0) for values in zip(*probabilities))
+    assert predictions["stock_level_predicted_forward_return_10d_ordered_logit_ranker"].null_count == 0
+    assert sorted(predictions["ordered_logit_cross_sectional_rank"].to_pylist()) == list(range(1, predictions.num_rows + 1))
+    metrics = json.loads((output / "date=2024-01-10" / "metrics.json").read_text())
+    details = metrics["model_details"]["ordered_logit_ranker"]
+    assert details["ordered_logit_diagnostics"]["training_row_count"] > 0
+    assert details["ordered_logit_diagnostics"]["coefficient_values"]
+    manifest = json.loads((output / "date=2024-01-10" / "manifest.json").read_text())
+    identity = manifest["model_registry_entries"][0]
+    assert identity["ranking_problem_contract"] == "daily_cross_sectional_ranking_problem_v1"
+    assert identity["relevance_contract"] == "within_date_quintile_relevance_v1"
+    assert manifest["target_identity"]["target_contract"] == "forward_return_10d"
+    assert manifest["target_identity"]["target_entry_hash"]
+
+
+def test_ordered_logit_requires_frozen_tree_schema(tmp_path: Path):
+    root = _dataset(tmp_path); output = tmp_path / "wrong-schema"
+    with pytest.raises(ValueError, match="explicit 21-feature"):
+        run_bounded_selector(_config(
+            root, output, oos_end_date="2024-01-10",
+            model_allowlist=["ordered_logit_ranker"], baseline_allowlist=[],
+        ))
 
 
 def test_registry_entry_mismatch_prevents_resume_and_skip_is_ledgered(tmp_path: Path):

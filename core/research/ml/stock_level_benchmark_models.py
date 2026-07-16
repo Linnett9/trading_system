@@ -87,6 +87,9 @@ def _build_tabular_model(
     random_seed: int,
     sklearn_n_jobs: int,
 ) -> Any:
+    if model_name == "ordered_logit_ranker":
+        from core.research.ml.ranking import OrderedLogitRanker
+        return OrderedLogitRanker()
     try:
         from sklearn.compose import TransformedTargetRegressor
         from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor

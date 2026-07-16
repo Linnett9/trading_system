@@ -60,6 +60,7 @@ def relevance_labels(rows: Sequence[Mapping[str, Any]], *, bins: int = 5, target
         decision=str(row.get("decision_timestamp") or row.get("rebalance_date") or "")
         value=row.get(target_field)
         if value in (None, ""): raise ValueError("Ranking relevance target is missing")
+        if not math.isfinite(float(value)): raise ValueError("Ranking relevance target must be finite")
         groups.setdefault(decision,[]).append(row)
     labels={}; tie_count=0; distributions={}
     for decision, group in sorted(groups.items()):
@@ -87,8 +88,12 @@ class OrderedLogitRanker:
         from sklearn.impute import SimpleImputer
         from sklearn.preprocessing import StandardScaler
         if groups is None or row_ids is None: raise ValueError("ordered_logit_ranker requires date groups and stable row IDs")
+        if not (len(x) == len(y) == len(groups) == len(row_ids)):
+            raise ValueError("ordered_logit_ranker training inputs must have identical populations")
         rows=[{"row_id":rid,"decision_timestamp":group,"actual_forward_return_10d":target} for rid,group,target in zip(row_ids,groups,y)]
         relevance=relevance_labels(rows,bins=self.bins); labels=np.asarray([relevance["labels_by_row_id"][str(rid)] for rid in row_ids],dtype=int)
+        if set(labels.tolist()) != set(range(self.bins)):
+            raise ValueError(f"ordered_logit_ranker requires all relevance classes 0..{self.bins - 1}")
         self.imputer_=SimpleImputer(strategy="median"); self.scaler_=StandardScaler(); matrix=self.scaler_.fit_transform(self.imputer_.fit_transform(x)); n_features=matrix.shape[1]
         def unpack(params):
             beta=params[:n_features]; raw=params[n_features:]; thresholds=np.cumsum(np.exp(raw)); thresholds-=np.mean(thresholds); return beta,thresholds
