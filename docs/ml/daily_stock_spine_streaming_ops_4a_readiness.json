@@ -1,0 +1,36 @@
+{
+  "ticket": "OPS-4A",
+  "status": "READY",
+  "contract": "daily_stock_spine_verification.v1",
+  "streaming_mode": "pyarrow_record_batches_with_temporary_sqlite",
+  "default_batch_size": 65536,
+  "worker_count": 1,
+  "whole_table_materialisation": false,
+  "whole_table_to_pylist_used": false,
+  "required_columns": [
+    "rebalance_date",
+    "symbol"
+  ],
+  "projected_column_classes": [
+    "row_identity",
+    "decision_and_feature_timing",
+    "target_horizon_and_maturity",
+    "stock_benchmark_and_residual_targets",
+    "source_and_calendar_identity"
+  ],
+  "exact_checks": [
+    "missing_keys",
+    "duplicate_economic_keys",
+    "row_id_population_alignment",
+    "target_alignment",
+    "benchmark_alignment",
+    "timestamp_alignment",
+    "temporal_ordering",
+    "legacy_compatible_population_checksum",
+    "legacy_compatible_dataset_id"
+  ],
+  "temporary_resource": "automatically_cleaned_sqlite",
+  "production_run_invoked": false,
+  "resume_requires_switch": true,
+  "resume_run_id": "20260716T091011Z"
+}

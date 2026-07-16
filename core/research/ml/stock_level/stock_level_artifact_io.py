@@ -7,7 +7,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -161,6 +161,42 @@ def read_stock_level_artifact(
     if missing:
         raise ValueError(f"Stock-level artifact {path} missing required columns: {missing}")
     return rows
+
+
+def iter_stock_level_artifact_batches(
+    path: Path,
+    *,
+    required_columns: Sequence[str],
+    batch_size: int = 65536,
+    expected_schema_fingerprint: str | None = None,
+) -> Iterator[list[dict[str, Any]]]:
+    """Yield projected Parquet rows in bounded, deterministic record batches."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    if path.suffix.lower() != ".parquet":
+        raise ValueError(f"Streaming stock-level artifact reader requires Parquet: {path}")
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    try:
+        parquet = pq.ParquetFile(path)
+    except Exception as exc:
+        raise ValueError(f"Could not open Parquet artifact {path}: {exc}") from exc
+    schema = parquet.schema_arrow
+    columns = list(dict.fromkeys(str(column) for column in required_columns))
+    missing = sorted(set(columns) - set(schema.names))
+    if missing:
+        raise ValueError(f"Stock-level artifact {path} missing required columns: {missing}")
+    schema_fp = schema_fingerprint(schema.names, schema)
+    if expected_schema_fingerprint and schema_fp != expected_schema_fingerprint:
+        raise ValueError(
+            f"Schema fingerprint mismatch for {path}: "
+            f"{schema_fp} != {expected_schema_fingerprint}"
+        )
+    try:
+        for batch in parquet.iter_batches(batch_size=batch_size, columns=columns, use_threads=False):
+            yield batch.to_pylist()
+    except Exception as exc:
+        raise ValueError(f"Could not stream Parquet artifact {path}: {exc}") from exc
 
 
 def artifact_identity(
