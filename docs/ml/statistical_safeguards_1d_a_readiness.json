@@ -1,0 +1,33 @@
+{
+  "contract_version": "statistical_safeguards_readiness_v1",
+  "ticket": "1D-A",
+  "status": "IMPLEMENTED_SYNTHETIC_ONLY_INTEGRATION_DEFERRED",
+  "implementation_owner": "core/research/ml/statistical_safeguards.py",
+  "input_contract": "matched_statistical_series_v1",
+  "result_contract": "statistical_safeguard_result_v1",
+  "block_policy": "explicit_circular_block_length_v1",
+  "methods": {
+    "block_bootstrap": "paired circular blocks with wraparound",
+    "dsr": "Bailey-Lopez de Prado 2014 finite-sample Sharpe variance and expected-maximum threshold",
+    "pbo": "bounded combinatorially symmetric cross-validation",
+    "spa": "studentized Hansen-style SPA with consistent recentering and circular blocks",
+    "mcs": "range-based MCS with circular-block bootstrap",
+    "seed_dispersion": "distinct-seed summary with retry collapse and cross-model rank stability"
+  },
+  "statuses": [
+    "VALID",
+    "INSUFFICIENT_DATA",
+    "INVALID_INPUT",
+    "UNMATCHED_POPULATION",
+    "UNSUPPORTED_CONFIGURATION",
+    "NUMERICAL_FAILURE"
+  ],
+  "focused_tests": "15 passed in 0.75s",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "historical_evaluation": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
