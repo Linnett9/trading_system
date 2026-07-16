@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--parent-gate", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--evaluation-cutoff", required=True)
+    parser.add_argument("--selector-run-id", default="20260716T091011Z")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     if args.verify_only:
@@ -32,6 +33,7 @@ def main() -> int:
             parent_gate=json.loads(args.parent_gate.read_text(encoding="utf-8")),
             rows=read_selector_dataset_rows(args.selector_dataset),
             output_root=args.output_root, evaluation_cutoff=args.evaluation_cutoff,
+            selector_run_id=args.selector_run_id,
         )
     print(json.dumps(result, sort_keys=True))
     return 0 if result.get("status", "READY") == "READY" else 2

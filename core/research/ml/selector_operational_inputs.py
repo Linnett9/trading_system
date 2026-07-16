@@ -23,12 +23,14 @@ DATES = ("2024-03-15", "2024-09-16", "2025-03-17", "2025-09-15", "2026-03-16")
 TARGET = "forward_return_10d"
 PURGE_SESSIONS = 10
 EMBARGO_SESSIONS = 10
+SELECTOR_RUN_ID = "20260716T091011Z"
 
 
 def build_operational_inputs(
     *, plan: Mapping[str, Any], dataset_manifest: Mapping[str, Any],
     parent_gate: Mapping[str, Any], rows: Sequence[Mapping[str, Any]],
     output_root: Path, evaluation_cutoff: str, source_git_commit: str | None = None,
+    selector_run_id: str = SELECTOR_RUN_ID,
 ) -> dict[str, Any]:
     jobs = list(plan.get("production_plan") or [])
     _validate_plan(jobs)
@@ -56,6 +58,7 @@ def build_operational_inputs(
     )
     inventory = {
         "inventory_contract_version": INVENTORY_CONTRACT,
+        "selector_run_id": selector_run_id,
         "operational_panel_id": "selector_operational_panel_v1",
         "required_component_count": 15,
         "required_models": list(MODELS), "required_dates": list(DATES),
@@ -85,6 +88,9 @@ def build_operational_inputs(
 
 def validate_inventory(
     path: Path, *, readiness: Mapping[str, Any] | None = None,
+    expected_run_id: str | None = None, expected_dataset_id: str | None = None,
+    expected_dataset_checksum: str | None = None, expected_parent_gate_checksum: str | None = None,
+    expected_evaluation_cutoff: str | None = None,
 ) -> dict[str, Any]:
     value = _json(path)
     reasons = []
@@ -92,6 +98,16 @@ def validate_inventory(
         reasons.append("INVENTORY_CONTRACT_MISMATCH")
     if value.get("logical_checksum") != _logical(value):
         reasons.append("INVENTORY_CHECKSUM_MISMATCH")
+    expectations = {
+        "selector_run_id": expected_run_id,
+        "selector_dataset_id": expected_dataset_id,
+        "selector_dataset_checksum": expected_dataset_checksum,
+        "parent_gate_checksum": expected_parent_gate_checksum,
+        "evaluation_cutoff": expected_evaluation_cutoff,
+    }
+    for key, expected in expectations.items():
+        if expected is not None and value.get(key) != expected:
+            reasons.append(f"{key.upper()}_MISMATCH")
     packages = list(value.get("packages") or [])
     ids = [str(row.get("job_id")) for row in packages]
     expected = {f"selector:{date}:{model}" for date in DATES for model in MODELS}
@@ -133,6 +149,13 @@ def validate_inventory(
             reasons.append("EVALUATION_CUTOFF_MISMATCH")
         if outcome_manifest.get("logical_checksum") != _logical(outcome_manifest):
             reasons.append("OUTCOME_MANIFEST_CHECKSUM_MISMATCH")
+        with outcome.open("r", encoding="utf-8", newline="") as handle:
+            outcome_rows = list(csv.DictReader(handle))
+        dates = {row.get("prediction_date") for row in outcome_rows}
+        if dates != set(DATES): reasons.append("OUTCOME_DATE_COVERAGE_MISMATCH")
+        if len(outcome_rows) != int(outcome_manifest.get("row_count", -1)): reasons.append("OUTCOME_ROW_COUNT_MISMATCH")
+        if any(row.get("target_contract") != TARGET or row.get("target_horizon") != "10_sessions" for row in outcome_rows): reasons.append("OUTCOME_TARGET_MISMATCH")
+        if any(row.get("maturity_status") != "MATURE" or row.get("label_available_timestamp", "") > str(value.get("evaluation_cutoff", "")) for row in outcome_rows): reasons.append("OUTCOME_IMMATURE")
     except (OSError, KeyError, ValueError):
         reasons.append("OUTCOME_OWNER_MISSING")
     return {"status": "READY" if not reasons else "BLOCKED", "reasons": sorted(set(reasons)), "inventory": value}
