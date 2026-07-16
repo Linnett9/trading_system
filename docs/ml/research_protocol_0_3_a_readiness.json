@@ -1,0 +1,47 @@
+{
+  "ticket": "0.3A",
+  "component": "protected_final_audit_and_research_budget_governance",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_INTEGRATION",
+  "contracts": {
+    "protocol": "research_protocol_v1",
+    "date_domains": "research_date_domain_v1",
+    "frozen_history": "frozen_development_history_v1",
+    "fold": "research_protocol_fold_v1",
+    "panel": "research_protocol_panel_v1",
+    "budget": "research_budget_policy_v1",
+    "audit_access_event": "final_audit_access_event_v1",
+    "promotion": "promotion_governance_v1",
+    "readiness": "research_protocol_readiness_v1"
+  },
+  "date_domains": [
+    "TRAINING",
+    "INNER_VALIDATION",
+    "DEVELOPMENT_EVALUATION",
+    "FINAL_AUDIT",
+    "EXCLUDED_EMBARGO",
+    "EXCLUDED_PURGE",
+    "UNASSIGNED"
+  ],
+  "state_path": [
+    "DRAFT",
+    "DEVELOPMENT_FROZEN",
+    "DEVELOPMENT_ACTIVE",
+    "DEVELOPMENT_CLOSED",
+    "FINAL_AUDIT_AUTHORIZED",
+    "FINAL_AUDIT_COMPLETE",
+    "PROMOTION_DECIDED"
+  ],
+  "budget_source": "Ticket 0.2B verified material effective-search count",
+  "shared_hypothesis_budget_resets_on_new_campaign": false,
+  "final_audit_is_tuning_panel": false,
+  "operational_rerun_requires_unchanged": [
+    "model_identity",
+    "portfolio_policy_identity",
+    "final_audit_population_identity"
+  ],
+  "data_policy": "synthetic_contracts_only",
+  "live_ledgers_read_or_written": false,
+  "focused_test_file": "tests/test_research_protocol.py",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT RUNS FINISH"
+}
+
