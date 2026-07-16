@@ -1,0 +1,47 @@
+{
+  "ticket": "5A-A",
+  "component": "ranking_label_contracts_and_frozen_grouped_dataset",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_MODEL_INTEGRATION",
+  "contracts": {
+    "continuous_percentile": "continuous_percentile_relevance_v1",
+    "pairwise_margin": "pairwise_return_margin_v1",
+    "grouped_dataset": "grouped_ranking_dataset_v1",
+    "pairwise_dataset": "pairwise_ranking_dataset_v1",
+    "lightgbm_export": "grouped_ranking_lightgbm_export_v1",
+    "xgboost_export": "grouped_ranking_xgboost_export_v1",
+    "generic_mapping": "grouped_ranking_mapping_v1",
+    "existing_relevance_compatibility": "existing_relevance_compatibility_v1"
+  },
+  "percentile_policy": {
+    "direction": "ascending realised return maps from zero to one",
+    "economic_ties": "average percentile rank",
+    "canonical_asset_id_changes_tied_label": false,
+    "missing_or_immature_targets": "fail_closed"
+  },
+  "pairwise_policy": {
+    "scope": "within_decision_date_only",
+    "orientation": "higher realised return is winner",
+    "exact_margin_included": true,
+    "ties_excluded": true,
+    "submargin_pairs_excluded": true,
+    "bounded_selection": "sha256_priority_without_random_sampling"
+  },
+  "grouped_dataset_order": [
+    "decision_date",
+    "canonical_asset_id",
+    "row_id"
+  ],
+  "supported_label_types": [
+    "quintile_integer",
+    "decile_integer",
+    "continuous_percentile"
+  ],
+  "lightgbm_imported": false,
+  "xgboost_imported": false,
+  "model_fitting_performed": false,
+  "real_data_used": false,
+  "registries_modified": false,
+  "focused_test_file": "tests/test_ranking_labels.py",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
+
