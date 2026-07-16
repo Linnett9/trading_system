@@ -139,6 +139,85 @@ def test_symbol_year_partition_routing_atomic_manifest_and_skip(tmp_path: Path) 
     assert second["completed_partitions"] == 1
 
 
+def test_partition_read_filters_before_python_normalisation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _env(tmp_path)
+    chunk = _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+    parquet = env["parquet"] / chunk.relative_to(env["raw"]) / "bars.parquet"
+    rows = pq.read_table(parquet).to_pylist()
+    rows.extend([
+        _chunk_row("SPY", "2026-01-02T14:30:00+00:00"),
+        _chunk_row("AAPL", "2025-01-02T14:30:00+00:00"),
+    ])
+    pq.write_table(pa.Table.from_pylist(rows), parquet)
+    seen = []
+    original = finalizer.normalize_output_row
+
+    def recording_normalise(row, *, chunk, registry):
+        seen.append((row["symbol"], row["timestamp"].year))
+        return original(row, chunk=chunk, registry=registry)
+
+    monkeypatch.setattr(finalizer, "normalize_output_row", recording_normalise)
+    result = finalizer.finalize_partition(
+        canonical_symbol="AAPL",
+        year=2026,
+        chunks=[_source_chunk(env, chunk)],
+        archive_root=env["archive"],
+        quarantine_root=env["report"] / "conflicts",
+        registry={"AAPL": {"asset_id": "asset-aapl"}, "SPY": {"asset_id": "asset-spy"}},
+    )
+
+    assert seen == [("AAPL", 2026), ("AAPL", 2026)]
+    assert result["source_row_count"] == 4
+    assert result["rows_decoded"] == 2
+    assert result["decoded_row_amplification_ratio"] == 1.0
+
+
+def test_corrupt_completed_output_is_rebuilt(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")
+    kwargs = dict(
+        raw_root=env["raw"],
+        parquet_root=env["parquet"],
+        archive_root=env["archive"],
+        report_root=env["report"],
+        collection_manifest_path=env["manifest"],
+        universe_path=env["universe"],
+        symbols=["AAPL"],
+        years=[2026],
+        dry_run=False,
+    )
+    finalize_symbol_year_archive(**kwargs)
+    output = env["archive"] / "symbol=AAPL" / "year=2026" / "bars.parquet"
+    output.write_bytes(b"corrupt")
+
+    rerun = finalize_symbol_year_archive(**kwargs)
+
+    assert rerun["partitions_dispatched"] == 1
+    assert pq.ParquetFile(output).metadata.num_rows == 2
+
+
+def test_single_owner_guard_rejects_competing_run(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    env["report"].mkdir(parents=True)
+    lock = env["report"] / ".finalizer.lock"
+    lock.write_text(json.dumps({"pid": 12345}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="another finalizer owns"):
+        finalize_symbol_year_archive(
+            raw_root=env["raw"],
+            parquet_root=env["parquet"],
+            archive_root=env["archive"],
+            report_root=env["report"],
+            collection_manifest_path=env["manifest"],
+            universe_path=env["universe"],
+            symbols=["AAPL"],
+            years=[2026],
+            dry_run=True,
+        )
+
+    assert lock.exists()
+
+
 def test_retry_only_failed_processes_failed_partition(tmp_path: Path) -> None:
     env = _env(tmp_path)
     _write_chunk(env, "AAPL", "20260102T143000Z", "20260102T150000Z")

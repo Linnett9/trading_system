@@ -16,6 +16,7 @@ import math
 import shutil
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from contextlib import contextmanager
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -36,6 +37,23 @@ DEFAULT_ARCHIVE_ROOT = Path("data/processed/alpaca/symbol_bars/sip/5m")
 DEFAULT_REPORT_ROOT = Path("reports/data_quality/alpaca_5m_symbol_year_finalisation")
 DEFAULT_COLLECTION_MANIFEST = Path("reports/market_data/historical_bar_backfill/5m_sip_514_symbol_full/collection_manifest.json")
 DATASET_VERSION = "alpaca_sip_5m_symbol_year_v1"
+SOURCE_COLUMNS = [
+    "symbol",
+    "provider_symbol",
+    "timestamp",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "trade_count",
+    "vwap",
+    "provider",
+    "feed",
+    "adjustment_mode",
+    "session_type",
+    "raw_chunk_identifier",
+]
 
 OUTPUT_SCHEMA = pa.schema(
     [
@@ -120,6 +138,48 @@ def finalize_symbol_year_archive(
     if max_in_flight_tasks < 0:
         raise ValueError("max_in_flight_tasks must be >= 0")
     report_root.mkdir(parents=True, exist_ok=True)
+    with _single_owner(report_root):
+        return _finalize_symbol_year_archive_owned(
+            raw_root=raw_root,
+            parquet_root=parquet_root,
+            archive_root=archive_root,
+            report_root=report_root,
+            collection_manifest_path=collection_manifest_path,
+            universe_path=universe_path,
+            symbols=symbols,
+            years=years,
+            max_chunks=max_chunks,
+            max_chunks_per_symbol_year=max_chunks_per_symbol_year,
+            dry_run=dry_run,
+            retry_only_failed=retry_only_failed,
+            workers=workers,
+            source_chunk_paths=source_chunk_paths,
+            fail_fast_same_signature_threshold=fail_fast_same_signature_threshold,
+            conflict_root=conflict_root,
+            max_in_flight_tasks=max_in_flight_tasks,
+        )
+
+
+def _finalize_symbol_year_archive_owned(
+    *,
+    raw_root: Path,
+    parquet_root: Path,
+    archive_root: Path,
+    report_root: Path,
+    collection_manifest_path: Path,
+    universe_path: Path,
+    symbols: Sequence[str],
+    years: Sequence[int],
+    max_chunks: int,
+    max_chunks_per_symbol_year: int,
+    dry_run: bool,
+    retry_only_failed: bool,
+    workers: int,
+    source_chunk_paths: Sequence[Path],
+    fail_fast_same_signature_threshold: int,
+    conflict_root: Path,
+    max_in_flight_tasks: int,
+) -> dict[str, Any]:
     selected_symbols = {normalize_symbol(symbol) for symbol in symbols if symbol}
     selected_years = {int(year) for year in years}
     registry = _registry(universe_path)
@@ -517,34 +577,63 @@ def finalize_partition(
     started = time.perf_counter()
     rows: list[dict[str, Any]] = []
     source_row_count = 0
+    rows_decoded = 0
+    source_bytes_opened = 0
+    read_seconds = 0.0
+    filter_normalize_seconds = 0.0
     for chunk in chunks:
-        table = pq.ParquetFile(chunk.parquet_path).read()
-        source_row_count += table.num_rows
+        parquet = pq.ParquetFile(chunk.parquet_path)
+        source_row_count += parquet.metadata.num_rows
+        source_bytes_opened += chunk.parquet_path.stat().st_size
+        read_started = time.perf_counter()
+        table = pq.read_table(
+            chunk.parquet_path,
+            columns=[name for name in SOURCE_COLUMNS if name in parquet.schema_arrow.names],
+            filters=[
+                ("symbol", "=", canonical_symbol),
+                ("timestamp", ">=", datetime(year, 1, 1, tzinfo=timezone.utc)),
+                ("timestamp", "<", datetime(year + 1, 1, 1, tzinfo=timezone.utc)),
+            ],
+        )
+        read_seconds += time.perf_counter() - read_started
+        rows_decoded += table.num_rows
+        filter_started = time.perf_counter()
         for row in _iter_table_rows(table):
             normalized = normalize_output_row(row, chunk=chunk, registry=registry)
             if normalized["canonical_symbol"] == canonical_symbol and normalized["timestamp_utc"].year == year:
                 rows.append(normalized)
+        filter_normalize_seconds += time.perf_counter() - filter_started
+    deduplicate_started = time.perf_counter()
     deduped, duplicate_report = deduplicate_rows(rows)
+    sort_deduplication_seconds = time.perf_counter() - deduplicate_started
     if duplicate_report["conflicting_duplicate_count"]:
         path = quarantine_root / f"{canonical_symbol}_{year}_conflicts.json"
         _write_json(path, duplicate_report)
         raise ValueError(f"conflicting duplicates for {canonical_symbol} {year}: {duplicate_report['conflicting_duplicate_count']}")
+    validation_started = time.perf_counter()
     invalid = validate_rows(deduped)
+    validation_seconds = time.perf_counter() - validation_started
     if invalid:
         raise ValueError(f"invalid output rows for {canonical_symbol} {year}: {invalid[:3]}")
     target = archive_root / f"symbol={canonical_symbol}" / f"year={year}" / "bars.parquet"
     table = pa.Table.from_pylist(deduped, schema=OUTPUT_SCHEMA)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".parquet.tmp")
+    write_started = time.perf_counter()
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(target)
+    parquet_write_seconds = time.perf_counter() - write_started
     timestamps = [row["timestamp_utc"] for row in deduped]
     manifest = {
         "canonical_symbol": canonical_symbol,
         "year": year,
         "source_chunk_count": len(chunks),
         "source_row_count": source_row_count,
+        "source_bytes_opened": source_bytes_opened,
+        "rows_decoded": rows_decoded,
         "output_row_count": len(deduped),
+        "read_amplification_ratio": source_row_count / max(1, len(deduped)),
+        "decoded_row_amplification_ratio": rows_decoded / max(1, len(deduped)),
         "exact_duplicates_removed": duplicate_report["exact_duplicates_removed"],
         "conflicting_duplicate_count": duplicate_report["conflicting_duplicate_count"],
         "invalid_row_count": len(invalid),
@@ -557,6 +646,13 @@ def finalize_partition(
         "path": str(target),
         "status": "COMPLETE",
         "dataset_version": DATASET_VERSION,
+        "phase_timings": {
+            "parquet_read_seconds": read_seconds,
+            "filter_normalize_seconds": filter_normalize_seconds,
+            "sort_deduplication_seconds": sort_deduplication_seconds,
+            "validation_seconds": validation_seconds,
+            "parquet_write_seconds": parquet_write_seconds,
+        },
         "elapsed_seconds": time.perf_counter() - started,
     }
     return manifest
@@ -1076,7 +1172,42 @@ def _completed_manifest_valid(path: Path, archive_root: Path) -> bool:
     if payload.get("status") != "COMPLETE":
         return False
     output = Path(str(payload.get("path") or ""))
-    return output.exists() and archive_root in output.parents
+    if not output.exists() or archive_root not in output.parents:
+        return False
+    try:
+        parquet = pq.ParquetFile(output)
+        return (
+            parquet.metadata.num_rows == int(payload.get("output_row_count", -1))
+            and schema_fingerprint(parquet.schema_arrow) == payload.get("schema_fingerprint")
+            and _file_sha256(output) == payload.get("output_file_hash")
+        )
+    except (OSError, ValueError, pa.ArrowException):
+        return False
+
+
+@contextmanager
+def _single_owner(report_root: Path) -> Iterable[None]:
+    lock_path = report_root / ".finalizer.lock"
+    payload = {"pid": os.getpid(), "created_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        owner = _read_json(lock_path)
+        raise RuntimeError(
+            f"another finalizer owns {report_root}: pid={owner.get('pid', 'unknown')}; "
+            f"remove {lock_path} only after confirming that process is not running"
+        ) from exc
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _progress_payload(
