@@ -179,6 +179,79 @@ def test_selector_identity_mismatch_and_malformed_files(tmp_path):
     assert load_json(malformed)[1].startswith("MALFORMED_FILE:")
 
 
+def test_small_json_loader_accepts_utf8_and_utf8_bom(tmp_path):
+    payload = {"status": "READY", "value": 1}
+    ordinary = tmp_path / "ordinary.json"
+    ordinary.write_text(json.dumps(payload), encoding="utf-8")
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
+
+    assert load_json(ordinary) == (payload, None)
+    assert load_json(bom) == (payload, None)
+
+
+def test_small_json_loader_rejects_malformed_with_and_without_bom(tmp_path):
+    ordinary = tmp_path / "malformed.json"
+    ordinary.write_text("{bad", encoding="utf-8")
+    bom = tmp_path / "malformed-bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf{bad")
+
+    assert load_json(ordinary)[1].startswith("MALFORMED_FILE:")
+    assert load_json(bom)[1].startswith("MALFORMED_FILE:")
+
+
+def test_bom_selector_state_preserves_stage_evidence_and_dependency_blocks(tmp_path):
+    state_path = tmp_path / "run_state.json"
+    state_path.write_bytes(b"\xef\xbb\xbf" + json.dumps(_selector()).encode("utf-8"))
+    selector_state, error = load_json(state_path)
+    assert error is None
+
+    result = _evaluate(
+        selector_state=selector_state,
+        progress=_progress(completed_partitions=5000, pending_partitions=654),
+        archive_validation=None,
+        finaliser_active=True,
+    )
+
+    stage_blockers = result["job_blockers"]["JOB-003"]
+    assert not any(blocker.startswith("SELECTOR_STAGE_1_") for blocker in stage_blockers)
+    assert not any(blocker.startswith("SELECTOR_STAGE_2_") for blocker in stage_blockers)
+    assert not any(blocker.startswith("SELECTOR_STAGE_3_") for blocker in stage_blockers)
+    assert not any("MALFORMED" in blocker for blocker in stage_blockers)
+    assert result["job_statuses"]["JOB-001"] == "ACTIVE"
+    assert result["job_statuses"]["JOB-003"] == "WAITING_DEPENDENCY"
+    assert "JOB-001_NOT_COMPLETE" in stage_blockers
+    assert "JOB-002_NOT_COMPLETE" in stage_blockers
+    assert "FINALISER_PROCESS_ACTIVE" in stage_blockers
+
+
+def test_bom_and_plain_selector_state_have_identical_logical_checksum(tmp_path):
+    payload = _selector()
+    plain = tmp_path / "plain.json"
+    plain.write_text(json.dumps(payload), encoding="utf-8")
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
+
+    plain_result = _evaluate(selector_state=load_json(plain)[0])
+    bom_result = _evaluate(selector_state=load_json(bom)[0])
+    assert plain_result["logical_checksum"] == bom_result["logical_checksum"]
+
+
+def test_loader_reads_only_the_explicit_fixture_path(monkeypatch, tmp_path):
+    configured = tmp_path / "configured.json"
+    configured.write_text('{"status":"READY"}', encoding="utf-8")
+    reads = []
+    original = Path.read_text
+
+    def recording_read_text(self, *args, **kwargs):
+        reads.append(self.resolve())
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+    assert load_json(configured)[1] is None
+    assert reads == [configured.resolve()]
+
+
 def test_dependency_order_and_no_downstream_readiness_leakage():
     result = _evaluate(
         progress=_progress(completed_partitions=0, pending_partitions=5654),

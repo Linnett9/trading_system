@@ -31,7 +31,7 @@ def load_json(path: Path | None) -> tuple[dict[str, Any] | None, str | None]:
     if path is None or not path.exists():
         return None, "MISSING_FILE"
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         return None, f"MALFORMED_FILE:{exc}"
     return (value, None) if isinstance(value, dict) else (None, "MALFORMED_FILE:ROOT_NOT_OBJECT")
