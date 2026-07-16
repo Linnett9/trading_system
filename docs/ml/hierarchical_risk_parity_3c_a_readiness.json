@@ -1,0 +1,44 @@
+{
+  "contract_version": "hierarchical_risk_parity_readiness_v1",
+  "ticket": "3C-A",
+  "status": "IMPLEMENTED_SYNTHETIC_ONLY_INTEGRATION_DEFERRED",
+  "implementation_owner": "core/research/ml/hierarchical_risk_parity.py",
+  "input_contract": "hierarchical_risk_parity_input_v1",
+  "result_contract": "hierarchical_risk_parity_result_v1",
+  "comparison_contract": "hierarchical_risk_parity_comparison_v1",
+  "variants": [
+    "standard_candidate_universe_hrp_v1",
+    "hrp_top_20_v1",
+    "hrp_top_40_v1",
+    "sector_first_hrp_v1"
+  ],
+  "distance": "sqrt((1-correlation)/2)",
+  "linkage": "scipy single linkage",
+  "quasi_diagonalisation": "scipy leaves_list over canonical input",
+  "cluster_variance": "inverse-variance cluster weights then v'Cov*v",
+  "recursive_bisection": "ordered half split with inverse sibling cluster variance",
+  "constraint_post_processing": "deterministic proportional waterfill guided by raw HRP weights",
+  "sector_first_aggregation": "inverse-volatility weighted sector return",
+  "statuses": [
+    "VALID",
+    "INFEASIBLE",
+    "INSUFFICIENT_DATA",
+    "INVALID_INPUT",
+    "UNSUPPORTED_CONFIGURATION",
+    "CLUSTERING_FAILURE",
+    "NUMERICAL_FAILURE"
+  ],
+  "focused_tests": "18 passed in 1.48s",
+  "adv_capacity_status": "UNVERIFIED",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "historical_evaluation": false,
+  "portfolio_mutation": false,
+  "orders_generated": false,
+  "dependency_installed_by_ticket": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
+
