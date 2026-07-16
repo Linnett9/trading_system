@@ -11,14 +11,13 @@ from core.research.ml.registries.types import RegistryValidationError
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
 
 
-def test_registry_capabilities_are_truthful_for_bounded_only():
+def test_registry_capabilities_are_truthful_for_bounded_and_ordinary():
     adapter = selector_model_adapter("ordered_logit_ranker", runner="bounded")
     assert adapter.bounded_runner_support is True
-    assert adapter.ordinary_runner_support is False
+    assert adapter.ordinary_runner_support is True
     assert adapter.ranking_problem_contract == "daily_cross_sectional_ranking_problem_v1"
     assert adapter.relevance_contract == "within_date_quintile_relevance_v1"
-    with pytest.raises(RegistryValidationError, match="does not support runner ordinary"):
-        selector_model_adapter("ordered_logit_ranker", runner="ordinary")
+    assert selector_model_adapter("ordered_logit_ranker", runner="ordinary").canonical_model_id == "ordered_logit_ranker"
     assert verify_registry_capabilities()["bounded"] >= 1
 
 

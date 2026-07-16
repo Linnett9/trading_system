@@ -60,6 +60,7 @@ TABULAR_MODEL_NAMES = (
     "random_forest",
     "gradient_boosting",
 )
+RANKING_MODEL_NAMES = ("ordered_logit_ranker",)
 SEQUENCE_MODEL_NAMES = (
     "dlinear",
     "patchtst",
@@ -71,7 +72,7 @@ SEQUENCE_MODEL_NAMES = (
     "news_analysis_transformer",
     "temporal_fusion_transformer",
 )
-MODEL_NAMES = (*TABULAR_MODEL_NAMES, *SEQUENCE_MODEL_NAMES)
+MODEL_NAMES = (*TABULAR_MODEL_NAMES, *RANKING_MODEL_NAMES, *SEQUENCE_MODEL_NAMES)
 PREDICTION_PREFIX = "stock_level_predicted_forward_return_10d_"
 ALL_FEATURE_COLUMNS = (*FEATURE_COLUMNS, *ENGINEERED_FEATURE_COLUMNS)
 
