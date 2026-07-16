@@ -1,0 +1,50 @@
+{
+  "contract_version": "aim_portfolio_readiness_v1",
+  "ticket": "2D-A",
+  "status": "IMPLEMENTED_SYNTHETIC_ONLY_INTEGRATION_DEFERRED",
+  "implementation_owner": "core/research/ml/aim_portfolio.py",
+  "input_contract": "aim_portfolio_input_v1",
+  "result_contract": "aim_portfolio_result_v1",
+  "policy_id": "turnover_penalised_aim_portfolio_v1",
+  "objective": "alpha'w - lambda/2*w'Sigma*w - kappa1*L1(w-w_previous) - kappa2*L2_squared(w-w_previous)",
+  "turnover_convention": {
+    "gross": "sum(abs(target_weight - previous_weight))",
+    "one_way": "gross / 2"
+  },
+  "solver": {
+    "identity": "scipy.optimize.SLSQP",
+    "observed_version": "1.17.1",
+    "tolerance": 1e-10,
+    "constraint_tolerance": 1e-7,
+    "maximum_iterations": 2000,
+    "heuristic_success_fallback": false
+  },
+  "constraints": [
+    "long_only",
+    "exact_exposure_target",
+    "stock_minimum_and_maximum_weights",
+    "sector_caps",
+    "liquidity_eligibility",
+    "gross_turnover_limit",
+    "optional_cash_residual",
+    "liquidate_or_retain_only_ineligible_holdings"
+  ],
+  "statuses": [
+    "OPTIMAL",
+    "INFEASIBLE",
+    "INVALID_INPUT",
+    "UNSUPPORTED_CONFIGURATION",
+    "NUMERICAL_FAILURE",
+    "SOLVER_UNAVAILABLE"
+  ],
+  "focused_tests": "13 passed in 1.60s",
+  "adv_capacity_status": "UNVERIFIED",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "portfolio_mutation": false,
+  "orders_generated": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
