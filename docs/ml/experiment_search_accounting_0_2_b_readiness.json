@@ -1,0 +1,47 @@
+{
+  "ticket": "0.2B",
+  "component": "experiment_search_accounting_and_materialised_views",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_INTEGRATION",
+  "authoritative_writer": "core/research/ml/experiment_ledger.py",
+  "live_ledger_read": false,
+  "contracts": {
+    "hypothesis": "experiment_hypothesis_v1",
+    "campaign": "experiment_search_campaign_v1",
+    "logical_trial": "experiment_logical_trial_v1",
+    "accounting": "experiment_search_accounting_v1",
+    "counting_policy": "material_trial_counting_policy_v1",
+    "promotion": "experiment_promotion_accounting_v1",
+    "materialisation": "experiment_search_materialisation_v1"
+  },
+  "material_count_policy": {
+    "completed": true,
+    "material_failed": true,
+    "material_rejected": true,
+    "completed_then_invalidated": true,
+    "pre_execution_rejected": false,
+    "retry_adds_count": false,
+    "resume_adds_count": false,
+    "cache_reuse_adds_count": false,
+    "distinct_seed_adds_count": true,
+    "distinct_hyperparameter_adds_count": true
+  },
+  "materialised_views": [
+    "canonical_json_snapshot",
+    "logical_trial_parquet",
+    "process_attempt_parquet",
+    "campaign_summary_parquet",
+    "hypothesis_summary_parquet",
+    "effective_search_count_parquet",
+    "validation_report"
+  ],
+  "parquet_dependency": "existing_pyarrow",
+  "statistical_inference_performed": false,
+  "later_consumers": [
+    "Ticket 1D-A Deflated Sharpe Ratio",
+    "Ticket 1D-A PBO"
+  ],
+  "focused_test_file": "tests/test_experiment_search_accounting.py",
+  "data_policy": "synthetic_events_and_temporary_directories_only",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT RUNS FINISH"
+}
+
