@@ -1,0 +1,48 @@
+{
+  "ticket": "4B-A",
+  "component": "contextual_elastic_net_selector_foundation",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_INTEGRATION",
+  "contracts": {
+    "input": "contextual_elastic_net_input_v1",
+    "interaction": "contextual_interaction_contract_v1",
+    "preprocessing": "contextual_elastic_net_preprocessing_v1",
+    "model": "contextual_elastic_net_model_v1",
+    "prediction": "contextual_elastic_net_prediction_v1",
+    "fit_result": "contextual_elastic_net_fit_result_v1",
+    "stability": "contextual_elastic_net_stability_v1",
+    "comparison": "contextual_elastic_net_incremental_comparison_v1"
+  },
+  "dependency": {
+    "package": "scikit-learn",
+    "version": "1.6.1",
+    "estimator": "sklearn.linear_model.ElasticNet",
+    "sample_weight_supported": true,
+    "installed_during_ticket": false
+  },
+  "default_configuration": {
+    "alpha": 0.001,
+    "l1_ratio": 0.25,
+    "fit_intercept": true,
+    "tolerance": 0.0001,
+    "maximum_iterations": 5000,
+    "selection": "cyclic",
+    "warm_start": false,
+    "include_context_main_effects": false
+  },
+  "interaction_ids": [
+    "momentum_x_market_volatility",
+    "momentum_x_market_trend",
+    "drawdown_recovery_x_market_drawdown",
+    "risk_adjusted_momentum_x_market_volatility",
+    "liquidity_x_market_volatility",
+    "stock_volatility_x_market_volatility"
+  ],
+  "preprocessing_order": "training base scaling then registered scaled-product interactions",
+  "full_all_pairs_expansion": false,
+  "historical_superiority_claimed": false,
+  "real_data_used": false,
+  "model_registry_modified": false,
+  "focused_test_file": "tests/test_contextual_elastic_net_selector.py",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
+
