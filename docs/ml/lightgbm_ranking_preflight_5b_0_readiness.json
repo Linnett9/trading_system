@@ -1,0 +1,47 @@
+{
+  "ticket": "5B-0",
+  "contract": "lightgbm_ranking_dependency_preflight_v1",
+  "status": "READY",
+  "lightgbm_version": "4.6.0",
+  "runtime_versions": {
+    "python": "3.11.9",
+    "numpy": "2.0.2",
+    "scipy": "1.17.1",
+    "scikit_learn": "1.6.1"
+  },
+  "installation_source": "Python Package Index wheel resolved by pip",
+  "installation_artifact": "prebuilt_py3_none_win_amd64_wheel",
+  "dependency_changes": {
+    "direct": ["lightgbm==4.6.0"],
+    "indirect": []
+  },
+  "capabilities": {
+    "rank_xendcg": true,
+    "lambdarank": true,
+    "grouped_queries": true,
+    "finite_predictions": true,
+    "deterministic_repeatability": true,
+    "model_serialisation_and_reload": true,
+    "openmp_runtime_resolved": true
+  },
+  "thread_policy": {
+    "minimum": 1,
+    "maximum": 2,
+    "tested": 1
+  },
+  "supported_labels": [
+    "quintile_integer",
+    "decile_integer",
+    "nonnegative_integer_relevance"
+  ],
+  "rejected_labels": [
+    "continuous_percentile",
+    "negative_relevance",
+    "non_integer_relevance"
+  ],
+  "real_data_used": false,
+  "historical_evaluation_performed": false,
+  "xgboost_installed": false,
+  "next_ticket": "5B-A — LightGBM Rank-XENDCG Synthetic Selector Foundation",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
