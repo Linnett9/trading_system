@@ -23,6 +23,12 @@ COMPONENT_CONTRACT = "authoritative_selector_component_v1"
 READINESS_CONTRACT = "selector_component_readiness.v2"
 VERIFIED_STRICT_OOS = "VERIFIED_STRICT_OOS"
 BASE_MODELS = ("momentum_120d", "ridge", "elastic_net", "ordered_logit_ranker")
+HORIZON_TARGETS = {
+    "return_1s": ("forward_return_1d", "actual_forward_return_1d", "1_sessions"),
+    "return_5s": ("forward_return_5d", "actual_forward_return_5d", "5_sessions"),
+    "return_10s": ("forward_return_10d", "actual_forward_return_10d", "10_sessions"),
+    "return_20s": ("forward_return_20d", "actual_forward_return_20d", "20_sessions"),
+}
 
 
 def evaluate_selector_components(
@@ -36,6 +42,7 @@ def evaluate_selector_components(
     evaluation_cutoff: str,
     required_models: Sequence[str] = BASE_MODELS,
     required_dates: Sequence[str] | None = None,
+    required_horizons: Sequence[str] | None = None,
     replacement_policy: str = "never_replace_complete",
 ) -> dict[str, Any]:
     readiness = _json(readiness_path)
@@ -43,6 +50,7 @@ def evaluate_selector_components(
         "contract": EVALUATION_CONTRACT, "panel_id": panel_id,
         "readiness_checksum": readiness.get("logical_checksum"),
         "required_models": list(required_models),
+        "required_horizons": list(required_horizons or ()),
         "required_dates": sorted(required_dates or readiness.get("required_dates", [])),
         "component_manifests": sorted(str(path) for path in component_manifests),
         "outcome_path": str(outcome_path),
@@ -60,26 +68,31 @@ def evaluate_selector_components(
             raise ValueError("Selector component readiness is not READY")
         dates = tuple(sorted(required_dates or readiness.get("required_dates", [])))
         models = tuple(required_models)
+        horizons = tuple(required_horizons or ())
         components, rejected = _load_components(component_manifests)
-        expected = {(date, model) for date in dates for model in models}
+        expected = {
+            (date, model, horizon)
+            for date in dates for model in models
+            for horizon in (horizons if model.startswith("multi_horizon_") else (None,))
+        }
         found = set(components)
         missing = sorted(expected - found)
         if missing:
-            rejected.extend({"prediction_date": date, "model_id": model, "reasons": ["MISSING_COMPONENT"]} for date, model in missing)
+            rejected.extend({"prediction_date": date, "model_id": model, "horizon_id": horizon, "reasons": ["MISSING_COMPONENT"]} for date, model, horizon in missing)
         outcomes = _load_outcomes(outcome_path, dates)
         blockers = []
         if rejected: blockers.append("COMPONENT_VALIDATION_FAILED")
-        matched = _matched_evidence(components, dates, models)
+        matched = _matched_evidence(components, dates, models, horizons)
         if any(row["status"] != "READY" for row in matched):
             blockers.append("UNMATCHED_PANEL")
-        maturity = _outcome_maturity(outcomes, dates, evaluation_cutoff)
+        maturity = _outcome_maturity(outcomes, dates, evaluation_cutoff, horizons)
         if any(row["status"] != "MATURE" for row in maturity):
             blockers.append("IMMATURE_OUTCOME")
-        if not _outcomes_match_components(components, outcomes, dates, models):
+        if not _outcomes_match_components(components, outcomes, dates, models, horizons):
             blockers.append("OUTCOME_POPULATION_MISMATCH")
         per_date, aggregate, ordered = [], {}, {}
         if not blockers:
-            per_date, aggregate, ordered = _metrics(components, outcomes, dates, models)
+            per_date, aggregate, ordered = _metrics(components, outcomes, dates, models, horizons)
         status = "READY" if not blockers else "BLOCKED"
         target_resolution = RegistryResolver(load_registry_bundle()).resolve(
             "target_contracts", "forward_return_10d", role="selector"
@@ -95,6 +108,7 @@ def evaluate_selector_components(
             "dataset_identity": readiness.get("dataset_identity"),
             "dataset_checksum": readiness.get("dataset_checksum"),
             "model_roster": list(models), "date_roster": list(dates),
+            "horizon_roster": list(horizons),
             "target_contract": "forward_return_10d",
             "target_contract_identity": {
                 "canonical_id": target_resolution.canonical_id,
@@ -169,6 +183,7 @@ def _load_components(paths: Sequence[Path]):
             continue
         model = str(manifest.get("selector_model_identity", ""))
         date = str(manifest.get("prediction_date", ""))
+        horizon = manifest.get("horizon_id")
         artifact = Path(str(manifest.get("prediction_artifact_path", "")))
         link = manifest.get("artifact_link") if isinstance(manifest.get("artifact_link"), Mapping) else {}
         frozen = manifest.get("frozen_selector_dataset_identity") if isinstance(manifest.get("frozen_selector_dataset_identity"), Mapping) else {}
@@ -185,7 +200,7 @@ def _load_components(paths: Sequence[Path]):
             if manifest.get(field) in (None, ""): reasons.append("INCOMPLETE_COMPONENT")
         if link.get("feature_schema_hash") in (None, ""):
             reasons.append("FEATURE_CONTRACT_MISMATCH")
-        if model == "ordered_logit_ranker" and (
+        if model in {"ordered_logit_ranker", "multi_horizon_ordered_logit"} and (
             manifest.get("ranking_contract_version") != "daily_cross_sectional_ranking_problem_v1"
             or manifest.get("relevance_contract_version") != "within_date_quintile_relevance_v1"
         ):
@@ -195,7 +210,8 @@ def _load_components(paths: Sequence[Path]):
             if manifest.get("selector_model_version") != resolution.entry.entry_hash: reasons.append("MODEL_REGISTRY_MISMATCH")
         except KeyError:
             reasons.append("MODEL_REGISTRY_MISMATCH")
-        target = resolver.resolve("target_contracts", "forward_return_10d", role="selector")
+        target_id = HORIZON_TARGETS.get(horizon, ("forward_return_10d",))[0]
+        target = resolver.resolve("target_contracts", target_id, role="selector")
         if manifest.get("target_contract_version") != target.canonical_id or link.get("target_contract_hash") != target.entry.entry_hash: reasons.append("TARGET_CONTRACT_MISMATCH")
         if not artifact.is_file() or _sha256(artifact) != manifest.get("prediction_checksum") or link.get("artifact_checksum") != manifest.get("prediction_checksum"): reasons.append("PREDICTION_CHECKSUM_MISMATCH")
         expected_manifest = canonical_hash({key: value for key, value in manifest.items() if key != "manifest_checksum"})
@@ -209,7 +225,7 @@ def _load_components(paths: Sequence[Path]):
         if len(set(scores)) < 2: reasons.append("DEGENERATE_RANK_POPULATION")
         asset_dates = [(row.get("asset_id"), row.get("prediction_date")) for row in rows]
         if len(asset_dates) != len(set(asset_dates)): reasons.append("DUPLICATE_ASSET_DATE")
-        if model == "ordered_logit_ranker":
+        if model in {"ordered_logit_ranker", "multi_horizon_ordered_logit"}:
             for row in rows:
                 probabilities = [float(row.get(f"ordered_logit_probability_{index}", "nan")) for index in range(5)]
                 if not all(math.isfinite(value) for value in probabilities) or not math.isclose(sum(probabilities), 1.0, abs_tol=1e-7):
@@ -217,11 +233,12 @@ def _load_components(paths: Sequence[Path]):
         if reasons:
             rejected.append({"manifest_path": str(path), "prediction_date": date, "model_id": model, "reasons": sorted(set(reasons))})
             continue
-        components[(date, model)] = {
+        components[(date, model, horizon)] = {
             "manifest": manifest, "rows": rows,
             "manifest_checksum": manifest["manifest_checksum"],
             "identity": {
                 "prediction_date": date, "model_id": model,
+                "horizon_id": horizon,
                 "model_entry_hash": manifest["selector_model_version"],
                 "dataset_id": frozen.get("dataset_id"),
                 "dataset_checksum": frozen.get("dataset_checksum"),
@@ -239,7 +256,7 @@ def _load_outcomes(path: Path, dates: Sequence[str]):
     rows = _csv(path)
     result = {}
     for row in rows:
-        key = (str(row["prediction_date"]), str(row["row_id"]))
+        key = (str(row["prediction_date"]), str(row["row_id"]), str(row.get("target_contract", "forward_return_10d")))
         if key in result: raise ValueError("Duplicate outcome row")
         result[key] = row
     if not result or any(date not in {key[0] for key in result} for date in dates):
@@ -247,76 +264,88 @@ def _load_outcomes(path: Path, dates: Sequence[str]):
     return result
 
 
-def _matched_evidence(components, dates, models):
+def _matched_evidence(components, dates, models, horizons=()):
     result = []
     for date in dates:
-        rows = [components.get((date, model)) for model in models]
-        identities = {
-            (
-                row["identity"]["population_checksum"], row["identity"]["dataset_id"],
-                row["identity"]["dataset_checksum"], row["identity"]["target_contract"],
-                tuple(item["row_id"] for item in row["rows"]),
-            )
-            for row in rows if row
-        }
-        result.append({
-            "prediction_date": date,
-            "status": "READY" if len(rows) == len(models) and all(rows) and len(identities) == 1 else "BLOCKED",
-            "model_count": sum(row is not None for row in rows),
-            "population_checksum": next(iter(identities))[0] if len(identities) == 1 else None,
-        })
+        panels = horizons or (None,)
+        for horizon in panels:
+            panel_models = [model for model in models if model.startswith("multi_horizon_") == (horizon is not None)]
+            if not panel_models: continue
+            rows = [components.get((date, model, horizon)) for model in panel_models]
+            identities = {
+                (
+                    row["identity"]["population_checksum"], row["identity"]["dataset_id"],
+                    row["identity"]["dataset_checksum"], row["identity"]["target_contract"],
+                    tuple(item["row_id"] for item in row["rows"]),
+                )
+                for row in rows if row
+            }
+            result.append({
+                "prediction_date": date, "horizon_id": horizon,
+                "status": "READY" if len(rows) == len(panel_models) and all(rows) and len(identities) == 1 else "BLOCKED",
+                "model_count": sum(row is not None for row in rows),
+                "population_checksum": next(iter(identities))[0] if len(identities) == 1 else None,
+            })
     return result
 
 
-def _outcome_maturity(outcomes, dates, evaluation_cutoff):
+def _outcome_maturity(outcomes, dates, evaluation_cutoff, horizons=()):
     evidence = []
     for date in dates:
-        rows = [row for (row_date, _), row in outcomes.items() if row_date == date]
-        mature = bool(rows) and all(
-            row.get("maturity_status") == "MATURE"
-            and row.get("target_contract") == "forward_return_10d"
-            and row.get("outcome_field") == "actual_forward_return_10d"
-            and row.get("target_horizon") == "10_sessions"
-            and bool(row.get("label_available_timestamp"))
-            and str(row.get("label_available_timestamp")) <= str(evaluation_cutoff)
-            and bool(row.get("outcome_source_identity"))
-            and bool(row.get("asset_id"))
-            for row in rows
-        )
-        evidence.append({"prediction_date": date, "status": "MATURE" if mature else "IMMATURE", "row_count": len(rows)})
+        for horizon in horizons or (None,):
+            target, field, sessions = HORIZON_TARGETS.get(horizon, ("forward_return_10d", "actual_forward_return_10d", "10_sessions"))
+            rows = [row for (row_date, _, row_target), row in outcomes.items() if row_date == date and row_target == target]
+            foreign_target = horizon is None and any(
+                row_date == date and row_target != target
+                for row_date, _, row_target in outcomes
+            )
+            mature = bool(rows) and all(
+                row.get("maturity_status") == "MATURE"
+                and row.get("target_contract") == target
+                and row.get("outcome_field") == field
+                and row.get("target_horizon") == sessions
+                and bool(row.get("label_available_timestamp"))
+                and str(row.get("label_available_timestamp")) <= str(evaluation_cutoff)
+                and bool(row.get("outcome_source_identity"))
+                and bool(row.get("asset_id"))
+                for row in rows
+            ) and not foreign_target
+            evidence.append({"prediction_date": date, "horizon_id": horizon, "status": "MATURE" if mature else "IMMATURE", "row_count": len(rows)})
     return evidence
 
 
-def _outcomes_match_components(components, outcomes, dates, models):
+def _outcomes_match_components(components, outcomes, dates, models, horizons=()):
     for date in dates:
-        outcome_ids = {row_id for (row_date, row_id) in outcomes if row_date == date}
         for model in models:
-            component = components.get((date, model))
-            if component is None:
-                return False
-            if {row["row_id"] for row in component["rows"]} != outcome_ids:
-                return False
+            for horizon in (horizons if model.startswith("multi_horizon_") else (None,)):
+                target = HORIZON_TARGETS.get(horizon, ("forward_return_10d",))[0]
+                outcome_ids = {row_id for (row_date, row_id, row_target) in outcomes if row_date == date and row_target == target}
+                component = components.get((date, model, horizon))
+                if component is None or {row["row_id"] for row in component["rows"]} != outcome_ids:
+                    return False
     return True
 
 
-def _metrics(components, outcomes, dates, models):
+def _metrics(components, outcomes, dates, models, horizons=()):
     per_date, rank_maps, top_sets = [], {}, {}
     ordered_summary = {"probability_valid": True, "invalid_probability_count": 0, "class_calibration_inputs": [], "expected_relevance_distribution": {}, "predicted_class_distribution": {}, "average_class_probabilities": {}, "diagnostic_references": []}
     for date in dates:
-        date_outcomes = {row_id: row for (row_date, row_id), row in outcomes.items() if row_date == date}
-        relevance = relevance_labels([
-            {"row_id": row_id, "decision_timestamp": date, "actual_forward_return_10d": float(row["actual_forward_return_10d"])}
-            for row_id, row in date_outcomes.items()
-        ], bins=5)
         for model in models:
-            component = components[(date, model)]
+          for horizon in (horizons if model.startswith("multi_horizon_") else (None,)):
+            target, outcome_field, _ = HORIZON_TARGETS.get(horizon, ("forward_return_10d", "actual_forward_return_10d", "10_sessions"))
+            date_outcomes = {row_id: row for (row_date, row_id, row_target), row in outcomes.items() if row_date == date and row_target == target}
+            relevance = relevance_labels([
+                {"row_id": row_id, "decision_timestamp": date, "actual_forward_return_10d": float(row[outcome_field])}
+                for row_id, row in date_outcomes.items()
+            ], bins=5)
+            component = components[(date, model, horizon)]
             merged = []
             for prediction in component["rows"]:
                 outcome = date_outcomes[prediction["row_id"]]
                 merged.append({
                     **prediction, "decision_timestamp": date,
                     "score": _score(prediction, model),
-                    "actual_forward_return_10d": float(outcome["actual_forward_return_10d"]),
+                    "actual_forward_return_10d": float(outcome[outcome_field]),
                     "benchmark_return": _optional_float(outcome.get("benchmark_return")),
                     "relevance": relevance["labels_by_row_id"][prediction["row_id"]],
                 })
@@ -326,12 +355,13 @@ def _metrics(components, outcomes, dates, models):
                 [_rank(row["score"], merged, "score") for row in residual],
                 [_rank(row["actual_forward_return_10d"] - row["benchmark_return"], residual, "residual") for row in residual],
             ) if residual else None
-            metric.update({"model_id": model, "prediction_date": date})
+            metric.update({"model_id": model, "prediction_date": date, "horizon_id": horizon})
             per_date.append(metric)
             ordered = sorted(merged, key=lambda row: (-row["score"], str(row["asset_id"])))
-            rank_maps[(date, model)] = {str(row["asset_id"]): index + 1 for index, row in enumerate(ordered)}
-            top_sets[(date, model)] = {str(row["asset_id"]) for row in ordered[:10]}
-            if model == "ordered_logit_ranker":
+            metric_key = f"{model}__{horizon}" if horizon else model
+            rank_maps[(date, metric_key)] = {str(row["asset_id"]): index + 1 for index, row in enumerate(ordered)}
+            top_sets[(date, metric_key)] = {str(row["asset_id"]) for row in ordered[:10]}
+            if model in {"ordered_logit_ranker", "multi_horizon_ordered_logit"}:
                 probabilities = [[float(row[f"ordered_logit_probability_{index}"]) for index in range(5)] for row in merged]
                 classes = [int(row["ordered_logit_predicted_relevance_class"]) for row in merged]
                 scores = [row["score"] for row in merged]
@@ -346,10 +376,13 @@ def _metrics(components, outcomes, dates, models):
             for index in range(5)
         }
     aggregate = {}
-    for model in models:
-        rows = [row for row in per_date if row["model_id"] == model]
+    metric_models = sorted({(row["model_id"], row.get("horizon_id")) for row in per_date})
+    metric_names = []
+    for model, horizon in metric_models:
+        name = f"{model}__{horizon}" if horizon else model; metric_names.append(name)
+        rows = [row for row in per_date if row["model_id"] == model and row.get("horizon_id") == horizon]
         rank_ics = [row["spearman_rank_ic"] for row in rows if row["spearman_rank_ic"] is not None]
-        aggregate[model] = {
+        aggregate[name] = {
             "mean_rank_ic": mean(rank_ics) if rank_ics else None,
             "median_rank_ic": median(rank_ics) if rank_ics else None,
             "rank_ic_standard_deviation": pstdev(rank_ics) if rank_ics else None,
@@ -360,14 +393,13 @@ def _metrics(components, outcomes, dates, models):
             **{f"mean_ndcg_at_{k}": _mean(row[f"ndcg_at_{k}"] for row in rows) for k in (10,20,40)},
             **{f"mean_top_{k}_return": _mean(row[f"top_{k}_mean_return"] for row in rows) for k in (10,20,40)},
             **{f"mean_top_minus_bottom_{k}": _mean(row[f"top_minus_bottom_{k}"] for row in rows) for k in (10,20,40)},
-            "rank_turnover": _rank_turnover(rank_maps, dates, model),
-            "top_10_continuity": _top_continuity(top_sets, dates, model),
-            "top_20_continuity": _top_continuity_for_k(components, dates, model, 20),
-            "top_40_continuity": _top_continuity_for_k(components, dates, model, 40),
+            "rank_turnover": _rank_turnover(rank_maps, dates, name),
+            "top_10_continuity": _top_continuity(top_sets, dates, name),
+            "top_20_continuity": None, "top_40_continuity": None,
             "evaluated_date_count": len(rows),
             "missing_date_count": len(dates) - len(rows), "rejected_date_count": 0,
         }
-    aggregate["model_rank_correlations"] = _model_correlations(rank_maps, dates, models)
+    aggregate["model_rank_correlations"] = _model_correlations(rank_maps, dates, metric_names)
     return per_date, aggregate, ordered_summary
 
 

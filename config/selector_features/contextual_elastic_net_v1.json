@@ -1,0 +1,16 @@
+{
+  "contract_version": "contextual_elastic_net_feature_schema_v1",
+  "description": "Wave 4 contextual Elastic Net schema with 21 stock features, eight context indicators, and six bounded interactions.",
+  "feature_ordering": "stock, context, then registered interaction order",
+  "stock_features": ["momentum","market_relative_momentum","momentum_acceleration","momentum_persistence","momentum_consistency","drawdown_recovery","rolling_drawdown","ulcer_index","downside_deviation","risk_adjusted_momentum","liquidity","stock_volatility","volatility_percentile","volatility_trend","atr_percentile","distance_from_high","relative_strength","volume_trend","turnover","price_trend","idiosyncratic_volatility"],
+  "market_context_features": ["market_volatility","market_trend","market_drawdown","market_momentum","market_volatility_percentile","market_breadth","market_liquidity","market_regime"],
+  "interactions": [["momentum","market_volatility"],["momentum","market_trend"],["drawdown_recovery","market_drawdown"],["risk_adjusted_momentum","market_volatility"],["liquidity","market_volatility"],["stock_volatility","market_volatility"]],
+  "preprocessing": "training-only winsorisation and standardisation; deterministic cyclic Elastic Net",
+  "missingness_policy": "fail closed on non-finite values",
+  "features": [
+    {"name":"momentum"},{"name":"market_relative_momentum"},{"name":"momentum_acceleration"},{"name":"momentum_persistence"},{"name":"momentum_consistency"},{"name":"drawdown_recovery"},{"name":"rolling_drawdown"},{"name":"ulcer_index"},{"name":"downside_deviation"},{"name":"risk_adjusted_momentum"},{"name":"liquidity"},{"name":"stock_volatility"},{"name":"volatility_percentile"},{"name":"volatility_trend"},{"name":"atr_percentile"},{"name":"distance_from_high"},{"name":"relative_strength"},{"name":"volume_trend"},{"name":"turnover"},{"name":"price_trend"},{"name":"idiosyncratic_volatility"},
+    {"name":"market_volatility"},{"name":"market_trend"},{"name":"market_drawdown"},{"name":"market_momentum"},{"name":"market_volatility_percentile"},{"name":"market_breadth"},{"name":"market_liquidity"},{"name":"market_regime"},
+    {"name":"momentum_x_market_volatility"},{"name":"momentum_x_market_trend"},{"name":"drawdown_recovery_x_market_drawdown"},{"name":"risk_adjusted_momentum_x_market_volatility"},{"name":"liquidity_x_market_volatility"},{"name":"stock_volatility_x_market_volatility"}
+  ],
+  "schema_hash": "110B77992A452FD900E06CB68BE462CD56E86F6088ED3282B511DFD9B4FECDBC"
+}

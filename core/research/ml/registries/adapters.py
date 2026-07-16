@@ -35,7 +35,15 @@ def selector_model_adapter(requested_model_id: str, *, runner: str, allow_blocke
         raise RegistryValidationError(f"Selector model {requested_model_id} does not support runner {runner}")
     if payload["implementation_status"] == "BLOCKED_BY_DATA" and not allow_blocked:
         raise RegistryValidationError(f"Selector model {requested_model_id} is blocked by data requirements")
-    constructor = "core.research.ml.stock_level.bounded_selector_runner:_bounded_model" if runner == "bounded" else "core.research.ml.stock_level_benchmark_models:TabularModelFactory/SequenceModelFactory"
+    if runner == "bounded":
+        constructor = "core.research.ml.stock_level.bounded_selector_runner:_bounded_model"
+    elif resolution.canonical_id in {
+        "huber", "contextual_elastic_net", "multi_horizon_ridge",
+        "multi_horizon_elastic_net", "multi_horizon_ordered_logit",
+    }:
+        constructor = "core.research.ml.stock_level.wave4_selector_integration:publish_wave4_component"
+    else:
+        constructor = "core.research.ml.stock_level_benchmark_models:TabularModelFactory/SequenceModelFactory"
     return SelectorModelAdapter(
         requested_model_id, resolution.canonical_id, str(payload["category"]),
         str(payload["implementation_owner"]), bool(payload["bounded_runner_support"]),
@@ -73,7 +81,11 @@ def verify_registry_capabilities() -> dict[str, int]:
     # Runner imports stay deferred so registry consumers remain lightweight.
     from core.research.ml.stock_level.bounded_selector_runner import SUPPORTED_MODELS
     from core.research.ml.stock_level_benchmark_types import MODEL_NAMES
+    wave4 = {
+        "huber", "contextual_elastic_net", "multi_horizon_ridge",
+        "multi_horizon_elastic_net", "multi_horizon_ordered_logit",
+    }
 
     return _verify_selector_capabilities(
-        load_registry_bundle(), set(SUPPORTED_MODELS), set(MODEL_NAMES)
+        load_registry_bundle(), set(SUPPORTED_MODELS), set(MODEL_NAMES) | wave4
     )

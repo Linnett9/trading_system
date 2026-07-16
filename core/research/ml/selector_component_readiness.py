@@ -14,6 +14,15 @@ PARENT_GATE_CONTRACT = "selector_parent_publication_gate.v1"
 VERIFIED_STRICT_OOS = "VERIFIED_STRICT_OOS"
 MODELS = ("ridge", "elastic_net", "ordered_logit_ranker")
 DATES = ("2024-03-15", "2024-09-16", "2025-03-17", "2025-09-15", "2026-03-16")
+WAVE4_CHALLENGERS = (
+    "huber", "contextual_elastic_net", "multi_horizon_ridge",
+    "multi_horizon_elastic_net", "multi_horizon_ordered_logit",
+)
+WAVE4_HORIZONS = ("return_1s", "return_5s", "return_10s", "return_20s")
+HORIZON_TARGETS = {
+    "return_1s": "forward_return_1d", "return_5s": "forward_return_5d",
+    "return_10s": "forward_return_10d", "return_20s": "forward_return_20d",
+}
 STATE_PRIORITY = (
     "MALFORMED", "NON_AUTHORITATIVE_ROOT", "INCOMPLETE",
     "MODEL_IDENTITY_MISMATCH", "DATASET_IDENTITY_MISMATCH",
@@ -32,6 +41,8 @@ def assess_selector_component_readiness(
     selector_dataset_root: Path,
     config_path: Path,
     approved_component_roots: tuple[Path, ...],
+    campaign: str = "base",
+    challenger_models: tuple[str, ...] = WAVE4_CHALLENGERS,
 ) -> dict[str, Any]:
     gate = _read_json(parent_gate_path)
     gate_ready = (
@@ -44,48 +55,59 @@ def assess_selector_component_readiness(
         path.resolve() for path in approved_component_roots
     }
     resolver = RegistryResolver(load_registry_bundle())
+    models = MODELS if campaign == "base" else challenger_models
+    if campaign not in {"base", "wave4_challengers"}:
+        raise ValueError("Unknown selector component campaign")
     expected_models = {
         model: resolver.resolve("selector_models", model, role="selector").entry.payload
-        for model in MODELS
+        for model in models
     }
     expected_hashes = {
         model: resolver.resolve("selector_models", model, role="selector").entry.entry_hash
-        for model in MODELS
+        for model in models
     }
-    target = resolver.resolve("target_contracts", "forward_return_10d", role="selector")
     matrix: list[dict[str, Any]] = []
 
     for prediction_date in DATES:
-        for model in MODELS:
-            owner = authoritative_root / f"model={model}" / f"date={prediction_date}"
-            manifest_path = owner / "manifest.json"
-            if not root_authoritative:
-                row = _base_row(model, prediction_date, owner, manifest_path, "NON_AUTHORITATIVE_ROOT")
-            elif not gate_ready:
-                row = _base_row(model, prediction_date, owner, manifest_path, "BLOCKED_PARENT_GATE")
-            elif not manifest_path.exists():
-                row = _base_row(
-                    model, prediction_date, owner, manifest_path,
-                    "INCOMPLETE" if owner.exists() else "MISSING",
+        for model in models:
+            horizons = WAVE4_HORIZONS if model.startswith("multi_horizon_") else (None,)
+            for horizon in horizons:
+                owner = (
+                    authoritative_root / f"model={model}" / f"horizon={horizon}" / f"date={prediction_date}"
+                    if horizon else authoritative_root / f"model={model}" / f"date={prediction_date}"
                 )
-            elif not _within(manifest_path, authoritative_root.resolve()):
-                row = _base_row(model, prediction_date, owner, manifest_path, "NON_AUTHORITATIVE_ROOT")
-            else:
-                payload = _read_json(manifest_path)
-                if payload is None:
-                    row = _base_row(model, prediction_date, owner, manifest_path, "MALFORMED")
-                else:
-                    row = _validate_component(
-                        payload=payload, manifest_path=manifest_path,
-                        model=model, prediction_date=prediction_date,
-                        gate=gate, expected_model=expected_models[model],
-                        expected_model_hash=expected_hashes[model],
-                        target_id=target.canonical_id,
-                        target_hash=target.entry.entry_hash,
+                target = resolver.resolve(
+                    "target_contracts", HORIZON_TARGETS[horizon] if horizon else "forward_return_10d",
+                    role="selector",
+                )
+                manifest_path = owner / "manifest.json"
+                if not root_authoritative:
+                    row = _base_row(model, prediction_date, owner, manifest_path, "NON_AUTHORITATIVE_ROOT", horizon)
+                elif not gate_ready:
+                    row = _base_row(model, prediction_date, owner, manifest_path, "BLOCKED_PARENT_GATE", horizon)
+                elif not manifest_path.exists():
+                    row = _base_row(
+                        model, prediction_date, owner, manifest_path,
+                        "INCOMPLETE" if owner.exists() else "MISSING", horizon,
                     )
-            matrix.append(row)
+                elif not _within(manifest_path, authoritative_root.resolve()):
+                    row = _base_row(model, prediction_date, owner, manifest_path, "NON_AUTHORITATIVE_ROOT", horizon)
+                else:
+                    payload = _read_json(manifest_path)
+                    if payload is None:
+                        row = _base_row(model, prediction_date, owner, manifest_path, "MALFORMED", horizon)
+                    else:
+                        row = _validate_component(
+                            payload=payload, manifest_path=manifest_path,
+                            model=model, prediction_date=prediction_date,
+                            gate=gate, expected_model=expected_models[model],
+                            expected_model_hash=expected_hashes[model],
+                            target_id=target.canonical_id,
+                            target_hash=target.entry.entry_hash, horizon=horizon,
+                        )
+                matrix.append(row)
 
-    matched = _matched_populations(matrix)
+    matched = _matched_populations(matrix, models)
 
     plan = [
         _planned_job(
@@ -101,7 +123,7 @@ def assess_selector_component_readiness(
     blockers = sorted({
         row["state"] for row in matrix if row["state"] not in {"READY", "MISSING"}
     })
-    if any(row["status"] == "BLOCKED" and row["ready_model_count"] == len(MODELS)
+    if any(row["status"] == "BLOCKED" and row["ready_model_count"] == row["expected_model_count"]
            for row in matched.values()):
         blockers.append("POPULATION_MISMATCH")
     if missing_count:
@@ -113,14 +135,15 @@ def assess_selector_component_readiness(
     )
     result = {
         "readiness_contract_version": READINESS_CONTRACT,
-        "required_models": list(MODELS),
+        "campaign": campaign,
+        "required_models": list(models),
         "required_dates": list(DATES),
-        "expected_component_count": len(MODELS) * len(DATES),
+        "expected_component_count": len(matrix),
         "ready_component_count": ready_count,
         "missing_component_count": missing_count,
         "invalid_component_count": invalid_count,
         "component_matrix": matrix,
-        "matched_population_results": [matched[date] for date in DATES],
+        "matched_population_results": [matched[key] for key in sorted(matched)],
         "parent_gate_contract": gate.get("gate_contract_version") if gate else None,
         "parent_gate_logical_checksum": gate.get("logical_checksum") if gate else None,
         "dataset_identity": gate.get("selector_dataset_id") if gate else None,
@@ -140,7 +163,7 @@ def _validate_component(
     *, payload: Mapping[str, Any], manifest_path: Path, model: str,
     prediction_date: str, gate: Mapping[str, Any],
     expected_model: Mapping[str, Any], expected_model_hash: str,
-    target_id: str, target_hash: str,
+    target_id: str, target_hash: str, horizon: str | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     link = payload.get("artifact_link")
@@ -154,6 +177,8 @@ def _validate_component(
         reasons.append("MODEL_IDENTITY_MISMATCH")
     if payload.get("prediction_date") != prediction_date:
         reasons.append("INCOMPLETE")
+    if payload.get("horizon_id") != horizon:
+        reasons.append("TARGET_CONTRACT_MISMATCH")
     if (
         frozen.get("dataset_id") != gate.get("selector_dataset_id")
         or frozen.get("dataset_checksum") != gate.get("selector_dataset_artifact_checksum")
@@ -210,7 +235,7 @@ def _validate_component(
     reasons = sorted(set(reasons), key=lambda value: STATE_PRIORITY.index(value))
     state = reasons[0] if reasons else "READY"
     return {
-        **_base_row(model, prediction_date, manifest_path.parent, manifest_path, state),
+        **_base_row(model, prediction_date, manifest_path.parent, manifest_path, state, horizon),
         "reasons": reasons,
         "prediction_row_count": row_count,
         "prediction_population_checksum": population,
@@ -236,23 +261,26 @@ def _temporal_legal(payload: Mapping[str, Any]) -> bool:
         return False
 
 
-def _matched_populations(matrix: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _matched_populations(matrix: list[dict[str, Any]], models) -> dict[str, dict[str, Any]]:
     results = {}
     for date in DATES:
-        rows = [row for row in matrix if row["prediction_date"] == date]
-        ready = [row for row in rows if row["state"] == "READY"]
-        populations = {
-            (row.get("prediction_row_count"), row.get("prediction_population_checksum"),
-             row.get("dataset_id"), row.get("dataset_checksum"),
-             row.get("target_contract"))
-            for row in ready
-        }
-        status = "READY" if len(ready) == len(MODELS) and len(populations) == 1 else "BLOCKED"
-        results[date] = {
-            "prediction_date": date, "status": status,
-            "ready_model_count": len(ready),
-            "matched_population": next(iter(populations), None) if status == "READY" else None,
-        }
+        horizons = sorted({row.get("horizon_id") for row in matrix if row["prediction_date"] == date}, key=str)
+        for horizon in horizons:
+            rows = [row for row in matrix if row["prediction_date"] == date and row.get("horizon_id") == horizon]
+            ready = [row for row in rows if row["state"] == "READY"]
+            populations = {
+                (row.get("prediction_row_count"), row.get("prediction_population_checksum"),
+                 row.get("dataset_id"), row.get("dataset_checksum"), row.get("target_contract"))
+                for row in ready
+            }
+            expected = sum(1 for model in models if (horizon is None) == (not model.startswith("multi_horizon_")))
+            status = "READY" if len(ready) == expected and len(populations) == 1 else "BLOCKED"
+            key = f"{date}|{horizon or 'single'}"
+            results[key] = {
+                "prediction_date": date, "horizon_id": horizon, "status": status,
+                "ready_model_count": len(ready), "expected_model_count": expected,
+                "matched_population": next(iter(populations), None) if status == "READY" else None,
+            }
     return results
 
 
@@ -262,10 +290,14 @@ def _planned_job(
     model_payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     model = str(row["model_id"]); date = str(row["prediction_date"])
+    horizon = row.get("horizon_id")
     feature = str(model_payload["feature_schema"])
     ranking = model_payload.get("ranking_problem_contract")
     relevance = model_payload.get("relevance_contract")
-    owner = authoritative_root / f"model={model}" / f"date={date}"
+    owner = (
+        authoritative_root / f"model={model}" / f"horizon={horizon}" / f"date={date}"
+        if horizon else authoritative_root / f"model={model}" / f"date={date}"
+    )
     command = (
         f'python main.py --mode ml-stock-selector-bounded --config "{config_path}" '
         f'--selector-dataset-root "{dataset_root}" --oos-start-date {date} '
@@ -276,7 +308,7 @@ def _planned_job(
     )
     job = {
         "job_id": f"selector:{date}:{model}",
-        "model_id": model, "prediction_date": date,
+        "model_id": model, "prediction_date": date, "horizon_id": horizon,
         "selector_dataset_root": str(dataset_root),
         "authoritative_output_root": str(owner),
         "feature_schema": feature,
@@ -294,9 +326,9 @@ def _planned_job(
     return job
 
 
-def _base_row(model, date, owner, manifest, state):
+def _base_row(model, date, owner, manifest, state, horizon=None):
     return {
-        "model_id": model, "prediction_date": date,
+        "model_id": model, "prediction_date": date, "horizon_id": horizon,
         "owner": str(owner), "manifest_path": str(manifest),
         "state": state, "reasons": [] if state in {"READY", "MISSING"} else [state],
     }
