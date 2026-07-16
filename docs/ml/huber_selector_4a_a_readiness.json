@@ -1,0 +1,43 @@
+{
+  "ticket": "4A-A",
+  "component": "huber_regression_selector_foundation",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_INTEGRATION",
+  "contracts": {
+    "input": "huber_selector_input_v1",
+    "preprocessing": "huber_selector_preprocessing_v1",
+    "model": "huber_selector_model_v1",
+    "prediction": "huber_selector_prediction_v1",
+    "fit_result": "huber_selector_fit_result_v1",
+    "coefficient_stability": "huber_selector_coefficient_stability_v1",
+    "linear_control": "huber_selector_linear_control_comparison_v1"
+  },
+  "dependency": {
+    "package": "scikit-learn",
+    "version": "1.6.1",
+    "estimator": "sklearn.linear_model.HuberRegressor",
+    "sample_weight_supported": true,
+    "installed_during_ticket": false
+  },
+  "default_configuration": {
+    "epsilon": 1.35,
+    "alpha": 0.0001,
+    "fit_intercept": true,
+    "tolerance": 1e-05,
+    "maximum_iterations": 100,
+    "warm_start": false
+  },
+  "preprocessing": {
+    "identity": "training_standardisation_ddof0_v1",
+    "fit_population": "training_only",
+    "constant_feature_policy": "center_then_unit_scale",
+    "winsorisation_default": "disabled",
+    "automatic_feature_selection": false
+  },
+  "prediction_semantics": "continuous_return_score_not_probability",
+  "historical_superiority_claimed": false,
+  "real_data_used": false,
+  "model_registry_modified": false,
+  "focused_test_file": "tests/test_huber_selector.py",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
+
