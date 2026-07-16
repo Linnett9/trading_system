@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.post_finaliser_pipeline import (
-    DATES, MODELS, RUN_ID, Pipeline, atomic_write, new_state, next_incomplete_stage,
+    DATES, MODELS, RUN_ID, Pipeline, atomic_write, configure_inventory_strategy, new_state, next_incomplete_stage,
     stage_mapping, state_checksum, validate_archive, validate_component_plan,
     validate_final_components, validate_progress,
 )
@@ -106,8 +106,10 @@ def args(tmp_path, resume=False):
         archive_root=tmp_path / "archive", archive_validation=tmp_path / "validation.json",
         selector_state=tmp_path / "selector.json", parent_gate=tmp_path / "gate.json",
         component_readiness=tmp_path / "components.json", selector_dataset_root=tmp_path / "dataset",
-        component_root=tmp_path / "owners", component_input_root=tmp_path / "inputs",
-        outcome_path=tmp_path / "outcomes.csv", evaluation_cutoff="2026-07-16",
+        component_root=tmp_path / "owners", component_input_inventory=None,
+        operational_inputs_output_root=Path(f"reports/ml/readiness/selector_evaluation_1c_e/runs/{RUN_ID}/test-inputs"),
+        evaluation_cutoff="2027-01-01T00:00:00Z", stop_after_phase=None,
+        inventory_strategy="automatic",
         state_path=tmp_path / "state.json",
     )
 
@@ -179,3 +181,56 @@ def test_default_concurrency_is_one():
     text = Path("scripts/post_finaliser_pipeline.py").read_text(encoding="utf-8")
     assert "--sklearn-n-jobs 1" in Path("core/research/ml/selector_component_readiness.py").read_text(encoding="utf-8")
     assert "plan[0]" in text
+
+
+def test_automatic_inventory_strategy_is_accepted(tmp_path):
+    a = args(tmp_path); configure_inventory_strategy(a)
+    assert a.inventory_strategy == "automatic"
+    assert a.evaluation_cutoff == "2027-01-01T00:00:00Z"
+
+
+def test_neither_inventory_strategy_is_rejected(tmp_path):
+    a = args(tmp_path); a.operational_inputs_output_root = None; a.evaluation_cutoff = None
+    with pytest.raises(ValueError, match="Exactly one"):
+        configure_inventory_strategy(a)
+
+
+def test_conflicting_inventory_strategies_are_rejected(tmp_path):
+    a = args(tmp_path); a.component_input_inventory = tmp_path / "inventory.json"
+    with pytest.raises(ValueError, match="Conflicting"):
+        configure_inventory_strategy(a)
+
+
+def test_malformed_cutoff_is_rejected(tmp_path):
+    a = args(tmp_path); a.evaluation_cutoff = "not-a-date"
+    with pytest.raises(ValueError, match="ISO"):
+        configure_inventory_strategy(a)
+
+
+def test_output_root_outside_run_owner_is_rejected(tmp_path):
+    a = args(tmp_path); a.operational_inputs_output_root = tmp_path / "outside"
+    with pytest.raises(ValueError, match="outside run ownership"):
+        configure_inventory_strategy(a)
+
+
+def test_cutoff_change_is_rejected_on_resume(tmp_path):
+    first = args(tmp_path); Pipeline(first)
+    resumed = args(tmp_path, resume=True); resumed.evaluation_cutoff = "2028-01-01T00:00:00Z"
+    with pytest.raises(ValueError, match="INCOMPATIBLE_INVENTORY"):
+        Pipeline(resumed)
+
+
+def test_prebuilt_inventory_strategy_reads_immutable_cutoff(tmp_path):
+    inventory = tmp_path / "inventory.json"
+    inventory.write_text(json.dumps({"evaluation_cutoff": "2027-02-01T00:00:00Z"}))
+    a = args(tmp_path); a.component_input_inventory = inventory
+    a.operational_inputs_output_root = None; a.evaluation_cutoff = None
+    configure_inventory_strategy(a)
+    assert a.inventory_strategy == "prebuilt"
+    assert a.evaluation_cutoff == "2027-02-01T00:00:00Z"
+
+
+def test_builder_command_is_exact_and_has_cutoff():
+    text = Path("scripts/post_finaliser_pipeline.py").read_text(encoding="utf-8")
+    for token in ("--plan", "--selector-dataset", "--parent-gate", "--output-root", "--evaluation-cutoff"):
+        assert token in text

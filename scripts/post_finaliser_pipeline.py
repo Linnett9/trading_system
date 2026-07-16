@@ -186,12 +186,13 @@ def new_state(root: Path, args: argparse.Namespace, mapping: Sequence[Mapping[st
         _job("PHASE-2", "Operational readiness", ["PHASE-1"]),
         _job("PHASE-3", "Resume selector parent publication", ["PHASE-2"]),
         _job("PHASE-4", "Validate base component plan", ["PHASE-3"]),
-        _job("PHASE-5", "Publish base components serially", ["PHASE-4"]),
-        _job("PHASE-6", "Validate all base components", ["PHASE-5"]),
-        _job("PHASE-7", "Freeze operational panel", ["PHASE-6"]),
-        _job("PHASE-8", "Evaluate selector components", ["PHASE-7"]),
+        _job("PHASE-5", "Build or verify operational input inventory", ["PHASE-4"]),
+        _job("PHASE-6", "Publish base components serially", ["PHASE-5"]),
+        _job("PHASE-7", "Validate all base components", ["PHASE-6"]),
+        _job("PHASE-8", "Freeze operational panel", ["PHASE-7"]),
+        _job("PHASE-9", "Evaluate selector components", ["PHASE-8"]),
     ]
-    jobs.extend({**_job(job_id, title, ["PHASE-8"]), "state": "BLOCKED", "blocker": blocker,
+    jobs.extend({**_job(job_id, title, ["PHASE-9"]), "state": "BLOCKED", "blocker": blocker,
                  "retryability": False} for job_id, title, blocker in blocked)
     state = {
         "contract_version": STATE_VERSION, "controller_run_id": args.controller_run_id,
@@ -200,6 +201,16 @@ def new_state(root: Path, args: argparse.Namespace, mapping: Sequence[Mapping[st
         "parameters": {
             "finaliser_manifest": str(args.finaliser_manifest),
             "poll_seconds": args.poll_seconds, "finaliser_process_id": args.finaliser_process_id,
+        },
+        "inventory_bootstrap": {
+            "strategy": args.inventory_strategy,
+            "plan_path": None, "dataset_path": None, "parent_gate_path": None,
+            "input_output_root": str(args.operational_inputs_output_root) if args.operational_inputs_output_root else None,
+            "evaluation_cutoff": args.evaluation_cutoff,
+            "build_command": None,
+            "inventory_path": str(args.component_input_inventory) if args.component_input_inventory else None,
+            "inventory_logical_checksum": None, "build_attempt_count": 0,
+            "verification_status": "WAITING_FOR_STAGE_10",
         },
         "jobs": jobs, "attempt_history": [], "commands_resolved": {},
     }
@@ -222,6 +233,7 @@ def state_checksum(state: Mapping[str, Any]) -> str:
 
 class Pipeline:
     def __init__(self, args: argparse.Namespace, executor: Callable[..., subprocess.CompletedProcess] = subprocess.run):
+        configure_inventory_strategy(args)
         self.args, self.executor = args, executor
         self.state_path = args.state_path
         self.run_root = self.state_path.parent
@@ -234,6 +246,9 @@ class Pipeline:
                 raise ValueError("INCOMPATIBLE_CONTROLLER_STATE")
             if self.state.get("logical_checksum") != state_checksum(self.state):
                 raise ValueError("CONTROLLER_STATE_CHECKSUM_MISMATCH")
+            prior = self.state.get("inventory_bootstrap", {})
+            if prior.get("strategy") != args.inventory_strategy or prior.get("evaluation_cutoff") != args.evaluation_cutoff:
+                raise ValueError("INCOMPATIBLE_INVENTORY_STRATEGY_OR_EVALUATION_CUTOFF")
         else:
             self.state = new_state(self.run_root, args, mapping)
             self.save()
@@ -314,11 +329,19 @@ class Pipeline:
         return subprocess.CompletedProcess(command, process.returncode, stdout, stderr), peak
 
     def resume_command(self) -> str:
-        return (
+        command = (
             f'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_post_finaliser_pipeline.ps1 '
             f'-Resume -ControllerRunId "{self.args.controller_run_id}" -WaitForFinaliser '
             f'-FinaliserManifest "{self.args.finaliser_manifest}"'
         )
+        if self.args.inventory_strategy == "prebuilt":
+            command += f' -ComponentInputInventory "{self.args.component_input_inventory}"'
+        else:
+            command += (
+                f' -OperationalInputsOutputRoot "{self.args.operational_inputs_output_root}"'
+                f' -EvaluationCutoff "{self.args.evaluation_cutoff}"'
+            )
+        return command
 
     def wait_for_finaliser(self) -> None:
         if self.job("PHASE-0")["state"] in {"COMPLETED", "SKIPPED_COMPATIBLE"}:
@@ -372,6 +395,7 @@ class Pipeline:
                 row.update(state="FAILED_TERMINAL", blocker=";".join(reasons), retryability=False)
                 self.save()
                 raise RuntimeError(f"Archive validation gate failed: {reasons}")
+        if self._stop("archive_validation"): return
         readiness = self.run_root / "reports/operational_readiness.json"
         readiness_cmd = [
             sys.executable, "scripts/check_post_finaliser_job_readiness.py", "--json",
@@ -405,42 +429,108 @@ class Pipeline:
                 raise RuntimeError("Selector stages were not proven complete by run state")
         elif start == 11:
             self.complete("PHASE-3", report=self.args.selector_state, skipped=True)
+        if self._stop("selector_stage_10"): return
         component = read_json(self.args.component_readiness)
         reasons = validate_component_plan(component)
         if reasons:
             raise RuntimeError(f"Component plan rejected: {reasons}")
         self.complete("PHASE-4", report=self.args.component_readiness)
+        self.bootstrap_inventory(component)
+        if self._stop("input_inventory"): return
         self.publish_components(readiness)
+        if self._stop("component_publication"): return
         final = read_json(self.args.component_readiness)
         reasons = validate_final_components(final)
         if reasons:
             raise RuntimeError(f"Final component gate failed: {reasons}")
-        self.complete("PHASE-6", report=self.args.component_readiness)
+        self.complete("PHASE-7", report=self.args.component_readiness)
         panel = self.freeze_operational_panel(final)
-        self.complete("PHASE-7", report=panel)
+        self.complete("PHASE-8", report=panel)
         evaluation = self.evaluate(final, panel)
-        self.complete("PHASE-8", report=evaluation)
+        self.complete("PHASE-9", report=evaluation)
         for row in self.state["jobs"]:
             if row["job_id"].startswith("DOWNSTREAM-"):
                 row["next_legal_command"] = None
         self.save()
 
+    def _stop(self, phase: str) -> bool:
+        return self.args.stop_after_phase == phase
+
+    def bootstrap_inventory(self, readiness: Mapping[str, Any]) -> Path:
+        from core.research.ml.selector_operational_inputs import validate_inventory
+        run_state = read_json(self.args.selector_state)
+        stages = {int(row["stage_number"]): row for row in run_state.get("stages", [])}
+        if stages.get(10, {}).get("status") != "complete":
+            raise RuntimeError("WAITING_FOR_STAGE_10")
+        artifacts = dict(run_state.get("artifacts") or {})
+        plan_path = Path(str(artifacts.get("component_preflight", "")))
+        dataset_manifest = Path(str(artifacts.get("dataset_manifest", "")))
+        parent_gate = Path(str(artifacts.get("parent_gate", "")))
+        if plan_path.resolve() != self.args.component_readiness.resolve():
+            raise RuntimeError("STAGE_10_PLAN_PATH_MISMATCH")
+        for label, path in (("plan", plan_path), ("dataset", dataset_manifest), ("parent_gate", parent_gate)):
+            if not path.is_file(): raise RuntimeError(f"VERIFIED_STAGE_ARTIFACT_MISSING:{label}:{path}")
+        bootstrap = self.state["inventory_bootstrap"]
+        bootstrap.update(plan_path=str(plan_path), dataset_path=str(dataset_manifest.parent), parent_gate_path=str(parent_gate))
+        if self.args.inventory_strategy == "automatic":
+            inventory = self.args.operational_inputs_output_root / "inventory.json"
+            command = [
+                sys.executable, "scripts/build_selector_operational_inputs.py",
+                "--plan", str(plan_path), "--selector-dataset", str(dataset_manifest.parent),
+                "--parent-gate", str(parent_gate), "--output-root", str(self.args.operational_inputs_output_root),
+                "--evaluation-cutoff", self.args.evaluation_cutoff, "--selector-run-id", RUN_ID,
+            ]
+            bootstrap.update(build_command=subprocess.list2cmdline(command), inventory_path=str(inventory))
+            if not inventory.exists():
+                bootstrap["verification_status"] = "BUILDING"
+                bootstrap["build_attempt_count"] = int(bootstrap["build_attempt_count"]) + 1
+                self.save()
+                self.run_command("PHASE-5", command, self.run_root / "transcripts/operational_inputs_build.txt", inventory)
+        else:
+            inventory = self.args.component_input_inventory
+        dataset = read_json(dataset_manifest); gate = read_json(parent_gate)
+        result = validate_inventory(
+            inventory, readiness=readiness, expected_run_id=RUN_ID,
+            expected_dataset_id=dataset.get("dataset_id"), expected_dataset_checksum=dataset.get("dataset_checksum"),
+            expected_parent_gate_checksum=gate.get("logical_checksum"),
+            expected_evaluation_cutoff=self.args.evaluation_cutoff,
+        )
+        if result["status"] != "READY":
+            bootstrap["verification_status"] = "FAILED_TERMINAL"
+            self.save(); raise RuntimeError(f"Operational input inventory rejected: {result['reasons']}")
+        self.args.component_input_inventory = inventory
+        bootstrap.update(verification_status="VERIFIED", inventory_logical_checksum=result["inventory"]["logical_checksum"])
+        self.complete("PHASE-5", report=inventory, skipped=self.args.inventory_strategy == "prebuilt" or bootstrap["build_attempt_count"] == 0)
+        return inventory
+
     def publish_components(self, readiness_report: Path) -> None:
-        if self.job("PHASE-5")["state"] in {"COMPLETED", "SKIPPED_COMPATIBLE"}:
+        from core.research.ml.selector_operational_inputs import validate_inventory
+        validated = validate_inventory(self.args.component_input_inventory)
+        if validated["status"] != "READY":
+            raise RuntimeError(f"Component input inventory rejected: {validated['reasons']}")
+        inventory = validated["inventory"]
+        owners = {str(row["job_id"]): row for row in inventory["packages"]}
+        if self.job("PHASE-6")["state"] in {"COMPLETED", "SKIPPED_COMPATIBLE"}:
             return
         while True:
             before = read_json(self.args.component_readiness)
             plan = list(before.get("production_plan") or [])
             if not plan:
-                self.complete("PHASE-5", report=self.args.component_readiness,
+                self.complete("PHASE-6", report=self.args.component_readiness,
                               skipped=int(before.get("ready_component_count", 0)) == 15)
                 return
             job = plan[0]
             job_id = str(job["job_id"])
             if str(job.get("model_id")) not in MODELS:
                 raise RuntimeError("Challenger attempted in base campaign")
-            training = self.args.component_input_root / f"{job_id.replace(':', '_')}.training.json"
-            prediction = self.args.component_input_root / f"{job_id.replace(':', '_')}.prediction.json"
+            owner = owners.get(job_id)
+            if owner is None:
+                raise RuntimeError(f"Inventory does not own planned job: {job_id}")
+            package_manifest = read_json(Path(owner["package_manifest_path"]))
+            if package_manifest.get("production_plan_job_checksum") != job.get("logical_checksum"):
+                raise RuntimeError(f"Inventory plan checksum mismatch for {job_id}")
+            training = Path(owner["training_rows_path"])
+            prediction = Path(owner["prediction_rows_path"])
             if not training.is_file() or not prediction.is_file():
                 raise RuntimeError(f"Required input owner missing for {job_id}: {training}, {prediction}")
             selected = self.run_root / "selected_jobs" / f"{job_id.replace(':', '_')}.json"
@@ -454,7 +544,7 @@ class Pipeline:
                 "--experiment-ledger", str(self.run_root / "experiment_ledger.jsonl"),
                 "--verification-output", str(report),
             ]
-            self.run_command("PHASE-5", command, transcript, report)
+            self.run_command("PHASE-6", command, transcript, report)
             revalidate = [
                 sys.executable, "main.py", "--mode", "ml-selector-component-preflight",
                 "--parent-gate", str(self.args.parent_gate),
@@ -470,7 +560,7 @@ class Pipeline:
             after = read_json(self.args.component_readiness)
             if int(after.get("ready_component_count", 0)) <= int(before.get("ready_component_count", 0)):
                 raise RuntimeError(f"Component readiness did not advance after {job_id}")
-            self.job("PHASE-5")["state"] = "RUNNING"
+            self.job("PHASE-6")["state"] = "RUNNING"
             self.save()
 
     def freeze_operational_panel(self, readiness: Mapping[str, Any]) -> Path:
@@ -497,13 +587,15 @@ class Pipeline:
 
     def evaluate(self, readiness: Mapping[str, Any], panel: Path) -> Path:
         from core.research.ml.selector_component_evaluation import evaluate_selector_components
+        from core.research.ml.selector_operational_inputs import validate_inventory
+        inventory = validate_inventory(self.args.component_input_inventory)["inventory"]
         manifests = sorted(self.args.component_root.glob("model=*/date=*/manifest.json"))
         output = self.run_root / "evaluation"
         result = evaluate_selector_components(
             readiness_path=self.args.component_readiness, component_manifests=manifests,
-            outcome_path=self.args.outcome_path, output_root=output,
+            outcome_path=Path(inventory["mature_outcome_path"]), output_root=output,
             ledger_path=self.run_root / "experiment_ledger.jsonl",
-            panel_id=read_json(panel)["panel_id"], evaluation_cutoff=self.args.evaluation_cutoff,
+            panel_id=read_json(panel)["panel_id"], evaluation_cutoff=inventory["evaluation_cutoff"],
             required_models=EVALUATION_MODELS, required_dates=DATES,
         )
         if result.get("evaluation_status") != "READY":
@@ -526,11 +618,42 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--component-readiness", type=Path, default=Path(f"reports/ml/readiness/selector_evaluation_1c_e/runs/{RUN_ID}/component_preflight_v2.json"))
     value.add_argument("--selector-dataset-root", type=Path, default=Path(f"reports/ml/readiness/canonical_v2_selector_dataset_v2/run={RUN_ID}/frozen"))
     value.add_argument("--component-root", type=Path, default=Path(f"reports/ml/selector_components/operational_v2/run={RUN_ID}"))
-    value.add_argument("--component-input-root", type=Path, required=True)
-    value.add_argument("--outcome-path", type=Path, required=True)
-    value.add_argument("--evaluation-cutoff", required=True)
+    value.add_argument("--component-input-inventory", type=Path)
+    value.add_argument("--operational-inputs-output-root", type=Path)
+    value.add_argument("--evaluation-cutoff")
+    value.add_argument("--stop-after-phase", choices=(
+        "archive_validation", "selector_stage_10", "input_inventory",
+        "component_publication", "selector_evaluation",
+    ))
     value.add_argument("--state-path", type=Path)
     return value
+
+
+def configure_inventory_strategy(args: argparse.Namespace) -> None:
+    prebuilt = getattr(args, "component_input_inventory", None)
+    output = getattr(args, "operational_inputs_output_root", None)
+    cutoff = getattr(args, "evaluation_cutoff", None)
+    if prebuilt and (output or cutoff):
+        raise ValueError("Conflicting inventory strategies")
+    if not prebuilt and not (output and cutoff):
+        raise ValueError("Exactly one inventory strategy is required")
+    if prebuilt:
+        args.inventory_strategy = "prebuilt"
+        payload = read_json(prebuilt)
+        args.evaluation_cutoff = payload.get("evaluation_cutoff")
+        if not args.evaluation_cutoff:
+            raise ValueError("Prebuilt inventory has no explicit evaluation cutoff")
+    else:
+        args.inventory_strategy = "automatic"
+        approved = (REPO_ROOT / f"reports/ml/readiness/selector_evaluation_1c_e/runs/{RUN_ID}").resolve()
+        candidate = (REPO_ROOT / output).resolve() if not output.is_absolute() else output.resolve()
+        try: candidate.relative_to(approved)
+        except ValueError as exc: raise ValueError("Operational input output root is outside run ownership") from exc
+        args.operational_inputs_output_root = candidate
+    try:
+        datetime.fromisoformat(str(args.evaluation_cutoff).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Evaluation cutoff must be an explicit ISO timestamp") from exc
 
 
 def main(argv: Sequence[str] | None = None) -> int:
