@@ -46,6 +46,13 @@ def parse_args():
             "ml-registry-verify",
             "ml-selector-evaluation-preflight",
             "ml-selector-panel-resolve",
+            "ml-selector-artifact-audit",
+            "ml-selector-component-preflight",
+            "ml-selector-dataset-lineage-audit",
+            "ml-selector-registry-validate",
+            "ml-selector-spine-validate",
+            "ml-selector-dataset-validate",
+            "ml-selector-dataset-build-preflight",
             "ml-legacy-artifact-evidence-import",
             "ml-smoke-test",
             "ml-data-inventory",
@@ -200,6 +207,7 @@ def parse_args():
     parser.add_argument("--baseline-allowlist", nargs="+", default=None)
     parser.add_argument("--bounded-output-root", default=None)
     parser.add_argument("--selector-feature-schema", default=None)
+    parser.add_argument("--selector-dataset-root", default=None)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--no-overwrite-incomplete-dates", action="store_true")
     parser.add_argument("--rf-estimators", type=int, default=None)
@@ -233,6 +241,15 @@ def parse_args():
     parser.add_argument("--selector-manifest-root", nargs="+", default=None)
     parser.add_argument("--panel-config", default=None)
     parser.add_argument("--panel-output-root", default=None)
+    parser.add_argument("--candidate-root", nargs="+", default=None)
+    parser.add_argument("--component-output-root", default=None)
+    parser.add_argument("--component-log-root", default=None)
+    parser.add_argument("--selector-dataset-manifest", default=None)
+    parser.add_argument("--daily-spine-manifest", default=None)
+    parser.add_argument("--symbol-registry-manifest", default=None)
+    parser.add_argument("--daily-feature-manifest", default=None)
+    parser.add_argument("--selector-source", default=None)
+    parser.add_argument("--selector-dataset-output-root", default=None)
     parser.add_argument("--expected-decision-date", default=None)
     parser.add_argument("--expected-replay-link", default=None)
     parser.add_argument("--legacy-manifest", default=None)

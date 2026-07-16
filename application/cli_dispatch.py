@@ -78,6 +78,18 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-panel-resolve":
         _commands("selector_evaluation_commands").run_selector_panel_resolve(config, args)
         return
+    if args.mode == "ml-selector-artifact-audit":
+        _commands("selector_evaluation_commands").run_selector_artifact_audit(config, args)
+        return
+    if args.mode == "ml-selector-component-preflight":
+        _commands("selector_evaluation_commands").run_selector_component_preflight(config, args)
+        return
+    if args.mode == "ml-selector-dataset-lineage-audit":
+        _commands("selector_evaluation_commands").run_selector_dataset_lineage_audit(config, args)
+        return
+    if args.mode in {"ml-selector-registry-validate", "ml-selector-spine-validate", "ml-selector-dataset-validate", "ml-selector-dataset-build-preflight"}:
+        _commands("selector_evaluation_commands").run_selector_publication_validate(config, args)
+        return
     if args.mode == "ml-legacy-artifact-evidence-import":
         _commands("ml_lineage_commands").run_legacy_evidence_import(config, args)
         return
