@@ -1,0 +1,57 @@
+{
+  "ticket": "4C-A",
+  "component": "multi_horizon_linear_selector_foundation",
+  "status": "READY_FOR_DEFERRED_SYNTHETIC_INTEGRATION",
+  "contracts": {
+    "targets": "multi_horizon_target_contract_v1",
+    "input": "multi_horizon_linear_input_v1",
+    "preprocessing": "multi_horizon_preprocessing_v1",
+    "model": "multi_horizon_linear_model_v1",
+    "ordered_logit_adapter": "multi_horizon_ordered_logit_adapter_v1",
+    "prediction": "multi_horizon_prediction_v1",
+    "combined_score": "multi_horizon_combined_score_v1",
+    "result": "multi_horizon_linear_result_v1"
+  },
+  "horizons": {
+    "return_1s": 1,
+    "return_5s": 5,
+    "return_10s": 10,
+    "return_20s": 20
+  },
+  "model_panel": {
+    "ridge": {
+      "alpha": 1.0,
+      "fit_intercept": true
+    },
+    "elastic_net": {
+      "alpha": 0.001,
+      "l1_ratio": 0.25,
+      "fit_intercept": true,
+      "maximum_iterations": 5000,
+      "selection": "cyclic"
+    }
+  },
+  "preprocessing_policy": "independent_mature_population_per_horizon_v1",
+  "combined_score_weights": {
+    "short_term": {
+      "return_1s": 0.6,
+      "return_5s": 0.4
+    },
+    "medium_term": {
+      "return_5s": 0.5,
+      "return_10s": 0.5
+    },
+    "long_term": {
+      "return_10s": 0.3,
+      "return_20s": 0.7
+    }
+  },
+  "missing_weights_silently_renormalised": false,
+  "statistical_significance_performed": false,
+  "historical_effectiveness_claimed": false,
+  "real_data_used": false,
+  "model_registry_modified": false,
+  "focused_test_file": "tests/test_multi_horizon_linear_selector.py",
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
+
