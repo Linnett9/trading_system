@@ -87,8 +87,11 @@ def dispatch(args, config, feed):
     if args.mode == "ml-selector-dataset-lineage-audit":
         _commands("selector_evaluation_commands").run_selector_dataset_lineage_audit(config, args)
         return
-    if args.mode in {"ml-selector-registry-validate", "ml-selector-spine-validate", "ml-selector-dataset-validate", "ml-selector-dataset-build-preflight"}:
+    if args.mode == "ml-selector-parent-gate":
         _commands("selector_evaluation_commands").run_selector_publication_validate(config, args)
+        return
+    if args.mode == "ml-selector-component-publish":
+        _commands("selector_evaluation_commands").run_selector_component_publish(config, args)
         return
     if args.mode == "ml-legacy-artifact-evidence-import":
         _commands("ml_lineage_commands").run_legacy_evidence_import(config, args)

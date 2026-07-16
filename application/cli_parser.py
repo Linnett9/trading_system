@@ -49,6 +49,8 @@ def parse_args():
             "ml-selector-artifact-audit",
             "ml-selector-component-preflight",
             "ml-selector-dataset-lineage-audit",
+            "ml-selector-parent-gate",
+            "ml-selector-component-publish",
             "ml-selector-registry-validate",
             "ml-selector-spine-validate",
             "ml-selector-dataset-validate",
@@ -245,6 +247,15 @@ def parse_args():
     parser.add_argument("--component-output-root", default=None)
     parser.add_argument("--component-log-root", default=None)
     parser.add_argument("--selector-dataset-manifest", default=None)
+    parser.add_argument("--parent-gate", default=None)
+    parser.add_argument("--operational-dates-manifest", default=None)
+    parser.add_argument("--approved-root", default=None)
+    parser.add_argument("--approved-component-root", action="append", default=[])
+    parser.add_argument("--required-operational-date", action="append", default=[])
+    parser.add_argument("--production-plan-job", default=None)
+    parser.add_argument("--training-rows-json", default=None)
+    parser.add_argument("--prediction-rows-json", default=None)
+    parser.add_argument("--experiment-ledger", default=None)
     parser.add_argument("--daily-spine-manifest", default=None)
     parser.add_argument("--symbol-registry-manifest", default=None)
     parser.add_argument("--daily-feature-manifest", default=None)

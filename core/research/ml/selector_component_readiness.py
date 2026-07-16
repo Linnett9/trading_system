@@ -334,3 +334,37 @@ def _logical_checksum(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(logical, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest().upper()
+
+
+def audit_component_commands(
+    jobs: list[Mapping[str, Any]], *, expected_dataset_root: Path
+) -> dict[str, Any]:
+    """Compatibility audit for previously committed run-state validators."""
+    import shlex
+
+    active = [row for row in jobs if row.get("action") in {"fit", "resume"}]
+    roots, missing, legacy = [], 0, 0
+    for row in active:
+        tokens = shlex.split(str(row.get("command", "")), posix=False)
+        try:
+            value = tokens[tokens.index("--selector-dataset-root") + 1].strip('"')
+        except (ValueError, IndexError):
+            missing += 1
+            continue
+        roots.append(str(Path(value).resolve()))
+        legacy += int("canonical_v2_selector_dataset_v1" in value)
+    unique = sorted(set(roots)); expected = str(expected_dataset_root.resolve())
+    reasons = []
+    if missing: reasons.append("COMPONENT_DATASET_OVERRIDE_MISSING")
+    if legacy: reasons.append("LEGACY_DATASET_ROOT_REFERENCED")
+    if active and unique != [expected]: reasons.append("MULTIPLE_OR_UNVERIFIED_DATASET_ROOTS")
+    return {
+        "audit": {
+            "planned_jobs": len(jobs), "fit_or_resume_jobs": len(active),
+            "explicit_override_jobs": len(active) - missing,
+            "missing_override_jobs": missing,
+            "unique_authoritative_dataset_roots": unique,
+            "legacy_root_jobs": legacy,
+        },
+        "blocking_reasons": reasons,
+    }

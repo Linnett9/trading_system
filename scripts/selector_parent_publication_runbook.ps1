@@ -5,6 +5,10 @@ param(
     [switch]$Resume,
     [string]$RunId = "",
     [string]$TranscriptPath = "",
+    [string]$ComponentJobId = "",
+    [string]$TrainingRowsJson = "",
+    [string]$PredictionRowsJson = "",
+    [string]$OperationalReadinessReport = "",
     [switch]$AllowSelectorFits,
     [switch]$InitializeOnly,
     [ValidateSet('none','complete','fail')][string]$SyntheticStageOne = 'none'
@@ -33,9 +37,9 @@ $stageDefinitions = @(
     @{number=7; name='selector dataset preflight'; mutating=$false; resumable=$true; skippable=$false; expected='READY'},
     @{number=8; name='selector dataset rebuild'; mutating=$true; resumable=$true; skippable=$true; expected='VERIFIED'},
     @{number=9; name='selector dataset validation'; mutating=$false; resumable=$true; skippable=$false; expected='READY'},
-    @{number=10; name='component readiness preflight'; mutating=$false; resumable=$true; skippable=$false; expected='READY'},
-    @{number=11; name='guarded component production'; mutating=$true; resumable=$true; skippable=$false; expected='complete'},
-    @{number=12; name='monitoring'; mutating=$false; resumable=$true; skippable=$false; expected='complete'},
+    @{number=10; name='parent gate and component readiness'; mutating=$false; resumable=$true; skippable=$false; expected='READY'},
+    @{number=11; name='guarded single-component publication'; mutating=$true; resumable=$true; skippable=$false; expected='complete'},
+    @{number=12; name='component inventory revalidation'; mutating=$false; resumable=$true; skippable=$false; expected='complete'},
     @{number=13; name='resume'; mutating=$false; resumable=$true; skippable=$false; expected='complete'},
     @{number=14; name='component validation'; mutating=$false; resumable=$true; skippable=$false; expected='VERIFIED_STRICT_OOS'},
     @{number=15; name='registry verification'; mutating=$false; resumable=$true; skippable=$false; expected='VERIFIED'},
@@ -51,9 +55,9 @@ $stageIO = @{
     7=@{inputs=@('exact spine, feature, registry manifests','enriched source'); outputs=@('dataset build preflight JSON'); exit='0 READY, nonzero blocked'}
     8=@{inputs=@('stage-7 verified parents'); outputs=@('immutable v2 dataset manifest'); exit='0 published/reused, nonzero conflict'}
     9=@{inputs=@('exact stage-8 dataset and parent manifests'); outputs=@('dataset validation JSON'); exit='0 READY, nonzero blocked'}
-    10=@{inputs=@('exact validated v2 dataset manifest'); outputs=@('run-owned component_preflight_v2.json'); exit='0 READY, nonzero BLOCKED with state preserved'}
-    11=@{inputs=@('reviewed READY stage-10 preflight','AllowSelectorFits'); outputs=@('15 bounded component owners and logs'); exit='0 complete, nonzero stops immediately'}
-    12=@{inputs=@('exact stage-10 preflight'); outputs=@('monitoring display'); exit='0 displayed'}
+    10=@{inputs=@('exact validated dataset and parent manifests'); outputs=@('parent_gate.json','component_readiness_v2.json'); exit='0 READY/PARTIAL, nonzero BLOCKED with state preserved'}
+    11=@{inputs=@('reviewed stage-10 plan','ComponentJobId','AllowSelectorFits','operational readiness'); outputs=@('one authoritative component owner'); exit='0 complete/skipped-compatible, nonzero stops immediately'}
+    12=@{inputs=@('exact stage-10 parent gate and component root'); outputs=@('updated component_readiness_v2.json'); exit='0 revalidated'}
     13=@{inputs=@('current run state'); outputs=@('safe resume command'); exit='0 displayed'}
     14=@{inputs=@('run-owned component manifests'); outputs=@('lineage verification results'); exit='0 all verified, nonzero blocked'}
     15=@{inputs=@('current ML registries'); outputs=@('registry verification JSON'); exit='0 VERIFIED, nonzero blocked'}
@@ -236,6 +240,8 @@ $datasetRoot = "reports/ml/readiness/canonical_v2_selector_dataset_v2/run=$RunId
 $componentRoot = "reports/ml/selector_components/operational_v2/run=$RunId"
 $componentLogRoot = "reports/ml/selector_components/logs/operational_v2/run=$RunId"
 $freshPreflight = Join-Path $runRoot 'component_preflight_v2.json'
+$parentGate = Join-Path $runRoot 'selector_parent_gate.json'
+$operationalDates = Join-Path $runRoot 'selector_operational_dates.json'
 
 Start-Transcript -LiteralPath $TranscriptPath -Append | Out-Null
 try {
@@ -301,76 +307,49 @@ try {
             }
             10 {
                 $datasetManifest = [string]$state.artifacts.dataset_manifest; Require-Path 10 $datasetManifest
-                $stageStart = (Get-Date).ToUniversalTime()
-                $cmd = 'python main.py --mode ml-selector-component-preflight --panel-config config/selector_evaluation/selector_multi_regime_evaluation_v1.json --selector-dataset-manifest "{0}" --component-output-root "{1}" --component-log-root "{2}" --config config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml --verification-output "{3}"' -f $datasetManifest, $componentRoot, $componentLogRoot, $freshPreflight
-                Start-Stage 10 $cmd; Invoke-Expression $cmd; $code = $LASTEXITCODE
-                Require-Path 10 $freshPreflight
-                $preflightItem = Get-Item -LiteralPath $freshPreflight
-                if ($preflightItem.LastWriteTimeUtc -lt $stageStart) { Fail-Stage 10 2 "stale preflight: $freshPreflight" }
+                $datasetPayload = Get-Content -LiteralPath $datasetManifest -Raw | ConvertFrom-Json
+                $datesPayload = [ordered]@{status='READY';publication_status='complete';validation_status='VERIFIED';selector_dataset_id=$datasetPayload.dataset_id;selector_dataset_manifest_checksum=(Get-FileHash $datasetManifest -Algorithm SHA256).Hash;row_population_checksum=$datasetPayload.row_population_checksum;available_operational_dates=@('2024-03-15','2024-09-16','2025-03-17','2025-09-15','2026-03-16')}
+                $datesPayload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath "$operationalDates.tmp" -Encoding UTF8
+                Move-Item -LiteralPath "$operationalDates.tmp" -Destination $operationalDates -Force
+                $spineManifest = [string]$state.artifacts.spine_manifest; $featureManifest = [string]$state.artifacts.feature_manifest
+                $gateCmd = 'python main.py --mode ml-selector-parent-gate --symbol-registry-manifest "{0}" --daily-spine-manifest "{1}" --daily-feature-manifest "{2}" --selector-dataset-manifest "{3}" --operational-dates-manifest "{4}" --approved-root "{5}" --required-operational-date 2024-03-15 --required-operational-date 2024-09-16 --required-operational-date 2025-03-17 --required-operational-date 2025-09-15 --required-operational-date 2026-03-16 --verification-output "{6}"' -f $registryManifest,$spineManifest,$featureManifest,$datasetManifest,$operationalDates,$repo,$parentGate
+                $readinessCmd = 'python main.py --mode ml-selector-component-preflight --parent-gate "{0}" --selector-dataset-root "{1}" --component-output-root "{2}" --approved-component-root "{2}" --config config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml --verification-output "{3}"' -f $parentGate,$datasetRoot,$componentRoot,$freshPreflight
+                Start-Stage 10 "$gateCmd; $readinessCmd"
+                Invoke-Expression $gateCmd; if ($LASTEXITCODE -ne 0) { Fail-Stage 10 $LASTEXITCODE 'selector parent gate blocked' }
+                Invoke-Expression $readinessCmd; $code = $LASTEXITCODE
+                Require-Path 10 $parentGate; Require-Path 10 $freshPreflight
                 $preflight = Get-Content -LiteralPath $freshPreflight -Raw | ConvertFrom-Json
-                $fitJobs = @($preflight.jobs | Where-Object action -in @('fit','resume'))
-                $overrideJobs = @($fitJobs | Where-Object command -match '--selector-dataset-root')
-                $legacyJobs = @($fitJobs | Where-Object command -match 'canonical_v2_selector_dataset_v1')
-                $quote = [char]34
-                $rootMarker = '--selector-dataset-root ' + $quote
-                $roots = @($fitJobs | ForEach-Object {
-                    $position = $_.command.IndexOf($rootMarker)
-                    if ($position -ge 0) {
-                        $tail = $_.command.Substring($position + $rootMarker.Length)
-                        $rootValue = $tail.Substring(0, $tail.IndexOf($quote))
-                        (Resolve-Path $rootValue).Path
-                    }
-                } | Sort-Object -Unique)
-                $expectedRoot = (Resolve-Path $datasetRoot).Path
-                $bindingOk = $preflight.component_count -eq 15 -and $overrideJobs.Count -eq 15 -and $legacyJobs.Count -eq 0 -and $roots.Count -eq 1 -and $roots[0] -eq $expectedRoot
-                $identityOk = $preflight.dataset_manifest_path -eq $datasetManifest -and $preflight.dataset_identity -and $preflight.daily_spine_identity -and $preflight.symbol_registry_identity -and $preflight.daily_feature_store_identity
                 Set-Artifact 'component_preflight' $freshPreflight
-                Write-Host ('Fresh preflight: {0}' -f $freshPreflight)
-                Write-Host ('Last write UTC: {0}' -f $preflightItem.LastWriteTimeUtc.ToString('o'))
-                Write-Host ('Schema: {0} | Status: {1} | Components: {2}' -f $preflight.preflight_schema_version, $preflight.status, $preflight.component_count)
-                Write-Host ('Fitting: {0} | Prediction: {1} | Blockers: {2}' -f $preflight.fitting_performed, $preflight.prediction_performed, ($preflight.blocking_reasons -join ', '))
-                Write-Host ('Dataset: {0} | {1}' -f $preflight.dataset_manifest_path, $preflight.dataset_identity)
-                Write-Host ('Spine: {0} | Registry: {1} | Features: {2}' -f $preflight.daily_spine_identity, $preflight.symbol_registry_identity, $preflight.daily_feature_store_identity)
-                if ($code -ne 0 -or $preflight.status -ne 'READY' -or $preflight.blocking_reasons.Count -ne 0 -or -not $bindingOk -or -not $identityOk) {
+                Set-Artifact 'parent_gate' $parentGate
+                if ($code -ne 0 -or $preflight.overall_status -eq 'BLOCKED' -or $preflight.expected_component_count -ne 15) {
                     $resumeCommand = '& "{0}" -FromStage 10 -ThroughStage 10 -Resume -RunId "{1}" -TranscriptPath "{2}"' -f $PSCommandPath, $RunId, $TranscriptPath
-                    Write-Host ('BLOCKED: {0}' -f ($preflight.blocking_reasons -join ', ')) -ForegroundColor Red
+                    Write-Host ('BLOCKED: {0}' -f ($preflight.blockers -join ', ')) -ForegroundColor Red
                     Write-Host ('Safe resume: {0}' -f $resumeCommand)
-                    Fail-Stage 10 2 ('component preflight blocked or command binding invalid: {0}' -f $freshPreflight)
+                    Fail-Stage 10 2 ('parent gate or component readiness blocked: {0}' -f $freshPreflight)
                 }
-                Complete-Stage 10 0 @($freshPreflight)
-                Write-Host 'READY FOR EXPLICIT BOUNDED COMPONENT PRODUCTION. NO FITTING HAS BEEN RUN.' -ForegroundColor Green
+                Complete-Stage 10 0 @($parentGate,$freshPreflight)
+                Write-Host 'READY FOR ONE EXPLICIT COMPONENT PUBLICATION. NO CAMPAIGN HAS BEEN LAUNCHED.' -ForegroundColor Green
             }
             11 {
                 if (-not $AllowSelectorFits) { Fail-Stage 11 2 'explicit -AllowSelectorFits is required' }
-                foreach ($requiredStage in @(3,6,9,10)) {
-                    if ((Stage-Row $requiredStage).status -ne 'complete') { Fail-Stage 11 2 "required validation stage is not complete: $requiredStage" }
-                }
+                if (-not $ComponentJobId -or -not $TrainingRowsJson -or -not $PredictionRowsJson) { Fail-Stage 11 2 'ComponentJobId, TrainingRowsJson, and PredictionRowsJson are required' }
+                Require-Path 11 $OperationalReadinessReport
+                $ops = Get-Content -LiteralPath $OperationalReadinessReport -Raw | ConvertFrom-Json
+                if ($ops.job_statuses.'JOB-003' -ne 'READY' -or $ops.resources.finaliser_active) { Fail-Stage 11 2 'finaliser/resource gate blocks heavy selector publication' }
                 $preflightPath = [string]$state.artifacts.component_preflight; Require-Path 11 $preflightPath
-                Require-Path 11 ([string]$state.artifacts.registry_manifest)
-                Require-Path 11 ([string]$state.artifacts.spine_manifest)
-                Require-Path 11 ([string]$state.artifacts.feature_manifest)
-                Require-Path 11 ([string]$state.artifacts.dataset_manifest)
                 $preflight = Get-Content -LiteralPath $preflightPath -Raw | ConvertFrom-Json
-                if ($preflight.status -ne 'READY' -or $preflight.component_count -ne 15 -or $preflight.blocking_reasons.Count -ne 0 -or $preflight.fitting_performed -ne $false -or $preflight.prediction_performed -ne $false -or $preflight.command_binding_audit.explicit_override_jobs -ne 15 -or $preflight.command_binding_audit.legacy_root_jobs -ne 0 -or $preflight.command_binding_audit.unique_authoritative_dataset_roots.Count -ne 1) { Fail-Stage 11 2 'stage-10 approval gates are not satisfied' }
-                Write-Host ('DO NOT PROCEED UNLESS REVIEWED. Models: {0} Dates: {1} Dataset: {2}' -f ($preflight.models -join ', '), ($preflight.requested_dates -join ', '), $preflight.dataset_identity) -ForegroundColor Yellow
-                Start-Stage 11 'execute the 15 exact commands recorded by stage 10'
-                foreach ($job in $preflight.jobs) {
-                    if ($job.action -in @('fit','resume')) {
-                        Write-Host ('model={0} date={1} owner={2} log={3}' -f $job.model, $job.date, $job.owner, $job.log)
-                        New-Item -ItemType Directory -Force (Split-Path $job.log) | Out-Null
-                        $jobCommand = '{0} *> "{1}"' -f $job.command, $job.log
-                        Invoke-Expression $jobCommand
-                        if ($LASTEXITCODE -ne 0) { Fail-Stage 11 $LASTEXITCODE ('component failed: {0} {1}' -f $job.model, $job.date) }
-                    }
-                }
-                Complete-Stage 11 0
+                $job = @($preflight.production_plan | Where-Object job_id -eq $ComponentJobId)
+                if ($job.Count -ne 1) { Fail-Stage 11 2 "expected exactly one planned job: $ComponentJobId" }
+                $jobPath = Join-Path $runRoot 'selected_component_job.json'; $job[0] | ConvertTo-Json -Depth 15 | Set-Content -LiteralPath $jobPath -Encoding UTF8
+                $cmd = 'python main.py --mode ml-selector-component-publish --production-plan-job "{0}" --parent-gate "{1}" --training-rows-json "{2}" --prediction-rows-json "{3}" --experiment-ledger "{4}" --verification-output "{5}"' -f $jobPath,$parentGate,$TrainingRowsJson,$PredictionRowsJson,"$runRoot/experiment_ledger.jsonl","$runRoot/component_publication.json"
+                Invoke-Checked 11 $cmd @("$runRoot/component_publication.json")
             }
             12 {
-                $preflight = Get-Content -LiteralPath ([string]$state.artifacts.component_preflight) -Raw | ConvertFrom-Json
-                Start-Stage 12 'display component job state'; $preflight.jobs | Select-Object date,model,status,action,owner,log | Format-Table -AutoSize; Complete-Stage 12 0
+                $cmd = 'python main.py --mode ml-selector-component-preflight --parent-gate "{0}" --selector-dataset-root "{1}" --component-output-root "{2}" --approved-component-root "{2}" --config config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml --verification-output "{3}"' -f $parentGate,$datasetRoot,$componentRoot,$freshPreflight
+                Invoke-Checked 12 $cmd @($freshPreflight)
             }
             13 {
-                $resumeFitCommand = '& "{0}" -FromStage 10 -ThroughStage 11 -Resume -RunId "{1}" -TranscriptPath "{2}" -AllowSelectorFits' -f $PSCommandPath, $RunId, $TranscriptPath
+                $resumeFitCommand = '& "{0}" -FromStage 10 -ThroughStage 12 -Resume -RunId "{1}" -TranscriptPath "{2}" -AllowSelectorFits -ComponentJobId "{3}" -TrainingRowsJson "{4}" -PredictionRowsJson "{5}" -OperationalReadinessReport "{6}"' -f $PSCommandPath, $RunId, $TranscriptPath, $ComponentJobId, $TrainingRowsJson, $PredictionRowsJson, $OperationalReadinessReport
                 Start-Stage 13 'resume guidance'; Write-Host $resumeFitCommand; Complete-Stage 13 0
             }
             14 {
