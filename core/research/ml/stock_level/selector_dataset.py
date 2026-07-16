@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
+import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -18,8 +21,10 @@ from core.research.ml.stock_level_benchmark_data import (
     SELECTOR_ROW_ID_CONTRACT_VERSION,
     _stable_selector_row_id,
 )
+from core.research.ml.selector_dataset_lineage import logical_manifest_checksum
 
 SELECTOR_DATASET_CONTRACT_VERSION = "canonical_v2_selector_dataset_v1"
+SELECTOR_DATASET_MANIFEST_VERSION = "authoritative_frozen_selector_dataset_v2"
 BASELINE_CONTRACT_VERSION = "stock_selector_trailing_signals_v1"
 DETERMINISTIC_SIGNAL_COLUMNS = (
     "predicted_momentum_20d",
@@ -101,14 +106,21 @@ def build_frozen_selector_dataset(
     source_path: Path, market_root: Path, output_root: Path,
     *, symbols: Iterable[str] | None = None, decision_dates: Iterable[str] | None = None,
     copy_source_rows: bool = True, source_sha256: str | None = None,
-    config_hash: str | None = None,
+    config_hash: str | None = None, daily_spine_manifest_path: Path | None = None,
+    daily_feature_manifest_path: Path | None = None,
+    symbol_registry_manifest_path: Path | None = None,
 ) -> SelectorDatasetPaths:
     import pyarrow as pa
     import pyarrow.dataset as ds
     import pyarrow.parquet as pq
 
-    if (output_root / "manifest.json").exists():
-        raise FileExistsError(f"Frozen selector dataset already exists: {output_root}")
+    if daily_spine_manifest_path is None or daily_feature_manifest_path is None or symbol_registry_manifest_path is None:
+        raise ValueError("Authoritative daily-spine, daily-feature, and symbol-registry parent manifests are required")
+    parents = _validate_parent_manifests(source_path, daily_spine_manifest_path, daily_feature_manifest_path, symbol_registry_manifest_path)
+    final_root = output_root
+    if final_root.exists():
+        raise FileExistsError(f"Frozen selector dataset already exists: {final_root}")
+    output_root = final_root.with_name(f".{final_root.name}.{uuid.uuid4().hex}.tmp")
     output_root.mkdir(parents=True, exist_ok=True)
     selected_symbols = sorted({str(x).upper() for x in symbols or ()})
     selected_dates = sorted({str(x) for x in decision_dates or ()})
@@ -219,21 +231,120 @@ def build_frozen_selector_dataset(
         "baseline_finite_counts": finite_counts,
         "bounded": bounded,
     }
+    population = _dataset_population_identity(rows_path)
+    _validate_rows_against_parents(rows_path, parents)
+    from core.research.ml.registries import RegistryResolver, load_registry_bundle
+
+    target = RegistryResolver(load_registry_bundle()).resolve(
+        "target_contracts", "forward_return_10d", role="selector"
+    )
     manifest = {
+        "manifest_schema_version": SELECTOR_DATASET_MANIFEST_VERSION,
+        "frozen_dataset_version": "v2",
         "dataset_id": SELECTOR_DATASET_CONTRACT_VERSION + ("_bounded" if bounded else ""),
+        "dataset_path": str(final_root / "rows.parquet"), "dataset_checksum": checksums["rows.parquet"],
+        "row_population_checksum": population["row_population_checksum"], "row_count": population["row_count"],
+        "date_coverage": population["date_coverage"], "symbol_count": population["symbol_count"],
         "source_path": str(source_path), "source_sha256": source_digest,
         "source_row_count": source_count, "source_symbol_count": 406,
         "row_id_contract": SELECTOR_ROW_ID_CONTRACT_VERSION,
         "feature_contract": SELECTOR_DATASET_CONTRACT_VERSION,
         "baseline_contract": BASELINE_CONTRACT_VERSION,
-        "target_contract": "stock_level_target_provenance_v4",
+        "target_contract": target.canonical_id,
+        "target_contract_checksum": target.entry.entry_hash,
+        "ranking_contract": "daily_cross_sectional_ranking_problem_v1",
+        "daily_stock_spine_identity": parents["daily_spine_identity"],
+        "daily_stock_spine_version": parents["daily_spine_version"],
+        "daily_stock_spine_checksum": parents["daily_spine_checksum"],
+        "daily_feature_store_identity": parents["daily_feature_identity"],
+        "daily_feature_store_version": parents["daily_feature_version"],
+        "daily_feature_store_checksum": parents["daily_feature_checksum"],
+        "symbol_registry_identity": parents["symbol_registry_identity"],
+        "symbol_registry_version": parents["symbol_registry_version"],
+        "symbol_registry_checksum": parents["symbol_registry_checksum"],
+        "parent_manifests": parents["parent_manifests"],
+        "source_price_artifact_identities": parents["source_price_artifact_identities"],
+        "point_in_time_feature_store_identities": parents["point_in_time_feature_store_identities"],
+        "builder_identity": "core.research.ml.stock_level.selector_dataset:build_frozen_selector_dataset",
+        "builder_run_identity": canonical_dataset_run_identity(source_digest, config_hash, parents),
         "git_commit": _git_commit(), "config_hash": config_hash, "checksums": checksums,
+        "feature_schema_checksum": checksums["feature_schema.json"],
+        "target_schema_checksum": checksums["target_schema.json"],
         "bounded_symbols": selected_symbols, "bounded_decision_dates": selected_dates,
+        "creation_timestamp": datetime.now(timezone.utc).isoformat(), "publication_status": "complete", "validation_status": "VERIFIED",
     }
+    manifest["logical_checksum"] = logical_manifest_checksum(manifest)
     _write_json(output_root / "quality_report.json", quality)
     _write_json(output_root / "manifest.json", manifest)
     _write_json(output_root / "checksums.json", checksums)
-    return SelectorDatasetPaths(output_root, rows_path, baseline_path, output_root / "manifest.json", output_root / "quality_report.json")
+    os.replace(output_root, final_root)
+    return SelectorDatasetPaths(final_root, final_root / "rows.parquet", final_root / "baseline_scores.parquet", final_root / "manifest.json", final_root / "quality_report.json")
+
+
+def canonical_dataset_run_identity(source_digest: str, config_hash: str | None, parents: dict[str, Any]) -> str:
+    payload = {
+        "source_checksum": source_digest,
+        "config_hash": config_hash,
+        "daily_spine_identity": parents["daily_spine_identity"],
+        "daily_spine_checksum": parents.get("daily_spine_checksum"),
+        "daily_feature_identity": parents.get("daily_feature_identity"),
+        "daily_feature_checksum": parents.get("daily_feature_checksum"),
+        "symbol_registry_identity": parents["symbol_registry_identity"],
+        "symbol_registry_checksum": parents.get("symbol_registry_checksum"),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest().upper()
+
+
+def _validate_parent_manifests(source_path: Path, spine_path: Path, feature_path: Path, registry_path: Path) -> dict[str, Any]:
+    spine = json.loads(spine_path.read_text(encoding="utf-8")); feature = json.loads(feature_path.read_text(encoding="utf-8")); registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    if spine.get("status") != "READY" or spine.get("dataset_type") != "canonical_daily_stock_spine": raise ValueError("Unknown or unready authoritative daily-spine identity")
+    if feature.get("status") != "READY" or feature.get("dataset_type") != "daily_price_features": raise ValueError("Unknown or unready authoritative daily-feature identity")
+    if registry.get("status") != "READY" or registry.get("dataset_type") != "canonical_asset_registry_audit": raise ValueError("Unknown or unready authoritative symbol-registry identity")
+    source_checksum = _sha256(source_path)
+    source_checksums = {str(key): str(value).upper() for key, value in dict(feature.get("source_checksums", {})).items()}
+    matching_feature_source = any(Path(key).resolve() == source_path.resolve() and value == source_checksum for key, value in source_checksums.items())
+    if not matching_feature_source: raise ValueError("Daily-feature parent source checksum or path mismatch")
+    if spine.get("dataset_id") not in set(feature.get("source_dataset_ids", [])): raise ValueError("Daily-feature parent does not reference the authoritative spine")
+    spine_file = Path(str(spine.get("spine_artifact_path", "")))
+    if not spine_file.exists() or str(spine.get("spine_artifact_checksum", "")).upper() != _sha256(spine_file): raise ValueError("Daily-spine artifact checksum mismatch")
+    registry_file = Path(str(registry.get("registry_path", "")))
+    if not registry_file.exists() or str(registry.get("registry_content_checksum", "")).upper() != _sha256(registry_file): raise ValueError("Symbol-registry parent checksum mismatch")
+    return {"daily_spine_identity": spine["dataset_id"], "daily_spine_version": spine["schema_version"], "daily_spine_checksum": _sha256(spine_path), "spine_path": spine_file, "daily_feature_identity": feature["dataset_id"], "daily_feature_version": feature["schema_version"], "daily_feature_checksum": _sha256(feature_path), "symbol_registry_identity": registry["dataset_id"], "symbol_registry_version": registry["symbol_registry_version"], "symbol_registry_checksum": _sha256(registry_path), "registry_path": registry_file, "parent_manifests": [{"path": str(spine_path), "checksum": _sha256(spine_path)}, {"path": str(feature_path), "checksum": _sha256(feature_path)}, {"path": str(registry_path), "checksum": _sha256(registry_path)}], "source_price_artifact_identities": spine.get("source_price_artifact_identities", []), "point_in_time_feature_store_identities": [feature["dataset_id"]]}
+
+
+def _dataset_population_identity(rows_path: Path) -> dict[str, Any]:
+    import pyarrow.parquet as pq
+    table = pq.read_table(rows_path, columns=["row_id", "asset_id", "canonical_symbol", "decision_session_date"])
+    rows = table.to_pylist(); keys = [(str(row["asset_id"]), str(row["decision_session_date"])) for row in rows]
+    if len(keys) != len(set(keys)): raise ValueError("Duplicate stock-date identity in frozen selector dataset")
+    canonical_rows = sorted(
+        rows,
+        key=lambda row: (
+            str(row["decision_session_date"]),
+            str(row["asset_id"]),
+            str(row["row_id"]),
+        ),
+    )
+    if rows != canonical_rows:
+        raise ValueError("Noncanonical frozen selector dataset ordering")
+    ordered = [str(row["row_id"]) for row in rows]
+    dates = sorted({str(row["decision_session_date"]) for row in rows})
+    return {"row_count": len(rows), "symbol_count": len({str(row["asset_id"]) for row in rows}), "date_coverage": {"min": dates[0], "max": dates[-1], "count": len(dates)}, "row_population_checksum": hashlib.sha256(json.dumps(ordered, separators=(",", ":")).encode()).hexdigest().upper()}
+
+
+def _validate_rows_against_parents(rows_path: Path, parents: dict[str, Any]) -> None:
+    import csv
+    import pyarrow.parquet as pq
+    with parents["registry_path"].open("r", encoding="utf-8", newline="") as handle:
+        registry = {row["asset_id"]: row["canonical_symbol"] for row in csv.DictReader(handle)}
+    table = pq.read_table(rows_path, columns=["asset_id", "canonical_symbol", "decision_session_date"])
+    spine = pq.read_table(parents["spine_path"], columns=["asset_id", "session_date"])
+    spine_keys = {(str(row["asset_id"]), str(row["session_date"])) for row in spine.to_pylist()}
+    for row in table.to_pylist():
+        expected = registry.get(str(row["asset_id"]))
+        if expected is None: raise ValueError(f"Unresolved selector asset: {row['asset_id']}")
+        if expected != str(row["canonical_symbol"]): raise ValueError(f"Ambiguous canonical symbol mapping: {row['asset_id']}")
+        if (str(row["asset_id"]), str(row["decision_session_date"])) not in spine_keys: raise ValueError(f"Selector row absent from authoritative daily spine: {row['asset_id']}:{row['decision_session_date']}")
 
 
 def _score_identity_rows(identity: list[dict[str, Any]], market_root: Path, ds: Any) -> list[dict[str, Any]]:
