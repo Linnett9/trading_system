@@ -1,0 +1,57 @@
+{
+  "ticket": "5B-A",
+  "status": "READY",
+  "contracts": {
+    "input": "lightgbm_rank_xendcg_input_v1",
+    "configuration": "lightgbm_rank_xendcg_configuration_v1",
+    "model": "lightgbm_rank_xendcg_model_v1",
+    "prediction": "lightgbm_rank_xendcg_prediction_v1",
+    "result": "lightgbm_rank_xendcg_result_v1",
+    "verification": "lightgbm_rank_xendcg_verification_v1"
+  },
+  "dependency": "lightgbm==4.6.0",
+  "objective": "rank_xendcg",
+  "fixed_parameters": {
+    "metric": "ndcg",
+    "eval_at": [1, 3, 5],
+    "n_estimators": 24,
+    "learning_rate": 0.08,
+    "num_leaves": 7,
+    "max_depth": 3,
+    "min_child_samples": 2,
+    "reg_alpha": 0.05,
+    "reg_lambda": 0.2,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "max_bin": 31,
+    "deterministic": true,
+    "force_col_wise": true,
+    "seed": 1729,
+    "thread_minimum": 1,
+    "thread_maximum": 2
+  },
+  "supported_label_contracts": [
+    "within_date_quintile_relevance_v1",
+    "within_date_decile_relevance_v1",
+    "explicitly_registered_nonnegative_integer_relevance"
+  ],
+  "rejected_labels": [
+    "continuous_percentile",
+    "fractional",
+    "negative",
+    "missing"
+  ],
+  "synthetic_fixtures": [
+    "clear_ranking_signal",
+    "nonlinear_ranking_signal",
+    "date_context_variation",
+    "tied_relevance",
+    "no_signal",
+    "invalid_continuous_label"
+  ],
+  "early_stopping_default": false,
+  "real_data_used": false,
+  "parameter_search_performed": false,
+  "publication_or_evaluation_invoked": false,
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
