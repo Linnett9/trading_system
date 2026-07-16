@@ -1,0 +1,52 @@
+{
+  "contract_version": "portfolio_risk_baselines_readiness_v1",
+  "ticket": "3A-A",
+  "status": "IMPLEMENTED_SYNTHETIC_ONLY_INTEGRATION_DEFERRED",
+  "implementation_owner": "core/research/ml/portfolio_risk_baselines.py",
+  "input_contract": "portfolio_risk_input_v1",
+  "inverse_volatility_contract": "inverse_volatility_portfolio_result_v1",
+  "shrinkage_contract": "linear_shrinkage_covariance_result_v1",
+  "minimum_variance_contract": "minimum_variance_portfolio_result_v1",
+  "comparison_contract": "portfolio_risk_baseline_comparison_v1",
+  "inverse_volatility": {
+    "formula": "1 / max(annualised_volatility, minimum_volatility)",
+    "constraint_allocation": "deterministic proportional waterfill",
+    "zero_volatility_policy": "explicit positive floor"
+  },
+  "shrinkage": {
+    "estimator": "sklearn.covariance.LedoitWolf",
+    "observed_library_version": "1.6.1",
+    "target": "trace(sample_covariance)/asset_count times identity",
+    "intensity": "estimated, not user fixed",
+    "nonlinear": false
+  },
+  "minimum_variance_solver": {
+    "identity": "scipy.optimize.SLSQP",
+    "observed_version": "1.17.1",
+    "tolerance": 1e-10,
+    "constraint_tolerance": 1e-7,
+    "maximum_iterations": 2000,
+    "heuristic_success_fallback": false
+  },
+  "statuses": [
+    "VALID",
+    "OPTIMAL",
+    "INFEASIBLE",
+    "INSUFFICIENT_DATA",
+    "INVALID_INPUT",
+    "UNSUPPORTED_CONFIGURATION",
+    "NUMERICAL_FAILURE",
+    "SOLVER_UNAVAILABLE"
+  ],
+  "focused_tests": "13 passed in 3.14s",
+  "adv_capacity_status": "UNVERIFIED",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "historical_evaluation": false,
+  "portfolio_mutation": false,
+  "orders_generated": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
