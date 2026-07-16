@@ -1,0 +1,47 @@
+{
+  "contract_version": "probabilistic_metrics_readiness_v1",
+  "ticket": "1E-A",
+  "status": "IMPLEMENTED_SYNTHETIC_ONLY_INTEGRATION_DEFERRED",
+  "implementation_owner": "core/research/ml/probabilistic_metrics.py",
+  "input_contract": "probabilistic_prediction_input_v1",
+  "result_contract": "probabilistic_metric_result_v1",
+  "classification_metrics": [
+    "multiclass_negative_log_likelihood",
+    "multiclass_brier_score",
+    "ranked_probability_score",
+    "expected_relevance",
+    "expected_calibration_error",
+    "classwise_calibration",
+    "probability_concentration",
+    "predictive_entropy",
+    "top_class_accuracy_diagnostic"
+  ],
+  "quantile_metrics": [
+    "pinball_loss",
+    "mean_pinball_loss",
+    "quantile_calibration",
+    "exceedance_rate",
+    "crossing_count",
+    "crossing_severity"
+  ],
+  "crps": "empirical samples: E|X-y| - 0.5 E|X-X_prime|",
+  "interval_score": "Winkler interval score",
+  "distribution_family": "gaussian_location_scale_only",
+  "calibration_policy": "deterministic equal-width confidence bins",
+  "statuses": [
+    "VALID",
+    "INSUFFICIENT_DATA",
+    "INVALID_INPUT",
+    "UNMATCHED_POPULATION",
+    "UNSUPPORTED_PREDICTION_TYPE",
+    "NUMERICAL_FAILURE"
+  ],
+  "focused_tests": "15 passed in 0.67s",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "historical_evaluation": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
