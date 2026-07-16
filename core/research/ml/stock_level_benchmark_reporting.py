@@ -49,7 +49,7 @@ def _leaderboard_columns() -> list[str]:
 
 
 def _prediction_columns(model_names: list[str]) -> list[str]:
-    return [
+    columns = [
         "row_id",
         "rebalance_date",
         "symbol",
@@ -64,6 +64,9 @@ def _prediction_columns(model_names: list[str]) -> list[str]:
         "predicted_risk_adjusted_momentum",
         *(f"{PREDICTION_PREFIX}{name}" for name in model_names),
     ]
+    if "ordered_logit_ranker" in model_names:
+        columns.extend(["ordered_logit_predicted_relevance_class", *(f"ordered_logit_probability_{index}" for index in range(5)), "ordered_logit_cross_sectional_rank", "ordered_logit_rank_percentile", "ordered_logit_relevance"])
+    return columns
 
 
 def _write_csv(
