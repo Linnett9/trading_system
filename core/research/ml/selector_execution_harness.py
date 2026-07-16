@@ -10,19 +10,20 @@ from typing import Any, Mapping, Sequence
 from core.research.ml.selector_component_readiness import audit_component_commands
 
 
-RUN_STATE_VERSION = "selector_parent_publication_run_state_v1"
+RUN_STATE_VERSION = "selector_parent_publication_run_state_v2"
 
 
 @dataclass(frozen=True)
 class StageDefinition:
-    number: int
+    stage_number: int
     name: str
     mutating: bool
     resumable: bool
-    skippable_when_verified: bool
-    expected_status: str
+    skippable: bool
+    expected: str
     expected_inputs: tuple[str, ...] = ()
     expected_outputs: tuple[str, ...] = ()
+    exit_semantics: str = ""
 
 
 STAGES = (
@@ -79,15 +80,31 @@ def _new_stage_state(stage: StageDefinition) -> dict[str, Any]:
     return {
         **definition,
         "status": "pending",
-        "commands": [],
-        "exit_codes": [],
+        "started_at": None,
+        "completed_at": None,
+        "exit_code": None,
+        "error": None,
+        "command": None,
+        "command_history": [],
         "observed_inputs": [],
         "produced_outputs": [],
+        "reused_artifact_identities": [],
+        "attempt_count": 0,
+        "freshness_metadata": {
+            "run_id": None,
+            "source_commit": None,
+            "parent_artifact_identities": {},
+            "stage_started_file_time_utc": None,
+        },
     }
 
 
 def new_run_state(*, run_id: str, repository_path: Path, source_commit: str, from_stage: int, through_stage: int, allow_selector_fits: bool) -> dict[str, Any]:
-    return {"run_state_version": RUN_STATE_VERSION, "run_id": run_id, "start_timestamp": datetime.now(timezone.utc).isoformat(), "repository_path": str(repository_path.resolve()), "source_commit": source_commit, "requested_stage_range": {"from": from_stage, "through": through_stage}, "allow_selector_fits": allow_selector_fits, "stages": [_new_stage_state(stage) for stage in STAGES], "artifacts": {}}
+    stages = [_new_stage_state(stage) for stage in STAGES]
+    for stage in stages:
+        stage["freshness_metadata"]["run_id"] = run_id
+        stage["freshness_metadata"]["source_commit"] = source_commit
+    return {"run_state_version": RUN_STATE_VERSION, "run_id": run_id, "start_timestamp": datetime.now(timezone.utc).isoformat(), "repository_path": str(repository_path.resolve()), "source_commit": source_commit, "requested_stage_range": {"from": from_stage, "through": through_stage}, "allow_selector_fits": allow_selector_fits, "stages": stages, "artifacts": {}}
 
 
 def write_run_state_atomic(path: Path, state: Mapping[str, Any]) -> None:
@@ -99,5 +116,16 @@ def write_run_state_atomic(path: Path, state: Mapping[str, Any]) -> None:
 
 def load_run_state(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("run_state_version") != RUN_STATE_VERSION: raise ValueError("Unsupported run-state version")
+    required = {
+        "stage_number", "name", "mutating", "resumable", "skippable", "expected",
+        "expected_inputs", "expected_outputs", "exit_semantics", "status", "started_at", "completed_at",
+        "exit_code", "error", "command", "command_history", "observed_inputs",
+        "produced_outputs", "reused_artifact_identities", "attempt_count",
+        "freshness_metadata",
+    }
+    stages = payload.get("stages")
+    if payload.get("run_state_version") != RUN_STATE_VERSION or not isinstance(stages, list) or len(stages) != 16:
+        raise ValueError("INCOMPATIBLE_RUN_STATE_SCHEMA: create a new RunId")
+    if any(not required.issubset(stage) for stage in stages) or [stage["stage_number"] for stage in stages] != list(range(1, 17)):
+        raise ValueError("INCOMPATIBLE_RUN_STATE_SCHEMA: create a new RunId")
     return payload
