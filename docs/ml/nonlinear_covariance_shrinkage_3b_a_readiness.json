@@ -1,0 +1,40 @@
+{
+  "contract_version": "nonlinear_covariance_shrinkage_readiness_v1",
+  "ticket": "3B-A",
+  "status": "BLOCKED_NO_VERIFIED_IMPLEMENTATION",
+  "implementation_owner": "core/research/ml/nonlinear_covariance_shrinkage.py",
+  "input_contract": "nonlinear_covariance_input_v1",
+  "dependency_audit_contract": "nonlinear_covariance_dependency_audit_v1",
+  "covariance_result_contract": "nonlinear_covariance_result_v1",
+  "allocation_result_contract": "nonlinear_minimum_variance_result_v1",
+  "comparison_contract": "linear_nonlinear_covariance_comparison_v1",
+  "selected_method": null,
+  "method_naming_claim": null,
+  "blocking_reasons": [
+    "NO_INSTALLED_INDEPENDENTLY_VERIFIED_NONLINEAR_SHRINKAGE_BACKEND",
+    "NO_REPOSITORY_QUEST_OR_ANALYTICAL_NONLINEAR_IMPLEMENTATION",
+    "LINEAR_RESULT_FULL_RETURN_HISTORY_IDENTITY_UNAVAILABLE"
+  ],
+  "dependencies": {
+    "nonlinshrink": {"installed": false},
+    "riskfolio-lib": {"installed": false},
+    "PyPortfolioOpt": {"installed": false},
+    "statsmodels": {"installed": false},
+    "QuEST": {"installed": false},
+    "scikit-learn": {"installed": true, "version": "1.6.1", "nonlinear_estimator_selected": false},
+    "SciPy": {"installed": true, "version": "1.17.1", "nonlinear_estimator_selected": false}
+  },
+  "dependency_installed_by_ticket": false,
+  "nonlinear_covariance_produced": false,
+  "minimum_variance_weights_produced": false,
+  "focused_tests": "13 passed in 3.55s",
+  "real_data_loaded": false,
+  "model_fitting": false,
+  "prediction_generation": false,
+  "portfolio_replay": false,
+  "historical_evaluation": false,
+  "portfolio_mutation": false,
+  "orders_generated": false,
+  "live_integration": false,
+  "integration_directive": "DEFER UNTIL ACTIVE PUBLICATION AND SELECTOR COMPONENT RUNS FINISH"
+}
