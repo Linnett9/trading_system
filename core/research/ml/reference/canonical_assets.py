@@ -493,7 +493,9 @@ def audit_registry(
     }
 
 
-def write_audit_reports(audit: Mapping[str, Any], *, report_dir: Path) -> None:
+def write_audit_reports(audit: Mapping[str, Any], *, report_dir: Path, registry_path: Path | None = None, alias_path: Path | None = None) -> None:
+    if report_dir.exists() and any(report_dir.iterdir()):
+        raise FileExistsError(f"Canonical registry publication destination is immutable: {report_dir}")
     report_dir.mkdir(parents=True, exist_ok=True)
     _write_json(report_dir / "registry_audit.json", audit)
     (report_dir / "registry_audit.md").write_text(_audit_markdown(audit), encoding="utf-8")
@@ -518,7 +520,22 @@ def write_audit_reports(audit: Mapping[str, Any], *, report_dir: Path) -> None:
         row_identity_checksum=str(audit.get("registry_content_hash") or ""),
         feature_versions={},
     )
-    _write_json(report_dir / "manifest.json", asdict(manifest))
+    payload = asdict(manifest)
+    payload.update({
+        "registry_schema_version": "canonical_asset_registry.v1",
+        "registry_content_hash": audit.get("registry_content_hash"),
+        "effective_date_semantics": "valid_from inclusive; valid_to exclusive when present",
+        "canonical_mapping_semantics": "asset_id owns one canonical_symbol; provider aliases resolve by provider and effective date",
+        "publication_status": "complete",
+        "validation_status": "VERIFIED",
+    })
+    if registry_path is not None:
+        payload["registry_path"] = str(registry_path)
+        payload["registry_content_checksum"] = file_sha256(registry_path)
+    if alias_path is not None:
+        payload["alias_registry_path"] = str(alias_path)
+        payload["alias_registry_checksum"] = file_sha256(alias_path)
+    _write_json(report_dir / "manifest.json", payload)
 
 
 def build_and_audit(
@@ -541,26 +558,41 @@ def build_and_audit(
         if not dry_run:
             write_registry_outputs(assets, aliases, asset_output=registry_output, alias_output=alias_output, parquet_output=parquet_output)
     audit = audit_registry(assets, aliases, universe_path=universe_path, repo_root=repo_root)
+    blockers = registry_publication_blockers(audit)
+    if blockers and not dry_run:
+        raise ValueError(f"Canonical registry publication blocked: {','.join(blockers)}")
     if not dry_run:
-        write_audit_reports(audit, report_dir=report_dir)
+        write_audit_reports(audit, report_dir=report_dir, registry_path=registry_output, alias_path=alias_output)
     return audit
+
+
+def registry_publication_blockers(audit: Mapping[str, Any]) -> list[str]:
+    blockers = []
+    if int(audit.get("canonical_asset_count", 0)) != 514: blockers.append("CANONICAL_ASSET_COUNT_NOT_514")
+    if audit.get("unresolved_collection_symbols"): blockers.append("UNRESOLVED_COLLECTION_SYMBOLS")
+    if audit.get("ambiguous_aliases"): blockers.append("AMBIGUOUS_PROVIDER_ALIASES")
+    if audit.get("duplicate_active_canonical_symbols"): blockers.append("DUPLICATE_ACTIVE_CANONICAL_SYMBOLS")
+    if audit.get("duplicate_provider_aliases"): blockers.append("DUPLICATE_PROVIDER_ALIASES")
+    if not audit.get("registry_content_hash") or not audit.get("registry_version"): blockers.append("REGISTRY_IDENTITY_MISSING")
+    return blockers
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build and audit the canonical asset registry.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--audit-only", action="store_true")
+    parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--registry-output", type=Path, default=Path("data/reference/assets/canonical_asset_registry.csv"))
     parser.add_argument("--alias-output", type=Path, default=Path("data/reference/assets/provider_symbol_aliases.csv"))
     parser.add_argument("--parquet-output", type=Path, default=Path("data/reference/assets/canonical_asset_registry.parquet"))
     parser.add_argument("--report-dir", type=Path, default=Path("reports/data_lineage/canonical_asset_registry"))
     parser.add_argument("--universe-path", type=Path, default=Path("config/universes/alpaca_514_symbols.txt"))
     args = parser.parse_args(argv)
-    if args.dry_run and args.audit_only:
-        raise SystemExit("--dry-run and --audit-only cannot be combined")
+    if sum(bool(value) for value in (args.dry_run, args.audit_only, args.verify_only)) > 1:
+        raise SystemExit("--dry-run, --audit-only, and --verify-only are mutually exclusive")
     audit = build_and_audit(
-        dry_run=args.dry_run,
-        audit_only=args.audit_only,
+        dry_run=args.dry_run or args.verify_only,
+        audit_only=args.audit_only or args.verify_only,
         registry_output=args.registry_output,
         alias_output=args.alias_output,
         parquet_output=args.parquet_output,
@@ -574,8 +606,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ambiguous_aliases": audit["ambiguous_aliases"],
         "registry_content_hash": audit["registry_content_hash"],
         "report_dir": str(args.report_dir),
-        "dry_run": args.dry_run,
-        "audit_only": args.audit_only,
+        "dry_run": args.dry_run or args.verify_only,
+        "audit_only": args.audit_only or args.verify_only,
+        "verify_only": args.verify_only,
     }, indent=2))
     return 0
 
