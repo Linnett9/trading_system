@@ -5,7 +5,7 @@
   "required":["registry_contract_version","registry_kind","entries"],
   "properties":{
     "registry_contract_version":{"const":"ml_registry_document_v1"},
-    "registry_kind":{"enum":["equations","indicators","selector_models","exposure","portfolio_policies"]},
+    "registry_kind":{"enum":["equations","indicators","selector_models","exposure","portfolio_policies","target_contracts","ranking_contracts"]},
     "entry_defaults":{"type":"object"},
     "entries":{"type":"array","items":{"$ref":"#/$defs/entry"}}
   },

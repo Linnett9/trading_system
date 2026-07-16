@@ -20,6 +20,8 @@ REGISTRY_FILES = {
     "selector_models": "selector_models.v1.json",
     "exposure": "exposure.v1.json",
     "portfolio_policies": "portfolio_policies.v1.json",
+    "target_contracts": "target_contracts.v1.json",
+    "ranking_contracts": "ranking_contracts.v1.json",
 }
 
 
@@ -88,6 +90,14 @@ def _validate_common(entry: Mapping[str, Any], kind: str) -> None:
         for field in ("source_fields", "source_dataset", "lookback", "calculation_equation", "available_timestamp_rule", "point_in_time_safe", "allowed_roles", "feature_schema_membership"):
             if field not in entry:
                 raise RegistryValidationError(f"Indicator {canonical_id} missing {field}")
+    if kind == "target_contracts":
+        for field in ("field_name", "horizon", "target_start_rule", "target_end_rule", "label_available_timestamp_field", "label_available_rule", "target_calculation_owner", "target_schema_owner", "allowed_roles", "unit", "data_type", "ranking_objective_contract"):
+            if field not in entry:
+                raise RegistryValidationError(f"Target contract {canonical_id} missing {field}")
+        if not str(entry["horizon"]).strip():
+            raise RegistryValidationError(f"Target contract {canonical_id} has an empty horizon")
+        if entry["label_available_timestamp_field"] != "label_available_timestamp":
+            raise RegistryValidationError(f"Target contract {canonical_id} must use label_available_timestamp")
 
 
 def load_registry(path: Path, *, expected_kind: str | None = None) -> RegistryDocument:
@@ -173,11 +183,18 @@ class RegistryResolver:
         load_feature_schema(path)
 
     def verify_target_contract(self, reference: str | None) -> None:
-        if reference and reference not in {
-            "stock_level_target_provenance_v4", "stock_selector_trailing_signals_v1",
-            "should_reduce_exposure", "risk_regime", "drawdown_risk", "champion_success",
-        }:
-            raise RegistryValidationError(f"Unknown target contract reference: {reference}")
+        if not reference or reference in {"stock_selector_trailing_signals_v1", "should_reduce_exposure", "risk_regime", "drawdown_risk", "champion_success"}:
+            return
+        try:
+            self.resolve("target_contracts", reference)
+        except KeyError as exc:
+            raise RegistryValidationError(f"Unknown target contract reference: {reference}") from exc
+
+    def target_for_field(self, field_name: str, *, role: str) -> RegistryResolution:
+        matches = [entry for entry in self.bundle.documents["target_contracts"].entries if entry.payload.get("field_name") == field_name]
+        if len(matches) != 1:
+            raise RegistryValidationError(f"Expected one target contract for field {field_name}; found {len(matches)}")
+        return self.resolve("target_contracts", matches[0].canonical_id, role=role)
 
     def validate_references(self) -> None:
         equations = {entry.canonical_id for entry in self.bundle.documents["equations"].entries}
