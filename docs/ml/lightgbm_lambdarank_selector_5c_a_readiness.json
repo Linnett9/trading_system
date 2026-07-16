@@ -1,0 +1,49 @@
+{
+  "ticket": "5C-A",
+  "status": "READY",
+  "contracts": {
+    "input": "lightgbm_lambdarank_input_v1",
+    "gain": "lightgbm_lambdarank_label_gain_v1",
+    "configuration": "lightgbm_lambdarank_configuration_v1",
+    "model": "lightgbm_lambdarank_model_v1",
+    "prediction": "lightgbm_lambdarank_prediction_v1",
+    "result": "lightgbm_lambdarank_result_v1",
+    "comparison": "lightgbm_lambdarank_rank_xendcg_comparison_v1",
+    "verification": "lightgbm_lambdarank_verification_v1"
+  },
+  "dependency": "lightgbm==4.6.0",
+  "objective": "lambdarank",
+  "fixed_parameters": {
+    "metric": "ndcg",
+    "eval_at": [1, 3, 5],
+    "n_estimators": 24,
+    "learning_rate": 0.08,
+    "num_leaves": 7,
+    "max_depth": 3,
+    "min_child_samples": 2,
+    "reg_alpha": 0.05,
+    "reg_lambda": 0.2,
+    "subsample": 1.0,
+    "colsample_bytree": 1.0,
+    "max_bin": 31,
+    "deterministic": true,
+    "force_col_wise": true,
+    "seed": 1729,
+    "thread_minimum": 1,
+    "thread_maximum": 2
+  },
+  "gain_policies": {
+    "quintile": [0, 1, 3, 7, 15],
+    "decile": [0, 1, 3, 7, 15, 31, 63, 127, 255, 511],
+    "formula": "2^relevance - 1"
+  },
+  "matched_rank_xendcg_comparison": {
+    "same_populations": true,
+    "same_non_objective_parameters": true,
+    "production_winner_selected": false
+  },
+  "real_data_used": false,
+  "parameter_search_performed": false,
+  "publication_or_evaluation_invoked": false,
+  "integration_directive": "DEFER UNTIL ACTIVE SELECTOR PUBLICATION AND COMPONENT-READINESS WORK FINISHES"
+}
