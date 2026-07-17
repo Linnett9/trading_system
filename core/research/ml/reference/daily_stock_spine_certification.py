@@ -12,7 +12,7 @@ import yaml
 from core.research.ml.reference.canonical_assets import file_sha256
 
 
-VALIDATOR_VERSION = "daily_stock_spine_validator.v5a"
+VALIDATOR_VERSION = "daily_stock_spine_validator.v7"
 VALIDATION_CONTRACT_VERSION = "daily_stock_spine_verification.v1"
 CERTIFICATION_CONTRACT_VERSION = "daily_stock_spine_certification.v2"
 

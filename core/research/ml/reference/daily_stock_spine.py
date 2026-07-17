@@ -57,10 +57,11 @@ STATUS_READY = "READY"
 STATUS_BLOCKED = "BLOCKED"
 DEFAULT_STREAM_BATCH_SIZE = 65536
 DEFAULT_MAX_WORKERS = 3
-MAX_REPORT_ROWS = 1000
+MAX_REPORT_ROWS = 100
 SPINE_SCHEMA_VERSION = "canonical_daily_stock_spine.v1"
 PRICE_FEATURE_SCHEMA_VERSION = "daily_price_feature_registration.v1"
 ROW_IDENTITY_VERSION = "canonical_daily_stock_row_id.v1"
+ALIGNMENT_KEY_VERSION = "daily_stock_spine_alignment_key.v2"
 SPINE_COLUMNS = (
     "row_id",
     "source_row_id",
@@ -463,6 +464,8 @@ def verify_and_register(
     if duplicates:
         blockers.append("duplicate_economic_rows")
     temporal = _temporal_validation(base_augmented)
+    if temporal["missing_field_counts"].get("decision_timestamp:label_start_timestamp"):
+        blockers.append("missing_future_label_observation")
     if temporal["violation_count"]:
         blockers.append("temporal_violations")
     alignment = _alignment(base_augmented, enriched_augmented) if base_augmented and enriched_augmented else _empty_alignment()
@@ -591,6 +594,8 @@ def _streaming_preflight(
     batch_counts = {"base": 0, "enriched": 0}
     row_counts = {"base": 0, "enriched": 0}
     temporal_violations = []
+    temporal_violation_count = 0
+    temporal_violation_digest = hashlib.sha256()
     temporal_missing = Counter()
     dates = {"base": set(), "enriched": set()}
     artifact_symbols = {"base": set(), "enriched": set()}
@@ -609,6 +614,7 @@ def _streaming_preflight(
             connection.execute(
                 """CREATE TABLE rows (
                     side TEXT NOT NULL, sequence INTEGER NOT NULL, row_id TEXT NOT NULL,
+                    alignment_key TEXT NOT NULL,
                     asset_id TEXT, decision_timestamp TEXT, target_horizon TEXT,
                     stock_target TEXT, benchmark_asset_id TEXT, benchmark_return TEXT,
                     excess_return TEXT, feature_cutoff_timestamp TEXT,
@@ -663,12 +669,15 @@ def _streaming_preflight(
                             bounds[0] = decision if bounds[0] is None or decision < bounds[0] else bounds[0]
                             bounds[1] = decision if bounds[1] is None or decision > bounds[1] else bounds[1]
                         if side == "base":
-                            _stream_temporal(row, temporal_violations, temporal_missing)
+                            temporal_violation_count = _stream_temporal(
+                                row, temporal_violations, temporal_missing,
+                                temporal_violation_count, temporal_violation_digest,
+                            )
                         for field in ("stock_target", "benchmark_return", "excess_return"):
                             if _is_nonfinite(row.get(field)):
                                 nonfinite_counts[side][field] += 1
                         inserts.append((
-                            side, sequence, row["row_id"], row["asset_id"], decision,
+                            side, sequence, row["row_id"], _alignment_key(row), row["asset_id"], decision,
                             row["target_horizon_sessions"], _string_or_none(row["stock_target"]),
                             row["benchmark_asset_id"], _string_or_none(row["benchmark_return"]),
                             _string_or_none(row["excess_return"]), row["feature_cutoff_timestamp"],
@@ -676,7 +685,7 @@ def _streaming_preflight(
                             row["target_available_timestamp"], row["source_symbol"],
                         ))
                     connection.executemany(
-                        "INSERT INTO rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "INSERT INTO rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         inserts,
                     )
                     sqlite_insert_count += len(inserts)
@@ -708,6 +717,7 @@ def _streaming_preflight(
             if resolution["validity_violations"]:
                 blockers.append("asset_validity_violations")
             connection.execute("CREATE INDEX rows_side_row_id ON rows(side, row_id)")
+            connection.execute("CREATE INDEX rows_side_alignment_key ON rows(side, alignment_key)")
             connection.execute(
                 "CREATE INDEX rows_side_key ON rows(side, asset_id, decision_timestamp, target_horizon)"
             )
@@ -736,7 +746,9 @@ def _streaming_preflight(
                 "target_mismatch_count", "benchmark_mismatch_count", "timestamp_mismatch_count",
             )):
                 blockers.append("target_or_benchmark_alignment_failures")
-            if temporal_violations:
+            if temporal_missing.get("decision_timestamp:label_start_timestamp"):
+                blockers.append("missing_future_label_observation")
+            if temporal_violation_count:
                 blockers.append("temporal_violations")
             base_row_ids_checksum, spine_dataset_id = _stream_identities(
                 connection, "base", "canonical_daily_stock_spine", lineage,
@@ -774,9 +786,11 @@ def _streaming_preflight(
         },
         "duplicate_economic_row_count": len(duplicates),
         "temporal_validation": {
-            "violation_count": len(temporal_violations),
+            "violation_count": temporal_violation_count,
             "violations": temporal_violations[:MAX_REPORT_ROWS],
             "missing_field_counts": dict(temporal_missing),
+            "violation_population_checksum": temporal_violation_digest.hexdigest(),
+            "example_limit": MAX_REPORT_ROWS,
         },
         "alignment": alignment,
         "target_alignment": target_alignment,
@@ -812,13 +826,14 @@ def _streaming_preflight(
                 peak_memory_bytes, _working_set_bytes(),
             ),
             "memory_measurement": "process_working_set_peak_without_allocation_tracing",
+            "alignment_key_version": ALIGNMENT_KEY_VERSION,
             "rows_scanned": sum(row_counts.values()),
             "bytes_scanned": base_path.stat().st_size + enriched_path.stat().st_size,
         },
     }
 
 
-def _stream_temporal(row, violations, missing):
+def _stream_temporal(row, violations, missing, violation_count, digest):
     checks = [
         ("feature_cutoff_timestamp", "decision_timestamp", "instant"),
         ("decision_timestamp", "target_start_timestamp", "price_anchor"),
@@ -831,42 +846,62 @@ def _stream_temporal(row, violations, missing):
         if not row.get(left) or not row.get(right):
             missing[f"{left}:{right}"] += 1
         elif not _temporal_order_valid(row[left], row[right], semantics):
+            violation_count += 1
+            payload = {
+                "row_id": row["row_id"], "left": left, "left_value": row[left],
+                "right": right, "right_value": row[right], "semantics": semantics,
+            }
+            digest.update(json.dumps(payload, sort_keys=True).encode("utf-8"))
             if len(violations) < MAX_REPORT_ROWS:
-                violations.append({
-                    "row_id": row["row_id"], "left": left, "left_value": row[left],
-                    "right": right, "right_value": row[right], "semantics": semantics,
-                })
+                violations.append(payload)
+    return violation_count
 
 
 def _stream_alignment(connection, counts):
     base_only_count = connection.execute(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT row_id FROM rows WHERE side='base' EXCEPT SELECT DISTINCT row_id FROM rows WHERE side='enriched')"
+        "SELECT COUNT(*) FROM (SELECT DISTINCT alignment_key FROM rows WHERE side='base' EXCEPT SELECT DISTINCT alignment_key FROM rows WHERE side='enriched')"
     ).fetchone()[0]
     enriched_only_count = connection.execute(
-        "SELECT COUNT(*) FROM (SELECT DISTINCT row_id FROM rows WHERE side='enriched' EXCEPT SELECT DISTINCT row_id FROM rows WHERE side='base')"
+        "SELECT COUNT(*) FROM (SELECT DISTINCT alignment_key FROM rows WHERE side='enriched' EXCEPT SELECT DISTINCT alignment_key FROM rows WHERE side='base')"
     ).fetchone()[0]
     duplicate_base_count = connection.execute(
-        "SELECT COUNT(*) FROM (SELECT row_id FROM rows WHERE side='base' GROUP BY row_id HAVING COUNT(*) > 1)"
+        "SELECT COUNT(*) FROM (SELECT alignment_key FROM rows WHERE side='base' GROUP BY alignment_key HAVING COUNT(*) > 1)"
     ).fetchone()[0]
     duplicate_enriched_count = connection.execute(
-        "SELECT COUNT(*) FROM (SELECT row_id FROM rows WHERE side='enriched' GROUP BY row_id HAVING COUNT(*) > 1)"
+        "SELECT COUNT(*) FROM (SELECT alignment_key FROM rows WHERE side='enriched' GROUP BY alignment_key HAVING COUNT(*) > 1)"
     ).fetchone()[0]
     base_only = connection.execute(
-        "SELECT row_id FROM (SELECT DISTINCT row_id FROM rows WHERE side='base' EXCEPT SELECT DISTINCT row_id FROM rows WHERE side='enriched') ORDER BY row_id LIMIT ?",
+        """SELECT alignment_key, MIN(row_id) FROM rows WHERE side='base'
+           AND alignment_key IN (
+               SELECT DISTINCT alignment_key FROM rows WHERE side='base'
+               EXCEPT SELECT DISTINCT alignment_key FROM rows WHERE side='enriched'
+           )
+           GROUP BY alignment_key ORDER BY alignment_key LIMIT ?""",
         (MAX_REPORT_ROWS,),
     ).fetchall()
     enriched_only = connection.execute(
-        "SELECT row_id FROM (SELECT DISTINCT row_id FROM rows WHERE side='enriched' EXCEPT SELECT DISTINCT row_id FROM rows WHERE side='base') ORDER BY row_id LIMIT ?",
+        """SELECT alignment_key, MIN(row_id) FROM rows WHERE side='enriched'
+           AND alignment_key IN (
+               SELECT DISTINCT alignment_key FROM rows WHERE side='enriched'
+               EXCEPT SELECT DISTINCT alignment_key FROM rows WHERE side='base'
+           )
+           GROUP BY alignment_key ORDER BY alignment_key LIMIT ?""",
         (MAX_REPORT_ROWS,),
     ).fetchall()
+    common_key_count = connection.execute(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT alignment_key FROM rows WHERE side='base' INTERSECT SELECT DISTINCT alignment_key FROM rows WHERE side='enriched')"
+    ).fetchone()[0]
     return {
         "same_row_id_set": base_only_count == 0 and enriched_only_count == 0,
+        "same_alignment_key_set": base_only_count == 0 and enriched_only_count == 0,
+        "alignment_key_version": ALIGNMENT_KEY_VERSION,
         "base_row_count": counts["base"], "enriched_row_count": counts["enriched"],
+        "common_key_count": common_key_count,
         "base_only_count": base_only_count, "enriched_only_count": enriched_only_count,
         "duplicate_base_count": duplicate_base_count,
         "duplicate_enriched_count": duplicate_enriched_count,
-        "base_only_rows": [{"row_id": row[0]} for row in base_only],
-        "enriched_only_rows": [{"row_id": row[0]} for row in enriched_only],
+        "base_only_rows": [{"alignment_key": row[0], "row_id": row[1]} for row in base_only],
+        "enriched_only_rows": [{"alignment_key": row[0], "row_id": row[1]} for row in enriched_only],
     }
 
 
@@ -881,16 +916,18 @@ def _stream_target_alignment(connection):
     output = {"target": [], "benchmark": [], "timestamp": []}
     counts = Counter()
     for category, field in fields:
-        query = f"""SELECT b.row_id, b.{field}, e.{field}
-                    FROM rows b JOIN rows e ON b.row_id=e.row_id
+        query = f"""SELECT b.alignment_key, b.row_id, e.row_id, b.{field}, e.{field}
+                    FROM rows b JOIN rows e ON b.alignment_key=e.alignment_key
                     WHERE b.side='base' AND e.side='enriched'
                     AND COALESCE(b.{field}, '') <> COALESCE(e.{field}, '')"""
         rows = connection.execute(query).fetchall()
         counts[category] += len(rows)
         remaining = MAX_REPORT_ROWS - len(output[category])
         output[category].extend({
-            "row_id": row_id, "field": field, "base": base, "enriched": enriched,
-        } for row_id, base, enriched in rows[:remaining])
+            "alignment_key": alignment_key, "base_row_id": base_row_id,
+            "enriched_row_id": enriched_row_id, "field": field,
+            "base": base, "enriched": enriched,
+        } for alignment_key, base_row_id, enriched_row_id, base, enriched in rows[:remaining])
     return {
         "target_mismatch_count": counts["target"],
         "benchmark_mismatch_count": counts["benchmark"],
@@ -996,7 +1033,9 @@ def _columnar_rows(batch: pa.RecordBatch):
         column = batch.column(index)
         if pa.types.is_timestamp(column.type):
             column = pc.strftime(column, format="%Y-%m-%dT%H:%M:%SZ")
-        columns[name] = column.to_pylist()
+            columns[name] = [_canonical_timestamp_text(value) for value in column.to_pylist()]
+        else:
+            columns[name] = column.to_pylist()
     names = tuple(columns)
     for index in range(batch.num_rows):
         yield {name: columns[name][index] for name in names}
@@ -1458,43 +1497,55 @@ def _temporal_validation(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def _alignment(base: Sequence[Mapping[str, Any]], enriched: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    base_counts = Counter(row["row_id"] for row in base)
-    enriched_counts = Counter(row["row_id"] for row in enriched)
+    base_counts = Counter(_alignment_key(row) for row in base)
+    enriched_counts = Counter(_alignment_key(row) for row in enriched)
     base_set = set(base_counts)
     enriched_set = set(enriched_counts)
+    base_examples = { _alignment_key(row): row["row_id"] for row in base }
+    enriched_examples = { _alignment_key(row): row["row_id"] for row in enriched }
     return {
         "same_row_id_set": base_set == enriched_set,
+        "same_alignment_key_set": base_set == enriched_set,
+        "alignment_key_version": ALIGNMENT_KEY_VERSION,
         "base_row_count": len(base),
         "enriched_row_count": len(enriched),
+        "common_key_count": len(base_set & enriched_set),
         "base_only_count": len(base_set - enriched_set),
         "enriched_only_count": len(enriched_set - base_set),
         "duplicate_base_count": sum(1 for count in base_counts.values() if count > 1),
         "duplicate_enriched_count": sum(1 for count in enriched_counts.values() if count > 1),
-        "base_only_rows": [{"row_id": row_id} for row_id in sorted(base_set - enriched_set)[:MAX_REPORT_ROWS]],
-        "enriched_only_rows": [{"row_id": row_id} for row_id in sorted(enriched_set - base_set)[:MAX_REPORT_ROWS]],
+        "base_only_rows": [
+            {"alignment_key": key, "row_id": base_examples[key]}
+            for key in sorted(base_set - enriched_set)[:MAX_REPORT_ROWS]
+        ],
+        "enriched_only_rows": [
+            {"alignment_key": key, "row_id": enriched_examples[key]}
+            for key in sorted(enriched_set - base_set)[:MAX_REPORT_ROWS]
+        ],
     }
 
 
 def _target_alignment(base: Sequence[Mapping[str, Any]], enriched: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    by_enriched = {row["row_id"]: row for row in enriched}
+    by_enriched = {_alignment_key(row): row for row in enriched}
     target_mismatches = []
     benchmark_mismatches = []
     timestamp_mismatches = []
     target_fields = ["stock_target", "target_horizon_sessions", "target_start_timestamp", "target_end_timestamp", "target_available_timestamp"]
     benchmark_fields = ["benchmark_asset_id", "benchmark_return", "excess_return"]
     for row in base:
-        other = by_enriched.get(row["row_id"])
+        alignment_key = _alignment_key(row)
+        other = by_enriched.get(alignment_key)
         if not other:
             continue
         for field in target_fields:
             if _string_or_none(row.get(field)) != _string_or_none(other.get(field)):
-                target_mismatches.append({"row_id": row["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
+                target_mismatches.append({"alignment_key": alignment_key, "base_row_id": row["row_id"], "enriched_row_id": other["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
         for field in benchmark_fields:
             if _string_or_none(row.get(field)) != _string_or_none(other.get(field)):
-                benchmark_mismatches.append({"row_id": row["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
+                benchmark_mismatches.append({"alignment_key": alignment_key, "base_row_id": row["row_id"], "enriched_row_id": other["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
         for field in ["decision_timestamp", "feature_cutoff_timestamp"]:
             if _string_or_none(row.get(field)) != _string_or_none(other.get(field)):
-                timestamp_mismatches.append({"row_id": row["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
+                timestamp_mismatches.append({"alignment_key": alignment_key, "base_row_id": row["row_id"], "enriched_row_id": other["row_id"], "field": field, "base": row.get(field), "enriched": other.get(field)})
     return {
         "target_mismatch_count": len(target_mismatches),
         "benchmark_mismatch_count": len(benchmark_mismatches),
@@ -1599,7 +1650,14 @@ def _empty_resolution() -> dict[str, Any]:
 
 
 def _empty_alignment() -> dict[str, Any]:
-    return {"same_row_id_set": False, "base_row_count": 0, "enriched_row_count": 0, "base_only_count": 0, "enriched_only_count": 0, "duplicate_base_count": 0, "duplicate_enriched_count": 0, "base_only_rows": [], "enriched_only_rows": []}
+    return {
+        "same_row_id_set": False, "same_alignment_key_set": False,
+        "alignment_key_version": ALIGNMENT_KEY_VERSION,
+        "base_row_count": 0, "enriched_row_count": 0, "common_key_count": 0,
+        "base_only_count": 0, "enriched_only_count": 0,
+        "duplicate_base_count": 0, "duplicate_enriched_count": 0,
+        "base_only_rows": [], "enriched_only_rows": [],
+    }
 
 
 def _empty_target_alignment() -> dict[str, Any]:
@@ -1634,10 +1692,30 @@ def _timestamp_value(row: Mapping[str, Any], field: str) -> str:
     value = row.get(field)
     if value in (None, ""):
         return ""
+    return _canonical_timestamp_text(value)
+
+
+def _canonical_timestamp_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-    text = str(value).replace("+00:00", "Z")
-    return text
+        parsed = value
+    else:
+        text = str(value).strip()
+        if "T" not in text and " " not in text:
+            return text
+        if "T" not in text and " " in text:
+            text = text.replace(" ", "T", 1)
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text.replace("+00:00", "Z")
+    if parsed.tzinfo is None:
+        return parsed.isoformat()
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.microsecond:
+        return parsed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _date_to_close_utc(value: str) -> str:
@@ -1685,6 +1763,21 @@ def _row_id_checksum(rows: Sequence[Mapping[str, Any]]) -> str:
 
 def _row_identity_hash(row: Mapping[str, Any]) -> str:
     return _hash_json({key: row.get(key) for key in ("asset_id", "decision_timestamp", "target_horizon_sessions", "universe_version", "daily_price_dataset_version", "target_definition_version")})
+
+
+def _alignment_key(row: Mapping[str, Any]) -> str:
+    payload = {
+        "version": ALIGNMENT_KEY_VERSION,
+        "asset_id": row.get("asset_id"),
+        "decision_timestamp": _canonical_timestamp_text(row.get("decision_timestamp")),
+        "target_horizon_sessions": str(row.get("target_horizon_sessions") or ""),
+        "target_start_timestamp": _canonical_timestamp_text(row.get("target_start_timestamp")),
+        "label_start_timestamp": _canonical_timestamp_text(row.get("label_start_timestamp")),
+        "target_end_timestamp": _canonical_timestamp_text(row.get("target_end_timestamp")),
+        "target_available_timestamp": _canonical_timestamp_text(row.get("target_available_timestamp")),
+        "target_definition_version": row.get("target_definition_version"),
+    }
+    return "align_" + _hash_json(payload)[:24]
 
 
 def _registry_version_from_resolution(resolution: Mapping[str, Any]) -> str:

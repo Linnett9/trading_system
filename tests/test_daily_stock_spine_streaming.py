@@ -19,6 +19,7 @@ def _row(index, *, symbol=None, date=None):
         "decision_timestamp": f"{decision_date}T21:00:00Z" if decision_date else None,
         "feature_data_cutoff_timestamp": f"{decision_date}T20:00:00Z" if decision_date else None,
         "target_start_timestamp": f"{decision_date}T22:00:00Z" if decision_date else None,
+        "label_start_timestamp": "2024-01-20T21:00:00Z" if decision_date else None,
         "label_end_timestamp": "2024-02-01T21:00:00Z",
         "label_available_timestamp": "2024-02-01T22:00:00Z",
         "target_horizon_trading_days": 10,

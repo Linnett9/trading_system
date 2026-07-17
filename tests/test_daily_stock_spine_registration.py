@@ -161,6 +161,24 @@ def test_successful_registration_is_deterministic_across_repeated_runs(tmp_path)
     assert first["price_feature_dataset_id"] == second["price_feature_dataset_id"]
 
 
+def test_parent_gate_rejects_missing_archive_manifest(tmp_path):
+    env = _env(tmp_path)
+    registry_manifest = _registry_manifest(tmp_path, env)
+    result = verify_and_register(base_artifact=env["base"], enriched_artifact=env["enriched"], registry=env["registry"], aliases=env["aliases"], registry_manifest=registry_manifest, daily_archive_manifest=tmp_path / "missing.json", dry_run=True)
+    assert "daily_archive_manifest_missing" in result["blockers"]
+
+
+def test_parent_gate_rejects_legacy_archive_and_wrong_registry_parent(tmp_path):
+    env = _env(tmp_path); registry_manifest = _registry_manifest(tmp_path, env)
+    archive = tmp_path / "archive.json"; archive.write_text(json.dumps({"status": "COMPLETE", "row_count": 10, "symbol_count": 514, "dataset_root": "legacy/path"}))
+    config = tmp_path / "config.yaml"; config.write_text("ml:\n  historical_data_provider: canonical_daily_v2\n  stooq_parquet_dir: authoritative/path\n")
+    result = verify_and_register(base_artifact=env["base"], enriched_artifact=env["enriched"], registry=env["registry"], aliases=env["aliases"], registry_manifest=registry_manifest, daily_archive_manifest=archive, expected_config=config, dry_run=True)
+    assert "daily_archive_source_mismatch" in result["blockers"]
+    payload = json.loads(registry_manifest.read_text()); payload["registry_content_checksum"] = "wrong"; registry_manifest.write_text(json.dumps(payload))
+    result = verify_and_register(base_artifact=env["base"], enriched_artifact=env["enriched"], registry=env["registry"], aliases=env["aliases"], registry_manifest=registry_manifest, daily_archive_manifest=archive, expected_config=config, dry_run=True)
+    assert "registry_manifest_source_mismatch" in result["blockers"]
+
+
 def _env(tmp_path: Path, *, base_rows=None, enriched_rows=None, symbols=("AAPL",)):
     tmp_path.mkdir(parents=True, exist_ok=True)
     universe = tmp_path / "universe.txt"
@@ -172,6 +190,12 @@ def _env(tmp_path: Path, *, base_rows=None, enriched_rows=None, symbols=("AAPL",
     base = _write_artifact(tmp_path / "base.parquet", base_rows or [_row("AAPL")])
     enriched = _write_artifact(tmp_path / "enriched.parquet", enriched_rows or [_row("AAPL") | {"momentum_250d": "0.1"}])
     return {"base": base, "enriched": enriched, "registry": registry, "aliases": alias_path}
+
+
+def _registry_manifest(tmp_path, env):
+    path = tmp_path / "registry_manifest.json"
+    path.write_text(json.dumps({"status": "READY", "validation_status": "VERIFIED", "dataset_id": "registry", "symbol_registry_version": "v1", "registry_path": str(env["registry"]), "registry_content_checksum": file_sha256(env["registry"])}))
+    return path
 
 
 def _verify(env, *, base=None, enriched=None, manifest=None, dry_run=True):
@@ -201,6 +225,7 @@ def _row(symbol: str, *, target="0.1", benchmark="0.01", feature_cutoff="2024-01
         "decision_timestamp": "2024-01-02T21:00:00Z",
         "feature_data_cutoff_timestamp": feature_cutoff,
         "target_start_timestamp": "2024-01-03T21:00:00Z",
+        "label_start_timestamp": "2024-01-03T21:00:00Z",
         "label_end_timestamp": "2024-01-16T21:00:00Z",
         "label_available_timestamp": "2024-01-16T22:00:00Z",
         "target_horizon_trading_days": 10,
@@ -222,4 +247,3 @@ def _manifest(tmp_path: Path, *, base: Path, enriched: Path, stock_status: str, 
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
-
