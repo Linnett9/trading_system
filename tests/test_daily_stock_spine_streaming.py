@@ -221,7 +221,8 @@ def test_malformed_timestamp_and_nonfinite_value_fail_closed(tmp_path):
     env = _environment(tmp_path / "malformed", malformed)
     result = _verify(env, tmp_path / "malformed")
     assert result["status"] == "BLOCKED"
-    assert any(value.startswith("stream_read_failure:") for value in result["blockers"])
+    assert "temporal_violations" in result["blockers"]
+    assert result["temporal_validation"]["violation_count"] >= 1
 
     nonfinite = [_row(0)]
     nonfinite[0]["actual_forward_return_10d"] = float("inf")

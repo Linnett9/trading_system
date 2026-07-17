@@ -254,6 +254,7 @@ $aliasCsv = 'data/reference/assets/provider_symbol_aliases.csv'
 $selectorConfig = 'config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml'
 $registryReport = "reports/data_lineage/canonical_asset_registry_v2/run=$RunId"
 $registryManifest = "$registryReport/manifest.json"
+$spineCertificationRoot = 'reports/data_lineage/daily_stock_spine_certifications_v1'
 $archiveManifest = 'reports/data_lineage/canonical_daily_v2/build_manifest.json'
 $baseArtifact = 'reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet'
 $enrichedArtifact = 'reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts_enriched.parquet'
@@ -296,7 +297,7 @@ try {
             }
             4 {
                 Require-Path 4 $registryManifest; Require-Path 4 $archiveManifest; Require-Path 4 $baseArtifact; Require-Path 4 $enrichedArtifact
-                $cmd = 'python scripts/verify_and_register_daily_stock_spine.py --base-artifact "{0}" --enriched-artifact "{1}" --registry "{2}" --aliases "{3}" --registry-manifest "{4}" --daily-archive-manifest "{5}" --output-root "{6}" --feature-output-root "{7}" --report-root "{8}" --expected-config config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml --verify-only' -f $baseArtifact, $enrichedArtifact, $registryCsv, $aliasCsv, $registryManifest, $archiveManifest, $spineRoot, $featureRoot, "$runRoot/spine_preflight"
+                $cmd = 'python scripts/verify_and_register_daily_stock_spine.py --base-artifact "{0}" --enriched-artifact "{1}" --registry "{2}" --aliases "{3}" --registry-manifest "{4}" --daily-archive-manifest "{5}" --output-root "{6}" --feature-output-root "{7}" --report-root "{8}" --expected-config config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml --certification-root "{9}" --selector-run-id "{10}" --verify-only' -f $baseArtifact, $enrichedArtifact, $registryCsv, $aliasCsv, $registryManifest, $archiveManifest, $spineRoot, $featureRoot, "$runRoot/spine_preflight", $spineCertificationRoot, $RunId
                 Invoke-Checked 4 $cmd
             }
             5 {

@@ -31,6 +31,12 @@ from core.research.ml.reference.canonical_assets import (
     read_aliases_csv,
     read_assets_csv,
 )
+from core.research.ml.reference.daily_stock_spine_certification import (
+    build_certification_identity,
+    load_ready_certification,
+    publish_ready_certification,
+    verify_registry_run_binding,
+)
 from core.research.ml.stock_level.prediction_artifacts.types import (
     ACTUAL_COLUMNS,
     CONTEXT_COLUMNS,
@@ -149,6 +155,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
     parser.add_argument("--memory-limit-mb", type=int)
     parser.add_argument("--heartbeat-seconds", type=float, default=30.0)
+    parser.add_argument("--certification-root", type=Path)
+    parser.add_argument("--no-certification-reuse", action="store_true")
+    parser.add_argument("--selector-run-id")
     args = parser.parse_args(argv)
     if not args.daily_archive_manifest or not args.registry_manifest:
         parser.error("--daily-archive-manifest and --registry-manifest are required")
@@ -171,6 +180,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_workers=args.max_workers,
         heartbeat_seconds=args.heartbeat_seconds,
         memory_limit_mb=args.memory_limit_mb,
+        certification_root=args.certification_root,
+        certification_reuse=not args.no_certification_reuse,
+        selector_run_id=args.selector_run_id,
     )
     print(json.dumps(_summary(result), indent=2, sort_keys=True, default=str))
     return 0 if result["status"] == STATUS_READY else 2
@@ -196,6 +208,9 @@ def verify_and_register(
     max_workers: int = DEFAULT_MAX_WORKERS,
     heartbeat_seconds: float = 30.0,
     memory_limit_mb: int | None = None,
+    certification_root: Path | None = None,
+    certification_reuse: bool = True,
+    selector_run_id: str | None = None,
 ) -> dict[str, Any]:
     config = _read_yaml(expected_config) if expected_config else {}
     run_manifest = _read_json(expected_run_manifest) if expected_run_manifest else {}
@@ -225,6 +240,7 @@ def verify_and_register(
         elif _norm_path(archive.get("dataset_root")) != _norm_path(lineage["source_path"]):
             blockers.append("daily_archive_source_mismatch")
     registry_parent = _read_json(registry_manifest) if registry_manifest else {}
+    registry_run_binding = None
     if registry_manifest:
         if not registry_parent:
             blockers.append("registry_manifest_missing")
@@ -232,6 +248,85 @@ def verify_and_register(
             blockers.append("registry_manifest_not_verified")
         elif Path(str(registry_parent.get("registry_path", ""))).resolve() != registry.resolve() or str(registry_parent.get("registry_content_checksum", "")).lower() != file_sha256(registry).lower():
             blockers.append("registry_manifest_source_mismatch")
+        if certification_root is not None:
+            registry_run_binding = verify_registry_run_binding(
+                registry_manifest=registry_manifest,
+                registry_path=registry,
+                aliases_path=aliases,
+                selector_run_id=selector_run_id,
+            )
+            blockers.extend(registry_run_binding["blockers"])
+
+    certification_identity = None
+    certification_miss_reason = "disabled"
+    if (
+        verify_only
+        and not blockers
+        and certification_root is not None
+        and registry_manifest is not None
+        and daily_archive_manifest is not None
+        and expected_config is not None
+    ):
+        reuse_started = time_module.perf_counter()
+        certification_identity = build_certification_identity(
+            base_path=Path(str(selected["base_artifact"])),
+            enriched_path=Path(str(selected["enriched_artifact"])),
+            registry_path=registry,
+            registry_content_hash=str(
+                registry_parent.get("registry_content_hash")
+                or registry_parent.get("row_identity_checksum")
+                or registry_parent.get("dataset_id")
+                or ""
+            ),
+            aliases_path=aliases,
+            archive_manifest=daily_archive_manifest,
+            expected_config=expected_config,
+        )
+        if certification_reuse:
+            certification, certification_miss_reason = load_ready_certification(
+                certification_root, certification_identity,
+            )
+            if certification is not None:
+                verification = dict(certification["verification"])
+                verification.update({
+                    "certification_cache_hit": True,
+                    "certification_cache_miss": False,
+                    "certification_id": certification_identity["certification_id"],
+                    "certification_source": certification_miss_reason,
+                    "certification_miss_reason": None,
+                    "reuse_validation_elapsed_seconds": time_module.perf_counter() - reuse_started,
+                    "spine_path": None,
+                    "price_feature_registration_path": None,
+                    "registry_run_binding": registry_run_binding,
+                })
+                verification["canonical_registry_parent"] = {
+                    "path": str(registry_manifest),
+                    "identity": registry_parent.get("dataset_id"),
+                    "version": registry_parent.get("symbol_registry_version"),
+                    "checksum": file_sha256(registry_manifest),
+                }
+                diagnostics = dict(verification.get("streaming_diagnostics", {}))
+                diagnostics.update({
+                    "source_scan_counts": {"base": 0, "enriched": 0},
+                    "rows_scanned": 0,
+                    "python_row_iterations": 0,
+                    "sqlite_insert_count": 0,
+                    "sqlite_query_count": 0,
+                    "certification_cache_hit": 1,
+                    "certification_cache_miss": 0,
+                })
+                verification["streaming_diagnostics"] = diagnostics
+                print(json.dumps({
+                    "event": "daily_spine_certification_reused",
+                    "certification_id": certification_identity["certification_id"],
+                    "certification_source": certification_miss_reason,
+                }, sort_keys=True), flush=True)
+                if not dry_run:
+                    write_verification_reports(
+                        verification,
+                        report_dir=report_root / verification["spine_dataset_id"],
+                    )
+                return verification
 
     base_rows: list[dict[str, Any]] = []
     enriched_rows: list[dict[str, Any]] = []
@@ -291,6 +386,7 @@ def verify_and_register(
                 "lineage": lineage,
                 "daily_archive_manifest": {"path": str(daily_archive_manifest) if daily_archive_manifest else None, "identity": archive.get("dataset_logical_partition_hash"), "status": archive.get("status"), "row_count": archive.get("row_count"), "symbol_count": archive.get("symbol_count"), "date_min": archive.get("date_min"), "date_max": archive.get("date_max")},
                 "canonical_registry_parent": {"path": str(registry_manifest) if registry_manifest else None, "identity": registry_parent.get("dataset_id"), "version": registry_parent.get("symbol_registry_version"), "checksum": file_sha256(registry_manifest) if registry_manifest and registry_manifest.exists() else None},
+                "registry_run_binding": registry_run_binding,
                 "base_artifact": streamed["base_artifact"],
                 "enriched_artifact": streamed["enriched_artifact"],
                 "symbol_resolution": streamed["symbol_resolution"],
@@ -325,6 +421,30 @@ def verify_and_register(
                     "price_feature_dataset_id", "row_identity_version",
                 )
             })
+            verification.update({
+                "certification_cache_hit": False,
+                "certification_cache_miss": bool(certification_root),
+                "certification_id": (
+                    certification_identity["certification_id"]
+                    if certification_identity else None
+                ),
+                "certification_source": None,
+                "certification_miss_reason": certification_miss_reason,
+                "reuse_validation_elapsed_seconds": 0.0,
+            })
+            if (
+                status == STATUS_READY
+                and not dry_run
+                and certification_root is not None
+                and certification_identity is not None
+            ):
+                try:
+                    certification_path = publish_ready_certification(
+                        certification_root, certification_identity, verification,
+                    )
+                    verification["certification_source"] = str(certification_path)
+                except FileExistsError as exc:
+                    verification["certification_publish_error"] = str(exc)
             if not dry_run:
                 write_verification_reports(verification, report_dir=report_root / spine_dataset_id)
             return verification
@@ -687,6 +807,7 @@ def _streaming_preflight(
             "requested_worker_count": max_workers,
             "serial_fallback": effective_workers != max_workers,
             "sqlite_insert_count": sqlite_insert_count,
+            "python_row_iterations": sqlite_insert_count,
             "sqlite_query_count": 19,
             "elapsed_seconds": time_module.perf_counter() - started,
             "cpu_seconds": time_module.process_time() - started_cpu,
@@ -702,19 +823,21 @@ def _streaming_preflight(
 
 def _stream_temporal(row, violations, missing):
     checks = [
-        ("feature_cutoff_timestamp", "decision_timestamp"),
-        ("decision_timestamp", "target_start_timestamp"),
-        ("target_start_timestamp", "target_end_timestamp"),
-        ("target_end_timestamp", "target_available_timestamp"),
+        ("feature_cutoff_timestamp", "decision_timestamp", "instant"),
+        ("decision_timestamp", "target_start_timestamp", "price_anchor"),
+        ("decision_timestamp", "label_start_timestamp", "strict_instant"),
+        ("target_start_timestamp", "label_start_timestamp", "instant"),
+        ("label_start_timestamp", "target_end_timestamp", "instant"),
+        ("target_end_timestamp", "target_available_timestamp", "instant"),
     ]
-    for left, right in checks:
+    for left, right, semantics in checks:
         if not row.get(left) or not row.get(right):
             missing[f"{left}:{right}"] += 1
-        elif _parse_dt(row[left]) > _parse_dt(row[right]):
+        elif not _temporal_order_valid(row[left], row[right], semantics):
             if len(violations) < MAX_REPORT_ROWS:
                 violations.append({
                     "row_id": row["row_id"], "left": left, "left_value": row[left],
-                    "right": right, "right_value": row[right],
+                    "right": right, "right_value": row[right], "semantics": semantics,
                 })
 
 
@@ -1277,6 +1400,7 @@ def _augment_row(
         "calendar_version": str(row.get("exchange_calendar_identity") or ""),
         "target_horizon_sessions": str(horizon),
         "target_start_timestamp": _timestamp_value(row, "target_start_timestamp") or _timestamp_value(row, "label_start_timestamp"),
+        "label_start_timestamp": _timestamp_value(row, "label_start_timestamp"),
         "target_end_timestamp": _timestamp_value(row, "label_end_timestamp"),
         "target_available_timestamp": _timestamp_value(row, "label_available_timestamp"),
         "target_definition_version": target_definition_version,
@@ -1311,18 +1435,20 @@ def _temporal_validation(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     violations = []
     missing = Counter()
     checks = [
-        ("feature_cutoff_timestamp", "<=", "decision_timestamp"),
-        ("decision_timestamp", "<=", "target_start_timestamp"),
-        ("target_start_timestamp", "<=", "target_end_timestamp"),
-        ("target_end_timestamp", "<=", "target_available_timestamp"),
+        ("feature_cutoff_timestamp", "<=", "decision_timestamp", "instant"),
+        ("decision_timestamp", "session<=", "target_start_timestamp", "price_anchor"),
+        ("decision_timestamp", "<", "label_start_timestamp", "strict_instant"),
+        ("target_start_timestamp", "<=", "label_start_timestamp", "instant"),
+        ("label_start_timestamp", "<=", "target_end_timestamp", "instant"),
+        ("target_end_timestamp", "<=", "target_available_timestamp", "instant"),
     ]
     for row in rows:
-        for left, _op, right in checks:
+        for left, _op, right, semantics in checks:
             if not row.get(left) or not row.get(right):
                 missing[f"{left}:{right}"] += 1
                 continue
-            if _parse_dt(row[left]) > _parse_dt(row[right]):
-                violations.append({"row_id": row.get("row_id"), "left": left, "left_value": row.get(left), "right": right, "right_value": row.get(right)})
+            if not _temporal_order_valid(row[left], row[right], semantics):
+                violations.append({"row_id": row.get("row_id"), "left": left, "left_value": row.get(left), "right": right, "right_value": row.get(right), "semantics": semantics})
     return {"violation_count": len(violations), "violations": violations[:MAX_REPORT_ROWS], "missing_field_counts": dict(missing)}
 
 
@@ -1519,6 +1645,32 @@ def _parse_dt(value: Any) -> datetime:
     parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _temporal_order_valid(left: Any, right: Any, semantics: str) -> bool:
+    try:
+        left_dt = _parse_temporal_dt_strict(left)
+        right_dt = _parse_temporal_dt_strict(right)
+    except (TypeError, ValueError):
+        return False
+    if semantics == "price_anchor":
+        # The target start is the close-price anchor session, not label onset.
+        return left_dt.date() <= right_dt.date()
+    if semantics == "strict_instant":
+        return left_dt < right_dt
+    return left_dt <= right_dt
+
+
+def _parse_temporal_dt_strict(value: Any) -> datetime:
+    text = str(value).strip()
+    parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    # Date-only target anchors are documented session labels. All real event
+    # timestamps must carry an explicit offset.
+    if "T" not in text:
+        return parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        raise ValueError("temporal event timestamps must be timezone-aware")
     return parsed.astimezone(timezone.utc)
 
 
