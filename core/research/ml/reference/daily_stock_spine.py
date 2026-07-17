@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import ctypes
 import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
 import tempfile
+import time as time_module
+import tracemalloc
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, time, timezone
@@ -46,6 +50,7 @@ from core.research.ml.stock_level.stock_level_artifact_io import (
 STATUS_READY = "READY"
 STATUS_BLOCKED = "BLOCKED"
 DEFAULT_STREAM_BATCH_SIZE = 65536
+DEFAULT_MAX_WORKERS = 3
 MAX_REPORT_ROWS = 1000
 SPINE_SCHEMA_VERSION = "canonical_daily_stock_spine.v1"
 PRICE_FEATURE_SCHEMA_VERSION = "daily_price_feature_registration.v1"
@@ -141,6 +146,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--stream-batch-size", type=int, default=DEFAULT_STREAM_BATCH_SIZE)
     parser.add_argument("--stream-temp-root", type=Path)
+    parser.add_argument("--max-workers", type=int, default=DEFAULT_MAX_WORKERS)
+    parser.add_argument("--memory-limit-mb", type=int)
+    parser.add_argument("--heartbeat-seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
     if not args.daily_archive_manifest or not args.registry_manifest:
         parser.error("--daily-archive-manifest and --registry-manifest are required")
@@ -160,6 +168,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         verify_only=args.verify_only,
         stream_batch_size=args.stream_batch_size,
         stream_temp_root=args.stream_temp_root,
+        max_workers=args.max_workers,
+        heartbeat_seconds=args.heartbeat_seconds,
+        memory_limit_mb=args.memory_limit_mb,
     )
     print(json.dumps(_summary(result), indent=2, sort_keys=True, default=str))
     return 0 if result["status"] == STATUS_READY else 2
@@ -182,6 +193,9 @@ def verify_and_register(
     verify_only: bool = False,
     stream_batch_size: int = DEFAULT_STREAM_BATCH_SIZE,
     stream_temp_root: Path | None = None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    heartbeat_seconds: float = 30.0,
+    memory_limit_mb: int | None = None,
 ) -> dict[str, Any]:
     config = _read_yaml(expected_config) if expected_config else {}
     run_manifest = _read_json(expected_run_manifest) if expected_run_manifest else {}
@@ -242,12 +256,28 @@ def verify_and_register(
                 lineage=lineage,
                 batch_size=stream_batch_size,
                 temp_root=stream_temp_root,
+                max_workers=max_workers,
+                heartbeat_seconds=heartbeat_seconds,
+                memory_limit_mb=memory_limit_mb,
             )
         except (OSError, ValueError, sqlite3.Error, MemoryError) as exc:
             blockers.append(f"stream_read_failure:{exc}")
             streamed = None
         if streamed is not None:
             blockers.extend(streamed["blockers"])
+            streamed["streaming_diagnostics"]["control_input_read_counts"] = {
+                "registry_csv": 1,
+                "alias_csv": 1,
+                "registry_manifest": int(bool(registry_manifest)),
+                "daily_archive_manifest": int(bool(daily_archive_manifest)),
+                "expected_config": int(bool(expected_config)),
+            }
+            streamed["streaming_diagnostics"]["checksum_pass_counts"] = {
+                "base_artifact": 1,
+                "enriched_artifact": 1,
+                "registry_csv": int(bool(registry_manifest)),
+                "registry_manifest": int(bool(registry_manifest)),
+            }
             status = STATUS_BLOCKED if blockers else STATUS_READY
             spine_dataset_id = streamed["spine_dataset_id"]
             price_feature_dataset_id = streamed["price_feature_dataset_id"]
@@ -284,6 +314,17 @@ def verify_and_register(
                 "spine_path": None,
                 "price_feature_registration_path": None,
             }
+            verification["logical_output_checksum"] = _hash_json({
+                key: verification[key]
+                for key in (
+                    "schema_version", "status", "blockers", "selected_sources", "lineage",
+                    "daily_archive_manifest", "canonical_registry_parent", "base_artifact",
+                    "enriched_artifact", "symbol_resolution", "row_grain",
+                    "duplicate_economic_row_count", "temporal_validation", "alignment",
+                    "target_alignment", "unknown_columns", "spine_dataset_id",
+                    "price_feature_dataset_id", "row_identity_version",
+                )
+            })
             if not dry_run:
                 write_verification_reports(verification, report_dir=report_root / spine_dataset_id)
             return verification
@@ -371,9 +412,25 @@ def _streaming_preflight(
     lineage: Mapping[str, Any],
     batch_size: int,
     temp_root: Path | None,
+    max_workers: int = 1,
+    heartbeat_seconds: float = 30.0,
+    memory_limit_mb: int | None = None,
 ) -> dict[str, Any]:
     if batch_size < 1:
         raise ValueError("stream batch size must be positive")
+    if max_workers not in {1, 3, 6}:
+        raise ValueError("max workers must be one of 1, 3, or 6")
+    if heartbeat_seconds < 0:
+        raise ValueError("heartbeat seconds must be non-negative")
+    if memory_limit_mb is not None and memory_limit_mb < 1:
+        raise ValueError("memory limit must be positive")
+    effective_workers = 1 if memory_limit_mb is not None and memory_limit_mb < 512 else max_workers
+    started = time_module.perf_counter()
+    started_cpu = time_module.process_time()
+    tracing_was_active = tracemalloc.is_tracing()
+    if not tracing_was_active:
+        tracemalloc.start()
+    peak_memory_bytes = _working_set_bytes()
     base_parquet, enriched_parquet = pq.ParquetFile(base_path), pq.ParquetFile(enriched_path)
     required = {"rebalance_date", "symbol"}
     for path, parquet in ((base_path, base_parquet), (enriched_path, enriched_parquet)):
@@ -391,16 +448,17 @@ def _streaming_preflight(
     }
     base_columns = [name for name in base_parquet.schema_arrow.names if name in candidate_columns]
     enriched_columns = [name for name in enriched_parquet.schema_arrow.names if name in candidate_columns]
+    all_alias_symbols = sorted({
+        str(alias.provider_symbol).upper()
+        for alias in aliases
+        if alias.provider in {"canonical", "stooq"}
+    })
+    working_resolution = _resolve_symbols(
+        ({"symbol": symbol} for symbol in all_alias_symbols), assets, aliases,
+    )
+    augmentation_context = _augmentation_context(working_resolution, lineage)
     symbols = set()
-    first_pass_batches = 0
-    for batch in iter_stock_level_artifact_batches(
-        base_path, required_columns=["symbol"], batch_size=batch_size,
-    ):
-        first_pass_batches += 1
-        for row in batch:
-            if row.get("symbol") not in (None, ""):
-                symbols.add(str(row["symbol"]).upper())
-    resolution = _resolve_symbols([{"symbol": symbol} for symbol in sorted(symbols)], assets, aliases)
+    resolution = _empty_resolution()
     blockers = []
     if resolution["unresolved_symbols"]:
         blockers.append("unresolved_symbols")
@@ -421,6 +479,10 @@ def _streaming_preflight(
     artifact_symbols = {"base": set(), "enriched": set()}
     decision_bounds = {"base": [None, None], "enriched": [None, None]}
     null_counts = {"base": Counter(), "enriched": Counter()}
+    nonfinite_counts = {"base": Counter(), "enriched": Counter()}
+    source_scans = {"base": 0, "enriched": 0}
+    sqlite_insert_count = 0
+    last_heartbeat = started
     with tempfile.TemporaryDirectory(prefix="daily-spine-stream-", dir=temp_parent) as temp_dir:
         database_path = Path(temp_dir) / "verification.sqlite"
         connection = sqlite3.connect(database_path)
@@ -441,18 +503,32 @@ def _streaming_preflight(
                 ("base", base_path, base_columns),
                 ("enriched", enriched_path, enriched_columns),
             ):
+                parquet = base_parquet if side == "base" else enriched_parquet
+                source_scans[side] += 1
                 sequence = 0
-                for batch in iter_stock_level_artifact_batches(
-                    path, required_columns=columns, batch_size=batch_size,
+                total_rows = parquet.metadata.num_rows
+                for batch_number, batch in enumerate(
+                    _iter_projected_batches(
+                        parquet,
+                        columns=columns,
+                        batch_size=batch_size,
+                        use_threads=effective_workers > 1,
+                    ),
+                    start=1,
                 ):
                     batch_counts[side] += 1
-                    maximum_batch_rows = max(maximum_batch_rows, len(batch))
-                    augmented = _augment_rows(batch, resolution, lineage)
+                    maximum_batch_rows = max(maximum_batch_rows, batch.num_rows)
                     inserts = []
-                    for source, row in zip(batch, augmented):
+                    for source in _columnar_rows(batch):
+                        row = _augment_row(
+                            source, working_resolution, lineage,
+                            context=augmentation_context,
+                        )
                         sequence += 1
                         row_counts[side] += 1
                         symbol = str(source.get("symbol") or "").upper()
+                        if symbol:
+                            symbols.add(symbol)
                         date_value = _date_value(source)
                         decision = row["decision_timestamp"]
                         if not symbol:
@@ -471,6 +547,9 @@ def _streaming_preflight(
                             bounds[1] = decision if bounds[1] is None or decision > bounds[1] else bounds[1]
                         if side == "base":
                             _stream_temporal(row, temporal_violations, temporal_missing)
+                        for field in ("stock_target", "benchmark_return", "excess_return"):
+                            if _is_nonfinite(row.get(field)):
+                                nonfinite_counts[side][field] += 1
                         inserts.append((
                             side, sequence, row["row_id"], row["asset_id"], decision,
                             row["target_horizon_sessions"], _string_or_none(row["stock_target"]),
@@ -483,7 +562,34 @@ def _streaming_preflight(
                         "INSERT INTO rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         inserts,
                     )
+                    sqlite_insert_count += len(inserts)
+                    now = time_module.perf_counter()
+                    peak_memory_bytes = max(peak_memory_bytes, _working_set_bytes())
+                    if heartbeat_seconds == 0 or now - last_heartbeat >= heartbeat_seconds:
+                        elapsed = max(now - started, 1e-9)
+                        print(json.dumps({
+                            "event": "daily_spine_preflight_heartbeat",
+                            "artifact": side,
+                            "batch": batch_number,
+                            "processed_rows": row_counts[side],
+                            "total_rows": total_rows,
+                            "elapsed_seconds": round(elapsed, 3),
+                            "rows_per_second": round(sum(row_counts.values()) / elapsed, 1),
+                            "worker_count": effective_workers,
+                            "working_set_memory_bytes": _working_set_bytes(),
+                            "peak_working_set_memory_bytes": peak_memory_bytes,
+                        }, sort_keys=True), flush=True)
+                        last_heartbeat = now
                 connection.commit()
+            resolution = _resolve_symbols(
+                ({"symbol": symbol} for symbol in sorted(symbols)), assets, aliases,
+            )
+            if resolution["unresolved_symbols"]:
+                blockers.append("unresolved_symbols")
+            if resolution["ambiguous_symbols"]:
+                blockers.append("ambiguous_symbols")
+            if resolution["validity_violations"]:
+                blockers.append("asset_validity_violations")
             connection.execute("CREATE INDEX rows_side_row_id ON rows(side, row_id)")
             connection.execute(
                 "CREATE INDEX rows_side_key ON rows(side, asset_id, decision_timestamp, target_horizon)"
@@ -499,6 +605,8 @@ def _streaming_preflight(
                 blockers.append("invalid_row:missing_symbol")
             if any(null_counts[side]["rebalance_date"] for side in ("base", "enriched")):
                 blockers.append("invalid_row:missing_date")
+            if any(nonfinite_counts[side] for side in ("base", "enriched")):
+                blockers.append("invalid_row:nonfinite_required_value")
             if duplicates:
                 blockers.append("duplicate_economic_rows")
             alignment = _stream_alignment(connection, row_counts)
@@ -513,13 +621,11 @@ def _streaming_preflight(
                 blockers.append("target_or_benchmark_alignment_failures")
             if temporal_violations:
                 blockers.append("temporal_violations")
-            base_row_ids_checksum = _stream_json_array_checksum(connection, "base")
-            enriched_row_ids_checksum = _stream_json_array_checksum(connection, "enriched")
-            spine_dataset_id = _stream_dataset_id(
+            base_row_ids_checksum, spine_dataset_id = _stream_identities(
                 connection, "base", "canonical_daily_stock_spine", lineage,
                 SPINE_SCHEMA_VERSION,
             )
-            price_feature_dataset_id = _stream_dataset_id(
+            enriched_row_ids_checksum, price_feature_dataset_id = _stream_identities(
                 connection, "enriched", "daily_price_features",
                 {**lineage, "spine_dataset_id": spine_dataset_id},
                 PRICE_FEATURE_SCHEMA_VERSION,
@@ -571,12 +677,25 @@ def _streaming_preflight(
                 "base": base_parquet.metadata.num_row_groups,
                 "enriched": enriched_parquet.metadata.num_row_groups,
             },
-            "batches_processed": {**batch_counts, "base_symbol_first_pass": first_pass_batches},
+            "batches_processed": {**batch_counts, "base_symbol_first_pass": 0},
+            "source_scan_counts": source_scans,
             "rows_processed": row_counts,
             "maximum_batch_row_count": maximum_batch_rows,
             "temporary_resource": "cleaned_temporary_sqlite",
             "maximum_temporary_bytes": temp_bytes,
-            "worker_count": 1,
+            "worker_count": effective_workers,
+            "requested_worker_count": max_workers,
+            "serial_fallback": effective_workers != max_workers,
+            "sqlite_insert_count": sqlite_insert_count,
+            "sqlite_query_count": 19,
+            "elapsed_seconds": time_module.perf_counter() - started,
+            "cpu_seconds": time_module.process_time() - started_cpu,
+            "peak_working_set_memory_bytes": max(
+                peak_memory_bytes, _working_set_bytes(), tracemalloc.get_traced_memory()[1],
+            ),
+            "memory_measurement": "working_set_or_python_tracemalloc_peak",
+            "rows_scanned": sum(row_counts.values()),
+            "bytes_scanned": base_path.stat().st_size + enriched_path.stat().st_size,
         },
     }
 
@@ -677,6 +796,59 @@ def _stream_json_array_checksum(connection, side):
     return digest.hexdigest()
 
 
+def _ordered_row_ids(connection, side):
+    return (
+        str(row_id)
+        for (row_id,) in connection.execute(
+            "SELECT row_id FROM rows WHERE side=? ORDER BY row_id, sequence", (side,),
+        )
+    )
+
+
+def _stream_identities(connection, side, kind, identity, schema):
+    population = hashlib.sha256()
+    population.update(b"[")
+    dataset = hashlib.sha256()
+    dataset.update(b'{"identity":')
+    dataset.update(json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    dataset.update(b',"kind":')
+    dataset.update(json.dumps(kind).encode("utf-8"))
+    dataset.update(b',"row_ids":[')
+    first = True
+    for row_id in _ordered_row_ids(connection, side):
+        if not first:
+            population.update(b",")
+            dataset.update(b",")
+        encoded = json.dumps(row_id).encode("utf-8")
+        population.update(encoded)
+        dataset.update(encoded)
+        first = False
+    population.update(b"]")
+    dataset.update(b'],"schema":')
+    dataset.update(json.dumps(schema).encode("utf-8"))
+    dataset.update(b"}")
+    return population.hexdigest(), f"{kind}-{dataset.hexdigest()[:16]}"
+
+
+def _stream_dataset_id_from_ordered_checksum(kind, identity, schema, ordered_row_ids):
+    digest = hashlib.sha256()
+    digest.update(b'{"identity":')
+    digest.update(json.dumps(identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(b',"kind":')
+    digest.update(json.dumps(kind).encode("utf-8"))
+    digest.update(b',"row_ids":[')
+    first = True
+    for row_id in ordered_row_ids:
+        if not first:
+            digest.update(b",")
+        digest.update(json.dumps(row_id).encode("utf-8"))
+        first = False
+    digest.update(b'],"schema":')
+    digest.update(json.dumps(schema).encode("utf-8"))
+    digest.update(b"}")
+    return f"{kind}-{digest.hexdigest()[:16]}"
+
+
 def _stream_dataset_id(connection, side, kind, identity, schema):
     digest = hashlib.sha256()
     digest.update(b'{"identity":')
@@ -696,6 +868,58 @@ def _stream_dataset_id(connection, side, kind, identity, schema):
     digest.update(json.dumps(schema).encode("utf-8"))
     digest.update(b"}")
     return f"{kind}-{digest.hexdigest()[:16]}"
+
+
+def _columnar_rows(batch: pa.RecordBatch):
+    columns = batch.to_pydict()
+    names = tuple(columns)
+    for index in range(batch.num_rows):
+        yield {name: columns[name][index] for name in names}
+
+
+def _iter_projected_batches(parquet, *, columns, batch_size, use_threads):
+    yield from parquet.iter_batches(
+        batch_size=batch_size,
+        columns=columns,
+        use_threads=use_threads,
+    )
+
+
+def _working_set_bytes() -> int:
+    if os.name != "nt":
+        try:
+            import resource
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+        except (ImportError, OSError):
+            return 0
+    class _Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", ctypes.c_ulong),
+            ("PageFaultCount", ctypes.c_ulong),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+    counters = _Counters()
+    counters.cb = ctypes.sizeof(counters)
+    handle = ctypes.windll.kernel32.GetCurrentProcess()
+    if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+        return int(counters.WorkingSetSize)
+    return 0
+
+
+def _is_nonfinite(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    try:
+        return not math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _stream_artifact_meta(
@@ -986,55 +1210,83 @@ def _resolve_symbols(rows: Sequence[Mapping[str, Any]], assets: Sequence[Any], a
 
 
 def _augment_rows(rows: Sequence[Mapping[str, Any]], resolution: Mapping[str, Any], lineage: Mapping[str, Any]) -> list[dict[str, Any]]:
+    context = _augmentation_context(resolution, lineage)
+    return [_augment_row(row, resolution, lineage, context=context) for row in rows]
+
+
+def _augmentation_context(
+    resolution: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+) -> dict[str, str]:
     mapping = resolution.get("map_by_symbol", {})
-    output = []
-    registry_version = _registry_version_from_resolution(resolution)
-    daily_price_version = _hash_json({"source": lineage.get("source_path"), "provider": lineage.get("daily_price_provider")})[:16]
-    universe_version = _hash_json(lineage.get("configured_universe", []))[:16]
-    target_definition_version = "stock_level_target_provenance_v1"
-    benchmark_asset_id = mapping.get(str(lineage.get("benchmark_symbol", "SPY")).upper(), {}).get("asset_id", "")
-    for row in rows:
-        symbol = str(row.get("symbol", "")).upper()
-        resolved = mapping.get(symbol, {})
-        decision = _decision_timestamp(row)
-        horizon = _target_horizon(row)
-        row_id = daily_spine_row_id(
-            asset_id=resolved.get("asset_id", ""),
-            decision_timestamp=decision,
-            target_horizon_sessions=horizon,
-            universe_version=universe_version,
-            daily_price_dataset_version=daily_price_version,
-            target_definition_version=target_definition_version,
-        )
-        output.append({
-            **dict(row),
-            "row_id": row_id,
-            "source_row_id": str(row.get("row_id") or row.get("source_row_id") or ""),
-            "asset_id": resolved.get("asset_id", ""),
-            "canonical_symbol": resolved.get("canonical_symbol", symbol),
-            "source_symbol": symbol,
-            "session_date": _date_value(row),
-            "decision_timestamp": decision,
-            "feature_cutoff_timestamp": _timestamp_value(row, "feature_data_cutoff_timestamp") or _timestamp_value(row, "feature_timestamp"),
-            "universe_version": universe_version,
-            "eligible_at_decision": "true",
-            "eligibility_reason": "present_in_source_artifact",
-            "daily_price_dataset_version": daily_price_version,
-            "symbol_registry_version": registry_version,
-            "calendar_version": str(row.get("exchange_calendar_identity") or ""),
-            "target_horizon_sessions": str(horizon),
-            "target_start_timestamp": _timestamp_value(row, "target_start_timestamp") or _timestamp_value(row, "label_start_timestamp"),
-            "target_end_timestamp": _timestamp_value(row, "label_end_timestamp"),
-            "target_available_timestamp": _timestamp_value(row, "label_available_timestamp"),
-            "target_definition_version": target_definition_version,
-            "benchmark_asset_id": benchmark_asset_id,
-            "stock_target": _string_or_none(row.get("actual_forward_return_10d")),
-            "benchmark_return": _string_or_none(row.get("actual_benchmark_return_10d")),
-            "excess_return": _string_or_none(row.get("actual_market_residual_return_10d")),
-            "source_artifact_path": "",
-            "source_artifact_dataset_id": _string_or_none(row.get("source_dataset_hash")),
-        })
-    return output
+    return {
+        "registry_version": _registry_version_from_resolution(resolution),
+        "daily_price_version": _hash_json({
+            "source": lineage.get("source_path"),
+            "provider": lineage.get("daily_price_provider"),
+        })[:16],
+        "universe_version": _hash_json(lineage.get("configured_universe", []))[:16],
+        "target_definition_version": "stock_level_target_provenance_v1",
+        "benchmark_asset_id": mapping.get(
+            str(lineage.get("benchmark_symbol", "SPY")).upper(), {},
+        ).get("asset_id", ""),
+    }
+
+
+def _augment_row(
+    row: Mapping[str, Any],
+    resolution: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+    *,
+    context: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    mapping = resolution.get("map_by_symbol", {})
+    values = context or _augmentation_context(resolution, lineage)
+    registry_version = values["registry_version"]
+    daily_price_version = values["daily_price_version"]
+    universe_version = values["universe_version"]
+    target_definition_version = values["target_definition_version"]
+    benchmark_asset_id = values["benchmark_asset_id"]
+    symbol = str(row.get("symbol", "")).upper()
+    resolved = mapping.get(symbol, {})
+    decision = _decision_timestamp(row)
+    horizon = _target_horizon(row)
+    row_id = daily_spine_row_id(
+        asset_id=resolved.get("asset_id", ""),
+        decision_timestamp=decision,
+        target_horizon_sessions=horizon,
+        universe_version=universe_version,
+        daily_price_dataset_version=daily_price_version,
+        target_definition_version=target_definition_version,
+    )
+    return {
+        **dict(row),
+        "row_id": row_id,
+        "source_row_id": str(row.get("row_id") or row.get("source_row_id") or ""),
+        "asset_id": resolved.get("asset_id", ""),
+        "canonical_symbol": resolved.get("canonical_symbol", symbol),
+        "source_symbol": symbol,
+        "session_date": _date_value(row),
+        "decision_timestamp": decision,
+        "feature_cutoff_timestamp": _timestamp_value(row, "feature_data_cutoff_timestamp") or _timestamp_value(row, "feature_timestamp"),
+        "universe_version": universe_version,
+        "eligible_at_decision": "true",
+        "eligibility_reason": "present_in_source_artifact",
+        "daily_price_dataset_version": daily_price_version,
+        "symbol_registry_version": registry_version,
+        "calendar_version": str(row.get("exchange_calendar_identity") or ""),
+        "target_horizon_sessions": str(horizon),
+        "target_start_timestamp": _timestamp_value(row, "target_start_timestamp") or _timestamp_value(row, "label_start_timestamp"),
+        "target_end_timestamp": _timestamp_value(row, "label_end_timestamp"),
+        "target_available_timestamp": _timestamp_value(row, "label_available_timestamp"),
+        "target_definition_version": target_definition_version,
+        "benchmark_asset_id": benchmark_asset_id,
+        "stock_target": _string_or_none(row.get("actual_forward_return_10d")),
+        "benchmark_return": _string_or_none(row.get("actual_benchmark_return_10d")),
+        "excess_return": _string_or_none(row.get("actual_market_residual_return_10d")),
+        "source_artifact_path": "",
+        "source_artifact_dataset_id": _string_or_none(row.get("source_dataset_hash")),
+    }
 
 
 def _row_grain(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

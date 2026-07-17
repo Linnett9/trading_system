@@ -161,7 +161,83 @@ def test_controlled_stream_read_failure_is_blocking(monkeypatch, tmp_path):
         raise ValueError("synthetic stream failure")
         yield
 
-    monkeypatch.setattr(owner, "iter_stock_level_artifact_batches", fail)
+    monkeypatch.setattr(owner, "_iter_projected_batches", fail)
     result = _verify(env, tmp_path)
     assert result["status"] == "BLOCKED"
     assert any(blocker.startswith("stream_read_failure:") for blocker in result["blockers"])
+
+
+@pytest.mark.parametrize("workers", [1, 3, 6])
+def test_one_scan_per_artifact_and_worker_determinism(tmp_path, workers):
+    rows = [_row(index % 8, symbol=f"S{index % 4:02d}", date=f"2024-01-{index % 8 + 2:02d}") for index in range(32)]
+    env = _environment(tmp_path / f"w{workers}", rows)
+    result = _verify(
+        env,
+        tmp_path / f"w{workers}",
+        dry_run=True,
+        stream_batch_size=5,
+        max_workers=workers,
+    )
+    diagnostics = result["streaming_diagnostics"]
+    assert diagnostics["source_scan_counts"] == {"base": 1, "enriched": 1}
+    assert diagnostics["batches_processed"]["base_symbol_first_pass"] == 0
+    assert diagnostics["worker_count"] == workers
+    assert diagnostics["sqlite_insert_count"] == 64
+    assert diagnostics["peak_working_set_memory_bytes"] > 0
+    assert result["logical_output_checksum"]
+
+
+def test_worker_counts_preserve_logical_identity_and_heartbeat(tmp_path, capsys):
+    rows = [_row(index) for index in range(8)]
+    env = _environment(tmp_path, rows)
+    results = [
+        _verify(
+            env,
+            tmp_path,
+            dry_run=True,
+            stream_batch_size=2,
+            max_workers=workers,
+            heartbeat_seconds=0,
+        )
+        for workers in (1, 3, 6)
+    ]
+    assert len({row["logical_output_checksum"] for row in results}) == 1
+    assert len({row["spine_dataset_id"] for row in results}) == 1
+    assert len({row["base_artifact"]["row_population_checksum"] for row in results}) == 1
+    assert "daily_spine_preflight_heartbeat" in capsys.readouterr().out
+
+
+def test_streaming_owner_does_not_materialize_complete_arrow_batches():
+    source = inspect.getsource(__import__(
+        "core.research.ml.reference.daily_stock_spine", fromlist=["_streaming_preflight"]
+    )._streaming_preflight)
+    assert ".to_pylist(" not in source
+    assert "iter_stock_level_artifact_batches(" not in source
+
+
+def test_malformed_timestamp_and_nonfinite_value_fail_closed(tmp_path):
+    malformed = [_row(0)]
+    malformed[0]["decision_timestamp"] = "not-a-timestamp"
+    env = _environment(tmp_path / "malformed", malformed)
+    result = _verify(env, tmp_path / "malformed")
+    assert result["status"] == "BLOCKED"
+    assert any(value.startswith("stream_read_failure:") for value in result["blockers"])
+
+    nonfinite = [_row(0)]
+    nonfinite[0]["actual_forward_return_10d"] = float("inf")
+    env = _environment(tmp_path / "nonfinite", nonfinite)
+    result = _verify(env, tmp_path / "nonfinite")
+    assert result["status"] == "BLOCKED"
+    assert "invalid_row:nonfinite_required_value" in result["blockers"]
+
+
+def test_memory_limit_reduces_concurrency_instead_of_failing(tmp_path):
+    rows = [_row(index) for index in range(4)]
+    env = _environment(tmp_path, rows)
+    result = _verify(
+        env, tmp_path, dry_run=True, max_workers=6, memory_limit_mb=128,
+    )
+    diagnostics = result["streaming_diagnostics"]
+    assert diagnostics["requested_worker_count"] == 6
+    assert diagnostics["worker_count"] == 1
+    assert diagnostics["serial_fallback"] is True
