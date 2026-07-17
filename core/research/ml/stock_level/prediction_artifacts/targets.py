@@ -142,9 +142,9 @@ def _forward_target(
     return ForwardTarget(
         value=(end / start) - 1.0,
         start_timestamp=rebalance_date,
-        label_start_timestamp=_label_observation_timestamp(label_start_session),
-        end_timestamp=_label_observation_timestamp(end_session),
-        available_timestamp=_label_observation_timestamp(available_session),
+        label_start_timestamp=label_observation_timestamp(label_start_session),
+        end_timestamp=label_observation_timestamp(end_session),
+        available_timestamp=label_observation_timestamp(available_session),
         horizon=horizon,
     )
 
@@ -182,7 +182,7 @@ def _first_after(values: list[str], timestamp: str) -> str:
     return next((value for value in values if value > timestamp), "")
 
 
-def _label_observation_timestamp(session: str) -> str:
+def label_observation_timestamp(session: str) -> str:
     if not session:
         return ""
     if "T" in session or " " in session:

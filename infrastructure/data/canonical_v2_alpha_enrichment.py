@@ -45,6 +45,7 @@ from core.research.ml.stock_level.stock_level_artifact_io import (
 DEFAULT_REPORT_ROOT = Path("reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2")
 EXPECTED_CANONICAL_HASH = "c2ab57992c9363c118d854f01da18ea34122b9c0775af3d0676afe5ff80bad56"
 EXPECTED_BASE_HASH = "739a2b984cdd0a160d65ea546d9523b75637be3921c14734dd5483a093357e89"
+ALPHA_ENRICHMENT_CONTRACT_VERSION = "canonical_v2_alpha_enrichment_v2"
 BOOL_COLUMNS = {"selector_eligible", "provider_transition_flag"}
 INT_COLUMNS = {
     "target_horizon_trading_days",
@@ -114,7 +115,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
             raise ValueError(f"missing labeled spine partition for requested symbols: {missing[:10]}")
     else:
         symbols = sorted(spine_index)
-    completed_before = _completed_symbols(manifest_root)
+    completed_before = _completed_compatible_symbols(manifest_root, config)
     pending = [symbol for symbol in symbols if symbol not in completed_before]
     workers = settings.alpha_feature_n_jobs
     plan = {
@@ -156,9 +157,9 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
                 except Exception as exc:
                     failed.append(_failure_record(symbol, exc))
                     _write_json(report_root / "failed_partitions.json", {"failed_partition_count": len(failed), "failed_partitions": failed})
-                    _progress(report_root, len(symbols), len(_completed_symbols(manifest_root)), len(failed), rows_processed, started)
+                    _progress(report_root, len(symbols), len(_completed_compatible_symbols(manifest_root, config)), len(failed), rows_processed, started)
                     raise
-                _progress(report_root, len(symbols), len(_completed_symbols(manifest_root)), len(failed), rows_processed, started)
+                _progress(report_root, len(symbols), len(_completed_compatible_symbols(manifest_root, config)), len(failed), rows_processed, started)
         else:
             with ProcessPoolExecutor(max_workers=effective_workers) as executor:
                 futures = {
@@ -175,7 +176,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
                         _write_json(report_root / "failed_partitions.json", {"failed_partition_count": len(failed), "failed_partitions": failed})
                         should_abort, abort_reason, dominant_signature = _should_abort_fail_fast(
                             failed,
-                            completed=len(_completed_symbols(manifest_root)),
+                            completed=len(_completed_compatible_symbols(manifest_root, config)),
                             settings=fail_fast,
                         )
                         if should_abort:
@@ -186,7 +187,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
                     _progress(
                         report_root,
                         len(symbols),
-                        len(_completed_symbols(manifest_root)),
+                        len(_completed_compatible_symbols(manifest_root, config)),
                         len(failed),
                         rows_processed,
                         started,
@@ -204,7 +205,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
     if failed:
         raise RuntimeError(f"canonical-v2 alpha partitions failed: {failed[:5]}")
 
-    partition_paths = _completed_partition_paths(manifest_root, expected_symbols=symbols)
+    partition_paths = _completed_partition_paths(manifest_root, expected_symbols=symbols, config=config)
     partition_validation = _validate_partition_dataset(partition_paths, report_root=report_root)
     _write_json(
         report_root / "partition_dataset_status.json",
@@ -212,7 +213,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
             "partition_processing_status": "complete",
             "partition_validation_status": "complete",
             "consolidation_status": "pending",
-            "partitions_reused": len(completed_before) if not pending else len(_completed_symbols(manifest_root)) - len(pending),
+            "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
             "partitions_recomputed": len(pending),
             "consolidation_retried": True,
             **partition_validation,
@@ -260,7 +261,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
                 "partition_validation_status": "complete",
                 "consolidation_status": "failed",
                 "consolidation_error": f"{type(exc).__name__}: {exc}",
-                "partitions_reused": len(completed_before) if not pending else len(_completed_symbols(manifest_root)) - len(pending),
+                "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
                 "partitions_recomputed": len(pending),
                 "consolidation_retried": True,
                 **partition_validation,
@@ -284,7 +285,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
     validation = validate_enriched_artifact(paths.enriched_parquet_path, input_resolution=input_resolution)
     validation.update(
         {
-            "completed_partitions": len(_completed_symbols(manifest_root)),
+            "completed_partitions": len(_completed_compatible_symbols(manifest_root, config)),
             "failed_partitions": len(failed),
             "planned_partitions": len(symbols),
             "worker_count": workers,
@@ -299,7 +300,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
             "partition_processing_status": "complete",
             "partition_validation_status": "complete",
             "consolidation_status": "complete",
-            "partitions_reused": len(completed_before) if not pending else len(_completed_symbols(manifest_root)) - len(pending),
+            "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
             "partitions_recomputed": len(pending),
             "consolidation_retried": True,
             "final_artifact": identity,
@@ -307,7 +308,7 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
         },
     )
     _write_json(report_root / "final_validation.json", validation)
-    _progress(report_root, len(symbols), len(_completed_symbols(manifest_root)), len(failed), validation["row_count"], started)
+    _progress(report_root, len(symbols), len(_completed_compatible_symbols(manifest_root, config)), len(failed), validation["row_count"], started)
     return paths
 
 
@@ -436,10 +437,14 @@ def ensure_base_symbol_partitions(config: Mapping[str, Any], *, input_resolution
     configured_symbols = ml.get("canonical_v2_alpha_symbols")
     requested = {str(symbol).upper() for symbol in configured_symbols} if configured_symbols else None
     manifest_path = report_root / "base_partition_manifest.json"
-    existing = sorted(base_partition_root.glob("symbol=*/rows.parquet"))
+    base_partition_root.mkdir(parents=True, exist_ok=True)
+    existing = sorted(
+        path
+        for path in base_partition_root.glob("symbol=*/rows.parquet")
+        if _base_partition_compatible(path, config, input_resolution=input_resolution)
+    )
     if existing:
         return _read_json(manifest_path) or {"status": "BUILT", "partition_count": len(existing), "path": str(base_partition_root)}
-    base_partition_root.mkdir(parents=True, exist_ok=True)
     spy_returns = _spine_return_by_date(labeled_root / "symbol=SPY" / "spine.parquet")
     partitions = []
     started = time.perf_counter()
@@ -447,15 +452,13 @@ def ensure_base_symbol_partitions(config: Mapping[str, Any], *, input_resolution
         symbol = spine_path.parent.name.split("=", 1)[1]
         if requested is not None and symbol.upper() not in requested:
             continue
-        rows = [
-            _base_row(row, spy_returns, input_resolution=input_resolution)
-            for row in _read_parquet_file(spine_path)
-            if row.get("selector_eligible") and row.get("is_labeled")
-        ]
+        spine_rows = _read_parquet_file(spine_path)
+        rows = _base_rows_from_spine(spine_rows, spy_returns, input_resolution=input_resolution)
         if not rows:
             continue
         target = base_partition_root / f"symbol={_safe_symbol(symbol)}" / "rows.parquet"
         _write_partition_parquet(target, rows, list(rows[0]))
+        _write_json(_base_partition_identity_path(target), _base_partition_identity(target, config, input_resolution=input_resolution))
         partitions.append({"symbol": symbol, "row_count": len(rows), "path": str(target), "sha256": _file_sha256(target)})
     payload = {
         "status": "BUILT",
@@ -610,6 +613,11 @@ def _build_partition(
         "source_base_partition_path": source_base_partition_path,
         "monolithic_base_read": monolithic_base_read,
         "base_partition_reused": base_partition_reused,
+        "compatibility_identity": _partition_compatibility_identity(
+            symbol,
+            config,
+            source_base_partition_path=source_base_partition_path,
+        ),
         "source_rows_read": spine_rows_read,
         "price_history_rows_read": price_history_rows_read,
         "phase_timings": timings,
@@ -618,12 +626,54 @@ def _build_partition(
     return manifest
 
 
-def _base_row(row: Mapping[str, Any], spy_returns: Mapping[str, float], *, input_resolution: Mapping[str, Any] | None) -> dict[str, Any]:
+def _base_rows_from_spine(
+    spine_rows: Sequence[Mapping[str, Any]],
+    spy_returns: Mapping[str, float],
+    *,
+    input_resolution: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    eligible = [
+        row for row in spine_rows
+        if row.get("selector_eligible") and row.get("is_labeled")
+    ]
+    eligible.sort(key=lambda row: str(row.get("session_date", ""))[:10])
+    sessions = [str(row.get("session_date", ""))[:10] for row in eligible]
+    return [
+        _base_row(row, spy_returns, next_session=sessions[index + 1] if index + 1 < len(sessions) else "", input_resolution=input_resolution)
+        for index, row in enumerate(eligible)
+    ]
+
+
+def _target_provenance_contract_version() -> str:
+    from core.research.ml.stock_level.prediction_artifacts.types import TARGET_PROVENANCE_CONTRACT_VERSION
+
+    return TARGET_PROVENANCE_CONTRACT_VERSION
+
+
+def _label_observation_timestamp(session: str) -> str:
+    from core.research.ml.stock_level.prediction_artifacts.targets import label_observation_timestamp
+
+    return label_observation_timestamp(session)
+
+
+def _base_row(
+    row: Mapping[str, Any],
+    spy_returns: Mapping[str, float],
+    *,
+    next_session: str = "",
+    input_resolution: Mapping[str, Any] | None,
+) -> dict[str, Any]:
     date = str(row["session_date"])[:10]
     end = str(row.get("target_end_session_date") or date)[:10]
     actual = _float(row.get("actual_forward_return_10d"))
     benchmark = spy_returns.get(date)
-    benchmark = 0.0 if benchmark is None else benchmark
+    residual = actual - benchmark if actual is not None and benchmark is not None else ""
+    label_start = _label_observation_timestamp(next_session) if next_session else ""
+    label_end = _label_observation_timestamp(end) if end else ""
+    label_available = label_end
+    benchmark_label_start = label_start if benchmark is not None else ""
+    benchmark_label_end = label_end if benchmark is not None else ""
+    benchmark_label_available = label_available if benchmark is not None else ""
     return {
         "rebalance_date": date,
         "symbol": str(row.get("symbol") or row.get("canonical_symbol", "")).upper(),
@@ -635,7 +685,7 @@ def _base_row(row: Mapping[str, Any], spy_returns: Mapping[str, float], *, input
         "selector_eligible": bool(row.get("selector_eligible")),
         "provider_transition_flag": bool(row.get("provider_transition_flag")),
         "provider_transition_id": row.get("provider_transition_id"),
-        "target_provenance_contract_version": "stock_level_target_provenance_v1",
+        "target_provenance_contract_version": _target_provenance_contract_version(),
         "feature_timestamp": date,
         "feature_data_cutoff_timestamp": f"{date} 20:00:00+00:00",
         "decision_timestamp": f"{date} 20:05:00+00:00",
@@ -650,22 +700,22 @@ def _base_row(row: Mapping[str, Any], spy_returns: Mapping[str, float], *, input
         "required_purge_horizon_trading_days": 10,
         "target_horizon": "10_trading_observations",
         "target_observation_count": 10,
-        "target_start_timestamp": f"{date} 00:00:00+00:00",
-        "label_start_timestamp": f"{date} 00:00:00+00:00",
-        "label_end_timestamp": f"{end} 00:00:00+00:00",
-        "label_available_timestamp": f"{end} 21:00:00+00:00",
+        "target_start_timestamp": date,
+        "label_start_timestamp": label_start,
+        "label_end_timestamp": label_end,
+        "label_available_timestamp": label_available,
         "target_price_convention": "canonical_daily_v2_model_close_to_close",
-        "benchmark_target_start_timestamp": f"{date} 00:00:00+00:00",
-        "benchmark_label_start_timestamp": f"{date} 00:00:00+00:00",
-        "benchmark_label_end_timestamp": f"{end} 00:00:00+00:00",
-        "benchmark_label_available_timestamp": f"{end} 21:00:00+00:00",
+        "benchmark_target_start_timestamp": date if benchmark is not None else "",
+        "benchmark_label_start_timestamp": benchmark_label_start,
+        "benchmark_label_end_timestamp": benchmark_label_end,
+        "benchmark_label_available_timestamp": benchmark_label_available,
         "target_status": "realized",
         "actual_forward_return_10d": actual,
         "actual_forward_return_5d": "",
         "actual_future_volatility": "",
         "actual_future_drawdown": "",
-        "actual_benchmark_return_10d": benchmark,
-        "actual_market_residual_return_10d": actual - benchmark if actual is not None else "",
+        "actual_benchmark_return_10d": benchmark if benchmark is not None else "",
+        "actual_market_residual_return_10d": residual,
         "actual_vol_adjusted_forward_return_10d": actual,
         "actual_drawdown_adjusted_forward_return_10d": actual,
         "actual_rank_normalized_forward_return_10d": "",
@@ -753,7 +803,7 @@ def _read_symbol_source_rows_from_spine(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not spine_path.exists():
         raise FileNotFoundError(f"missing labeled spine partition for symbol {symbol}: {spine_path}")
-    if base_partition_path.exists():
+    if base_partition_path.exists() and _base_partition_compatible(base_partition_path, config, input_resolution=input_resolution):
         rows = _read_parquet_file(base_partition_path)
         return rows, {
             "base_partition_reused": True,
@@ -768,14 +818,11 @@ def _read_symbol_source_rows_from_spine(
     ml = dict(config.get("ml", {}) or {})
     labeled_root = Path(str(ml.get("canonical_v2_labeled_spine_root", "reports/ml/readiness/selector_spine_extension/labeled_selector_spine_partitions")))
     spy_returns = _spine_return_by_date(labeled_root / "symbol=SPY" / "spine.parquet")
-    rows = [
-        _base_row(row, spy_returns, input_resolution=input_resolution)
-        for row in spine_rows
-        if row.get("selector_eligible") and row.get("is_labeled")
-    ]
+    rows = _base_rows_from_spine(spine_rows, spy_returns, input_resolution=input_resolution)
     if not rows:
         raise ValueError(f"labeled spine partition for symbol {symbol} produced no eligible labeled rows")
     _write_partition_parquet(base_partition_path, rows, list(rows[0]))
+    _write_json(_base_partition_identity_path(base_partition_path), _base_partition_identity(base_partition_path, config, input_resolution=input_resolution))
     return rows, {
         "base_partition_reused": False,
         "source_rows_read": len(spine_rows),
@@ -790,7 +837,7 @@ def _read_symbol_source_rows(path: Path, symbol: str, *, config: Mapping[str, An
         report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
         base_partition_root = Path(str(ml.get("canonical_v2_base_partition_root", report_root / "base_partitions")))
         partition = base_partition_root / f"symbol={_safe_symbol(symbol)}" / "rows.parquet"
-        if partition.exists():
+        if partition.exists() and _base_partition_compatible(partition, config, input_resolution=resolve_inputs(config)):
             return _read_parquet_file(partition)
     try:
         table = pq.read_table(path, filters=[("symbol", "=", symbol)])
@@ -813,13 +860,20 @@ def _read_partition_rows(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _completed_partition_paths(manifest_root: Path, *, expected_symbols: Sequence[str]) -> list[Path]:
+def _completed_partition_paths(manifest_root: Path, *, expected_symbols: Sequence[str], config: Mapping[str, Any] | None = None) -> list[Path]:
     paths: list[Path] = []
     missing: list[str] = []
     for symbol in expected_symbols:
         manifest = _read_json(manifest_root / f"{_safe_symbol(symbol)}.json")
         path = Path(str(manifest.get("path") or ""))
-        if manifest.get("status") != "COMPLETE" or not path.exists():
+        compatible = True
+        if config is not None:
+            compatible = manifest.get("compatibility_identity") == _partition_compatibility_identity(
+                str(symbol),
+                config,
+                source_base_partition_path=str(manifest.get("source_base_partition_path") or ""),
+            )
+        if manifest.get("status") != "COMPLETE" or not path.exists() or not compatible:
             missing.append(symbol)
             continue
         paths.append(path)
@@ -1418,6 +1472,92 @@ def _completed_symbols(manifest_root: Path) -> set[str]:
         if payload.get("status") == "COMPLETE" and payload.get("symbol"):
             completed.add(str(payload["symbol"]).upper())
     return completed
+
+
+def _completed_compatible_symbols(manifest_root: Path, config: Mapping[str, Any]) -> set[str]:
+    completed = set()
+    for path in manifest_root.glob("*.json"):
+        payload = _read_json(path)
+        symbol = str(payload.get("symbol") or "").upper()
+        if payload.get("status") != "COMPLETE" or not symbol:
+            continue
+        partition_path = Path(str(payload.get("path") or ""))
+        if not partition_path.exists():
+            continue
+        source_base_partition_path = payload.get("source_base_partition_path")
+        expected = _partition_compatibility_identity(
+            symbol,
+            config,
+            source_base_partition_path=str(source_base_partition_path or ""),
+        )
+        if payload.get("compatibility_identity") == expected:
+            completed.add(symbol)
+    return completed
+
+
+def _partition_compatibility_identity(
+    symbol: str,
+    config: Mapping[str, Any],
+    *,
+    source_base_partition_path: str,
+) -> dict[str, Any]:
+    return {
+        "alpha_enrichment_contract_version": ALPHA_ENRICHMENT_CONTRACT_VERSION,
+        "target_provenance_contract_version": _target_provenance_contract_version(),
+        "feature_schema_identity": _feature_schema_identity(),
+        "configuration_identity": _alpha_configuration_identity(config),
+        "implementation_identity": "canonical_v2_alpha_enrichment.partitioned.v2",
+        "source_base_partition_path": source_base_partition_path,
+        "source_base_partition_sha256": _file_sha256(Path(source_base_partition_path)) if source_base_partition_path and Path(source_base_partition_path).exists() else "",
+        "symbol": symbol.upper(),
+    }
+
+
+def _feature_schema_identity() -> str:
+    payload = {
+        "engineered": list(ENGINEERED_FEATURE_COLUMNS),
+        "enrichment_metadata": list(ENRICHMENT_METADATA_COLUMNS),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _alpha_configuration_identity(config: Mapping[str, Any]) -> str:
+    ml = dict(config.get("ml", {}) or {})
+    payload = {
+        "stock_alpha_feature_n_jobs": ml.get("stock_alpha_feature_n_jobs"),
+        "stock_level_artifact_format": ml.get("stock_level_artifact_format", "parquet"),
+        "stock_level_parquet_compression": ml.get("stock_level_parquet_compression", "zstd"),
+        "canonical_v2_labeled_spine_manifest_path": ml.get("canonical_v2_labeled_spine_manifest_path"),
+        "canonical_v2_labeled_spine_root": ml.get("canonical_v2_labeled_spine_root"),
+        "stooq_parquet_dir": ml.get("stooq_parquet_dir"),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _base_partition_identity_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".identity.json")
+
+
+def _base_partition_identity(path: Path, config: Mapping[str, Any], *, input_resolution: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {
+        "alpha_enrichment_contract_version": ALPHA_ENRICHMENT_CONTRACT_VERSION,
+        "target_provenance_contract_version": _target_provenance_contract_version(),
+        "configuration_identity": _alpha_configuration_identity(config),
+        "implementation_identity": "canonical_v2_alpha_enrichment.base_partition.v2",
+        "canonical_dataset_hash": (input_resolution or {}).get("canonical_dataset", {}).get("hash", ""),
+        "path": str(path),
+        "sha256": _file_sha256(path) if path.exists() else "",
+    }
+
+
+def _base_partition_compatible(path: Path, config: Mapping[str, Any], *, input_resolution: Mapping[str, Any] | None) -> bool:
+    if not path.exists():
+        return False
+    identity_path = _base_partition_identity_path(path)
+    if not identity_path.exists():
+        return False
+    payload = _read_json(identity_path)
+    return payload == _base_partition_identity(path, config, input_resolution=input_resolution)
 
 
 def _failure_record(symbol: str, exc: BaseException) -> dict[str, Any]:

@@ -23,6 +23,11 @@ from infrastructure.data.canonical_v2_alpha_enrichment import (
     PartitionBuildError,
     _column_type_inventory,
     _consolidate_partition_parquets,
+    _base_partition_identity,
+    _base_partition_identity_path,
+    _completed_partition_paths,
+    _completed_compatible_symbols,
+    _partition_compatibility_identity,
     _failure_record,
     _normalize_partition_rows,
     _read_symbol_source_rows_from_spine,
@@ -344,8 +349,11 @@ def test_alpha_symbol_spine_index_and_missing_partition(tmp_path: Path) -> None:
 def test_alpha_symbol_rows_reuse_existing_base_partition_without_spine_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spine = tmp_path / "spines" / "symbol=AAPL" / "spine.parquet"
     base = tmp_path / "base" / "symbol=AAPL" / "rows.parquet"
+    config = {"ml": {}}
+    input_resolution = {}
     _write_partition(spine, [{"symbol": "AAPL", "session_date": "2026-01-01"}])
     _write_partition(base, [{"symbol": "AAPL", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
+    _base_partition_identity_path(base).write_text(json.dumps(_base_partition_identity(base, config, input_resolution=input_resolution)))
 
     def fail_spine_read(path: Path, columns: object = None) -> list[dict[str, object]]:
         if Path(path) == spine:
@@ -357,13 +365,62 @@ def test_alpha_symbol_rows_reuse_existing_base_partition_without_spine_scan(tmp_
         "AAPL",
         spine,
         base,
-        config={"ml": {}},
-        input_resolution={},
+        config=config,
+        input_resolution=input_resolution,
     )
 
     assert rows[0]["symbol"] == "AAPL"
     assert meta["base_partition_reused"] is True
     assert meta["spine_read_seconds"] == 0.0
+
+
+def test_alpha_symbol_rows_reject_v1_base_partition_and_rebuild(tmp_path: Path) -> None:
+    spine_root = tmp_path / "spines"
+    spine = spine_root / "symbol=AAPL" / "spine.parquet"
+    spy = spine_root / "symbol=SPY" / "spine.parquet"
+    base = tmp_path / "base" / "symbol=AAPL" / "rows.parquet"
+    _write_partition(
+        spine,
+        [
+            {
+                "symbol": "AAPL",
+                "canonical_symbol": "AAPL",
+                "asset_id": "asset-aapl",
+                "session_date": "2026-01-02",
+                "target_end_session_date": "2026-01-16",
+                "actual_forward_return_10d": 0.1,
+                "selector_eligible": True,
+                "is_labeled": True,
+                "provider_transition_flag": False,
+            },
+            {
+                "symbol": "AAPL",
+                "canonical_symbol": "AAPL",
+                "asset_id": "asset-aapl",
+                "session_date": "2026-01-05",
+                "target_end_session_date": "2026-01-20",
+                "actual_forward_return_10d": 0.2,
+                "selector_eligible": True,
+                "is_labeled": True,
+                "provider_transition_flag": False,
+            },
+        ],
+    )
+    _write_partition(spy, [{"session_date": "2026-01-02", "actual_forward_return_10d": 0.02}, {"session_date": "2026-01-05", "actual_forward_return_10d": 0.03}])
+    _write_partition(base, [{"symbol": "AAPL", "rebalance_date": "2026-01-02", "target_provenance_contract_version": "stock_level_target_provenance_v1"}])
+
+    rows, meta = _read_symbol_source_rows_from_spine(
+        "AAPL",
+        spine,
+        base,
+        config={"ml": {"canonical_v2_labeled_spine_root": str(spine_root)}},
+        input_resolution={"canonical_dataset": {"hash": "hash"}},
+    )
+
+    assert meta["base_partition_reused"] is False
+    assert rows[0]["target_provenance_contract_version"] == "stock_level_target_provenance_v2"
+    assert rows[0]["label_start_timestamp"] == "2026-01-05T21:00:00Z"
+    assert rows[0]["actual_market_residual_return_10d"] == pytest.approx(0.08)
 
 
 def test_alpha_symbol_rows_build_base_from_single_spine_partition(tmp_path: Path) -> None:
@@ -404,6 +461,51 @@ def test_alpha_symbol_rows_build_base_from_single_spine_partition(tmp_path: Path
     assert meta["source_rows_read"] == 1
 
 
+def test_alpha_base_row_missing_benchmark_fails_closed(tmp_path: Path) -> None:
+    spine_root = tmp_path / "spines"
+    spine = spine_root / "symbol=AAPL" / "spine.parquet"
+    base = tmp_path / "base" / "symbol=AAPL" / "rows.parquet"
+    _write_partition(
+        spine,
+        [
+            {
+                "symbol": "AAPL",
+                "canonical_symbol": "AAPL",
+                "asset_id": "asset-aapl",
+                "session_date": "2026-01-02",
+                "target_end_session_date": "2026-01-16",
+                "actual_forward_return_10d": 0.1,
+                "selector_eligible": True,
+                "is_labeled": True,
+                "provider_transition_flag": False,
+            },
+            {
+                "symbol": "AAPL",
+                "canonical_symbol": "AAPL",
+                "asset_id": "asset-aapl",
+                "session_date": "2026-01-05",
+                "target_end_session_date": "2026-01-20",
+                "actual_forward_return_10d": 0.2,
+                "selector_eligible": True,
+                "is_labeled": True,
+                "provider_transition_flag": False,
+            },
+        ],
+    )
+
+    rows, _ = _read_symbol_source_rows_from_spine(
+        "AAPL",
+        spine,
+        base,
+        config={"ml": {"canonical_v2_labeled_spine_root": str(spine_root)}},
+        input_resolution={"canonical_dataset": {"hash": "hash"}},
+    )
+
+    assert rows[0]["actual_benchmark_return_10d"] == ""
+    assert rows[0]["actual_market_residual_return_10d"] == ""
+    assert rows[0]["benchmark_label_start_timestamp"] == ""
+
+
 def test_alpha_partition_build_records_paths_timings_and_no_monolith(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spine_root = tmp_path / "spines"
     spine = spine_root / "symbol=AAPL" / "spine.parquet"
@@ -423,7 +525,6 @@ def test_alpha_partition_build_records_paths_timings_and_no_monolith(tmp_path: P
             }
         )
     )
-    _write_partition(base_root / "symbol=AAPL" / "rows.parquet", [{"symbol": "AAPL", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
     config = {
         "ml": {
             "canonical_v2_labeled_spine_manifest_path": str(manifest),
@@ -433,6 +534,9 @@ def test_alpha_partition_build_records_paths_timings_and_no_monolith(tmp_path: P
             "output_dir": str(tmp_path / "out"),
         }
     }
+    base_path = base_root / "symbol=AAPL" / "rows.parquet"
+    _write_partition(base_path, [{"symbol": "AAPL", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
+    _base_partition_identity_path(base_path).write_text(json.dumps(_base_partition_identity(base_path, config, input_resolution={"canonical_dataset": {"hash": "hash"}})))
     monkeypatch.setattr(alpha_enrichment, "resolve_inputs", lambda config: {"canonical_dataset": {"hash": "hash"}})
     monkeypatch.setattr(alpha_enrichment, "_load_price_histories", lambda root, symbols: {"AAPL": [{"date": "2025-12-31", "close": 100.0}]})
     monkeypatch.setattr(
@@ -450,6 +554,99 @@ def test_alpha_partition_build_records_paths_timings_and_no_monolith(tmp_path: P
     assert manifest_payload["price_history_rows_read"] == 1
     assert {"normalisation_seconds", "parquet_write_seconds", "total_seconds"} <= set(manifest_payload["phase_timings"])
     assert Path(manifest_payload["path"]).exists()
+    assert manifest_payload["compatibility_identity"] == _partition_compatibility_identity(
+        "AAPL",
+        config,
+        source_base_partition_path=str(base_path),
+    )
+    assert _completed_compatible_symbols(manifest_root, config) == {"AAPL"}
+
+
+def test_alpha_partition_enrichment_preserves_v2_target_metadata_order_independent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spine_root = tmp_path / "spines"
+    spine = spine_root / "symbol=AAPL" / "spine.parquet"
+    spy = spine_root / "symbol=SPY" / "spine.parquet"
+    manifest = tmp_path / "labeled_spine_manifest.json"
+    partition_root = tmp_path / "partitions"
+    manifest_root = tmp_path / "manifests"
+    price_root = tmp_path / "prices"
+    _write_partition(
+        spine,
+        [
+                {"symbol": "AAPL", "canonical_symbol": "AAPL", "asset_id": "asset-aapl", "session_date": "2026-01-02", "target_end_session_date": "2026-01-16", "actual_forward_return_10d": 0.1, "selector_eligible": True, "is_labeled": True, "provider_transition_flag": False},
+                {"symbol": "AAPL", "canonical_symbol": "AAPL", "asset_id": "asset-aapl", "session_date": "2026-01-05", "target_end_session_date": "2026-01-20", "actual_forward_return_10d": 0.2, "selector_eligible": True, "is_labeled": True, "provider_transition_flag": False},
+                {"symbol": "AAPL", "canonical_symbol": "AAPL", "asset_id": "asset-aapl", "session_date": "2026-01-06", "target_end_session_date": "2026-01-21", "actual_forward_return_10d": 0.3, "selector_eligible": True, "is_labeled": True, "provider_transition_flag": False},
+            ],
+        )
+    _write_partition(spy, [{"session_date": "2026-01-02", "actual_forward_return_10d": 0.02}, {"session_date": "2026-01-05", "actual_forward_return_10d": 0.03}, {"session_date": "2026-01-06", "actual_forward_return_10d": 0.04}])
+    manifest.write_text(json.dumps({"status": "BUILT", "partition_manifests": [{"canonical_symbol": "AAPL", "status": "BUILT", "path": str(spine), "row_count": 2}]}))
+    config = {"ml": {"canonical_v2_labeled_spine_manifest_path": str(manifest), "canonical_v2_labeled_spine_root": str(spine_root), "canonical_v2_base_partition_root": str(tmp_path / "base"), "stooq_parquet_dir": str(price_root), "output_dir": str(tmp_path / "out")}}
+    monkeypatch.setattr(alpha_enrichment, "resolve_inputs", lambda config: {"canonical_dataset": {"hash": "hash"}})
+    monkeypatch.setattr(alpha_enrichment, "_load_price_histories", lambda root, symbols: {"AAPL": []})
+
+    def enrich(payload):
+        rows, _history, _spy = payload
+        return [{**row, "_stock_above_200d_average": 1.0} for row in reversed(rows)]
+
+    monkeypatch.setattr(alpha_enrichment, "_build_symbol_rows", enrich)
+
+    alpha_enrichment._build_partition("AAPL", config, [], partition_root, manifest_root)
+    base_rows = _read_parquet_file(tmp_path / "base" / "symbol=AAPL" / "rows.parquet")
+    enriched_rows = _read_parquet_file(partition_root / "symbol=AAPL" / "rows.parquet")
+    by_key = {(row["symbol"], row["rebalance_date"]): row for row in enriched_rows}
+
+    for base_row in base_rows[:-1]:
+        enriched = by_key[(base_row["symbol"], base_row["rebalance_date"])]
+        for column in (
+            "actual_forward_return_10d",
+            "actual_benchmark_return_10d",
+            "actual_market_residual_return_10d",
+            "target_provenance_contract_version",
+            "target_start_timestamp",
+            "label_start_timestamp",
+            "label_end_timestamp",
+            "label_available_timestamp",
+            "benchmark_label_start_timestamp",
+            "benchmark_label_end_timestamp",
+            "benchmark_label_available_timestamp",
+        ):
+            assert enriched[column] == base_row[column]
+        assert base_row["target_provenance_contract_version"] == "stock_level_target_provenance_v2"
+        assert base_row["decision_timestamp"] < base_row["label_start_timestamp"] <= base_row["label_end_timestamp"] <= base_row["label_available_timestamp"]
+
+
+def test_alpha_partition_resume_rejects_wrong_base_identity_and_feature_schema(tmp_path: Path) -> None:
+    manifest_root = tmp_path / "manifests"
+    part = tmp_path / "partitions" / "symbol=AAPL" / "rows.parquet"
+    base = tmp_path / "base" / "symbol=AAPL" / "rows.parquet"
+    config = {"ml": {"output_dir": str(tmp_path / "out")}}
+    _write_partition(part, [{"symbol": "AAPL", "rebalance_date": "2026-01-01"}])
+    _write_partition(base, [{"symbol": "AAPL", "rebalance_date": "2026-01-01"}])
+    manifest_root.mkdir(parents=True)
+    good = {
+        "symbol": "AAPL",
+        "status": "COMPLETE",
+        "path": str(part),
+        "source_base_partition_path": str(base),
+        "compatibility_identity": _partition_compatibility_identity("AAPL", config, source_base_partition_path=str(base)),
+    }
+    (manifest_root / "AAPL.json").write_text(json.dumps(good))
+    assert _completed_compatible_symbols(manifest_root, config) == {"AAPL"}
+
+    wrong_base = dict(good)
+    wrong_base["compatibility_identity"] = {**good["compatibility_identity"], "source_base_partition_sha256": "wrong"}
+    (manifest_root / "AAPL.json").write_text(json.dumps(wrong_base))
+    assert _completed_compatible_symbols(manifest_root, config) == set()
+
+    wrong_schema = dict(good)
+    wrong_schema["compatibility_identity"] = {**good["compatibility_identity"], "feature_schema_identity": "wrong"}
+    (manifest_root / "AAPL.json").write_text(json.dumps(wrong_schema))
+    assert _completed_compatible_symbols(manifest_root, config) == set()
+
+    missing_evidence = {key: value for key, value in good.items() if key != "compatibility_identity"}
+    (manifest_root / "AAPL.json").write_text(json.dumps(missing_evidence))
+    with pytest.raises(FileNotFoundError, match="missing completed alpha partitions"):
+        _completed_partition_paths(manifest_root, expected_symbols=["AAPL"], config=config)
 
 
 def test_alpha_partition_failure_persists_payload_and_no_parquet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -470,7 +667,6 @@ def test_alpha_partition_failure_persists_payload_and_no_parquet(tmp_path: Path,
             }
         )
     )
-    _write_partition(base_root / "symbol=AAPL" / "rows.parquet", [{"symbol": "AAPL", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
     config = {
         "ml": {
             "canonical_v2_labeled_spine_manifest_path": str(manifest),
@@ -480,6 +676,9 @@ def test_alpha_partition_failure_persists_payload_and_no_parquet(tmp_path: Path,
             "output_dir": str(tmp_path / "out"),
         }
     }
+    base_path = base_root / "symbol=AAPL" / "rows.parquet"
+    _write_partition(base_path, [{"symbol": "AAPL", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
+    _base_partition_identity_path(base_path).write_text(json.dumps(_base_partition_identity(base_path, config, input_resolution={"canonical_dataset": {"hash": "hash"}})))
     monkeypatch.setattr(alpha_enrichment, "resolve_inputs", lambda config: {"canonical_dataset": {"hash": "hash"}})
     monkeypatch.setattr(alpha_enrichment, "_load_price_histories", lambda root, symbols: {"AAPL": []})
     monkeypatch.setattr(
@@ -576,6 +775,21 @@ def test_alpha_consolidation_duplicate_symbol_date_fails_and_does_not_promote(tm
 
     assert not output.exists()
     assert not output.with_suffix(output.suffix + ".tmp").exists()
+
+
+def test_alpha_failed_consolidation_preserves_existing_final_artifact(tmp_path: Path) -> None:
+    first = tmp_path / "partitions" / "symbol=AAA" / "rows.parquet"
+    second = tmp_path / "partitions" / "symbol=AAA_DUP" / "rows.parquet"
+    output = tmp_path / "out.parquet"
+    _write_partition(output, [{"symbol": "OLD", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 9.0}])
+    before = output.read_bytes()
+    _write_partition(first, [{"symbol": "AAA", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.1}])
+    _write_partition(second, [{"symbol": "AAA", "rebalance_date": "2026-01-01", "actual_forward_return_10d": 0.2}])
+
+    with pytest.raises(ValueError, match="duplicate symbol/date"):
+        _consolidate_partition_parquets([first, second], output, config={"ml": {}}, sample_path=None, expected_row_count=2)
+
+    assert output.read_bytes() == before
 
 
 def test_alpha_consolidation_successful_retry_publishes_after_failure(tmp_path: Path) -> None:
