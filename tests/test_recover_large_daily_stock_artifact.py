@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import inspect
 import json
 from pathlib import Path
 
+import pyarrow.parquet as pq
 import pytest
 
 from scripts.recover_large_daily_stock_artifact import (
@@ -21,6 +24,25 @@ def test_valid_partitions_are_reused(tmp_path):
     result = run_recovery(config_path=env["config"], run_dir=env["run"], audit_partitions=True, dry_run=True)
     assert result["audit"]["valid_partition_count"] == 2
     assert result["audit"]["recovery_decision"] == "ALL PARTITIONS REUSABLE"
+
+
+def test_authoritative_partition_writer_emits_recovery_lineage():
+    from core.research.ml.stock_level.prediction_artifacts.rows import (
+        _symbol_partition_payload,
+    )
+
+    rows = [_row("AAPL", "2024-01-02"), _row("AAPL", "2024-01-03")]
+    payload = _symbol_partition_payload(
+        "AAPL", rows, ["2024-01-02", "2024-01-03"],
+        diagnostic_run_id="run-1",
+    )
+    assert payload["diagnostic_run_id"] == "run-1"
+    for field in (
+        "dataset_identity", "feature_schema_identity",
+        "target_contract_identity", "decision_date_panel_identity",
+        "partition_identity",
+    ):
+        assert payload[field]
 
 
 def test_missing_partitions_are_detected(tmp_path):
@@ -47,7 +69,7 @@ def test_schema_mismatches_are_detected(tmp_path):
     env = _env(tmp_path)
     _write_partition(env["partition_root"] / "MSFT.json", "MSFT", extra={"extra_col": 1})
     result = run_recovery(config_path=env["config"], run_dir=env["run"], audit_partitions=True, dry_run=True)
-    assert result["audit"]["status_counts"]["SCHEMA_MISMATCH"] == 1
+    assert result["audit"]["status_counts"]["SCHEMA_MISMATCH"] == 2
 
 
 def test_duplicate_economic_rows_are_detected(tmp_path):
@@ -96,7 +118,7 @@ def test_failed_temporary_write_does_not_create_final_path(tmp_path, monkeypatch
     def fail(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(rec, "_write_recovered_parquet", fail)
+    monkeypatch.setattr(rec, "_write_parquet_batch", fail)
     inventory = audit_partitions_for_run(partition_root=env["partition_root"], expected_symbols=["AAPL", "MSFT"])
     with pytest.raises(RuntimeError):
         finalize_base_from_partitions(config=_config_payload(env["run"], env["universe"]), run_dir=env["run"], inventory=inventory, report_root=tmp_path / "reports")
@@ -174,6 +196,168 @@ def test_repeated_recovery_runs_are_idempotent(tmp_path):
     assert first["finalization"]["identity"]["sha256"] == second["finalization"]["identity"]["sha256"]
 
 
+def test_configured_batches_and_deterministic_economic_order(tmp_path):
+    env = _env(tmp_path)
+    result = run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        report_root=tmp_path / "reports", finalize_from_partitions=True,
+        batch_rows=1, progress_every_partitions=1,
+    )
+    report = result["finalization"]
+    assert report["maximum_rows_materialized"] == 1
+    assert report["parquet_row_groups"] == 4
+    table = pq.read_table(env["run"] / FINAL_BASE_NAME)
+    pairs = list(zip(
+        table["symbol"].to_pylist(),
+        table["decision_timestamp"].to_pylist(),
+    ))
+    assert pairs == sorted(pairs)
+
+
+@pytest.mark.parametrize(
+    ("field", "status"),
+    [
+        ("diagnostic_run_id", "DIAGNOSTIC_RUN_MISMATCH"),
+        ("dataset_identity", "DATASET_IDENTITY_MISMATCH"),
+        ("feature_schema_identity", "FEATURE_SCHEMA_MISMATCH"),
+        ("target_contract_identity", "TARGET_CONTRACT_MISMATCH"),
+        ("decision_date_panel_identity", "DECISION_PANEL_MISMATCH"),
+    ],
+)
+def test_mixed_partition_lineage_blocks(tmp_path, field, status):
+    env = _env(tmp_path)
+    _mutate_partition(env["partition_root"] / "MSFT.json", **{field: "other"})
+    result = run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        finalize_from_partitions=True, dry_run=True,
+    )
+    assert result["audit"]["status_counts"][status] == 2
+    assert result["audit"]["recovery_decision"] != "ALL PARTITIONS REUSABLE"
+
+
+def test_missing_partition_metadata_blocks(tmp_path):
+    env = _env(tmp_path)
+    _mutate_partition(
+        env["partition_root"] / "MSFT.json",
+        remove_field="dataset_identity",
+    )
+    row = inspect_partition(env["partition_root"] / "MSFT.json", symbol="MSFT")
+    assert row["status"] == "MISSING_METADATA"
+
+
+@pytest.mark.parametrize(
+    "versions",
+    [
+        ("stock_level_target_provenance_v1", "stock_level_target_provenance_v1"),
+        ("stock_level_target_provenance_v1", "stock_level_target_provenance_v2"),
+    ],
+)
+def test_v1_or_mixed_target_provenance_blocks(tmp_path, versions):
+    env = _env(tmp_path)
+    for symbol, version in zip(("AAPL", "MSFT"), versions):
+        _mutate_partition_rows(
+            env["partition_root"] / f"{symbol}.json",
+            lambda row, version=version: {
+                **row, "target_provenance_contract_version": version,
+            },
+        )
+    result = run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        finalize_from_partitions=True, dry_run=True,
+    )
+    assert result["audit"]["status_counts"]["TARGET_PROVENANCE_MISMATCH"]
+
+
+def test_duplicate_symbol_partition_blocks(tmp_path):
+    env = _env(tmp_path)
+    (env["partition_root"] / "AAPL-copy.json").write_bytes(
+        (env["partition_root"] / "AAPL.json").read_bytes()
+    )
+    result = run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        audit_partitions=True, dry_run=True,
+    )
+    assert result["audit"]["status_counts"]["DUPLICATE_SYMBOL_PARTITION"] == 2
+
+
+def test_failures_preserve_final_and_write_failure_phase(tmp_path, monkeypatch):
+    env = _env(tmp_path)
+    final = env["run"] / FINAL_BASE_NAME
+    final.write_bytes(b"known-good-final")
+    with pytest.raises(FileExistsError):
+        run_recovery(
+            config_path=env["config"], run_dir=env["run"],
+            report_root=tmp_path / "reports",
+            finalize_from_partitions=True,
+        )
+    assert final.read_bytes() == b"known-good-final"
+    final.unlink()
+    import scripts.recover_large_daily_stock_artifact as rec
+    monkeypatch.setattr(
+        rec, "_validate_written_artifact",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("invalid")),
+    )
+    with pytest.raises(RuntimeError):
+        run_recovery(
+            config_path=env["config"], run_dir=env["run"],
+            report_root=tmp_path / "reports",
+            finalize_from_partitions=True,
+        )
+    assert not final.exists()
+    failure = json.loads(
+        (tmp_path / "reports" / "finalization_report.json").read_text()
+    )
+    assert failure["failure_phase"] == "metadata_validation"
+
+
+def test_incompatible_completed_manifest_blocks(tmp_path):
+    env = _env(tmp_path)
+    report_root = tmp_path / "reports"
+    first = run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        report_root=report_root, finalize_from_partitions=True,
+    )
+    manifest_path = report_root / "finalization_report.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["partition_population_checksum"] = "incompatible"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(FileExistsError, match="compatible completed"):
+        run_recovery(
+            config_path=env["config"], run_dir=env["run"],
+            report_root=report_root, finalize_from_partitions=True,
+        )
+    assert first["finalization"]["final_checksum"] == file_sha256(
+        env["run"] / FINAL_BASE_NAME
+    )
+
+
+def test_progress_and_streaming_guards(tmp_path, capsys):
+    env = _env(tmp_path)
+    run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        report_root=tmp_path / "reports",
+        finalize_from_partitions=True, progress_every_partitions=1,
+    )
+    output = capsys.readouterr().out
+    for event in (
+        "partition audit started", "partition audit completed",
+        "streaming finalisation started", "partitions processed",
+        "temporary artifact closed", "metadata validation complete",
+        "atomic replacement complete",
+    ):
+        assert event in output
+    import scripts.recover_large_daily_stock_artifact as rec
+    source = inspect.getsource(rec.finalize_base_from_partitions)
+    assert "read_stock_level_artifact(" not in source
+    assert "pq.read_table(" not in source
+    assert ".to_pylist(" not in source
+    for forbidden in (
+        "stock_level_portfolio_replay", "allocation.exposures",
+        "stock_alpha_news", "alpaca_5m",
+    ):
+        assert forbidden not in inspect.getsource(rec)
+
+
 def _env(tmp_path: Path, *, missing=()):
     run = tmp_path / "run"
     partition_root = run / "stock_artifact_symbol_partitions"
@@ -201,6 +385,23 @@ def _config_payload(run: Path, universe: Path):
     }
 
 
+def _mutate_partition(path: Path, remove_field=None, **updates):
+    payload = json.loads(path.read_text())
+    if remove_field:
+        payload.pop(remove_field, None)
+    payload.update(updates)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _mutate_partition_rows(path: Path, transform):
+    payload = json.loads(path.read_text())
+    payload["rows"] = [transform(row) for row in payload["rows"]]
+    payload["rows_sha256"] = hashlib.sha256(
+        json.dumps(payload["rows"], sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _write_partition(path: Path, symbol: str, *, extra=None, duplicate=False):
     rows = [_row(symbol, "2024-01-02"), _row(symbol, "2024-01-03")]
     if duplicate:
@@ -212,9 +413,24 @@ def _write_partition(path: Path, symbol: str, *, extra=None, duplicate=False):
         "symbol": symbol,
         "row_count": len(rows),
         "expected_date_count": 2,
-        "rows_sha256": "test",
+        "rows_sha256": hashlib.sha256(
+            json.dumps(rows, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest(),
+        "diagnostic_run_id": "diagnostic-run-1",
+        "dataset_identity": "dataset-1",
+        "feature_schema_identity": "feature-schema-1",
+        "target_contract_identity": "target-contract-1",
+        "decision_date_panel_identity": "panel-1",
         "rows": rows,
     }
+    payload["partition_identity"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in payload.items() if key != "rows"},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -230,7 +446,7 @@ def _row(symbol: str, date: str):
         "actual_rank_normalized_forward_return_10d": "",
         "actual_top_decile_label_10d": "",
         "target_horizon_trading_days": 10,
-        "target_provenance_contract_version": "stock_level_target_provenance_v1",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "benchmark_symbol": "SPY",
         "target_status": "realized",
     }

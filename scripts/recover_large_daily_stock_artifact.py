@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +24,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from core.research.ml.stock_level.prediction_artifacts.targets import _add_cross_sectional_targets
 from core.research.ml.stock_level.stock_level_alpha_features import write_stock_level_alpha_features
 from core.research.ml.stock_level.stock_level_artifact_io import (
     artifact_identity,
@@ -34,6 +35,7 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
     CONTEXT_COLUMNS,
     PREDICTION_COLUMNS,
     TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
 )
 
 
@@ -51,6 +53,15 @@ REQUIRED_COLUMNS = {
 FINAL_BASE_NAME = "stock_level_prediction_artifacts.parquet"
 FINAL_ENRICHED_NAME = "stock_level_prediction_artifacts_enriched.parquet"
 MAX_REPORT_ROWS = 1000
+RECOVERY_SCHEMA_VERSION = "daily_stock_artifact_partition_recovery.v2"
+PARTITION_SCHEMA_VERSION = "stock_level_symbol_partition_v1"
+PARTITION_METADATA_FIELDS = (
+    "diagnostic_run_id",
+    "dataset_identity",
+    "feature_schema_identity",
+    "target_contract_identity",
+    "decision_date_panel_identity",
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -63,6 +74,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--finalize-from-partitions", action="store_true")
     parser.add_argument("--generate-enriched-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--batch-rows", type=int, default=65536)
+    parser.add_argument("--progress-every-partitions", type=int, default=25)
+    parser.add_argument("--temporary-output", type=Path)
+    parser.add_argument("--expected-diagnostic-run-id")
+    parser.add_argument("--fail-if-final-exists", action="store_true")
     args = parser.parse_args(argv)
     if not any([args.audit_partitions, args.resume_missing_partitions, args.finalize_from_partitions, args.generate_enriched_only]):
         raise SystemExit("Select one mode: --audit-partitions, --resume-missing-partitions, --finalize-from-partitions, or --generate-enriched-only")
@@ -76,6 +92,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         finalize_from_partitions=args.finalize_from_partitions,
         generate_enriched_only=args.generate_enriched_only,
         dry_run=args.dry_run,
+        batch_rows=args.batch_rows,
+        progress_every_partitions=args.progress_every_partitions,
+        temporary_output=args.temporary_output,
+        expected_diagnostic_run_id=args.expected_diagnostic_run_id,
+        fail_if_final_exists=args.fail_if_final_exists,
     )
     print(json.dumps(_summary(result), indent=2, sort_keys=True, default=str))
     return 0
@@ -90,6 +111,11 @@ def run_recovery(
     finalize_from_partitions: bool = False,
     generate_enriched_only: bool = False,
     dry_run: bool = False,
+    batch_rows: int = 65536,
+    progress_every_partitions: int = 25,
+    temporary_output: Path | None = None,
+    expected_diagnostic_run_id: str | None = None,
+    fail_if_final_exists: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     if not run_dir:
@@ -98,8 +124,21 @@ def run_recovery(
     partition_root = _partition_root(config, run_dir)
     expected_symbols = _expected_symbols(config)
     diagnostics = _diagnostics(run_dir / "stock_artifact_symbol_tasks.jsonl")
-    inventory = audit_partitions_for_run(partition_root=partition_root, expected_symbols=expected_symbols)
+    if batch_rows < 1 or progress_every_partitions < 1:
+        raise ValueError("batch_rows and progress_every_partitions must be positive")
+    print("[recovery] partition audit started", flush=True)
+    inventory = audit_partitions_for_run(
+        partition_root=partition_root,
+        expected_symbols=expected_symbols,
+        expected_diagnostic_run_id=expected_diagnostic_run_id,
+        progress_every_partitions=progress_every_partitions,
+    )
     audit = _partition_audit_payload(config_path, run_dir, partition_root, expected_symbols, diagnostics, inventory)
+    print(
+        f"[recovery] partition audit completed decision={audit['recovery_decision']} "
+        f"valid={audit['valid_partition_count']}/{audit['expected_symbol_count']}",
+        flush=True,
+    )
     if not dry_run:
         write_recovery_reports(audit, inventory, report_root=report_root)
 
@@ -111,7 +150,17 @@ def run_recovery(
         elif audit["recovery_decision"] != "ALL PARTITIONS REUSABLE":
             finalization = {"status": "BLOCKED", "reason": "partitions_not_all_reusable"}
         else:
-            finalization = finalize_base_from_partitions(config=config, run_dir=run_dir, inventory=inventory, report_root=report_root)
+            finalization = finalize_base_from_partitions(
+                config=config,
+                run_dir=run_dir,
+                inventory=inventory,
+                report_root=report_root,
+                batch_rows=batch_rows,
+                progress_every_partitions=progress_every_partitions,
+                temporary_output=temporary_output,
+                expected_diagnostic_run_id=expected_diagnostic_run_id,
+                fail_if_final_exists=fail_if_final_exists,
+            )
     if generate_enriched_only:
         if dry_run:
             enriched = {"status": "DRY_RUN", "expected_path": str(run_dir / FINAL_ENRICHED_NAME)}
@@ -119,7 +168,7 @@ def run_recovery(
             enriched = generate_enriched_artifact(config=config, run_dir=run_dir, report_root=report_root)
     elapsed = time.perf_counter() - started
     recovery_manifest = {
-        "schema_version": "daily_stock_artifact_recovery.v1",
+        "schema_version": RECOVERY_SCHEMA_VERSION,
         "config_path": str(config_path),
         "run_dir": str(run_dir),
         "partition_root": str(partition_root),
@@ -132,29 +181,59 @@ def run_recovery(
         "config_hash": _hash_json(config),
         "source_data_modified": False,
         "full_recomputation_triggered": False,
+        "bounded_batch_rows": batch_rows,
     }
     if not dry_run:
         _write_json(report_root / "recovery_manifest.json", recovery_manifest)
     return recovery_manifest
 
 
-def audit_partitions_for_run(*, partition_root: Path, expected_symbols: Sequence[str]) -> list[dict[str, Any]]:
+def audit_partitions_for_run(
+    *,
+    partition_root: Path,
+    expected_symbols: Sequence[str],
+    expected_diagnostic_run_id: str | None = None,
+    progress_every_partitions: int = 50,
+) -> list[dict[str, Any]]:
     rows = []
-    expected_date_count = None
-    schema_hash = None
-    for index, symbol in enumerate(expected_symbols, start=1):
-        path = partition_root / f"{symbol}.json"
-        row = inspect_partition(path, symbol=symbol)
-        if row["status"] == "VALID_COMPLETE":
-            expected_date_count = expected_date_count or row["decision_date_count"]
-            schema_hash = schema_hash or row["schema_hash"]
-            if row["decision_date_count"] != expected_date_count:
-                row["status"] = "DATE_COVERAGE_MISMATCH"
-            elif row["schema_hash"] != schema_hash:
-                row["status"] = "SCHEMA_MISMATCH"
+    expected = {str(symbol).upper() for symbol in expected_symbols}
+    paths = sorted(partition_root.glob("*.json"), key=lambda path: path.name.upper())
+    observed_symbols = []
+    for index, path in enumerate(paths, start=1):
+        row = inspect_partition(path, symbol=path.stem.upper())
+        observed_symbols.append(str(row["symbol"]).upper())
+        if str(row["symbol"]).upper() not in expected and row["status"] == "VALID_COMPLETE":
+            row["status"] = "EXTRA_SYMBOL"
+        if expected_diagnostic_run_id and row.get("diagnostic_run_id") != expected_diagnostic_run_id and row["status"] == "VALID_COMPLETE":
+            row["status"] = "DIAGNOSTIC_RUN_MISMATCH"
         rows.append(row)
-        if index % 50 == 0:
-            print(f"[recovery] audited partitions {index}/{len(expected_symbols)}", flush=True)
+        if index % progress_every_partitions == 0:
+            print(f"[recovery] audited partitions {index}/{len(paths)}", flush=True)
+    for symbol in sorted(expected - set(observed_symbols)):
+        rows.append(inspect_partition(partition_root / f"{symbol}.json", symbol=symbol))
+    duplicates = {symbol for symbol, count in Counter(observed_symbols).items() if count > 1}
+    for row in rows:
+        if row["symbol"] in duplicates:
+            row["status"] = "DUPLICATE_SYMBOL_PARTITION"
+    compatible = [row for row in rows if row["status"] == "VALID_COMPLETE"]
+    for field, status in (
+        ("diagnostic_run_id", "DIAGNOSTIC_RUN_MISMATCH"),
+        ("dataset_identity", "DATASET_IDENTITY_MISMATCH"),
+        ("feature_schema_identity", "FEATURE_SCHEMA_MISMATCH"),
+        ("target_contract_identity", "TARGET_CONTRACT_MISMATCH"),
+        ("decision_date_panel_identity", "DECISION_PANEL_MISMATCH"),
+    ):
+        if len({str(row.get(field) or "") for row in compatible}) > 1:
+            for row in compatible:
+                row["status"] = status
+    expected_date_counts = {row["decision_date_count"] for row in compatible}
+    schema_hashes = {row["schema_hash"] for row in compatible}
+    if len(expected_date_counts) > 1:
+        for row in compatible:
+            row["status"] = "DATE_COVERAGE_MISMATCH"
+    if len(schema_hashes) > 1:
+        for row in compatible:
+            row["status"] = "SCHEMA_MISMATCH"
     return rows
 
 
@@ -175,6 +254,9 @@ def inspect_partition(path: Path, *, symbol: str) -> dict[str, Any]:
         "duplicate_candidate_count": 0,
         "required_column_status": "",
         "status": "UNKNOWN",
+        **{field: "" for field in PARTITION_METADATA_FIELDS},
+        "target_provenance_contract_version": "",
+        "partition_identity": "",
     }
     if not path.exists():
         return {**base, "read_status": "missing", "status": "MISSING"}
@@ -199,8 +281,30 @@ def inspect_partition(path: Path, *, symbol: str) -> dict[str, Any]:
         if isinstance(row, Mapping)
     ]
     duplicate_count = len(keys) - len(set(keys))
+    payload_symbol = str(payload.get("symbol") or symbol).upper()
+    target_versions = sorted({
+        str(row.get("target_provenance_contract_version")).strip()
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("target_provenance_contract_version") not in (None, "")
+    })
+    missing_metadata = [
+        field for field in PARTITION_METADATA_FIELDS if not payload.get(field)
+    ]
     status = "VALID_COMPLETE"
-    if missing_required:
+    if payload.get("schema_version") != PARTITION_SCHEMA_VERSION:
+        status = "PARTITION_SCHEMA_MISMATCH"
+    elif payload_symbol != symbol.upper():
+        status = "SYMBOL_METADATA_MISMATCH"
+    elif payload.get("row_count") != len(rows):
+        status = "ROW_COUNT_MISMATCH"
+    elif payload.get("rows_sha256") != _partition_rows_hash(rows):
+        status = "CHECKSUM_MISMATCH"
+    elif missing_metadata:
+        status = "MISSING_METADATA"
+    elif target_versions != [TARGET_PROVENANCE_CONTRACT_VERSION]:
+        status = "TARGET_PROVENANCE_MISMATCH"
+    elif missing_required:
         status = "TARGET_CONTRACT_MISMATCH"
     elif duplicate_count:
         status = "DUPLICATE_ROWS"
@@ -208,6 +312,7 @@ def inspect_partition(path: Path, *, symbol: str) -> dict[str, Any]:
         status = "DATE_COVERAGE_MISMATCH"
     return {
         **base,
+        "symbol": payload_symbol,
         "file_size": path.stat().st_size,
         "row_count": len(rows),
         "column_count": len(columns),
@@ -221,80 +326,298 @@ def inspect_partition(path: Path, *, symbol: str) -> dict[str, Any]:
         "duplicate_candidate_count": duplicate_count,
         "required_column_status": "ok" if not missing_required else "missing:" + "|".join(missing_required),
         "status": status,
+        **{field: str(payload.get(field) or "") for field in PARTITION_METADATA_FIELDS},
+        "target_provenance_contract_version": (
+            target_versions[0] if len(target_versions) == 1 else "|".join(target_versions)
+        ),
+        "partition_identity": str(payload.get("partition_identity") or ""),
     }
 
 
-def finalize_base_from_partitions(*, config: Mapping[str, Any], run_dir: Path, inventory: Sequence[Mapping[str, Any]], report_root: Path) -> dict[str, Any]:
-    output_path = run_dir / FINAL_BASE_NAME
-    if output_path.exists():
-        started = time.perf_counter()
-        rows = read_stock_level_artifact(output_path, required_columns=REQUIRED_COLUMNS)
-        identity = _fast_parquet_identity(output_path, rows, list(rows[0]) if rows else [])
-        _write_base_audit_files(run_dir, rows, identity)
-        output_paths = _base_output_paths(run_dir, output_path)
-        _mark_stage_files(run_dir, "stock_artifact", "completed", output_paths)
-        report = {
-            "status": "EXISTING_VALID",
-            "path": str(output_path),
-            "identity": identity,
-            "row_count": len(rows),
-            "symbol_count": len({row["symbol"] for row in rows}),
-            "date_min": min(str(row["rebalance_date"]) for row in rows) if rows else "",
-            "date_max": max(str(row["rebalance_date"]) for row in rows) if rows else "",
-            "elapsed_seconds": time.perf_counter() - started,
-            "reused_partition_count": len([row for row in inventory if row["status"] == "VALID_COMPLETE"]),
-        }
-        _write_json(report_root / "finalization_report.json", report)
-        (report_root / "finalization_report.md").write_text(_finalization_markdown(report), encoding="utf-8")
-        return report
+def finalize_base_from_partitions(
+    *,
+    config: Mapping[str, Any],
+    run_dir: Path,
+    inventory: Sequence[Mapping[str, Any]],
+    report_root: Path,
+    batch_rows: int = 65536,
+    progress_every_partitions: int = 25,
+    temporary_output: Path | None = None,
+    expected_diagnostic_run_id: str | None = None,
+    fail_if_final_exists: bool = False,
+) -> dict[str, Any]:
     started = time.perf_counter()
-    rows: list[dict[str, Any]] = []
-    valid = [row for row in inventory if row["status"] == "VALID_COMPLETE"]
-    for index, item in enumerate(sorted(valid, key=lambda row: row["symbol"]), start=1):
-        payload = json.loads(Path(str(item["partition_path"])).read_text(encoding="utf-8"))
-        rows.extend(payload["rows"])
-        if index % 50 == 0:
-            print(f"[recovery] loaded partitions {index}/{len(valid)} rows={len(rows)} elapsed={time.perf_counter() - started:.1f}s", flush=True)
-    if not rows:
-        raise ValueError("no partition rows available for finalization")
-    rows.sort(key=lambda row: (str(row.get("decision_timestamp") or row.get("rebalance_date") or ""), str(row.get("symbol", "")).upper()))
-    _add_cross_sectional_targets(rows)
-    _validate_final_rows(rows, expected_symbols=[str(row["symbol"]) for row in valid])
-    fieldnames = list(rows[0])
-    tmp_path = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
-    if tmp_path.exists():
-        tmp_path.unlink()
-    try:
-        _write_recovered_parquet(
-            tmp_path,
-            rows,
-            fieldnames=fieldnames,
-            config=config,
+    started_at = _utc_now()
+    run_id = uuid.uuid4().hex
+    output_path = run_dir / FINAL_BASE_NAME
+    manifest_path = report_root / "finalization_report.json"
+    valid = sorted(
+        (row for row in inventory if row["status"] == "VALID_COMPLETE"),
+        key=lambda row: str(row["symbol"]).upper(),
+    )
+    if len(valid) != len(inventory) or not valid:
+        raise ValueError("finalization requires an ALL PARTITIONS REUSABLE audit")
+    partition_population_checksum = _hash_json([
+        (row["symbol"], row["checksum"], row.get("partition_identity"))
+        for row in valid
+    ])
+    if output_path.exists():
+        if fail_if_final_exists:
+            raise FileExistsError(f"final artifact already exists: {output_path}")
+        existing = _read_json(manifest_path)
+        if (
+            existing.get("status") == "COMPLETED"
+            and existing.get("partition_population_checksum")
+            == partition_population_checksum
+            and existing.get("final_checksum") == file_sha256(output_path)
+        ):
+            return {**existing, "status": "EXISTING_VALID", "idempotent": True}
+        raise FileExistsError(
+            "existing final artifact lacks a compatible completed recovery manifest"
         )
-        _write_sample_csv(run_dir / "stock_level_prediction_artifacts_sample.csv", rows[:100], fieldnames)
-        _validate_written_artifact(tmp_path, expected_rows=len(rows), expected_symbols=len(valid))
-        os.replace(tmp_path, output_path)
-    except Exception:
+    tmp_path = temporary_output or output_path.with_name(
+        f".{output_path.stem}.{run_id}.tmp.parquet"
+    )
+    if tmp_path.exists():
+        raise FileExistsError(f"temporary output already exists: {tmp_path}")
+    report_root.mkdir(parents=True, exist_ok=True)
+    failure_phase = "cross_sectional_index"
+    writer = None
+    database_path = report_root / f".recovery-{run_id}.sqlite"
+    rows_written = 0
+    row_groups = 0
+    sample_rows = []
+    population_digest = hashlib.sha256()
+    fieldnames = []
+    schema = None
+    print("[recovery] streaming finalisation started", flush=True)
+    try:
+        connection = sqlite3.connect(database_path)
+        try:
+            connection.execute(
+                "CREATE TABLE targets (decision_date TEXT, symbol TEXT, value REAL, "
+                "PRIMARY KEY(decision_date, symbol))"
+            )
+            connection.execute(
+                "CREATE TABLE economic_keys (symbol TEXT, decision TEXT, horizon TEXT, "
+                "PRIMARY KEY(symbol, decision, horizon))"
+            )
+            for item in valid:
+                payload = _read_partition_payload(Path(str(item["partition_path"])))
+                for row in payload["rows"]:
+                    key = _row_key(row)
+                    try:
+                        connection.execute(
+                            "INSERT INTO economic_keys VALUES (?,?,?)", key,
+                        )
+                    except sqlite3.IntegrityError as exc:
+                        raise ValueError(f"duplicate final economic row: {key}") from exc
+                    value = row.get("actual_forward_return_10d")
+                    if value not in (None, ""):
+                        connection.execute(
+                            "INSERT INTO targets VALUES (?,?,?)",
+                            (
+                                str(row.get("rebalance_date", "")),
+                                str(row.get("symbol", "")).upper(),
+                                float(value),
+                            ),
+                        )
+            connection.execute(
+                """CREATE TABLE ranks AS
+                   SELECT decision_date, symbol,
+                          ROW_NUMBER() OVER (
+                            PARTITION BY decision_date ORDER BY value, symbol
+                          ) - 1 AS rank_index,
+                          COUNT(*) OVER (PARTITION BY decision_date) AS population
+                   FROM targets"""
+            )
+            connection.execute(
+                "CREATE INDEX ranks_symbol_date ON ranks(symbol, decision_date)"
+            )
+            connection.commit()
+            failure_phase = "streaming_write"
+            compression = str(
+                (config.get("ml", {}) or {}).get(
+                    "stock_level_parquet_compression", "zstd"
+                )
+            ).lower()
+            for partition_index, item in enumerate(valid, start=1):
+                payload = _read_partition_payload(Path(str(item["partition_path"])))
+                symbol = str(item["symbol"]).upper()
+                ranks = {
+                    date: (rank_index, population)
+                    for date, rank_index, population in connection.execute(
+                        "SELECT decision_date, rank_index, population "
+                        "FROM ranks WHERE symbol=?",
+                        (symbol,),
+                    )
+                }
+                partition_rows = sorted(
+                    payload["rows"],
+                    key=lambda row: (
+                        str(row.get("decision_timestamp") or row.get("rebalance_date") or ""),
+                        str(row.get("target_horizon_trading_days") or ""),
+                        _hash_json(row),
+                    ),
+                )
+                for offset in range(0, len(partition_rows), batch_rows):
+                    batch = []
+                    for source in partition_rows[offset : offset + batch_rows]:
+                        row = dict(source)
+                        ranked = ranks.get(str(row.get("rebalance_date", "")))
+                        if ranked:
+                            rank_index, population = ranked
+                            row["actual_rank_normalized_forward_return_10d"] = (
+                                rank_index / (population - 1)
+                                if population > 1 else 0.5
+                            )
+                            top_count = max(1, (population + 9) // 10)
+                            row["actual_top_decile_label_10d"] = int(
+                                rank_index >= population - top_count
+                            )
+                        batch.append(row)
+                        population_digest.update(
+                            json.dumps(
+                                row, sort_keys=True, separators=(",", ":"),
+                                default=str,
+                            ).encode("utf-8")
+                        )
+                        population_digest.update(b"\n")
+                    if not fieldnames:
+                        fieldnames = list(batch[0])
+                    normalized = [
+                        {name: _normalize_value(row.get(name)) for name in fieldnames}
+                        for row in batch
+                    ]
+                    table = pa.Table.from_pylist(normalized)
+                    table = table.select(fieldnames)
+                    if writer is None:
+                        schema = table.schema
+                        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                        writer = pq.ParquetWriter(
+                            tmp_path, schema, compression=compression,
+                        )
+                    elif table.schema != schema:
+                        table = table.cast(schema)
+                    _write_parquet_batch(writer, table)
+                    row_groups += 1
+                    rows_written += len(batch)
+                    if len(sample_rows) < 100:
+                        sample_rows.extend(batch[: 100 - len(sample_rows)])
+                if (
+                    partition_index % progress_every_partitions == 0
+                    or partition_index == len(valid)
+                ):
+                    elapsed = max(time.perf_counter() - started, 1e-9)
+                    size = tmp_path.stat().st_size if tmp_path.exists() else 0
+                    print(
+                        f"[recovery] partitions processed {partition_index}/{len(valid)} "
+                        f"rows={rows_written} elapsed={elapsed:.1f}s "
+                        f"rows_per_second={rows_written / elapsed:.1f} "
+                        f"temporary_bytes={size}",
+                        flush=True,
+                    )
+            if writer is None:
+                raise ValueError("no partition rows available for finalization")
+            writer.close()
+            writer = None
+            _fsync_file(tmp_path)
+            print("[recovery] temporary artifact closed", flush=True)
+            failure_phase = "metadata_validation"
+            expected_rows = sum(int(row["row_count"]) for row in valid)
+            metadata = _validate_written_artifact(
+                tmp_path,
+                expected_rows=expected_rows,
+                expected_symbols=len(valid),
+                expected_schema_fingerprint=_schema_fingerprint(schema),
+            )
+            print("[recovery] metadata validation complete", flush=True)
+            failure_phase = "atomic_replacement"
+            os.replace(tmp_path, output_path)
+            print("[recovery] atomic replacement complete", flush=True)
+        finally:
+            connection.close()
+            database_path.unlink(missing_ok=True)
+    except Exception as exc:
+        if writer is not None:
+            writer.close()
         tmp_path.unlink(missing_ok=True)
+        failure = {
+            "schema_version": RECOVERY_SCHEMA_VERSION,
+            "recovery_run_id": run_id,
+            "status": "FAILED",
+            "started_at": started_at,
+            "completed_at": _utc_now(),
+            "failure_phase": failure_phase,
+            "failure_reason": f"{type(exc).__name__}: {exc}",
+            "temporary_path": str(tmp_path),
+            "final_path": str(output_path),
+            "source_partitions_preserved": True,
+        }
+        _write_json_atomic(manifest_path, failure)
         raise
-    final_rows = read_stock_level_artifact(output_path, required_columns=REQUIRED_COLUMNS)
-    final_identity = _fast_parquet_identity(output_path, final_rows, fieldnames)
+    final_checksum = file_sha256(output_path)
     report = {
+        "schema_version": RECOVERY_SCHEMA_VERSION,
+        "recovery_run_id": run_id,
         "status": "COMPLETED",
+        "started_at": started_at,
+        "completed_at": _utc_now(),
+        "source_partition_root": str(Path(str(valid[0]["partition_path"])).parent),
+        "diagnostic_run_id": expected_diagnostic_run_id or valid[0].get("diagnostic_run_id"),
+        "expected_partition_count": len(inventory),
+        "validated_partition_count": len(valid),
+        "missing_partition_count": 0,
+        "invalid_partition_count": 0,
+        "duplicate_partition_count": 0,
+        "dataset_identity": valid[0].get("dataset_identity"),
+        "feature_schema_identity": valid[0].get("feature_schema_identity"),
+        "target_contract_identity": valid[0].get("target_contract_identity"),
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "decision_date_panel_identity": valid[0].get("decision_date_panel_identity"),
+        "rows_expected": sum(int(row["row_count"]) for row in valid),
+        "rows_written": rows_written,
+        "parquet_row_groups": metadata["num_row_groups"],
+        "temporary_path": str(tmp_path),
+        "final_path": str(output_path),
         "path": str(output_path),
-        "identity": final_identity,
-        "row_count": len(final_rows),
-        "symbol_count": len({row["symbol"] for row in final_rows}),
-        "date_min": min(str(row["rebalance_date"]) for row in final_rows),
-        "date_max": max(str(row["rebalance_date"]) for row in final_rows),
+        "final_checksum": final_checksum,
+        "population_checksum": population_digest.hexdigest().upper(),
+        "partition_population_checksum": partition_population_checksum,
+        "schema_fingerprint": metadata["schema_fingerprint"],
+        "batch_rows": batch_rows,
+        "maximum_rows_materialized": min(batch_rows, max(int(row["row_count"]) for row in valid)),
+        "deterministic_order": ["symbol", "decision_timestamp", "target_horizon_trading_days", "row_hash"],
+        "failure_phase": None,
+        "failure_reason": None,
+        "source_commit": _git_commit(),
         "elapsed_seconds": time.perf_counter() - started,
         "reused_partition_count": len(valid),
+        "row_count": rows_written,
+        "symbol_count": len(valid),
+        "date_min": min(row["date_min"] for row in valid),
+        "date_max": max(row["date_max"] for row in valid),
+        "identity": {
+            "sha256": final_checksum,
+            "schema_fingerprint": metadata["schema_fingerprint"],
+            "row_count": rows_written,
+        },
     }
-    _write_json(report_root / "finalization_report.json", report)
-    (report_root / "finalization_report.md").write_text(_finalization_markdown(report), encoding="utf-8")
+    _write_json_atomic(manifest_path, report)
+    (report_root / "finalization_report.md").write_text(
+        _finalization_markdown(report), encoding="utf-8",
+    )
+    _write_sample_csv(
+        run_dir / "stock_level_prediction_artifacts_sample.csv",
+        sample_rows,
+        fieldnames,
+    )
     _append_recovery_history(run_dir, {"stock_artifact": report})
-    _write_base_audit_files(run_dir, rows, final_identity)
-    _mark_stage_files(run_dir, "stock_artifact", "completed", _base_output_paths(run_dir, output_path))
+    _write_base_audit_summary(run_dir, report)
+    _mark_stage_files(
+        run_dir, "stock_artifact", "completed",
+        _base_output_paths(run_dir, output_path),
+    )
     return report
 
 
@@ -463,18 +786,29 @@ def _validate_final_rows(rows: Sequence[Mapping[str, Any]], *, expected_symbols:
         raise ValueError(f"final rows missing required columns: {missing}")
 
 
-def _validate_written_artifact(path: Path, *, expected_rows: int, expected_symbols: int) -> None:
+def _validate_written_artifact(
+    path: Path,
+    *,
+    expected_rows: int,
+    expected_symbols: int,
+    expected_schema_fingerprint: str | None = None,
+) -> dict[str, Any]:
     parquet = pq.ParquetFile(path)
     if parquet.metadata.num_rows != expected_rows:
         raise ValueError("temporary artifact row count mismatch")
-    table = pq.read_table(path)
-    columns = set(table.schema.names)
+    columns = set(parquet.schema_arrow.names)
     missing = sorted(REQUIRED_COLUMNS - columns)
     if missing:
         raise ValueError(f"temporary artifact missing required columns: {missing}")
-    rows = table.to_pylist()
-    if len({row["symbol"] for row in rows}) != expected_symbols:
-        raise ValueError("temporary artifact symbol count mismatch")
+    fingerprint = _schema_fingerprint(parquet.schema_arrow)
+    if expected_schema_fingerprint and fingerprint != expected_schema_fingerprint:
+        raise ValueError("temporary artifact schema fingerprint mismatch")
+    return {
+        "num_rows": parquet.metadata.num_rows,
+        "num_row_groups": parquet.metadata.num_row_groups,
+        "schema_fingerprint": fingerprint,
+        "expected_symbol_count": expected_symbols,
+    }
 
 
 def _write_recovered_parquet(path: Path, rows: Sequence[Mapping[str, Any]], *, fieldnames: Sequence[str], config: Mapping[str, Any]) -> None:
@@ -484,6 +818,60 @@ def _write_recovered_parquet(path: Path, rows: Sequence[Mapping[str, Any]], *, f
     table = pa.Table.from_pylist(normalized)
     table = table.select([name for name in fieldnames if name in table.schema.names])
     pq.write_table(table, path, compression=compression)
+
+
+def _read_partition_payload(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload.get("rows"), list):
+        raise ValueError(f"partition rows are not a list: {path}")
+    return payload
+
+
+def _schema_fingerprint(schema: pa.Schema | None) -> str:
+    if schema is None:
+        return ""
+    return _hash_json([
+        (field.name, str(field.type), field.nullable) for field in schema
+    ])
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("r+b") as handle:
+        os.fsync(handle.fileno())
+
+
+def _write_parquet_batch(
+    writer: pq.ParquetWriter,
+    table: pa.Table,
+) -> None:
+    writer.write_table(table)
+
+
+def _write_base_audit_summary(
+    run_dir: Path,
+    report: Mapping[str, Any],
+) -> None:
+    payload = {
+        "row_count": report["row_count"],
+        "symbol_count": report["symbol_count"],
+        "date_range": [report["date_min"], report["date_max"]],
+        "canonical_artifact": dict(report["identity"]),
+        "recovered_from_symbol_partitions": True,
+        "recovery_manifest_schema": RECOVERY_SCHEMA_VERSION,
+        "research_only": True,
+        "trading_impact": "none",
+    }
+    _write_json_atomic(run_dir / "stock_level_prediction_artifacts.json", payload)
+    (run_dir / "stock_level_prediction_artifacts.md").write_text(
+        "\n".join([
+            "# Stock-Level Prediction Artifacts Recovery",
+            "",
+            f"- Rows: {payload['row_count']}",
+            f"- Symbols: {payload['symbol_count']}",
+            f"- Date range: {payload['date_range']}",
+        ]),
+        encoding="utf-8",
+    )
 
 
 def _normalize_value(value: Any) -> Any:
@@ -664,6 +1052,9 @@ def _inventory_fields() -> list[str]:
         "read_status",
         "duplicate_candidate_count",
         "required_column_status",
+        *PARTITION_METADATA_FIELDS,
+        "target_provenance_contract_version",
+        "partition_identity",
         "status",
     ]
 
@@ -688,6 +1079,26 @@ def _write_partition_parquet(path: Path, rows: Sequence[Mapping[str, Any]]) -> N
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _audit_markdown(audit: Mapping[str, Any]) -> str:
@@ -746,6 +1157,12 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def _hash_json(payload: Any) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+
+
+def _partition_rows_hash(rows: Sequence[Mapping[str, Any]]) -> str:
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _git_commit() -> str | None:

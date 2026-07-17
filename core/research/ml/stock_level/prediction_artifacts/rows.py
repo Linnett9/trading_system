@@ -519,7 +519,13 @@ def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
     partition_path = ""
     partition_written = False
     if partition_dir is not None:
-        partition_path = str(_write_symbol_partition(partition_dir, symbol, rows, dates))
+        partition_path = str(_write_symbol_partition(
+            partition_dir,
+            symbol,
+            rows,
+            dates,
+            diagnostic_run_id=diagnostic_run_id,
+        ))
         partition_written = True
     _write_task_event(
         diagnostics_path,
@@ -632,9 +638,21 @@ def _symbol_partition_path(partition_dir: Path, symbol: str) -> Path:
     return partition_dir / f"{safe_symbol}.json"
 
 
-def _write_symbol_partition(partition_dir: Path, symbol: str, rows: list[dict[str, Any]], expected_dates: list[str]) -> Path:
+def _write_symbol_partition(
+    partition_dir: Path,
+    symbol: str,
+    rows: list[dict[str, Any]],
+    expected_dates: list[str],
+    *,
+    diagnostic_run_id: str = "",
+) -> Path:
     path = _symbol_partition_path(partition_dir, symbol)
-    payload = _symbol_partition_payload(symbol, rows, expected_dates)
+    payload = _symbol_partition_payload(
+        symbol,
+        rows,
+        expected_dates,
+        diagnostic_run_id=diagnostic_run_id,
+    )
     if path.exists():
         existing = _load_symbol_partition(path, symbol=symbol, expected_dates=expected_dates)
         if _rows_hash(existing["rows"]) != payload["rows_sha256"]:
@@ -647,7 +665,13 @@ def _write_symbol_partition(partition_dir: Path, symbol: str, rows: list[dict[st
     return path
 
 
-def _symbol_partition_payload(symbol: str, rows: list[dict[str, Any]], expected_dates: list[str]) -> dict[str, Any]:
+def _symbol_partition_payload(
+    symbol: str,
+    rows: list[dict[str, Any]],
+    expected_dates: list[str],
+    *,
+    diagnostic_run_id: str = "",
+) -> dict[str, Any]:
     _validate_partition_rows(symbol, rows, expected_dates)
     rows_sha = _rows_hash(rows)
     payload = {
@@ -656,6 +680,31 @@ def _symbol_partition_payload(symbol: str, rows: list[dict[str, Any]], expected_
         "row_count": len(rows),
         "expected_date_count": len(expected_dates),
         "rows_sha256": rows_sha,
+        "diagnostic_run_id": diagnostic_run_id,
+        "dataset_identity": _hash_json({
+            "source_dataset_hashes": sorted({
+                str(row.get("source_dataset_hash"))
+                for row in rows
+                if row.get("source_dataset_hash")
+            }),
+            "decision_dates": expected_dates,
+        }),
+        "feature_schema_identity": _hash_json(
+            sorted({key for row in rows for key in row})
+        ),
+        "target_contract_identity": _hash_json({
+            "target_provenance_contract_version": sorted({
+                str(row.get("target_provenance_contract_version"))
+                for row in rows
+                if row.get("target_provenance_contract_version")
+            }),
+            "target_horizons": sorted({
+                str(row.get("target_horizon_trading_days"))
+                for row in rows
+                if row.get("target_horizon_trading_days") not in (None, "")
+            }),
+        }),
+        "decision_date_panel_identity": _hash_json(expected_dates),
         "rows": rows,
     }
     payload["partition_identity"] = _hash_json({key: value for key, value in payload.items() if key != "rows"})
