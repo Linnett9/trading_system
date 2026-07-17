@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import inspect
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -11,7 +12,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
 
-from infrastructure.data.market_sessions import next_trading_session, trading_sessions
+from infrastructure.data.market_sessions import EASTERN, next_trading_session, rth_close_for_date, trading_sessions
 from core.research.ml.stock_level import stock_level_prediction_artifacts
 from core.research.ml.stock_level.prediction_artifacts.service import (
     build_stock_level_prediction_artifacts,
@@ -22,6 +23,7 @@ from core.research.ml.stock_level.prediction_artifacts.sources import _universe_
 from core.research.ml.stock_level.prediction_artifacts.types import (
     TARGET_PROVENANCE_CONTRACT_VERSION,
 )
+from core.research.ml.stock_level.stock_level_alpha_features_io import _write_enriched_csv
 from core.research.ml.stock_level.stock_level_artifact_io import read_stock_level_artifact
 
 
@@ -166,11 +168,12 @@ def test_forward_target_provenance_uses_same_future_observation_and_preserves_va
     assert row["target_horizon"] == "10_trading_observations"
     assert row["target_observation_count"] == 10
     assert row["target_start_timestamp"] == "2024-01-01"
-    assert row["label_start_timestamp"] == "2024-01-02"
-    assert row["label_end_timestamp"] == "2024-01-11"
-    assert row["label_available_timestamp"] == "2024-01-12"
-    assert row["benchmark_label_end_timestamp"] == "2024-01-11"
-    assert row["benchmark_label_available_timestamp"] == "2024-01-12"
+    assert row["label_start_timestamp"] == _close_ts("2024-01-02")
+    assert row["label_end_timestamp"] == _close_ts("2024-01-11")
+    assert row["label_available_timestamp"] == _close_ts("2024-01-12")
+    assert row["benchmark_label_start_timestamp"] == row["label_start_timestamp"]
+    assert row["benchmark_label_end_timestamp"] == row["label_end_timestamp"]
+    assert row["benchmark_label_available_timestamp"] == row["label_available_timestamp"]
     assert audit["target_provenance_audit"]["complete_rows"] == 1
 
 
@@ -185,8 +188,8 @@ def test_forward_target_availability_uses_ordered_trading_calendar_not_calendar_
     row = next(row for row in rows if row["rebalance_date"] == "2024-01-02")
 
     assert row["actual_forward_return_10d"] == pytest.approx((110.0 / 100.0) - 1.0)
-    assert row["label_end_timestamp"] == "2024-01-16"
-    assert row["label_available_timestamp"] == "2024-01-17"
+    assert row["label_end_timestamp"] == _close_ts("2024-01-16")
+    assert row["label_available_timestamp"] == _close_ts("2024-01-17")
 
 
 def test_missing_benchmark_data_leaves_benchmark_outcome_blank():
@@ -636,8 +639,9 @@ def test_daily_targets_are_ten_trading_days_and_boundary_rows_are_explicit():
 
     assert realized["target_horizon"] == "10_trading_observations"
     assert realized["target_observation_count"] == 10
-    assert realized["label_end_timestamp"] == sessions[sessions.index(realized["rebalance_date"]) + 10]
-    assert realized["label_available_timestamp"] == sessions[sessions.index(realized["rebalance_date"]) + 11]
+    assert realized["label_start_timestamp"] == _close_ts(sessions[sessions.index(realized["rebalance_date"]) + 1])
+    assert realized["label_end_timestamp"] == _close_ts(sessions[sessions.index(realized["rebalance_date"]) + 10])
+    assert realized["label_available_timestamp"] == _close_ts(sessions[sessions.index(realized["rebalance_date"]) + 11])
     assert realized["benchmark_label_end_timestamp"] == realized["label_end_timestamp"]
     assert (
         realized["benchmark_label_available_timestamp"]
@@ -645,6 +649,218 @@ def test_daily_targets_are_ten_trading_days_and_boundary_rows_are_explicit():
     )
     assert boundary["target_status"] == "unrealized_boundary"
     assert boundary["actual_forward_return_10d"] == ""
+
+
+def test_daily_target_metadata_uses_next_session_close_after_intraday_decision():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 25))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-25",
+        decision_grid_min_history_sessions=0,
+    )
+
+    row = next(row for row in rows if row["rebalance_date"] == "2024-01-02")
+
+    assert row["target_start_timestamp"] == "2024-01-02"
+    assert row["decision_timestamp"] < row["label_start_timestamp"]
+    assert row["label_start_timestamp"] == _close_ts("2024-01-03")
+    assert row["label_start_timestamp"] <= row["label_end_timestamp"]
+    assert row["label_end_timestamp"] <= row["label_available_timestamp"]
+
+
+def test_daily_target_horizon_crosses_weekend_and_holiday_by_ordered_observations():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 12), date(2024, 2, 5))
+    ]
+    assert "2024-01-15" not in sessions  # MLK Day.
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-12")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 50.0),
+            "SPY": _session_closes(sessions, 100.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-12",
+        decision_grid_end_date="2024-02-05",
+        decision_grid_min_history_sessions=0,
+    )
+
+    row = next(row for row in rows if row["rebalance_date"] == "2024-01-12")
+    start_index = sessions.index("2024-01-12")
+    end_session = sessions[start_index + 10]
+
+    assert end_session == "2024-01-29"
+    assert row["label_start_timestamp"] == _close_ts("2024-01-16")
+    assert row["label_end_timestamp"] == _close_ts(end_session)
+    assert row["actual_forward_return_10d"] == pytest.approx((60.0 / 50.0) - 1.0)
+
+
+def test_missing_future_history_keeps_existing_unrealized_boundary_policy():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 12))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-12",
+        decision_grid_min_history_sessions=0,
+    )
+
+    assert all(row["target_status"] == "unrealized_boundary" for row in rows)
+    assert all(row["actual_forward_return_10d"] == "" for row in rows)
+
+
+def test_benchmark_and_residual_targets_share_future_label_contract():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 25))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "QQQ": _session_closes(sessions, 300.0),
+        },
+        market_symbol="QQQ",
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-25",
+        decision_grid_min_history_sessions=0,
+    )
+
+    row = next(row for row in rows if row["target_status"] == "realized")
+
+    assert row["benchmark_label_start_timestamp"] == row["label_start_timestamp"]
+    assert row["benchmark_label_end_timestamp"] == row["label_end_timestamp"]
+    assert row["benchmark_label_available_timestamp"] == row["label_available_timestamp"]
+    assert row["actual_market_residual_return_10d"] == pytest.approx(
+        row["actual_forward_return_10d"] - row["actual_benchmark_return_10d"]
+    )
+
+
+def test_metadata_only_correction_preserves_numerical_target_and_changes_identity(tmp_path):
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 25))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-25",
+        decision_grid_min_history_sessions=1,
+    )
+    row = next(row for row in rows if row["target_status"] == "realized")
+
+    legacy = {
+        **row,
+        "target_provenance_contract_version": "stock_level_target_provenance_v1",
+        "label_start_timestamp": row["label_start_timestamp"][:10],
+        "label_end_timestamp": row["label_end_timestamp"][:10],
+        "label_available_timestamp": row["label_available_timestamp"][:10],
+        "benchmark_label_start_timestamp": row["benchmark_label_start_timestamp"][:10],
+        "benchmark_label_end_timestamp": row["benchmark_label_end_timestamp"][:10],
+        "benchmark_label_available_timestamp": row["benchmark_label_available_timestamp"][:10],
+    }
+
+    assert row["actual_forward_return_10d"] == pytest.approx(legacy["actual_forward_return_10d"])
+    assert _logical_row_id(row) != _logical_row_id(legacy)
+
+
+def test_genuine_horizon_change_changes_numerical_target():
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 25))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-25",
+        decision_grid_min_history_sessions=0,
+    )
+
+    row = next(row for row in rows if row["rebalance_date"] == "2024-01-02")
+    start = 100.0
+    ten_session = (110.0 / start) - 1.0
+    nine_session = (109.0 / start) - 1.0
+
+    assert row["actual_forward_return_10d"] == pytest.approx(ten_session)
+    assert row["actual_forward_return_10d"] != pytest.approx(nine_session)
+
+
+def test_enriched_writer_preserves_base_target_metadata_equality(tmp_path):
+    sessions = [
+        day.isoformat()
+        for day in trading_sessions(date(2024, 1, 2), date(2024, 1, 25))
+    ]
+    rows, _ = build_stock_level_prediction_artifacts(
+        expanded_rows=[_expanded("2024-01-02")],
+        artifact_rows=[],
+        universe_symbols=["AAA"],
+        closes_by_symbol={
+            "AAA": _session_closes(sessions, 100.0),
+            "SPY": _session_closes(sessions, 200.0),
+        },
+        decision_grid_frequency="daily",
+        decision_grid_start_date="2024-01-02",
+        decision_grid_end_date="2024-01-25",
+        decision_grid_min_history_sessions=1,
+    )
+    base_row = next(row for row in rows if row["target_status"] == "realized")
+    enriched_row = {**base_row, "_stock_above_200d_average": 1.0}
+    path = tmp_path / "stock_level_prediction_artifacts_enriched.parquet"
+
+    _write_enriched_csv(path, [base_row], [enriched_row], config={"ml": {"stock_level_artifact_format": "parquet"}})
+    [written] = read_stock_level_artifact(path)
+
+    for column in (
+        "target_start_timestamp",
+        "label_start_timestamp",
+        "label_end_timestamp",
+        "label_available_timestamp",
+        "benchmark_target_start_timestamp",
+        "benchmark_label_start_timestamp",
+        "benchmark_label_end_timestamp",
+        "benchmark_label_available_timestamp",
+    ):
+        assert _utc_text(written[column]) == _utc_text(base_row[column])
 
 
 def test_future_price_and_future_context_mutations_do_not_change_earlier_daily_features():
@@ -789,6 +1005,27 @@ def _expanded(date: str) -> dict[str, str]:
         "spy_max_drawdown_63d": "-0.03",
         "spy_max_drawdown_126d": "-0.05",
     }
+
+
+def _close_ts(session: str) -> str:
+    close = rth_close_for_date(date.fromisoformat(session))
+    assert close is not None
+    return datetime.combine(date.fromisoformat(session), close, tzinfo=EASTERN).astimezone(
+        timezone.utc
+    ).isoformat().replace("+00:00", "Z")
+
+
+def _utc_text(value: object) -> str:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _logical_row_id(row: dict[str, object]) -> str:
+    return hashlib.sha256(
+        json.dumps(row, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _closes(start: float) -> dict[str, dict[str, float]]:

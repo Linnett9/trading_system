@@ -48,7 +48,7 @@ ACTUAL_COLUMNS = (
     "actual_rank_normalized_forward_return_10d",
     "actual_top_decile_label_10d",
 )
-TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v1"
+TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v2"
 TARGET_PROVENANCE_COLUMNS = (
     "decision_session_date",
     "target_provenance_contract_version",

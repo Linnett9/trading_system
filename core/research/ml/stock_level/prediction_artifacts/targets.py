@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from statistics import pstdev
 from typing import Any
+
+from infrastructure.data.market_sessions import EASTERN, rth_close_for_date
 
 from core.research.ml.stock_level.prediction_artifacts.math import (
     _trailing_volatility,
@@ -127,21 +130,21 @@ def _forward_target(
     end_index = index + horizon
     if start <= 0.0 or end_index >= len(dates):
         return ForwardTarget("", "", "", "", "", horizon)
-    end_timestamp = dates[end_index]
-    end = closes_by_date[end_timestamp]
+    end_session = dates[end_index]
+    end = closes_by_date[end_session]
     if end <= 0.0:
         return ForwardTarget("", "", "", "", "", horizon)
-    label_start = dates[index + 1] if index + 1 < len(dates) else ""
+    label_start_session = dates[index + 1] if index + 1 < len(dates) else ""
     candidates = sorted(set(decision_dates or dates))
-    available = _first_after(candidates, end_timestamp)
-    if not available:
+    available_session = _first_after(candidates, end_session)
+    if not available_session:
         return ForwardTarget("", "", "", "", "", horizon)
     return ForwardTarget(
         value=(end / start) - 1.0,
         start_timestamp=rebalance_date,
-        label_start_timestamp=label_start,
-        end_timestamp=end_timestamp,
-        available_timestamp=available,
+        label_start_timestamp=_label_observation_timestamp(label_start_session),
+        end_timestamp=_label_observation_timestamp(end_session),
+        available_timestamp=_label_observation_timestamp(available_session),
         horizon=horizon,
     )
 
@@ -177,6 +180,18 @@ def _target_provenance(
 
 def _first_after(values: list[str], timestamp: str) -> str:
     return next((value for value in values if value > timestamp), "")
+
+
+def _label_observation_timestamp(session: str) -> str:
+    if not session:
+        return ""
+    if "T" in session or " " in session:
+        return session
+    close = rth_close_for_date(date.fromisoformat(session))
+    if close is None:
+        return session
+    close_utc = datetime.combine(date.fromisoformat(session), close, tzinfo=EASTERN).astimezone(timezone.utc)
+    return close_utc.isoformat().replace("+00:00", "Z")
 
 
 def _decision_contract_fields(decision_metadata: dict[str, Any]) -> dict[str, Any]:
