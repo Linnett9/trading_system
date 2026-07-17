@@ -18,6 +18,7 @@ RUNBOOK_SOURCE_BOUNDARY = (
     "core/research/ml/runbook_source_lineage.py",
     "core/research/ml/reference/canonical_assets.py",
     "core/research/ml/reference/daily_stock_spine.py",
+    "core/research/ml/reference/daily_stock_spine_certification.py",
     "core/research/ml/selector_publication_gates.py",
     "core/research/ml/selector_component_readiness.py",
     "core/research/ml/stock_level/selector_dataset.py",
