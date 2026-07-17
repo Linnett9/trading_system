@@ -51,7 +51,6 @@ def parse_args():
             "ml-selector-dataset-lineage-audit",
             "ml-selector-parent-gate",
             "ml-selector-component-publish",
-            "ml-selector-registry-validate",
             "ml-selector-spine-validate",
             "ml-selector-dataset-validate",
             "ml-selector-dataset-build-preflight",
@@ -258,6 +257,7 @@ def parse_args():
     parser.add_argument("--experiment-ledger", default=None)
     parser.add_argument("--daily-spine-manifest", default=None)
     parser.add_argument("--symbol-registry-manifest", default=None)
+    parser.add_argument("--registry-run-id", default=None)
     parser.add_argument("--daily-feature-manifest", default=None)
     parser.add_argument("--selector-source", default=None)
     parser.add_argument("--selector-dataset-output-root", default=None)

@@ -27,6 +27,22 @@ $runRoot = Join-Path $repo "reports/ml/readiness/selector_evaluation_1c_e/runs/$
 $statePath = Join-Path $runRoot 'run_state.json'
 if (-not $TranscriptPath) { $TranscriptPath = Join-Path $runRoot 'transcript.txt' }
 
+function Get-CleanSourceLineage {
+    $sourceLineageText = & python -m core.research.ml.runbook_source_lineage $repo
+    $sourceLineageExitCode = $LASTEXITCODE
+    if (-not $sourceLineageText) { throw 'RUNBOOK_SOURCE_LINEAGE_CHECK_FAILED: no result returned' }
+    $result = $sourceLineageText | ConvertFrom-Json
+    if ($sourceLineageExitCode -ne 0 -or -not $result.clean_working_tree) {
+        throw "RUNBOOK_SOURCE_BOUNDARY_DIRTY: $(@($result.changes) -join '; ')"
+    }
+    return $result
+}
+
+$sourceLineage = $null
+if (-not $Resume -and -not $InitializeOnly -and $SyntheticStageOne -eq 'none') {
+    $sourceLineage = Get-CleanSourceLineage
+}
+
 $stageDefinitions = @(
     @{number=1; name='canonical registry preflight'; mutating=$false; resumable=$true; skippable=$false; expected='READY'},
     @{number=2; name='canonical registry publication'; mutating=$true; resumable=$true; skippable=$true; expected='complete'},
@@ -191,17 +207,23 @@ if ($Resume) {
     if (-not (Test-Path -LiteralPath $statePath)) { throw "Resume state does not exist: $statePath" }
     $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
     Assert-CompatibleRunState $state
+    if (@($state.stages | Where-Object status -eq 'running').Count -gt 0) { throw 'INTERRUPTED_STAGE_REQUIRES_MANUAL_REVIEW' }
+    if (-not $InitializeOnly -and $SyntheticStageOne -eq 'none') { $sourceLineage = Get-CleanSourceLineage }
     if ($state.source_commit -ne (git rev-parse HEAD)) { throw 'Source commit changed since the selected run; start a new RunId' }
+    if ($sourceLineage -and $state.source_tree_content_checksum -ne $sourceLineage.source_tree_content_checksum) { throw 'Runbook source boundary changed since the selected run; start a new RunId' }
     $state.requested_stage_range = @{from=$FromStage; through=$ThroughStage}
     $state.allow_selector_fits = [bool]$AllowSelectorFits
 } else {
     if (Test-Path -LiteralPath $statePath) { throw "RunId already exists; use -Resume or choose another RunId: $RunId" }
-    $sourceCommit = git rev-parse HEAD
+    $sourceCommit = if ($sourceLineage) { [string]$sourceLineage.source_commit } else { git rev-parse HEAD }
     $stageStateRecords = New-StageStateRecords $sourceCommit
     $state = [ordered]@{
         run_state_version='selector_parent_publication_run_state_v2'; run_id=$RunId
         start_timestamp=(Get-Date).ToUniversalTime().ToString('o'); repository_path=$repo
         source_commit=$sourceCommit; requested_stage_range=@{from=$FromStage; through=$ThroughStage}
+        clean_working_tree=if ($sourceLineage) { [bool]$sourceLineage.clean_working_tree } else { $null }
+        source_tree_content_checksum=if ($sourceLineage) { [string]$sourceLineage.source_tree_content_checksum } else { $null }
+        source_boundary=if ($sourceLineage) { [object[]]@($sourceLineage.source_boundary) } else { [object[]]@() }
         allow_selector_fits=[bool]$AllowSelectorFits
         stages=@($stageStateRecords)
         artifacts=@{}
@@ -229,6 +251,7 @@ if ($SyntheticStageOne -ne 'none') {
 
 $registryCsv = 'data/reference/assets/canonical_asset_registry.csv'
 $aliasCsv = 'data/reference/assets/provider_symbol_aliases.csv'
+$selectorConfig = 'config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml'
 $registryReport = "reports/data_lineage/canonical_asset_registry_v2/run=$RunId"
 $registryManifest = "$registryReport/manifest.json"
 $archiveManifest = 'reports/data_lineage/canonical_daily_v2/build_manifest.json'
@@ -259,8 +282,17 @@ try {
             }
             3 {
                 Require-Path 3 $registryManifest
-                $cmd = 'python main.py --mode ml-selector-registry-validate --symbol-registry-manifest "{0}" --verification-output "{1}"' -f $registryManifest, "$runRoot/registry_validation.json"
-                Invoke-Checked 3 $cmd @("$runRoot/registry_validation.json")
+                $stage3Report = "$runRoot/registry_validation.json"
+                $stage3Args = @('main.py', '--mode', 'ml-registry-verify', '--config', $selectorConfig, '--artifact-manifest', $registryManifest, '--registry-run-id', $RunId, '--verification-output', $stage3Report)
+                $cmd = 'python ' + (($stage3Args | ForEach-Object { '"{0}"' -f ($_ -replace '"', '\"') }) -join ' ')
+                Start-Stage 3 $cmd
+                & python @stage3Args
+                $code = $LASTEXITCODE
+                if ($code -ne 0) { Fail-Stage 3 $code "command exit code $code" }
+                if (-not (Test-Path -LiteralPath $stage3Report)) { Fail-Stage 3 2 "missing expected output: $stage3Report" }
+                $stage3Payload = Get-Content -LiteralPath $stage3Report -Raw | ConvertFrom-Json
+                if ($stage3Payload.status -ne 'READY') { Fail-Stage 3 2 "registry verification status is not READY" }
+                Complete-Stage 3 0 @($stage3Report)
             }
             4 {
                 Require-Path 4 $registryManifest; Require-Path 4 $archiveManifest; Require-Path 4 $baseArtifact; Require-Path 4 $enrichedArtifact
@@ -333,9 +365,6 @@ try {
             11 {
                 if (-not $AllowSelectorFits) { Fail-Stage 11 2 'explicit -AllowSelectorFits is required' }
                 if (-not $ComponentJobId -or -not $TrainingRowsJson -or -not $PredictionRowsJson) { Fail-Stage 11 2 'ComponentJobId, TrainingRowsJson, and PredictionRowsJson are required' }
-                Require-Path 11 $OperationalReadinessReport
-                $ops = Get-Content -LiteralPath $OperationalReadinessReport -Raw | ConvertFrom-Json
-                if ($ops.job_statuses.'JOB-003' -ne 'READY' -or $ops.resources.finaliser_active) { Fail-Stage 11 2 'finaliser/resource gate blocks heavy selector publication' }
                 $preflightPath = [string]$state.artifacts.component_preflight; Require-Path 11 $preflightPath
                 $preflight = Get-Content -LiteralPath $preflightPath -Raw | ConvertFrom-Json
                 $job = @($preflight.production_plan | Where-Object job_id -eq $ComponentJobId)

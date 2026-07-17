@@ -9,6 +9,12 @@ from core.research.ml.experiment_ledger import append_ledger_event, experiment_s
 from core.research.ml.provenance import source_provenance
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.legacy_evidence import import_legacy_evidence
+from core.research.ml.reference.canonical_assets import (
+    file_sha256,
+    read_aliases_csv,
+    read_assets_csv,
+    registry_content_hash,
+)
 
 
 def run_artifact_lineage_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
@@ -45,6 +51,8 @@ def run_artifact_lineage_verify(config: Mapping[str, Any], args: Any) -> dict[st
 
 
 def run_registry_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    if getattr(args, "artifact_manifest", None):
+        return _run_canonical_registry_publication_verify(args)
     first = load_registry_bundle()
     second = load_registry_bundle()
     if first.registry_set_hash != second.registry_set_hash:
@@ -68,6 +76,83 @@ def run_registry_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
     if args.verification_output: _write_reports(Path(args.verification_output), result)
     print(json.dumps(result, sort_keys=True))
     return result
+
+
+def _run_canonical_registry_publication_verify(args: Any) -> dict[str, Any]:
+    manifest_path = Path(args.artifact_manifest)
+    expected_run_id = str(getattr(args, "registry_run_id", None) or "")
+    blockers: list[str] = []
+    manifest = _read_json(manifest_path, blockers, "MANIFEST_MISSING_OR_INVALID")
+    audit = _read_json(manifest_path.parent / "registry_audit.json", blockers, "AUDIT_MISSING_OR_INVALID")
+    if not expected_run_id or manifest_path.parent.name != f"run={expected_run_id}":
+        blockers.append("RUN_ID_MISMATCH")
+    registry_path = Path(str(manifest.get("registry_path") or "")) if manifest.get("registry_path") else None
+    alias_path = Path(str(manifest.get("alias_registry_path") or "")) if manifest.get("alias_registry_path") else None
+    assets, aliases = [], []
+    for path, checksum_key, missing, mismatch, invalid, reader, destination in (
+        (registry_path, "registry_content_checksum", "REGISTRY_ARTIFACT_MISSING", "REGISTRY_ARTIFACT_CHECKSUM_MISMATCH", "REGISTRY_ARTIFACT_INVALID", read_assets_csv, assets),
+        (alias_path, "alias_registry_checksum", "ALIAS_ARTIFACT_MISSING", "ALIAS_ARTIFACT_CHECKSUM_MISMATCH", "ALIAS_ARTIFACT_INVALID", read_aliases_csv, aliases),
+    ):
+        if path is None or not path.is_file():
+            blockers.append(missing)
+            continue
+        if file_sha256(path) != str(manifest.get(checksum_key) or ""):
+            blockers.append(mismatch)
+        try:
+            destination.extend(reader(path))
+        except Exception:
+            blockers.append(invalid)
+    calculated_hash = registry_content_hash(assets, aliases) if assets and aliases else None
+    published_hash = str(manifest.get("registry_content_hash") or "")
+    if not calculated_hash or calculated_hash != published_hash or audit.get("registry_content_hash") != published_hash:
+        blockers.append("REGISTRY_CONTENT_HASH_MISMATCH")
+    checks = (
+        (manifest.get("publication_status"), "complete", "PUBLICATION_INCOMPLETE"),
+        (manifest.get("validation_status"), "VERIFIED", "MANIFEST_NOT_VERIFIED"),
+        (manifest.get("row_count"), 514, "MANIFEST_ASSET_COUNT_NOT_514"),
+        (manifest.get("symbol_count"), 514, "MANIFEST_SYMBOL_COUNT_NOT_514"),
+        (manifest.get("row_identity_checksum"), published_hash, "MANIFEST_IDENTITY_MISMATCH"),
+        (audit.get("canonical_asset_count"), 514, "CANONICAL_ASSET_COUNT_NOT_514"),
+        (audit.get("resolved_collection_symbol_count"), 514, "RESOLVED_SYMBOL_COUNT_NOT_514"),
+    )
+    blockers.extend(reason for actual, expected, reason in checks if actual != expected)
+    if audit.get("unresolved_collection_symbols"):
+        blockers.append("UNRESOLVED_COLLECTION_SYMBOLS")
+    if audit.get("ambiguous_aliases"):
+        blockers.append("AMBIGUOUS_ALIASES")
+    blockers = sorted(set(blockers))
+    result = {
+        "registry_verification_version": "canonical_registry_publication_verification_v1",
+        "status": "READY" if not blockers else "BLOCKED",
+        "run_id": expected_run_id,
+        "manifest_path": str(manifest_path),
+        "manifest_checksum": file_sha256(manifest_path) if manifest_path.is_file() else None,
+        "registry_content_hash": calculated_hash,
+        "canonical_asset_count": len(assets),
+        "resolved_collection_symbol_count": audit.get("resolved_collection_symbol_count"),
+        "unresolved_collection_symbols": audit.get("unresolved_collection_symbols", []),
+        "ambiguous_aliases": audit.get("ambiguous_aliases", []),
+        "blockers": blockers,
+        "feedless": True,
+        "publication_modified": False,
+    }
+    if args.verification_output:
+        _write_reports(Path(args.verification_output), result)
+    print(json.dumps(result, sort_keys=True))
+    if blockers:
+        raise SystemExit(2)
+    return result
+
+
+def _read_json(path: Path, blockers: list[str], blocker: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON object required")
+        return payload
+    except (OSError, ValueError):
+        blockers.append(blocker)
+        return {}
 
 
 def run_legacy_evidence_import(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
