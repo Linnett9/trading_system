@@ -4,21 +4,151 @@ import itertools
 import json
 import math
 import platform
+import os
+import uuid
 from datetime import datetime, timezone
 from hashlib import sha256
 from statistics import NormalDist
 from typing import Any, Mapping, Sequence
+from pathlib import Path
 
 import numpy as np
 
 
 RESULT_SCHEMA = "statistical_safeguard_result_v1"
+CONTRACT_VERSION = "ml_statistical_safeguards.v1"
 MATCHED_SERIES_SCHEMA = "matched_statistical_series_v1"
 BLOCK_POLICY_VERSION = "explicit_circular_block_length_v1"
 STATUSES = {
     "VALID", "INSUFFICIENT_DATA", "INVALID_INPUT", "UNMATCHED_POPULATION",
     "UNSUPPORTED_CONFIGURATION", "NUMERICAL_FAILURE",
 }
+SUPPORTED_STATISTICS = {"mean", "sharpe_ratio", "rank_ic_mean", "top_minus_bottom_mean"}
+DEFERRED_V2_METHODS = ("superior_predictive_ability", "model_confidence_set")
+
+
+def block_bootstrap(
+    observations: Sequence[float], *, statistic_id: str, block_length: int,
+    bootstrap_count: int = 2000, random_seed: int = 0,
+    annualisation_factor: float = 252.0, minimum_observations: int = 3,
+    confidence_level: float = 0.95,
+) -> dict[str, Any]:
+    method = f"moving_circular_block_bootstrap:{statistic_id}"
+    params = {
+        "statistic_id": statistic_id, "block_length": block_length,
+        "bootstrap_count": bootstrap_count, "annualisation_factor": annualisation_factor,
+        "minimum_observations": minimum_observations,
+        "block_length_rule": "explicit_circular_temporal_blocks",
+        "confidence_level": confidence_level,
+    }
+    base = {"observation_count": len(observations), "candidate_count": 1,
+            "orientation": "temporal_input_order", "overlap_horizon": block_length}
+    try:
+        values = np.asarray(_finite_vector(observations, "observations"), dtype=float)
+        if statistic_id not in SUPPORTED_STATISTICS:
+            raise SafeguardInputError("UNSUPPORTED_CONFIGURATION", "STATISTIC_ID_UNSUPPORTED")
+        if len(values) < minimum_observations:
+            raise SafeguardInputError("INSUFFICIENT_DATA", "OBSERVATION_COUNT_INSUFFICIENT")
+        _validate_bootstrap_parameters(len(values), block_length, bootstrap_count, confidence_level)
+        rng = np.random.default_rng(random_seed)
+        indices = _circular_indices(len(values), block_length, bootstrap_count, rng)
+        samples = values[indices]
+        estimates = np.asarray([_supported_statistic(row, statistic_id, annualisation_factor) for row in samples])
+        observed = _supported_statistic(values, statistic_id, annualisation_factor)
+        alpha = 1 - confidence_level
+        metrics = {
+            "observed_statistic": observed,
+            "bootstrap_standard_error": float(np.std(estimates, ddof=1)),
+            "confidence_interval": [
+                float(np.quantile(estimates, alpha / 2)),
+                float(np.quantile(estimates, 1 - alpha / 2)),
+            ],
+            "resample_checksum": canonical_hash(estimates.tolist()),
+            "temporal_blocks_preserved": True,
+        }
+        return _result(method, "1.0", base, params, random_seed, metrics)
+    except SafeguardInputError as exc:
+        return _blocked_result(method, "1.0", base, params, random_seed, exc)
+
+
+def window_dispersion(
+    records: Sequence[Mapping[str, Any]], *, threshold: float = 0.0,
+) -> dict[str, Any]:
+    method = "window_regime_dispersion"
+    params = {"threshold": threshold, "minimum_observations": 2}
+    try:
+        if len(records) < 2:
+            raise SafeguardInputError("INSUFFICIENT_DATA", "WINDOW_RECORDS_INSUFFICIENT")
+        rows = sorted(
+            ({"window_id": str(row["window_id"]), "value": float(row["value"])} for row in records),
+            key=lambda row: row["window_id"],
+        )
+        values = np.asarray([row["value"] for row in rows])
+        if not np.isfinite(values).all() or len({row["window_id"] for row in rows}) != len(rows):
+            raise SafeguardInputError("INVALID_INPUT", "WINDOW_RECORDS_INVALID")
+        metrics = {
+            "mean": float(values.mean()), "standard_deviation": float(values.std(ddof=1)),
+            "minimum": float(values.min()), "maximum": float(values.max()),
+            "positive_window_count": int(np.sum(values > 0)),
+            "negative_window_count": int(np.sum(values < 0)),
+            "worst_window": rows[int(np.argmin(values))]["window_id"],
+            "best_window": rows[int(np.argmax(values))]["window_id"],
+            "fraction_above_threshold": float(np.mean(values > threshold)),
+        }
+        metadata = {"observation_count": len(rows), "candidate_count": 1,
+                    "orientation": "window_id", "overlap_horizon": 1}
+        return _result(method, "1.0", metadata, params, None, metrics)
+    except (SafeguardInputError, KeyError, TypeError, ValueError) as exc:
+        error = exc if isinstance(exc, SafeguardInputError) else SafeguardInputError("INVALID_INPUT", "WINDOW_RECORDS_INVALID")
+        return _blocked_result(method, "1.0", {}, params, None, error)
+
+
+def effective_trial_accounting(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    method = "wait3_effective_material_trial_accounting"
+    params = {"counting_rule": "fitted_selector_trials_only", "minimum_observations": 1}
+    try:
+        if evidence.get("ledger_contract_version") != "selector_experiment_ledger.v1":
+            raise SafeguardInputError("INVALID_INPUT", "SELECTOR_LEDGER_CONTRACT_INVALID")
+        expected = canonical_hash({key: value for key, value in evidence.items() if key != "ledger_checksum"})
+        if evidence.get("ledger_checksum") != expected:
+            raise SafeguardInputError("INVALID_INPUT", "SELECTOR_LEDGER_CHECKSUM_INVALID")
+        rows = list(evidence.get("experiments") or [])
+        if any(row.get("model_id") == "momentum" for row in rows):
+            raise SafeguardInputError("INVALID_INPUT", "MOMENTUM_COUNTED_AS_FITTED_TRIAL")
+        counts = evidence.get("trial_counts") or {}
+        reconstructed = {
+            "planned_material_trials": len(rows),
+            "executed_material_trials": sum(row.get("status") != "PLANNED" for row in rows),
+            "failed_material_trials": sum(row.get("status") == "FAILED" for row in rows),
+            "rejected_material_trials": sum(row.get("status") == "REJECTED" for row in rows),
+            "effective_fitted_model_trial_count": len(rows),
+        }
+        for key in ("planned_material_trials", "executed_material_trials",
+                    "failed_material_trials", "rejected_material_trials"):
+            if counts.get(key) != reconstructed[key]:
+                raise SafeguardInputError("INVALID_INPUT", f"LEDGER_COUNT_MISMATCH:{key}")
+        metadata = {"observation_count": len(rows), "candidate_count": len({row["model_id"] for row in rows}),
+                    "orientation": "material_trials", "overlap_horizon": 1}
+        return _result(method, "1.0", metadata, params, None, reconstructed)
+    except (SafeguardInputError, KeyError, TypeError) as exc:
+        error = exc if isinstance(exc, SafeguardInputError) else SafeguardInputError("INVALID_INPUT", "LEDGER_EVIDENCE_INVALID")
+        return _blocked_result(method, "1.0", {}, params, None, error)
+
+
+def write_safeguard_report(path: Path, result: Mapping[str, Any]) -> None:
+    if result.get("calculation_status") != "VALID":
+        raise ValueError("Only complete valid safeguard results may be written")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(result, handle, indent=2, sort_keys=True, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 class SafeguardInputError(ValueError):
@@ -145,6 +275,8 @@ def deflated_sharpe_ratio(
     skewness: float,
     kurtosis: float,
     effective_search_count: int | None,
+    raw_trial_count: int | None = None,
+    annualisation_factor: float = 252.0,
     variance_convention: str = "bailey_lopez_de_prado_2014",
     annualisation_convention: str = "input_sharpe_already_annualised",
 ) -> dict[str, Any]:
@@ -153,6 +285,8 @@ def deflated_sharpe_ratio(
         "observed_sharpe": observed_sharpe, "observation_count": observation_count,
         "skewness": skewness, "kurtosis": kurtosis,
         "effective_search_count": effective_search_count,
+        "raw_trial_count": raw_trial_count if raw_trial_count is not None else effective_search_count,
+        "annualisation_factor": annualisation_factor, "minimum_observations": 3,
         "variance_convention": variance_convention,
         "annualisation_convention": annualisation_convention,
     }
@@ -191,6 +325,8 @@ def deflated_sharpe_ratio(
             "deflated_sharpe_z_score": z_score,
             "deflated_sharpe_probability": probability,
             "effective_search_count": effective_search_count,
+            "raw_trial_count": raw_trial_count if raw_trial_count is not None else effective_search_count,
+            "return_skewness": skewness, "return_kurtosis": kurtosis,
         }
         return _result(method, "bailey_lopez_de_prado_2014_v1", base, params, None, metrics)
     except SafeguardInputError as exc:
@@ -202,10 +338,21 @@ def probability_of_backtest_overfitting(
     *,
     partition_budget: int = 100,
     random_seed: int = 0,
+    selection_metric: str = "mean_return",
+    evaluation_metric: str = "mean_return",
 ) -> dict[str, Any]:
     method = "combinatorially_symmetric_cross_validation_pbo"
-    params = {"partition_budget": partition_budget, "selection_policy": "seeded_bounded_lexicographic_cscv"}
+    params = {
+        "partition_budget": partition_budget,
+        "selection_policy": "seeded_bounded_lexicographic_cscv",
+        "selection_metric": selection_metric, "evaluation_metric": evaluation_metric,
+        "minimum_observations": 6,
+    }
     try:
+        if selection_metric not in {"mean_return", "sharpe_ratio", "rank_ic_mean"} or evaluation_metric not in {"mean_return", "sharpe_ratio", "rank_ic_mean"}:
+            raise SafeguardInputError("UNSUPPORTED_CONFIGURATION", "PBO_METRIC_UNSUPPORTED")
+        if "final_audit" in set(map(str, series.get("partition_labels", ()))):
+            raise SafeguardInputError("INVALID_INPUT", "UNTOUCHED_FINAL_AUDIT_NOT_PERMITTED_IN_PBO")
         validated = _validated_payload(series, minimum_observations=6)
         candidate_ids = sorted(validated["candidates"])
         if len(candidate_ids) < 2:
@@ -232,9 +379,15 @@ def probability_of_backtest_overfitting(
         for train_tuple in selected:
             train = np.asarray(train_tuple, dtype=int)
             test = np.asarray(sorted(set(range(n)) - set(train_tuple)), dtype=int)
-            train_means = {candidate: float(advantages[candidate][train].mean()) for candidate in candidate_ids}
+            train_means = {
+                candidate: _pbo_metric(advantages[candidate][train], selection_metric)
+                for candidate in candidate_ids
+            }
             winner = sorted(candidate_ids, key=lambda item: (-train_means[item], item))[0]
-            test_means = {candidate: float(advantages[candidate][test].mean()) for candidate in candidate_ids}
+            test_means = {
+                candidate: _pbo_metric(advantages[candidate][test], evaluation_metric)
+                for candidate in candidate_ids
+            }
             ordered = sorted(candidate_ids, key=lambda item: (test_means[item], item))
             rank = ordered.index(winner) + 1
             relative_rank = rank / (len(candidate_ids) + 1)
@@ -249,9 +402,19 @@ def probability_of_backtest_overfitting(
             raise SafeguardInputError("INSUFFICIENT_DATA", "PBO_PARTITIONS_INSUFFICIENT")
         metrics = {
             "partition_count": len(rows), "full_partition_count": full_count,
+            "number_of_valid_combinations": len(rows),
             "bounded_selection_applied": full_count > partition_budget,
             "probability_of_backtest_overfitting": sum(row["logit"] <= 0 for row in rows) / len(rows),
             "mean_logit": float(np.mean([row["logit"] for row in rows])),
+            "logit_distribution": [row["logit"] for row in rows],
+            "selected_in_sample_candidate_identities": [row["in_sample_winner"] for row in rows],
+            "out_of_sample_ranks": [row["out_of_sample_rank_ascending"] for row in rows],
+            "tied_result_count": sum(
+                len({
+                    float(advantages[candidate][np.asarray(row["training_indexes"], dtype=int)].mean())
+                    for candidate in candidate_ids
+                }) < len(candidate_ids) for row in rows
+            ),
             "partitions": rows,
         }
         return _result(method, "cscv_bounded_v1", validated, params, random_seed, metrics)
@@ -382,6 +545,15 @@ def seed_dispersion(
     try:
         if not records:
             raise SafeguardInputError("INSUFFICIENT_DATA", "SEED_RECORDS_MISSING")
+        identity_fields = (
+            "dataset_identity", "feature_schema", "target_contract", "model_definition",
+            "hyperparameters_without_seed", "fold_date_panel", "source_commit",
+        )
+        supplied = [field for field in identity_fields if any(field in row for row in records)]
+        for field in supplied:
+            identities = {canonical_hash(row.get(field)) for row in records}
+            if len(identities) != 1:
+                raise SafeguardInputError("UNMATCHED_POPULATION", f"IMMUTABLE_DEFINITION_MISMATCH:{field}")
         latest: dict[tuple[str, str], Mapping[str, Any]] = {}
         retry_count = 0
         for row in records:
@@ -493,6 +665,7 @@ def _block_warnings(block_length: int, overlap_horizon: int) -> list[str]:
 
 def _result(method: str, version: str, series: Mapping[str, Any], params: Mapping[str, Any], random_seed: int | None, metrics: Mapping[str, Any], *, warnings: Sequence[str] = ()) -> dict[str, Any]:
     logical = {
+        "contract_version": CONTRACT_VERSION,
         "contract_schema": RESULT_SCHEMA, "method_id": method, "method_version": version,
         "status": "VALID", "valid": True, "blocking_reasons": [], "warnings": sorted(set(warnings)),
         "observation_count": int(series.get("observation_count", 0)),
@@ -501,14 +674,23 @@ def _result(method: str, version: str, series: Mapping[str, Any], params: Mappin
         "parameter_checksum": canonical_hash(_identity_safe(params)), "deterministic_random_seed": random_seed,
         "input_orientation": series.get("orientation"), "target_overlap_horizon": series.get("overlap_horizon"),
         "result_metrics": _jsonable(metrics),
+        "effective_trial_count": params.get("effective_search_count"),
+        "block_length_rule": params.get("block_length_rule") or params.get("block_policy_version"),
+        "bootstrap_count": params.get("bootstrap_count") or params.get("replications", 0),
+        "random_seed": random_seed,
+        "annualisation_factor": params.get("annualisation_factor"),
+        "minimum_observations": params.get("minimum_observations"),
+        "calculation_status": "VALID", "failure_unavailable_reason": None,
     }
     logical["logical_result_checksum"] = canonical_hash(logical)
+    logical["calculation_checksum"] = logical["logical_result_checksum"]
     return {**logical, "creation_metadata": _creation_metadata()}
 
 
 def _blocked_result(method: str, version: str, series: Mapping[str, Any], params: Mapping[str, Any], random_seed: int | None, error: SafeguardInputError) -> dict[str, Any]:
     status = error.status if error.status in STATUSES else "INVALID_INPUT"
     logical = {
+        "contract_version": CONTRACT_VERSION,
         "contract_schema": RESULT_SCHEMA, "method_id": method, "method_version": version,
         "status": status, "valid": False, "blocking_reasons": [error.reason], "warnings": [],
         "observation_count": int(series.get("observation_count", len(series.get("observation_ids", ()))) if isinstance(series, Mapping) else 0),
@@ -518,8 +700,15 @@ def _blocked_result(method: str, version: str, series: Mapping[str, Any], params
         "input_orientation": series.get("orientation") if isinstance(series, Mapping) else None,
         "target_overlap_horizon": series.get("overlap_horizon") if isinstance(series, Mapping) else None,
         "result_metrics": {},
+        "effective_trial_count": params.get("effective_search_count"),
+        "block_length_rule": params.get("block_length_rule") or params.get("block_policy_version"),
+        "bootstrap_count": params.get("bootstrap_count") or params.get("replications", 0),
+        "random_seed": random_seed, "annualisation_factor": params.get("annualisation_factor"),
+        "minimum_observations": params.get("minimum_observations"),
+        "calculation_status": status, "failure_unavailable_reason": error.reason,
     }
     logical["logical_result_checksum"] = canonical_hash(logical)
+    logical["calculation_checksum"] = logical["logical_result_checksum"]
     return {**logical, "creation_metadata": _creation_metadata()}
 
 
@@ -578,3 +767,21 @@ def _rank_stability(latest: Mapping[tuple[str, str], Mapping[str, Any]]) -> floa
         if np.std(x) > 0 and np.std(y) > 0:
             correlations.append(float(np.corrcoef(x, y)[0, 1]))
     return float(np.mean(correlations)) if correlations else None
+
+
+def _supported_statistic(values: np.ndarray, statistic_id: str, annualisation_factor: float) -> float:
+    if statistic_id in {"mean", "rank_ic_mean", "top_minus_bottom_mean"}:
+        return float(np.mean(values))
+    standard_deviation = float(np.std(values, ddof=1))
+    if standard_deviation <= 0:
+        raise SafeguardInputError("INSUFFICIENT_DATA", "SHARPE_ZERO_VARIANCE")
+    return float(np.mean(values) / standard_deviation * math.sqrt(annualisation_factor))
+
+
+def _pbo_metric(values: np.ndarray, metric_id: str) -> float:
+    if metric_id in {"mean_return", "rank_ic_mean"}:
+        return float(np.mean(values))
+    standard_deviation = float(np.std(values, ddof=1))
+    return float(np.mean(values) / standard_deviation) if standard_deviation > 0 else (
+        math.inf if float(np.mean(values)) > 0 else 0.0
+    )
