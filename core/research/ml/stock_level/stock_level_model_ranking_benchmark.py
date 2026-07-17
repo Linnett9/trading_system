@@ -10,6 +10,8 @@ from core.research.ml.immutable_runs import (
     file_digest,
     preserve_immutable_run,
 )
+from core.research.ml.artifact_lineage import VerificationResult, build_artifact_link, promotion_eligibility
+from core.research.ml.registries.io import canonical_hash
 from core.research.ml.stock_level_benchmark_types import (
     BASELINE_COLUMNS,
     FEATURE_COLUMNS,
@@ -78,9 +80,19 @@ from core.research.ml.stock_level.stock_level_artifact_io import read_stock_leve
 from core.research.ml.stock_level.selector_dataset import read_selector_dataset_rows
 from core.research.ml.stock_level.stock_alpha_news_contract import validate_news_contract
 from core.research.ml.runtime_parallelism import apply_stock_alpha_worker_caps
+from core.research.ml.experiment_ledger import append_ledger_event, experiment_spec_hash, new_experiment_run_id
+from core.research.ml.provenance import dependency_identity, file_identity, source_provenance
+from core.research.ml.registries import RegistryResolver, load_registry_bundle
+from core.research.ml.registries.adapters import selector_model_adapter
 from core.research.ml.stock_level.stock_alpha_model_sets import FULL_SEQUENCE_MODELS, StockAlphaModelSet, resolve_stock_alpha_model_set
 from datetime import datetime, timezone
 import time
+
+
+def _ordered_logit_features() -> tuple[str, ...]:
+    from core.research.ml.stock_level.selector_feature_schema import load_feature_schema
+    schema = load_feature_schema(Path("config/selector_features/canonical_v2_daily_tree_cross_sectional_v1.json"))
+    return tuple(row["name"] for row in schema["features"])
 
 
 def write_stock_level_model_ranking_benchmark(
@@ -88,6 +100,13 @@ def write_stock_level_model_ranking_benchmark(
 ) -> StockLevelModelRankingBenchmarkPaths:
     """Train the isolated stock-level benchmark and write research artifacts."""
     settings = StockLevelResearchConfig.from_mapping(config)
+    if config.get("ml", {}).get("ordinary_selector_manifest_root"):
+        raise ValueError(
+            "Ordinary selector publication is owned by the selector component "
+            "publication pipeline. Run ml-selector-component-publish with a "
+            "validated parent gate and production-plan job; the ranking "
+            "benchmark writes research artifacts only."
+        )
     thread_caps = apply_stock_alpha_worker_caps(config)
     started_at = datetime.now(timezone.utc).isoformat(); started = time.perf_counter()
     output_dir = settings.output_dir
@@ -114,8 +133,21 @@ def write_stock_level_model_ranking_benchmark(
     )
     with logger.stage("training_and_evaluation"):
         model_set = resolve_stock_alpha_model_set(settings.ranker_model_set, include_sequence_models=settings.include_sequence_models)
+        news_available = validate_news_contract(config, rows).available
+        explicit_model_ids = config.get("ml", {}).get("stock_ranker_model_ids")
+        requested_models = tuple(explicit_model_ids if explicit_model_ids is not None else (model for model in model_set.included_models if news_available or model != "news_analysis_transformer"))
+        registry_context = _ordinary_selector_registry_context(requested_models, settings.target_column, news_available=news_available)
+        selected_canonical = tuple(row["canonical_model_id"] for row in registry_context["models"])
+        if "ordered_logit_ranker" in selected_canonical:
+            feature_columns = _ordered_logit_features()
         tabular_factories, sequence_factories = _factories_for_model_set(settings, model_set, sklearn_n_jobs=settings.sklearn_n_jobs, torch_num_threads=thread_caps["torch_num_threads"])
-        predictions, payload = build_stock_level_model_ranking_benchmark(
+        if "ordered_logit_ranker" in selected_canonical:
+            tabular_factories["ordered_logit_ranker"] = TabularModelFactory("ordered_logit_ranker", settings.random_seed, settings.sklearn_n_jobs)
+        tabular_factories = {name: factory for name, factory in tabular_factories.items() if name in selected_canonical}
+        sequence_factories = {name: factory for name, factory in sequence_factories.items() if name in selected_canonical}
+        _ordinary_selector_events(config, registry_context, "STARTED", source_path=source_path, feature_columns=feature_columns, settings=settings, thread_caps=thread_caps)
+        try:
+            predictions, payload = build_stock_level_model_ranking_benchmark(
             rows,
             target_column=settings.target_column,
             feature_columns=feature_columns,
@@ -130,18 +162,40 @@ def write_stock_level_model_ranking_benchmark(
             sklearn_n_jobs=settings.sklearn_n_jobs,
             model_n_jobs=settings.model_n_jobs,
             include_sequence_models=settings.include_sequence_models,
-            model_factories={name: factory for name, factory in tabular_factories.items() if name in model_set.included_models},
-            sequence_model_factories={name: factory for name, factory in sequence_factories.items() if name in model_set.included_models},
+            model_factories=tabular_factories,
+            sequence_model_factories=sequence_factories,
             sequence_length=settings.sequence_length,
             sequence_epochs=settings.sequence_epochs,
             sequence_batch_size=settings.sequence_batch_size,
             sequence_device=settings.sequence_device,
-            news_contract_available=validate_news_contract(config, rows).available,
-        )
+            news_contract_available=news_available,
+            )
+        except BaseException as exc:
+            _ordinary_selector_events(config, registry_context, "FAILED", source_path=source_path, feature_columns=feature_columns, settings=settings, thread_caps=thread_caps, error_summary=f"{type(exc).__name__}: {exc}")
+            raise
         payload.update(run_profile)
         payload.update(model_set.metadata())
         payload["stock_ranker_model_set"] = settings.ranker_model_set
-        payload["requested_models"] = list(model_set.included_models)
+        payload["requested_models"] = list(requested_models)
+        payload["canonical_models"] = list(selected_canonical)
+        payload["registry_provenance"] = registry_context
+        folds = payload.get("walk_forward", {}).get("folds", [])
+        payload["ordinary_selector_provenance"] = {
+            "identity_version": registry_context["identity_version"],
+            "dataset_identity": file_identity(source_path),
+            "feature_schema_paths_and_hashes": [{"canonical_model_id": row["canonical_model_id"], "feature_schema": row["feature_schema"], "model_entry_hash": row["model_entry_hash"]} for row in registry_context["models"]],
+            "target_identity": registry_context["target_identity"],
+            "hyperparameter_identity": {"sequence_length": settings.sequence_length, "sequence_epochs": settings.sequence_epochs, "sequence_batch_size": settings.sequence_batch_size},
+            "random_seed": settings.random_seed,
+            "worker_configuration": {"sklearn_n_jobs": settings.sklearn_n_jobs, "model_n_jobs": settings.model_n_jobs, **thread_caps},
+            "training_cutoff": max((fold.get("decision_timestamp", "") for fold in folds), default=None),
+            "maximum_legal_label_availability_timestamp": max((fold.get("training_label_available_max", "") for fold in folds), default=None),
+            "dependency_provenance": registry_context["dependency_provenance"],
+            "source_provenance": registry_context["source_provenance"],
+            "experiment_runs": registry_context["experiment_runs"],
+        }
+        payload["dependency_provenance"] = registry_context["dependency_provenance"]
+        payload["source_provenance"] = registry_context["source_provenance"]
         payload.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=source_path))
         payload.update({"started_at": started_at, "completed_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": time.perf_counter() - started, "thread_caps": thread_caps})
 
@@ -153,6 +207,32 @@ def write_stock_level_model_ranking_benchmark(
         predictions_path=output_dir / "stock_level_model_oos_predictions.csv",
         temporal_audit_path=output_dir / "stock_level_temporal_audit.json",
     )
+    decision_dates = sorted({str(row.get("rebalance_date")) for row in predictions if row.get("rebalance_date")})
+    ordinary_reasons = (
+        "PER_DECISION_TRAINING_CUTOFF_UNVERIFIED", "LABEL_AVAILABILITY_MISSING",
+        "ROW_POPULATION_UNVERIFIED", "PREDICTION_QUALITY_MISSING",
+    )
+    ordinary_link = build_artifact_link(
+        artifact_kind="ORDINARY_SELECTOR_PREDICTION",
+        artifact_id=f"ordinary-selector:{canonical_hash({'models': list(selected_canonical), 'source': str(source_path)})}",
+        artifact_manifest_path=paths.json_path,
+        artifact_path=paths.predictions_path,
+        artifact_checksum=canonical_hash([str(row.get("row_id") or f"{row.get('rebalance_date')}:{row.get('symbol')}") for row in predictions]),
+        source_commit=registry_context["source_provenance"].get("git_commit"),
+        registry_identity_version="ordinary_selector_identity_v2_registry",
+        requested_model_or_policy_id=",".join(requested_models), canonical_model_or_policy_id=",".join(selected_canonical),
+        model_or_policy_entry_hash=canonical_hash(sorted(row["model_entry_hash"] for row in registry_context["models"])),
+        dataset_id=registry_context.get("dataset_identity", {}).get("dataset_id") or str(source_path),
+        dataset_checksum=file_identity(source_path).get("sha256"),
+        feature_schema_hash=canonical_hash([row["feature_schema"] for row in registry_context["models"]]),
+        target_contract_hash=registry_context["target_identity"].get("target_entry_hash"),
+        decision_start=decision_dates[0] if decision_dates else None, decision_end=decision_dates[-1] if decision_dates else None,
+        strict_oos_claim=payload.get("walk_forward", {}).get("out_of_sample_only") is True,
+        strict_oos_evidence={"prediction_quality_passed": None, "row_population_verified": False},
+        verification_status="DECLARED_STRICT_OOS_UNVERIFIED", verification_reasons=list(ordinary_reasons), completion_status="complete",
+    )
+    payload["artifact_link"] = ordinary_link
+    payload["promotion"] = promotion_eligibility(ordinary_link, VerificationResult("DECLARED_STRICT_OOS_UNVERIFIED", ordinary_reasons))
     with logger.stage("report_generation"):
         writer = ResearchArtifactWriter()
         writer.write_csv(
@@ -171,13 +251,14 @@ def write_stock_level_model_ranking_benchmark(
             payload.get("temporal_audit", {"version": 1, "folds": [], "summary": {}}),
         )
         writer.write_markdown(paths.markdown_path, _markdown(payload))
-    _preserve_stock_selector_benchmark_run(
+    immutable_record = _preserve_stock_selector_benchmark_run(
         output_dir,
         paths,
         payload,
         config=config,
         source_path=source_path,
     )
+    _ordinary_selector_events(config, registry_context, "COMPLETED", source_path=source_path, feature_columns=feature_columns, settings=settings, thread_caps=thread_caps, artifact_paths=(str(paths.json_path), str(paths.predictions_path), str(immutable_record.manifest_path)), immutable_run_id=immutable_record.run_id)
     return paths
 
 
@@ -188,7 +269,7 @@ def _preserve_stock_selector_benchmark_run(
     *,
     config: dict[str, Any],
     source_path: Path,
-) -> None:
+) -> Any:
     identity = {
         "source_path": str(source_path),
         "source_sha256": file_digest(source_path),
@@ -210,9 +291,13 @@ def _preserve_stock_selector_benchmark_run(
         ),
         "stock_ranker_model_set": payload.get("stock_ranker_model_set"),
         "config_hash": MLCoreArtifactWriter.hash_payload(config),
+        "identity_version": (payload.get("ordinary_selector_provenance") or {}).get("identity_version"),
+        "registry_models": (payload.get("registry_provenance") or {}).get("models"),
+        "target_identity": (payload.get("registry_provenance") or {}).get("target_identity"),
+        "dependency_identity": (payload.get("dependency_provenance") or {}).get("hash"),
     }
     run_id = deterministic_run_id("stock_selector_benchmark", identity)
-    preserve_immutable_run(
+    return preserve_immutable_run(
         output_dir=output_dir,
         run_id=run_id,
         kind="stock_selector_benchmark",
@@ -229,6 +314,54 @@ def _preserve_stock_selector_benchmark_run(
             "champion_pointer_updated": False,
         },
     )
+
+
+def _ordinary_selector_registry_context(requested_models: tuple[str, ...], target_field: str, *, news_available: bool) -> dict[str, Any]:
+    bundle = load_registry_bundle(); resolver = RegistryResolver(bundle)
+    models = []
+    dependencies: set[str] = {"pyarrow"}
+    for requested in requested_models:
+        adapter = selector_model_adapter(requested, runner="ordinary", allow_blocked=news_available and requested in {"news_analysis_transformer", "news_transformer"})
+        dependencies.update(adapter.dependency_requirements)
+        models.append({
+            "requested_model_id": requested, "canonical_model_id": adapter.canonical_model_id,
+            "model_entry_hash": adapter.entry_hash, "model_family": adapter.model_family,
+            "feature_schema": adapter.feature_schema, "target_contract": adapter.target_contract,
+            "constructor_owner": adapter.constructor_owner, "checkpoint_support": adapter.checkpoint_support,
+            "ranking_problem_contract": adapter.ranking_problem_contract, "relevance_contract": adapter.relevance_contract,
+        })
+    target = resolver.target_for_field(target_field, role="selector")
+    ranking_identities = {entry.canonical_id: entry.entry_hash for entry in bundle.documents["ranking_contracts"].entries}
+    return {
+        "identity_version": "ordinary_selector_identity_v2_registry", "registry_contract_version": "ml_registry_set_v1",
+        "selector_registry_hash": bundle.documents["selector_models"].registry_hash,
+        "target_registry_hash": bundle.documents["target_contracts"].registry_hash,
+        "registry_set_hash": bundle.registry_set_hash, "models": models,
+        "target_identity": {"canonical_target_id": target.canonical_id, "field_name": target_field, "target_entry_hash": target.entry.entry_hash},
+        "dependency_provenance": dependency_identity(dependencies), "source_provenance": source_provenance(),
+        "experiment_runs": {},
+        "ranking_contract_identities": ranking_identities,
+    }
+
+
+def _ordinary_selector_events(config, context, status, *, source_path, feature_columns, settings, thread_caps, artifact_paths=(), error_summary=None, immutable_run_id=None):
+    ledger = Path(config.get("ml", {}).get("experiment_ledger_path", "reports/ml/experiments/experiment_ledger.jsonl"))
+    for model in context["models"]:
+        spec = {
+            "identity_version": context["identity_version"], "canonical_model_id": model["canonical_model_id"],
+            "requested_model_id": model["requested_model_id"], "model_entry_hash": model["model_entry_hash"],
+            "dataset_identity": {"path": str(source_path)}, "feature_columns": list(feature_columns),
+            "feature_schema": model["feature_schema"], "target_identity": context["target_identity"],
+            "hyperparameters": {"sequence_length": settings.sequence_length, "sequence_epochs": settings.sequence_epochs, "sequence_batch_size": settings.sequence_batch_size},
+            "seed": settings.random_seed, "workers": {"sklearn_n_jobs": settings.sklearn_n_jobs, "model_n_jobs": settings.model_n_jobs, **thread_caps},
+            "training_window_contract": {"min_train_dates": settings.min_train_dates, "walk_forward_mode": settings.walk_forward_mode, "embargo_dates": settings.embargo_dates},
+            "source_commit": context["source_provenance"]["git_commit"], "dependency_hash": context["dependency_provenance"]["hash"],
+        }
+        spec_hash = experiment_spec_hash(spec); key = model["canonical_model_id"]
+        if status == "STARTED" or key not in context["experiment_runs"]:
+            context["experiment_runs"][key] = {"experiment_spec_hash": spec_hash, "experiment_run_id": new_experiment_run_id(spec_hash)}
+        run = context["experiment_runs"][key]
+        append_ledger_event(ledger, experiment_spec_hash_value=run["experiment_spec_hash"], experiment_run_id=run["experiment_run_id"], event_status=status, artifact_kind="MODEL_EXPERIMENT", canonical_model_id=model["canonical_model_id"], requested_model_id=model["requested_model_id"], registry_hashes={"model_entry_hash":model["model_entry_hash"],"selector_registry_hash":context["selector_registry_hash"],"target_entry_hash":context["target_identity"]["target_entry_hash"]}, source_commit=context["source_provenance"]["git_commit"], artifact_paths=artifact_paths, error_summary=error_summary, metadata={"immutable_run_id":immutable_run_id,"identity_version":context["identity_version"]})
 
 
 def _factories_for_model_set(
@@ -368,7 +501,7 @@ def build_stock_level_model_ranking_benchmark(
         )
 
     specs = [
-        ModelRunSpec(name, "tabular", factory, feature_columns)
+        ModelRunSpec(name, "tabular", factory, _ordered_logit_features() if name == "ordered_logit_ranker" else feature_columns)
         for name, factory in tabular_factories.items()
     ]
     specs.extend(
@@ -380,6 +513,17 @@ def build_stock_level_model_ranking_benchmark(
         )
         for name, factory in sequence_factories.items()
     )
+    model_publication_contracts = {
+        spec.name: {
+            "model_kind": spec.kind,
+            "sequence_contract_version": "ordinary_selector_sequence_input_v1" if spec.kind == "sequence" else None,
+            "lookback": sequence_length if spec.kind == "sequence" else None,
+            "channel_order": list(spec.feature_columns),
+            "input_sequence_identity": canonical_hash({"lookback": sequence_length, "channel_order": list(spec.feature_columns)}) if spec.kind == "sequence" else None,
+            "checkpoint_capability": "not_integrated",
+        }
+        for spec in specs
+    }
     model_results, model_errors, model_timings = _execute_model_runs(
         specs,
         prepared_rows=prepared_rows,
@@ -410,7 +554,24 @@ def build_stock_level_model_ranking_benchmark(
     for model_name, values_by_key in model_results.items():
         column = f"{PREDICTION_PREFIX}{model_name}"
         for row in predictions:
-            row[column] = values_by_key[(row["rebalance_date"], row["symbol"])]
+            value = values_by_key[(row["rebalance_date"], row["symbol"])]
+            row[column] = float(value)
+            if model_name == "ordered_logit_ranker" and hasattr(value, "probabilities"):
+                probabilities = tuple(value.probabilities)
+                row["ordered_logit_predicted_relevance_class"] = max(range(len(probabilities)), key=lambda index: probabilities[index])
+                for index, probability in enumerate(probabilities): row[f"ordered_logit_probability_{index}"] = probability
+
+    ranking_evaluation = None
+    if "ordered_logit_ranker" in model_results:
+        from core.research.ml.ranking import ranking_metrics, relevance_labels
+        relevance = relevance_labels(predictions, bins=5)
+        ordered_rows=sorted(predictions,key=lambda row:(float(row[f"{PREDICTION_PREFIX}ordered_logit_ranker"]),str(row["row_id"])))
+        ranks={str(row["row_id"]):index+1 for index,row in enumerate(ordered_rows)}
+        for row in predictions:
+            row["ordered_logit_relevance"] = relevance["labels_by_row_id"][str(row["row_id"])]
+            row["ordered_logit_cross_sectional_rank"] = ranks[str(row["row_id"])]
+            row["ordered_logit_rank_percentile"] = (ranks[str(row["row_id"])]-1)/max(len(ordered_rows)-1,1)
+        ranking_evaluation = {"relevance": relevance, "metrics": ranking_metrics(predictions, score_field=f"{PREDICTION_PREFIX}ordered_logit_ranker", relevance_field="ordered_logit_relevance")}
 
     _validate_unique_keys(predictions)
     completed_models = tuple(spec.name for spec in specs if spec.name in model_results)
@@ -470,6 +631,8 @@ def build_stock_level_model_ranking_benchmark(
             "dates_parallelized": False,
         },
         "model_timings": model_timings,
+        "model_publication_contracts": model_publication_contracts,
+        "ranking_evaluation": ranking_evaluation,
         "walk_forward": {
             "operating_mode": operating_mode,
             "mode": walk_forward_mode,

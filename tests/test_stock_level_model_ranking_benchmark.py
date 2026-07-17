@@ -309,6 +309,32 @@ def test_stock_level_alpha_suite_has_no_operational_imports():
     assert "live_trading" not in source
     assert "core.entities.order" not in source
     assert "order_execution" not in source
+    assert "publish_ordinary_selector_partitions" not in source
+
+
+def test_benchmark_defer_selector_publication_to_component_pipeline(tmp_path):
+    source_path = tmp_path / "stock_level_prediction_artifacts.csv"
+    source_path.write_text("rebalance_date,symbol\n", encoding="utf-8")
+
+    try:
+        stock_level_model_ranking_benchmark.write_stock_level_model_ranking_benchmark(
+            {
+                "ml": {
+                    "output_dir": str(tmp_path / "output"),
+                    "stock_level_prediction_artifacts_path": str(source_path),
+                    "stock_level_allow_csv_artifact_fallback": True,
+                    "ordinary_selector_manifest_root": str(tmp_path / "ordinary"),
+                }
+            }
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("ordinary selector publication should be deferred")
+
+    assert "selector component publication pipeline" in message
+    assert "ml-selector-component-publish" in message
+    assert not (tmp_path / "ordinary").exists()
 
 
 def test_registry_covers_the_model_zoo_and_reports_missing_news_inputs():
