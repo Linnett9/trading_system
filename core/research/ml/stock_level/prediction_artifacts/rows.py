@@ -58,6 +58,7 @@ def build_stock_level_prediction_artifacts(
     diagnostic_run_id: str | None = None,
     partition_dir: Path | None = None,
     resume_partitions: bool = True,
+    partition_only: bool = False,
     executor_cls: type | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if dataset_workers < 1:
@@ -136,30 +137,42 @@ def build_stock_level_prediction_artifacts(
         diagnostic_run_id=diagnostic_run_id,
         partition_dir=partition_dir,
         resume_partitions=resume_partitions,
+        partition_only=partition_only,
         phase_timings=phase_timings,
     )
-    phase_started, phase_start_ts = _phase_start()
-    _add_cross_sectional_targets(rows)
-    _record_phase(
-        phase_timings,
-        "cross-sectional calculation",
-        phase_started,
-        phase_start_ts,
-        requested_workers=1,
-        effective_workers=1,
-        task_count=len(dates),
-    )
-    phase_started, phase_start_ts = _phase_start()
-    audit = _audit(rows, symbols, dates, artifact_rows)
-    _record_phase(
-        phase_timings,
-        "base validation",
-        phase_started,
-        phase_start_ts,
-        requested_workers=1,
-        effective_workers=1,
-        task_count=len(rows),
-    )
+    if partition_only:
+        audit = {
+            "row_count": sum(
+                int(value)
+                for value in parallelism.get("partition_row_counts", {}).values()
+            ),
+            "symbol_count": len(symbols),
+            "rebalance_date_count": len(dates),
+            "streaming_partition_consolidation": True,
+        }
+    else:
+        phase_started, phase_start_ts = _phase_start()
+        _add_cross_sectional_targets(rows)
+        _record_phase(
+            phase_timings,
+            "cross-sectional calculation",
+            phase_started,
+            phase_start_ts,
+            requested_workers=1,
+            effective_workers=1,
+            task_count=len(dates),
+        )
+        phase_started, phase_start_ts = _phase_start()
+        audit = _audit(rows, symbols, dates, artifact_rows)
+        _record_phase(
+            phase_timings,
+            "base validation",
+            phase_started,
+            phase_start_ts,
+            requested_workers=1,
+            effective_workers=1,
+            task_count=len(rows),
+        )
     audit["decision_grid"] = decision_grid.audit
     audit.update(decision_grid.audit)
     audit["dataset_parallelism"] = {
@@ -199,6 +212,7 @@ def _build_dataset_symbol_rows(
     diagnostic_run_id: str | None,
     partition_dir: Path | None,
     resume_partitions: bool,
+    partition_only: bool,
     phase_timings: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     phase_started, phase_start_ts = _phase_start()
@@ -220,6 +234,7 @@ def _build_dataset_symbol_rows(
             "diagnostic_run_id": diagnostic_run_id or "",
             "partition_dir": str(partition_dir) if partition_dir else "",
             "resume_partitions": resume_partitions,
+            "retain_rows": not partition_only,
         }
         for symbol in symbols
     ]
@@ -271,6 +286,7 @@ def _build_dataset_symbol_rows(
             expected_dates=dates,
             diagnostics_path=diagnostics_path,
             diagnostic_run_id=diagnostic_run_id,
+            retain_rows=not partition_only,
         )
         results.extend(reused_results)
         metadata["reused_partition_count"] = len(reused_results)
@@ -297,7 +313,8 @@ def _build_dataset_symbol_rows(
                 f"timeout_seconds={task_timeout_seconds or 'none'}",
                 flush=True,
             )
-            with executor_cls(max_workers=effective_workers) as executor:
+            executor = executor_cls(max_workers=effective_workers)
+            try:
                 if not hasattr(executor, "submit"):
                     results.extend(list(executor.map(_build_dataset_symbol_task, pending_tasks)))
                 else:
@@ -310,6 +327,20 @@ def _build_dataset_symbol_rows(
                         diagnostics_path=diagnostics_path,
                         diagnostic_run_id=diagnostic_run_id,
                     ))
+                print(
+                    "[stock-alpha] all symbol futures resolved "
+                    f"successful_task_count={len(results)} "
+                    f"failed_task_count={metadata['failed_task_count']} "
+                    f"cancelled_task_count={metadata.get('cancelled_task_count', 0)}",
+                    flush=True,
+                )
+            finally:
+                print("[stock-alpha] executor shutdown started", flush=True)
+                if hasattr(executor, "shutdown"):
+                    executor.shutdown(wait=True, cancel_futures=True)
+                elif hasattr(executor, "__exit__"):
+                    executor.__exit__(None, None, None)
+                print("[stock-alpha] executor shutdown completed", flush=True)
         _record_phase(
             phase_timings,
             "symbol-task execution",
@@ -326,6 +357,10 @@ def _build_dataset_symbol_rows(
     phase_started, phase_start_ts = _phase_start()
     metadata["completed_task_count"] = len(results)
     metadata["written_partition_count"] = len([result for result in results if result.get("partition_written")])
+    metadata["partition_row_counts"] = {
+        str(result.get("symbol", "")).upper(): int(result.get("row_count", 0))
+        for result in results
+    }
     metadata["worker_process_ids"] = sorted({
         int(result["worker_process_id"]) for result in results if result.get("worker_process_id")
     })
@@ -339,6 +374,14 @@ def _build_dataset_symbol_rows(
         task_count=len(results),
         execution_mode="coordinator",
     )
+    if partition_only:
+        result_symbols = [str(result.get("symbol", "")).upper() for result in results]
+        if len(result_symbols) != len(set(result_symbols)) or set(result_symbols) != set(symbols):
+            raise ValueError("partition-only worker result population mismatch")
+        results.clear()
+        pending_tasks.clear()
+        tasks.clear()
+        return [], metadata
     phase_started, phase_start_ts = _phase_start()
     rows = _validate_and_merge_symbol_results(
         results,
@@ -403,9 +446,23 @@ def _collect_symbol_task_futures(
         )
         for future in done:
             symbol = futures[future]
+            if future.cancelled():
+                metadata["cancelled_task_count"] = (
+                    int(metadata.get("cancelled_task_count", 0)) + 1
+                )
+                _write_task_event(
+                    diagnostics_path,
+                    "cancelled",
+                    symbol=symbol,
+                    diagnostic_run_id=diagnostic_run_id,
+                )
+                continue
             try:
                 completed.append(future.result())
             except Exception as exc:
+                metadata["failed_task_count"] = (
+                    int(metadata.get("failed_task_count", 0)) + 1
+                )
                 _write_task_event(
                     diagnostics_path,
                     "failed",
@@ -425,6 +482,10 @@ def _collect_symbol_task_futures(
                 flush=True,
             )
             next_progress = time.perf_counter() + max(1.0, progress_interval_seconds)
+    if metadata.get("cancelled_task_count"):
+        raise RuntimeError(
+            "stock-level dataset symbol task cancellation blocks consolidation"
+        )
     return completed
 
 
@@ -542,7 +603,7 @@ def _build_dataset_symbol_task(task: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "symbol": symbol,
-        "rows": rows,
+        "rows": rows if bool(task.get("retain_rows", True)) else [],
         "row_count": len(rows),
         "worker_process_id": os.getpid(),
         "seconds_elapsed": seconds,
@@ -610,6 +671,7 @@ def _load_reusable_partitions(
     expected_dates: list[str],
     diagnostics_path: Path | None,
     diagnostic_run_id: str | None,
+    retain_rows: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     reused = []
     pending = []
@@ -620,6 +682,8 @@ def _load_reusable_partitions(
             pending.append(task)
             continue
         result = _load_symbol_partition(path, symbol=symbol, expected_dates=expected_dates)
+        if not retain_rows:
+            result["rows"] = []
         reused.append(result)
         _write_task_event(
             diagnostics_path,

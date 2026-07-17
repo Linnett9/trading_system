@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -42,10 +43,7 @@ from core.research.ml.stock_level.prediction_artifacts.sources import (
     _read_parquet_closes,
     _universe_symbols,
 )
-from core.research.ml.stock_level.prediction_artifacts.targets import (
-    _actual_targets,
-    _add_cross_sectional_targets,
-)
+from core.research.ml.stock_level.prediction_artifacts.targets import _actual_targets
 from core.research.ml.stock_level.prediction_artifacts.types import (
     ACTUAL_COLUMNS,
     BASELINE_PREDICTION_COLUMNS,
@@ -58,10 +56,24 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
 )
 from core.research.ml.stock_level.stock_level_artifact_io import (
     canonical_artifact_path,
-    write_stock_level_artifact,
 )
-
 LOGGER = logging.getLogger("research")
+
+
+def audit_partitions_for_run(**kwargs):
+    from scripts.recover_large_daily_stock_artifact import (
+        audit_partitions_for_run as owner,
+    )
+
+    return owner(**kwargs)
+
+
+def finalize_base_from_partitions(**kwargs):
+    from scripts.recover_large_daily_stock_artifact import (
+        finalize_base_from_partitions as owner,
+    )
+
+    return owner(**kwargs)
 
 
 def write_stock_level_prediction_artifacts(
@@ -156,41 +168,52 @@ def write_stock_level_prediction_artifacts(
         phase_start_ts,
         task_count=len(closes_by_symbol),
     )
-    rows, audit = build_stock_level_prediction_artifacts(
-        expanded_rows=expanded_rows,
-        artifact_rows=meta_rows,
-        universe_symbols=universe_symbols,
-        closes_by_symbol=closes_by_symbol,
-        sector_by_symbol=sector_by_symbol,
-        market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
-        dataset_workers=settings.dataset_workers,
-        inner_thread_limit=settings.dataset_inner_threads,
-        decision_grid_frequency=str(
-            config.get("ml", {}).get("stock_level_decision_frequency", "source")
-        ),
-        decision_grid_start_date=config.get("ml", {}).get("stock_level_decision_start_date"),
-        decision_grid_end_date=config.get("ml", {}).get("stock_level_decision_end_date"),
-        decision_grid_max_sessions=config.get("ml", {}).get("stock_level_decision_max_sessions"),
-        decision_grid_min_history_sessions=int(
-            config.get("ml", {}).get(
-                "stock_level_decision_min_history_sessions",
-                config.get("ml", {}).get("feature_lookback_days", 1),
-            )
-        ),
-        task_timeout_seconds=_optional_float(
-            config.get("ml", {}).get("stock_level_dataset_task_timeout_seconds")
-        ),
-        progress_interval_seconds=float(
-            config.get("ml", {}).get(
-                "stock_level_dataset_progress_interval_seconds",
-                30.0,
-            )
-        ),
-        diagnostics_path=diagnostic_path,
-        diagnostic_run_id=diagnostic_run_id,
-        partition_dir=partition_dir,
-        resume_partitions=resume_partitions,
-    )
+    consolidation_manifest_path = output_dir / "stock_artifact_consolidation_manifest.json"
+    try:
+        rows, audit = build_stock_level_prediction_artifacts(
+            expanded_rows=expanded_rows,
+            artifact_rows=meta_rows,
+            universe_symbols=universe_symbols,
+            closes_by_symbol=closes_by_symbol,
+            sector_by_symbol=sector_by_symbol,
+            market_symbol=str(config.get("ml", {}).get("stock_ranker_market_symbol", "SPY")),
+            dataset_workers=settings.dataset_workers,
+            inner_thread_limit=settings.dataset_inner_threads,
+            decision_grid_frequency=str(
+                config.get("ml", {}).get("stock_level_decision_frequency", "source")
+            ),
+            decision_grid_start_date=config.get("ml", {}).get("stock_level_decision_start_date"),
+            decision_grid_end_date=config.get("ml", {}).get("stock_level_decision_end_date"),
+            decision_grid_max_sessions=config.get("ml", {}).get("stock_level_decision_max_sessions"),
+            decision_grid_min_history_sessions=int(
+                config.get("ml", {}).get(
+                    "stock_level_decision_min_history_sessions",
+                    config.get("ml", {}).get("feature_lookback_days", 1),
+                )
+            ),
+            task_timeout_seconds=_optional_float(
+                config.get("ml", {}).get("stock_level_dataset_task_timeout_seconds")
+            ),
+            progress_interval_seconds=float(
+                config.get("ml", {}).get(
+                    "stock_level_dataset_progress_interval_seconds", 30.0,
+                )
+            ),
+            diagnostics_path=diagnostic_path,
+            diagnostic_run_id=diagnostic_run_id,
+            partition_dir=partition_dir,
+            resume_partitions=resume_partitions,
+            partition_only=True,
+        )
+    except Exception as exc:
+        _write_consolidation_failure(
+            consolidation_manifest_path,
+            phase="symbol_task_execution",
+            exc=exc,
+        )
+        raise
+    closes_by_symbol = {}
+    rows = []
     audit["phase_timings"] = [*phase_timings, *audit.get("phase_timings", [])]
     audit["stock_artifact_preflight"] = preflight
     paths = StockLevelPredictionArtifactsPaths(
@@ -199,18 +222,63 @@ def write_stock_level_prediction_artifacts(
         markdown_path=output_dir / "stock_level_prediction_artifacts.md",
         sample_csv_path=output_dir / "stock_level_prediction_artifacts_sample.csv",
     )
-    fieldnames = list(rows[0]) if rows else ["rebalance_date", "symbol"]
-    identity = write_stock_level_artifact(
-        paths.parquet_path,
-        rows,
-        fieldnames=fieldnames,
-        config=config,
-        inspection_sample_path=paths.sample_csv_path,
-        phase_timings=audit["phase_timings"],
-        write_phase_name="base Parquet writing",
-        validation_phase_name="base validation",
-        hash_phase_name="logical-content hashing",
+    ml = dict(config.get("ml", {}) or {})
+    print("[stock-alpha] partition audit started", flush=True)
+    inventory = audit_partitions_for_run(
+        partition_root=partition_dir,
+        expected_symbols=universe_symbols,
+        progress_every_partitions=int(
+            ml.get("consolidation_progress_every_partitions", 25)
+        ),
     )
+    if any(row["status"] != "VALID_COMPLETE" for row in inventory):
+        exc = RuntimeError("stock artifact partition audit failed")
+        _write_consolidation_failure(
+            consolidation_manifest_path, phase="partition_audit", exc=exc,
+        )
+        raise exc
+    print(
+        f"[stock-alpha] partition audit completed valid={len(inventory)}/{len(universe_symbols)}",
+        flush=True,
+    )
+    try:
+        consolidation = finalize_base_from_partitions(
+            config=config,
+            run_dir=output_dir,
+            inventory=inventory,
+            report_root=output_dir,
+            batch_rows=int(ml.get("consolidation_batch_rows", 65536)),
+            progress_every_partitions=int(
+                ml.get("consolidation_progress_every_partitions", 25)
+            ),
+            expected_diagnostic_run_id=None,
+            replace_existing=True,
+            manifest_path=consolidation_manifest_path,
+            sqlite_temp_root=(
+                Path(str(ml["consolidation_sqlite_temp_root"]))
+                if ml.get("consolidation_sqlite_temp_root") else None
+            ),
+        )
+    except Exception:
+        raise
+    identity = {
+        **dict(consolidation["identity"]),
+        "artifact_format": "parquet",
+        "compression": str(ml.get("stock_level_parquet_compression", "zstd")),
+        "resolved_artifact_path": str(paths.parquet_path),
+        "file_size_bytes": paths.parquet_path.stat().st_size,
+        "logical_content_sha256": consolidation["population_checksum"],
+        "target_contract_version": consolidation[
+            "target_provenance_contract_version"
+        ],
+        "benchmark_contract_version": "stock_level_benchmark_return_10d_v1",
+        "completion_status": "complete",
+    }
+    audit.update(_streaming_audit_details(
+        consolidation,
+        universe_symbols=universe_symbols,
+    ))
+    print("[stock-alpha] stock artifact completed", flush=True)
     audit.update(
         stock_alpha_report_metadata(
             config,
@@ -239,6 +307,107 @@ def write_stock_level_prediction_artifacts(
 
 def _phase_start() -> tuple[float, str]:
     return time.perf_counter(), datetime.now(timezone.utc).isoformat()
+
+
+def _write_consolidation_failure(
+    path: Path,
+    *,
+    phase: str,
+    exc: Exception,
+) -> None:
+    payload = {
+        "schema_version": "daily_stock_artifact_partition_recovery.v2",
+        "status": "FAILED",
+        "failure_phase": phase,
+        "failure_reason": f"{type(exc).__name__}: {exc}",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "alpha_enrichment_allowed": False,
+    }
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _streaming_audit_details(
+    consolidation: dict[str, Any],
+    *,
+    universe_symbols: list[str],
+) -> dict[str, Any]:
+    row_count = int(consolidation["row_count"])
+    date_count = len({
+        str(row.get("date_min") or "")
+        for row in [consolidation]
+        if row.get("date_min")
+    })
+    non_null = dict(consolidation.get("column_non_null_counts", {}))
+    missing = dict(consolidation.get("column_missing_counts", {}))
+    baseline_available = any(
+        int(non_null.get(column, 0)) > 0
+        for column in BASELINE_PREDICTION_COLUMNS
+    )
+    return {
+        "mode": "stock_level_prediction_artifacts_research_only",
+        "purpose": "Create one row per symbol per decision date for cross-sectional ranking research.",
+        "root_cause_artifact_level_limitation": (
+            "Artifact-level predictions are not symbol-level stock predictions."
+        ),
+        "row_count": row_count,
+        "symbol_count": len(universe_symbols),
+        "rebalance_date_count": int(
+            consolidation.get("decision_date_count")
+            or max(1, date_count)
+        ),
+        "date_range": [
+            consolidation.get("date_min"),
+            consolidation.get("date_max"),
+        ],
+        "average_symbols_per_date": (
+            row_count / max(
+                1, int(consolidation.get("decision_date_count") or date_count or 1)
+            )
+        ),
+        "missing_prediction_counts": {
+            column: int(missing.get(column, row_count))
+            for column in PREDICTION_COLUMNS
+        },
+        "populated_prediction_counts": {
+            column: int(non_null.get(column, 0))
+            for column in PREDICTION_COLUMNS
+        },
+        "missing_actual_target_counts": {
+            column: int(missing.get(column, row_count))
+            for column in ACTUAL_COLUMNS
+        },
+        "target_provenance_contract_version": consolidation[
+            "target_provenance_contract_version"
+        ],
+        "target_provenance_audit": {
+            "complete_rows": int(
+                consolidation.get("target_provenance_complete_rows", 0)
+            ),
+            "missing_rows": row_count - int(
+                consolidation.get("target_provenance_complete_rows", 0)
+            ),
+            "required_columns": [],
+        },
+        "target_audit": {},
+        "artifact_rows_with_symbol_predictions": 0,
+        "true_stock_level_rows": row_count > 0,
+        "usable_for_stock_level_ranking": row_count > 0 and baseline_available,
+        "suitable_for_true_stock_level_ranking_diagnostics": (
+            row_count > 0 and baseline_available
+        ),
+        "suitability_reason": (
+            "stock-level rows include point-in-time baseline forecast signals"
+            if baseline_available
+            else "stock-level rows are present without populated baseline forecasts"
+        ),
+        "existing_artifact_level_files_preserved": True,
+        "prediction_fields_are_explicitly_missing": True,
+    }
 
 
 def _record_phase(

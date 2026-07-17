@@ -205,11 +205,15 @@ def write_overnight_stock_alpha_experiment(
     feature_key = "enriched_parquet_path" if settings.base_artifact_path.suffix.lower() == ".parquet" else "enriched_csv_path"
     feature_expected = {feature_key: output_dir / f"stock_level_prediction_artifacts_enriched{settings.base_artifact_path.suffix}", "audit_json_path": output_dir / "stock_level_alpha_feature_audit.json"}
     if stage_selection.enabled("alpha_features"):
+        def start_alpha_enrichment():
+            print("[stock-alpha] alpha enrichment started", flush=True)
+            return stages.alpha_features(feature_config)
+
         feature_paths = resumable(
             "alpha_features",
             feature_expected,
             {feature_key: {"rebalance_date", "symbol"}, "audit_json_path": {"features"}},
-            lambda: stages.alpha_features(feature_config),
+            start_alpha_enrichment,
         )
     else:
         mark_disabled("alpha_features")

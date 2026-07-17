@@ -534,6 +534,11 @@ def test_worker_task_failure_prevents_canonical_publication(tmp_path, monkeypatc
 
     assert not (output_dir / "stock_level_prediction_artifacts.parquet").exists()
     assert not list(output_dir.glob("*.worker*.tmp"))
+    failure = json.loads(
+        (output_dir / "stock_artifact_consolidation_manifest.json").read_text()
+    )
+    assert failure["failure_phase"] == "symbol_task_execution"
+    assert failure["alpha_enrichment_allowed"] is False
 
 
 def test_interruption_after_partitions_before_publication_leaves_no_complete_artifact(tmp_path, monkeypatch):
@@ -556,7 +561,9 @@ def test_interruption_after_partitions_before_publication_leaves_no_complete_art
     def fail_publish(*_args, **_kwargs):
         raise RuntimeError("synthetic publication interruption")
 
-    monkeypatch.setattr(artifact_service, "write_stock_level_artifact", fail_publish)
+    monkeypatch.setattr(
+        artifact_service, "finalize_base_from_partitions", fail_publish,
+    )
     with pytest.raises(RuntimeError, match="synthetic publication interruption"):
         artifact_service.write_stock_level_prediction_artifacts(
             {
@@ -995,6 +1002,51 @@ def test_stock_level_prediction_artifacts_has_no_operational_imports():
     assert "order_execution" not in source
 
 
+def test_normal_service_uses_partition_only_shared_streaming_owner():
+    service_source = inspect.getsource(
+        artifact_service.write_stock_level_prediction_artifacts
+    )
+    assert "partition_only=True" in service_source
+    assert "finalize_base_from_partitions(" in service_source
+    assert "write_stock_level_artifact(" not in service_source
+    from scripts.recover_large_daily_stock_artifact import (
+        finalize_base_from_partitions as consolidation_owner,
+    )
+    owner_source = inspect.getsource(consolidation_owner)
+    assert "pq.ParquetWriter(" in owner_source
+    assert "read_stock_level_artifact(" not in owner_source
+    assert "pq.read_table(" not in owner_source
+    assert ".to_pylist(" not in owner_source
+    rows_source = inspect.getsource(
+        build_stock_level_prediction_artifacts
+    )
+    assert "partition_only" in rows_source
+
+
+def test_cancelled_future_blocks_partition_consolidation(tmp_path):
+    diagnostics = tmp_path / "diagnostics.jsonl"
+    with pytest.raises(RuntimeError, match="cancellation blocks consolidation"):
+        build_stock_level_prediction_artifacts(
+            expanded_rows=[_expanded("2024-01-01")],
+            artifact_rows=[],
+            universe_symbols=["AAA", "BBB"],
+            closes_by_symbol={
+                "AAA": _closes(100.0),
+                "BBB": _closes(50.0),
+                "SPY": _closes(200.0),
+            },
+            dataset_workers=2,
+            diagnostics_path=diagnostics,
+            partition_dir=tmp_path / "partitions",
+            partition_only=True,
+            executor_cls=CancelledExecutor,
+        )
+    events = [
+        json.loads(line) for line in diagnostics.read_text().splitlines()
+    ]
+    assert any(row["event_type"] == "cancelled" for row in events)
+
+
 def _expanded(date: str) -> dict[str, str]:
     return {
         "rebalance_date": date,
@@ -1116,6 +1168,23 @@ class NeverCompletesExecutor:
         future = Future()
         self.futures.append(future)
         return future
+
+
+class CancelledExecutor:
+    def __init__(self, max_workers):
+        self.max_workers = max_workers
+        self.shutdown_called = False
+
+    def submit(self, _fn, _task):
+        from concurrent.futures import Future
+
+        future = Future()
+        future.cancel()
+        future.set_running_or_notify_cancel()
+        return future
+
+    def shutdown(self, **_kwargs):
+        self.shutdown_called = True
 
 
 def _history_around_rebalance(after_jump: float) -> dict[str, dict[str, float]]:

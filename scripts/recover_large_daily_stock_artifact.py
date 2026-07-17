@@ -345,12 +345,15 @@ def finalize_base_from_partitions(
     temporary_output: Path | None = None,
     expected_diagnostic_run_id: str | None = None,
     fail_if_final_exists: bool = False,
+    replace_existing: bool = False,
+    manifest_path: Path | None = None,
+    sqlite_temp_root: Path | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     started_at = _utc_now()
     run_id = uuid.uuid4().hex
     output_path = run_dir / FINAL_BASE_NAME
-    manifest_path = report_root / "finalization_report.json"
+    manifest_path = manifest_path or report_root / "finalization_report.json"
     valid = sorted(
         (row for row in inventory if row["status"] == "VALID_COMPLETE"),
         key=lambda row: str(row["symbol"]).upper(),
@@ -364,17 +367,18 @@ def finalize_base_from_partitions(
     if output_path.exists():
         if fail_if_final_exists:
             raise FileExistsError(f"final artifact already exists: {output_path}")
-        existing = _read_json(manifest_path)
-        if (
-            existing.get("status") == "COMPLETED"
-            and existing.get("partition_population_checksum")
-            == partition_population_checksum
-            and existing.get("final_checksum") == file_sha256(output_path)
-        ):
-            return {**existing, "status": "EXISTING_VALID", "idempotent": True}
-        raise FileExistsError(
-            "existing final artifact lacks a compatible completed recovery manifest"
-        )
+        if not replace_existing:
+            existing = _read_json(manifest_path)
+            if (
+                existing.get("status") == "COMPLETED"
+                and existing.get("partition_population_checksum")
+                == partition_population_checksum
+                and existing.get("final_checksum") == file_sha256(output_path)
+            ):
+                return {**existing, "status": "EXISTING_VALID", "idempotent": True}
+            raise FileExistsError(
+                "existing final artifact lacks a compatible completed recovery manifest"
+            )
     tmp_path = temporary_output or output_path.with_name(
         f".{output_path.stem}.{run_id}.tmp.parquet"
     )
@@ -383,11 +387,16 @@ def finalize_base_from_partitions(
     report_root.mkdir(parents=True, exist_ok=True)
     failure_phase = "cross_sectional_index"
     writer = None
-    database_path = report_root / f".recovery-{run_id}.sqlite"
+    sqlite_root = sqlite_temp_root or report_root
+    sqlite_root.mkdir(parents=True, exist_ok=True)
+    database_path = sqlite_root / f".stock-artifact-consolidation-{run_id}.sqlite"
     rows_written = 0
     row_groups = 0
     sample_rows = []
     population_digest = hashlib.sha256()
+    tracked_columns = tuple(PREDICTION_COLUMNS) + tuple(ACTUAL_COLUMNS)
+    non_null_counts = Counter()
+    provenance_complete_rows = 0
     fieldnames = []
     schema = None
     print("[recovery] streaming finalisation started", flush=True)
@@ -402,7 +411,12 @@ def finalize_base_from_partitions(
                 "CREATE TABLE economic_keys (symbol TEXT, decision TEXT, horizon TEXT, "
                 "PRIMARY KEY(symbol, decision, horizon))"
             )
-            for item in valid:
+            connection.execute(
+                "CREATE TABLE artifact_rows (symbol TEXT, decision TEXT, horizon TEXT, "
+                "row_hash TEXT, payload TEXT)"
+            )
+            print("[recovery] cross-sectional index started", flush=True)
+            for partition_index, item in enumerate(valid, start=1):
                 payload = _read_partition_payload(Path(str(item["partition_path"])))
                 for row in payload["rows"]:
                     key = _row_key(row)
@@ -422,6 +436,22 @@ def finalize_base_from_partitions(
                                 float(value),
                             ),
                         )
+                    connection.execute(
+                        "INSERT INTO artifact_rows VALUES (?,?,?,?,?)",
+                        (
+                            key[0], key[1], key[2], _hash_json(row),
+                            json.dumps(row, sort_keys=True, default=str),
+                        ),
+                    )
+                if (
+                    partition_index % progress_every_partitions == 0
+                    or partition_index == len(valid)
+                ):
+                    print(
+                        f"[recovery] partitions processed "
+                        f"{partition_index}/{len(valid)} during index",
+                        flush=True,
+                    )
             connection.execute(
                 """CREATE TABLE ranks AS
                    SELECT decision_date, symbol,
@@ -435,36 +465,34 @@ def finalize_base_from_partitions(
                 "CREATE INDEX ranks_symbol_date ON ranks(symbol, decision_date)"
             )
             connection.commit()
+            print("[recovery] cross-sectional index completed", flush=True)
             failure_phase = "streaming_write"
             compression = str(
                 (config.get("ml", {}) or {}).get(
                     "stock_level_parquet_compression", "zstd"
                 )
             ).lower()
-            for partition_index, item in enumerate(valid, start=1):
-                payload = _read_partition_payload(Path(str(item["partition_path"])))
-                symbol = str(item["symbol"]).upper()
-                ranks = {
-                    date: (rank_index, population)
-                    for date, rank_index, population in connection.execute(
-                        "SELECT decision_date, rank_index, population "
-                        "FROM ranks WHERE symbol=?",
-                        (symbol,),
-                    )
-                }
-                partition_rows = sorted(
-                    payload["rows"],
-                    key=lambda row: (
-                        str(row.get("decision_timestamp") or row.get("rebalance_date") or ""),
-                        str(row.get("target_horizon_trading_days") or ""),
-                        _hash_json(row),
-                    ),
-                )
-                for offset in range(0, len(partition_rows), batch_rows):
-                    batch = []
-                    for source in partition_rows[offset : offset + batch_rows]:
+            cursor = connection.execute(
+                "SELECT payload FROM artifact_rows "
+                "ORDER BY decision, symbol, horizon, row_hash"
+            )
+            print("[recovery] streaming consolidation started", flush=True)
+            while True:
+                fetched = cursor.fetchmany(batch_rows)
+                if not fetched:
+                    break
+                batch = []
+                for (payload_text,) in fetched:
+                        source = json.loads(payload_text)
                         row = dict(source)
-                        ranked = ranks.get(str(row.get("rebalance_date", "")))
+                        ranked = connection.execute(
+                            "SELECT rank_index, population FROM ranks "
+                            "WHERE symbol=? AND decision_date=?",
+                            (
+                                str(row.get("symbol", "")).upper(),
+                                str(row.get("rebalance_date", "")),
+                            ),
+                        ).fetchone()
                         if ranked:
                             rank_index, population = ranked
                             row["actual_rank_normalized_forward_return_10d"] = (
@@ -475,6 +503,14 @@ def finalize_base_from_partitions(
                             row["actual_top_decile_label_10d"] = int(
                                 rank_index >= population - top_count
                             )
+                        for column in tracked_columns:
+                            if row.get(column) not in (None, ""):
+                                non_null_counts[column] += 1
+                        if all(
+                            str(row.get(column, "")).strip()
+                            for column in TARGET_PROVENANCE_COLUMNS
+                        ):
+                            provenance_complete_rows += 1
                         batch.append(row)
                         population_digest.update(
                             json.dumps(
@@ -483,40 +519,35 @@ def finalize_base_from_partitions(
                             ).encode("utf-8")
                         )
                         population_digest.update(b"\n")
-                    if not fieldnames:
-                        fieldnames = list(batch[0])
-                    normalized = [
-                        {name: _normalize_value(row.get(name)) for name in fieldnames}
-                        for row in batch
-                    ]
-                    table = pa.Table.from_pylist(normalized)
-                    table = table.select(fieldnames)
-                    if writer is None:
-                        schema = table.schema
-                        tmp_path.parent.mkdir(parents=True, exist_ok=True)
-                        writer = pq.ParquetWriter(
-                            tmp_path, schema, compression=compression,
-                        )
-                    elif table.schema != schema:
-                        table = table.cast(schema)
-                    _write_parquet_batch(writer, table)
-                    row_groups += 1
-                    rows_written += len(batch)
-                    if len(sample_rows) < 100:
-                        sample_rows.extend(batch[: 100 - len(sample_rows)])
-                if (
-                    partition_index % progress_every_partitions == 0
-                    or partition_index == len(valid)
-                ):
-                    elapsed = max(time.perf_counter() - started, 1e-9)
-                    size = tmp_path.stat().st_size if tmp_path.exists() else 0
-                    print(
-                        f"[recovery] partitions processed {partition_index}/{len(valid)} "
-                        f"rows={rows_written} elapsed={elapsed:.1f}s "
-                        f"rows_per_second={rows_written / elapsed:.1f} "
-                        f"temporary_bytes={size}",
-                        flush=True,
+                if not fieldnames:
+                    fieldnames = list(batch[0])
+                normalized = [
+                    {name: _normalize_value(row.get(name)) for name in fieldnames}
+                    for row in batch
+                ]
+                table = pa.Table.from_pylist(normalized).select(fieldnames)
+                if writer is None:
+                    schema = table.schema
+                    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                    writer = pq.ParquetWriter(
+                        tmp_path, schema, compression=compression,
                     )
+                elif table.schema != schema:
+                    table = table.cast(schema)
+                _write_parquet_batch(writer, table)
+                row_groups += 1
+                rows_written += len(batch)
+                if len(sample_rows) < 100:
+                    sample_rows.extend(batch[: 100 - len(sample_rows)])
+                elapsed = max(time.perf_counter() - started, 1e-9)
+                size = tmp_path.stat().st_size if tmp_path.exists() else 0
+                print(
+                    f"[recovery] rows written={rows_written} "
+                    f"elapsed={elapsed:.1f}s "
+                    f"rows_per_second={rows_written / elapsed:.1f} "
+                    f"temporary_bytes={size}",
+                    flush=True,
+                )
             if writer is None:
                 raise ValueError("no partition rows available for finalization")
             writer.close()
@@ -583,11 +614,22 @@ def finalize_base_from_partitions(
         "path": str(output_path),
         "final_checksum": final_checksum,
         "population_checksum": population_digest.hexdigest().upper(),
+        "column_non_null_counts": {
+            column: non_null_counts[column] for column in tracked_columns
+        },
+        "column_missing_counts": {
+            column: rows_written - non_null_counts[column]
+            for column in tracked_columns
+        },
+        "target_provenance_complete_rows": provenance_complete_rows,
         "partition_population_checksum": partition_population_checksum,
         "schema_fingerprint": metadata["schema_fingerprint"],
         "batch_rows": batch_rows,
-        "maximum_rows_materialized": min(batch_rows, max(int(row["row_count"]) for row in valid)),
-        "deterministic_order": ["symbol", "decision_timestamp", "target_horizon_trading_days", "row_hash"],
+        "maximum_batch_rows": min(batch_rows, rows_written),
+        "maximum_partition_rows_loaded": max(
+            int(row["row_count"]) for row in valid
+        ),
+        "deterministic_order": ["decision_timestamp", "symbol", "target_horizon_trading_days", "row_hash"],
         "failure_phase": None,
         "failure_reason": None,
         "source_commit": _git_commit(),
@@ -595,6 +637,7 @@ def finalize_base_from_partitions(
         "reused_partition_count": len(valid),
         "row_count": rows_written,
         "symbol_count": len(valid),
+        "decision_date_count": int(valid[0].get("decision_date_count") or 0),
         "date_min": min(row["date_min"] for row in valid),
         "date_max": max(row["date_max"] for row in valid),
         "identity": {

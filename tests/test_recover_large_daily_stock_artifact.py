@@ -204,14 +204,41 @@ def test_configured_batches_and_deterministic_economic_order(tmp_path):
         batch_rows=1, progress_every_partitions=1,
     )
     report = result["finalization"]
-    assert report["maximum_rows_materialized"] == 1
+    assert report["maximum_batch_rows"] == 1
+    assert report["maximum_partition_rows_loaded"] == 2
     assert report["parquet_row_groups"] == 4
     table = pq.read_table(env["run"] / FINAL_BASE_NAME)
     pairs = list(zip(
-        table["symbol"].to_pylist(),
         table["decision_timestamp"].to_pylist(),
+        table["symbol"].to_pylist(),
     ))
     assert pairs == sorted(pairs)
+
+
+def test_disk_backed_cross_sectional_targets_match_existing_semantics(tmp_path):
+    env = _env(tmp_path)
+    run_recovery(
+        config_path=env["config"], run_dir=env["run"],
+        report_root=tmp_path / "reports", finalize_from_partitions=True,
+        batch_rows=1,
+    )
+    rows = read_stock_level_artifact(env["run"] / FINAL_BASE_NAME)
+    by_key = {
+        (row["rebalance_date"], row["symbol"]): row for row in rows
+    }
+    for decision_date in ("2024-01-02", "2024-01-03"):
+        assert by_key[(decision_date, "AAPL")][
+            "actual_rank_normalized_forward_return_10d"
+        ] == 0.0
+        assert by_key[(decision_date, "AAPL")][
+            "actual_top_decile_label_10d"
+        ] == 0
+        assert by_key[(decision_date, "MSFT")][
+            "actual_rank_normalized_forward_return_10d"
+        ] == 1.0
+        assert by_key[(decision_date, "MSFT")][
+            "actual_top_decile_label_10d"
+        ] == 1
 
 
 @pytest.mark.parametrize(
@@ -308,6 +335,32 @@ def test_failures_preserve_final_and_write_failure_phase(tmp_path, monkeypatch):
         (tmp_path / "reports" / "finalization_report.json").read_text()
     )
     assert failure["failure_phase"] == "metadata_validation"
+
+
+def test_production_replacement_validation_failure_preserves_old_final(
+    tmp_path, monkeypatch,
+):
+    env = _env(tmp_path)
+    final = env["run"] / FINAL_BASE_NAME
+    final.write_bytes(b"prior-valid-artifact")
+    inventory = audit_partitions_for_run(
+        partition_root=env["partition_root"],
+        expected_symbols=["AAPL", "MSFT"],
+    )
+    import scripts.recover_large_daily_stock_artifact as rec
+    monkeypatch.setattr(
+        rec, "_validate_written_artifact",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("invalid")),
+    )
+    with pytest.raises(RuntimeError, match="invalid"):
+        finalize_base_from_partitions(
+            config=_config_payload(env["run"], env["universe"]),
+            run_dir=env["run"],
+            inventory=inventory,
+            report_root=tmp_path / "reports",
+            replace_existing=True,
+        )
+    assert final.read_bytes() == b"prior-valid-artifact"
 
 
 def test_incompatible_completed_manifest_blocks(tmp_path):

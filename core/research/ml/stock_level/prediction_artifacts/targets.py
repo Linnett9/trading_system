@@ -158,6 +158,9 @@ def _target_provenance(
     if target.value == "":
         output = {column: "" for column in TARGET_PROVENANCE_COLUMNS}
         output.update(_decision_contract_fields(decision_metadata))
+        output["target_provenance_contract_version"] = (
+            TARGET_PROVENANCE_CONTRACT_VERSION
+        )
         output["target_status"] = "unrealized_boundary"
         return output
     return {
@@ -212,12 +215,16 @@ def _decision_contract_fields(decision_metadata: dict[str, Any]) -> dict[str, An
 
 
 def _empty_targets(decision_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
+    output = {
         **{column: "" for column in ACTUAL_COLUMNS},
         **{column: "" for column in TARGET_PROVENANCE_COLUMNS},
         **_decision_contract_fields(decision_metadata or {}),
         "target_status": "missing_source_price",
     }
+    output["target_provenance_contract_version"] = (
+        TARGET_PROVENANCE_CONTRACT_VERSION
+    )
+    return output
 
 def _add_cross_sectional_targets(rows: list[dict[str, Any]]) -> None:
     by_date: dict[str, list[dict[str, Any]]] = {}
