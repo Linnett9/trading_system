@@ -33,6 +33,7 @@ def _row(symbol: str, date: str, *, horizon: int = 10) -> dict:
         "actual_benchmark_return_10d": "0.01",
         "actual_market_residual_return_10d": "0.09",
         "source_dataset_hash": "source",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
     }
 
 

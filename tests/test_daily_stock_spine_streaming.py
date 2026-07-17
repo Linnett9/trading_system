@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -26,6 +27,7 @@ def _row(index, *, symbol=None, date=None):
         "actual_forward_return_10d": str(index / 100),
         "actual_benchmark_return_10d": "0.01",
         "actual_market_residual_return_10d": "0.0",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "unused_feature": float(index),
     }
 
@@ -243,3 +245,158 @@ def test_memory_limit_reduces_concurrency_instead_of_failing(tmp_path):
     assert diagnostics["requested_worker_count"] == 6
     assert diagnostics["worker_count"] == 1
     assert diagnostics["serial_fallback"] is True
+
+
+def _with_provenance(rows, value):
+    output = []
+    for row in rows:
+        updated = dict(row)
+        if value is _MISSING:
+            updated.pop("target_provenance_contract_version", None)
+        else:
+            updated["target_provenance_contract_version"] = value
+        output.append(updated)
+    return output
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("side", "value", "blocker"),
+    [
+        ("base", _MISSING, "missing_target_provenance_column"),
+        ("enriched", _MISSING, "missing_target_provenance_column"),
+        ("base", None, "missing_target_provenance_value"),
+        ("enriched", "   ", "blank_target_provenance_value"),
+        ("base", "stock_level_target_provenance_v1", "target_provenance_v1"),
+        ("enriched", "stock_level_target_provenance_v1", "target_provenance_v1"),
+        ("base", "unknown-provenance", "unexpected_target_provenance_version"),
+    ],
+)
+def test_target_provenance_invalid_inputs_block(tmp_path, side, value, blocker):
+    rows = [_row(index) for index in range(2)]
+    base = _with_provenance(rows, value) if side == "base" else rows
+    enriched = _with_provenance(rows, value) if side == "enriched" else rows
+    env = _environment(tmp_path, base, enriched)
+    result = _verify(env, tmp_path, stream_batch_size=1, dry_run=True)
+    evidence = result["target_provenance_validation"]
+    assert result["status"] == "BLOCKED"
+    assert blocker in result["blockers"]
+    assert blocker in evidence[side]["blockers"]
+    assert evidence[side]["status"] == "BLOCKED"
+
+
+def test_target_provenance_v2_repeats_across_batches_and_reports_evidence(tmp_path):
+    rows = [_row(index) for index in range(5)]
+    env = _environment(tmp_path, rows)
+    result = _verify(env, tmp_path, stream_batch_size=2, dry_run=True)
+    evidence = result["target_provenance_validation"]
+    assert result["status"] == "READY"
+    assert evidence["status"] == "READY"
+    assert evidence["same_contract_version"] is True
+    assert evidence["derived_target_definition_version"] == (
+        "stock_level_target_provenance_v2"
+    )
+    for side in ("base", "enriched"):
+        assert evidence[side]["rows_scanned"] == 5
+        assert evidence[side]["distinct_value_count"] == 1
+        assert evidence[side]["distinct_values"] == [
+            "stock_level_target_provenance_v2"
+        ]
+        assert evidence[side]["matches_expected_value"] is True
+        assert len(evidence[side]["population_checksum"]) == 64
+    assert (
+        "target_provenance_contract_version"
+        in result["streaming_diagnostics"]["projected_columns"]["base"]
+    )
+
+
+def test_mixed_and_mismatched_provenance_are_bounded_and_block(tmp_path):
+    rows = [_row(index) for index in range(4)]
+    mixed = [
+        {
+            **row,
+            "target_provenance_contract_version": value,
+        }
+        for row, value in zip(
+            rows,
+            (
+                "stock_level_target_provenance_v1",
+                "stock_level_target_provenance_v2",
+                "unknown-a",
+                "unknown-b",
+            ),
+        )
+    ]
+    env = _environment(tmp_path / "mixed", mixed, rows)
+    result = _verify(env, tmp_path / "mixed", stream_batch_size=1, dry_run=True)
+    base = result["target_provenance_validation"]["base"]
+    assert "mixed_target_provenance_versions" in result["blockers"]
+    assert "base_enriched_target_provenance_mismatch" in result["blockers"]
+    assert base["distinct_value_count"] <= base["distinct_value_limit"] == 2
+    assert base["distinct_values_truncated"] is True
+
+    v1 = _with_provenance(rows, "stock_level_target_provenance_v1")
+    env = _environment(tmp_path / "mismatch", rows, v1)
+    result = _verify(env, tmp_path / "mismatch", dry_run=True)
+    assert "base_enriched_target_provenance_mismatch" in result["blockers"]
+
+
+def test_provenance_is_order_independent_and_ignores_extra_columns(tmp_path):
+    rows = [_row(index) for index in range(4)]
+    enriched = [{**row, "unrelated_extra": index} for index, row in enumerate(rows)]
+    first = _verify(
+        _environment(tmp_path / "first", rows, list(reversed(enriched))),
+        tmp_path / "first",
+        stream_batch_size=1,
+        dry_run=True,
+    )
+    second = _verify(
+        _environment(tmp_path / "second", list(reversed(rows)), enriched),
+        tmp_path / "second",
+        stream_batch_size=3,
+        dry_run=True,
+    )
+    assert first["status"] == second["status"] == "READY"
+    assert (
+        first["target_provenance_validation"]["base"]["population_checksum"]
+        == second["target_provenance_validation"]["base"]["population_checksum"]
+    )
+    assert first["alignment"]["same_alignment_key_set"] is True
+    assert first["temporal_validation"]["violation_count"] == 0
+
+
+def test_provenance_failures_are_written_to_json_and_markdown(tmp_path):
+    rows = _with_provenance([_row(0)], "stock_level_target_provenance_v1")
+    env = _environment(tmp_path, rows)
+    result = _verify(env, tmp_path, stream_batch_size=1, dry_run=False)
+    report_dir = tmp_path / "reports" / result["spine_dataset_id"]
+    payload = json.loads(
+        (report_dir / "verification_report.json").read_text(encoding="utf-8")
+    )
+    markdown = (
+        report_dir / "verification_report.md"
+    ).read_text(encoding="utf-8")
+    assert payload["target_provenance_validation"]["base"]["distinct_values"] == [
+        "stock_level_target_provenance_v1"
+    ]
+    assert "Target provenance: BLOCKED" in markdown
+    assert "target_provenance_v1" in markdown
+
+
+def test_streaming_provenance_owner_avoids_forbidden_materialisation_and_imports():
+    import core.research.ml.reference.daily_stock_spine as owner
+
+    source = inspect.getsource(owner._streaming_preflight)
+    assert "pq.read_table(" not in source
+    assert ".to_pylist(" not in source
+    assert "read_stock_level_artifact(" not in source
+    module_source = inspect.getsource(owner)
+    for forbidden in (
+        "stock_level_portfolio_replay",
+        "allocation.exposures",
+        "stock_alpha_news",
+        "alpaca_5m",
+    ):
+        assert forbidden not in module_source

@@ -12,7 +12,7 @@ import yaml
 from core.research.ml.reference.canonical_assets import file_sha256
 
 
-VALIDATOR_VERSION = "daily_stock_spine_validator.v7"
+VALIDATOR_VERSION = "daily_stock_spine_validator.v8"
 VALIDATION_CONTRACT_VERSION = "daily_stock_spine_verification.v1"
 CERTIFICATION_CONTRACT_VERSION = "daily_stock_spine_certification.v2"
 
@@ -81,6 +81,7 @@ def load_ready_certification(
     verification_required = {
         "status", "base_artifact", "enriched_artifact", "symbol_resolution",
         "alignment", "target_alignment", "spine_dataset_id",
+        "target_provenance_validation",
         "price_feature_dataset_id", "logical_output_checksum",
     }
     if not isinstance(verification, dict) or not verification_required.issubset(verification):

@@ -210,6 +210,9 @@ def _fixture(root: Path, rows: int) -> dict[str, Path]:
             "actual_forward_return_10d": str(index / 100000),
             "actual_benchmark_return_10d": "0.01",
             "actual_market_residual_return_10d": "0.0",
+            "target_provenance_contract_version": (
+                "stock_level_target_provenance_v2"
+            ),
         })
     table = pa.Table.from_pylist(records)
     base, enriched = root / "base.parquet", root / "enriched.parquet"

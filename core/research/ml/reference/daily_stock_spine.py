@@ -42,6 +42,7 @@ from core.research.ml.stock_level.prediction_artifacts.types import (
     CONTEXT_COLUMNS,
     PREDICTION_COLUMNS,
     TARGET_PROVENANCE_COLUMNS,
+    TARGET_PROVENANCE_CONTRACT_VERSION,
 )
 from core.research.ml.stock_level.stock_level_alpha_features_types import (
     ENGINEERED_FEATURE_COLUMNS,
@@ -62,6 +63,10 @@ SPINE_SCHEMA_VERSION = "canonical_daily_stock_spine.v1"
 PRICE_FEATURE_SCHEMA_VERSION = "daily_price_feature_registration.v1"
 ROW_IDENTITY_VERSION = "canonical_daily_stock_row_id.v1"
 ALIGNMENT_KEY_VERSION = "daily_stock_spine_alignment_key.v2"
+TARGET_PROVENANCE_VALIDATION_CONTRACT_VERSION = (
+    "daily_stock_spine_target_provenance_validation.v1"
+)
+MAX_PROVENANCE_DISTINCT_VALUES = 2
 SPINE_COLUMNS = (
     "row_id",
     "source_row_id",
@@ -396,6 +401,9 @@ def verify_and_register(
                 "temporal_validation": streamed["temporal_validation"],
                 "alignment": streamed["alignment"],
                 "target_alignment": streamed["target_alignment"],
+                "target_provenance_validation": streamed[
+                    "target_provenance_validation"
+                ],
                 "unknown_columns": streamed["unknown_columns"],
                 "spine_dataset_id": spine_dataset_id,
                 "price_feature_dataset_id": price_feature_dataset_id,
@@ -418,7 +426,8 @@ def verify_and_register(
                     "daily_archive_manifest", "canonical_registry_parent", "base_artifact",
                     "enriched_artifact", "symbol_resolution", "row_grain",
                     "duplicate_economic_row_count", "temporal_validation", "alignment",
-                    "target_alignment", "unknown_columns", "spine_dataset_id",
+                    "target_alignment", "target_provenance_validation",
+                    "unknown_columns", "spine_dataset_id",
                     "price_feature_dataset_id", "row_identity_version",
                 )
             })
@@ -565,6 +574,7 @@ def _streaming_preflight(
         "label_end_timestamp", "label_available_timestamp", "actual_forward_return_10d",
         "actual_benchmark_return_10d", "actual_market_residual_return_10d",
         "source_dataset_hash", "exchange_calendar_identity",
+        "target_provenance_contract_version",
     }
     base_columns = [name for name in base_parquet.schema_arrow.names if name in candidate_columns]
     enriched_columns = [name for name in enriched_parquet.schema_arrow.names if name in candidate_columns]
@@ -603,6 +613,18 @@ def _streaming_preflight(
     null_counts = {"base": Counter(), "enriched": Counter()}
     nonfinite_counts = {"base": Counter(), "enriched": Counter()}
     source_scans = {"base": 0, "enriched": 0}
+    provenance_states = {
+        side: _new_target_provenance_state(
+            column_present=(
+                "target_provenance_contract_version"
+                in parquet.schema_arrow.names
+            )
+        )
+        for side, parquet in (
+            ("base", base_parquet),
+            ("enriched", enriched_parquet),
+        )
+    }
     sqlite_insert_count = 0
     last_heartbeat = started
     with tempfile.TemporaryDirectory(prefix="daily-spine-stream-", dir=temp_parent) as temp_dir:
@@ -643,6 +665,10 @@ def _streaming_preflight(
                     maximum_batch_rows = max(maximum_batch_rows, batch.num_rows)
                     inserts = []
                     for source in _columnar_rows(batch):
+                        _update_target_provenance_state(
+                            provenance_states[side],
+                            source.get("target_provenance_contract_version"),
+                        )
                         row = _augment_row(
                             source, working_resolution, lineage,
                             context=augmentation_context,
@@ -750,6 +776,13 @@ def _streaming_preflight(
                 blockers.append("missing_future_label_observation")
             if temporal_violation_count:
                 blockers.append("temporal_violations")
+            target_provenance_validation = _target_provenance_validation(
+                provenance_states,
+                derived_target_definition_version=augmentation_context[
+                    "target_definition_version"
+                ],
+            )
+            blockers.extend(target_provenance_validation["blockers"])
             base_row_ids_checksum, spine_dataset_id = _stream_identities(
                 connection, "base", "canonical_daily_stock_spine", lineage,
                 SPINE_SCHEMA_VERSION,
@@ -794,6 +827,7 @@ def _streaming_preflight(
         },
         "alignment": alignment,
         "target_alignment": target_alignment,
+        "target_provenance_validation": target_provenance_validation,
         "unknown_columns": _unknown_columns(enriched_parquet.schema_arrow.names),
         "spine_dataset_id": spine_dataset_id,
         "price_feature_dataset_id": price_feature_dataset_id,
@@ -828,6 +862,9 @@ def _streaming_preflight(
             "memory_measurement": "process_working_set_peak_without_allocation_tracing",
             "alignment_key_version": ALIGNMENT_KEY_VERSION,
             "rows_scanned": sum(row_counts.values()),
+            "target_provenance_distinct_value_limit": (
+                MAX_PROVENANCE_DISTINCT_VALUES
+            ),
             "bytes_scanned": base_path.stat().st_size + enriched_path.stat().st_size,
         },
     }
@@ -1047,6 +1084,134 @@ def _iter_projected_batches(parquet, *, columns, batch_size, use_threads):
         columns=columns,
         use_threads=use_threads,
     )
+
+
+def _new_target_provenance_state(*, column_present: bool) -> dict[str, Any]:
+    return {
+        "column_present": column_present,
+        "rows_scanned": 0,
+        "null_count": 0,
+        "blank_count": 0,
+        "distinct_values": set(),
+        "distinct_values_truncated": False,
+        "population_accumulator": 0,
+    }
+
+
+def _update_target_provenance_state(
+    state: dict[str, Any],
+    value: Any,
+) -> None:
+    state["rows_scanned"] += 1
+    if value is None:
+        state["null_count"] += 1
+        normalized = "<NULL>"
+    else:
+        normalized = str(value).strip()
+        if not normalized:
+            state["blank_count"] += 1
+            normalized = "<BLANK>"
+        elif len(state["distinct_values"]) < MAX_PROVENANCE_DISTINCT_VALUES:
+            state["distinct_values"].add(normalized)
+        elif normalized not in state["distinct_values"]:
+            state["distinct_values_truncated"] = True
+    digest = int.from_bytes(
+        hashlib.sha256(normalized.encode("utf-8")).digest(), "big",
+    )
+    state["population_accumulator"] = (
+        state["population_accumulator"] + digest
+    ) % (1 << 256)
+
+
+def _target_provenance_validation(
+    states: Mapping[str, Mapping[str, Any]],
+    *,
+    derived_target_definition_version: str,
+) -> dict[str, Any]:
+    evidence = {
+        side: _target_provenance_evidence(state)
+        for side, state in states.items()
+    }
+    blockers = [
+        blocker
+        for side in ("base", "enriched")
+        for blocker in evidence[side]["blockers"]
+    ]
+    base_values = evidence["base"]["distinct_values"]
+    enriched_values = evidence["enriched"]["distinct_values"]
+    same_contract_version = (
+        len(base_values) == 1
+        and len(enriched_values) == 1
+        and base_values == enriched_values
+    )
+    if (
+        base_values
+        and enriched_values
+        and base_values != enriched_values
+    ):
+        blockers.append("base_enriched_target_provenance_mismatch")
+    if derived_target_definition_version != TARGET_PROVENANCE_CONTRACT_VERSION:
+        blockers.append("derived_target_definition_version_mismatch")
+    blockers = sorted(set(blockers))
+    return {
+        "schema_version": TARGET_PROVENANCE_VALIDATION_CONTRACT_VERSION,
+        "expected_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "base": evidence["base"],
+        "enriched": evidence["enriched"],
+        "same_contract_version": same_contract_version,
+        "derived_target_definition_version": derived_target_definition_version,
+        "status": STATUS_BLOCKED if blockers else STATUS_READY,
+        "blockers": blockers,
+    }
+
+
+def _target_provenance_evidence(
+    state: Mapping[str, Any],
+) -> dict[str, Any]:
+    values = sorted(state["distinct_values"])
+    blockers = []
+    if not state["column_present"]:
+        blockers.append("missing_target_provenance_column")
+    if state["null_count"]:
+        blockers.append("missing_target_provenance_value")
+    if state["blank_count"]:
+        blockers.append("blank_target_provenance_value")
+    if not values:
+        blockers.append("missing_target_provenance_value")
+    if len(values) > 1 or state["distinct_values_truncated"]:
+        blockers.append("mixed_target_provenance_versions")
+    if len(values) == 1:
+        if values[0] == "stock_level_target_provenance_v1":
+            blockers.append("target_provenance_v1")
+        elif values[0] != TARGET_PROVENANCE_CONTRACT_VERSION:
+            blockers.append("unexpected_target_provenance_version")
+    matches_expected = (
+        state["column_present"]
+        and state["rows_scanned"] > 0
+        and not state["null_count"]
+        and not state["blank_count"]
+        and not state["distinct_values_truncated"]
+        and values == [TARGET_PROVENANCE_CONTRACT_VERSION]
+    )
+    blockers = sorted(set(blockers))
+    return {
+        "schema_version": TARGET_PROVENANCE_VALIDATION_CONTRACT_VERSION,
+        "column_present": state["column_present"],
+        "rows_scanned": state["rows_scanned"],
+        "null_count": state["null_count"],
+        "blank_count": state["blank_count"],
+        "distinct_value_count": len(values),
+        "distinct_values": values,
+        "distinct_values_truncated": state["distinct_values_truncated"],
+        "distinct_value_limit": MAX_PROVENANCE_DISTINCT_VALUES,
+        "expected_value": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "matches_expected_value": matches_expected,
+        "population_checksum": (
+            f"{state['population_accumulator']:064x}".upper()
+        ),
+        "status": STATUS_BLOCKED if blockers else STATUS_READY,
+        "blockers": blockers,
+    }
 
 
 def _working_set_bytes() -> int:
@@ -1393,7 +1558,7 @@ def _augmentation_context(
             "provider": lineage.get("daily_price_provider"),
         })[:16],
         "universe_version": _hash_json(lineage.get("configured_universe", []))[:16],
-        "target_definition_version": "stock_level_target_provenance_v1",
+        "target_definition_version": TARGET_PROVENANCE_CONTRACT_VERSION,
         "benchmark_asset_id": mapping.get(
             str(lineage.get("benchmark_symbol", "SPY")).upper(), {},
         ).get("asset_id", ""),
@@ -1831,6 +1996,26 @@ def _markdown(payload: Mapping[str, Any]) -> str:
         f"- Target mismatches: {payload['target_alignment'].get('target_mismatch_count')}",
         f"- Benchmark mismatches: {payload['target_alignment'].get('benchmark_mismatch_count')}",
         f"- Temporal violations: {payload['temporal_validation'].get('violation_count')}",
+        (
+            "- Target provenance: "
+            f"{payload.get('target_provenance_validation', {}).get('status', 'UNKNOWN')}"
+        ),
+        (
+            "- Target provenance blockers: "
+            f"{', '.join(payload.get('target_provenance_validation', {}).get('blockers', [])) or 'none'}"
+        ),
+        (
+            "- Base target provenance values: "
+            f"{payload.get('target_provenance_validation', {}).get('base', {}).get('distinct_values', [])}"
+        ),
+        (
+            "- Enriched target provenance values: "
+            f"{payload.get('target_provenance_validation', {}).get('enriched', {}).get('distinct_values', [])}"
+        ),
+        (
+            "- Derived target-definition identity: "
+            f"{payload.get('target_provenance_validation', {}).get('derived_target_definition_version')}"
+        ),
         f"- Spine dataset ID: {payload['spine_dataset_id']}",
         f"- Price-feature dataset ID: {payload['price_feature_dataset_id']}",
         "",

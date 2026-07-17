@@ -234,6 +234,7 @@ def _row(symbol: str, *, target="0.1", benchmark="0.01", feature_cutoff="2024-01
         "actual_market_residual_return_10d": "0.09",
         "benchmark_symbol": "AAPL",
         "source_dataset_hash": "source1",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
     }
 
 
