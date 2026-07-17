@@ -41,6 +41,7 @@ def build_selector_component_plan(
     decision_dates: Sequence[str] = DATES,
     random_seed: int = 42,
     write: bool = True,
+    experiment_ledger_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build the deterministic first-campaign selector component plan.
 
@@ -103,6 +104,7 @@ def build_selector_component_plan(
         "fitted_models": list(model_ids),
         "decision_dates": list(decision_dates),
         "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_checksum": dataset_manifest["dataset_checksum"],
         "dataset_manifest_path": str(dataset_manifest["dataset_manifest_path"]),
         "daily_spine_id": dataset_manifest["daily_spine_id"],
         "daily_spine_manifest_path": str(dataset_manifest["daily_spine_manifest_path"]),
@@ -118,6 +120,9 @@ def build_selector_component_plan(
         "components": rows,
     }
     manifest["logical_checksum"] = _logical(manifest)
+    if experiment_ledger_path is not None:
+        from core.research.ml.experiment_ledger import register_selector_plan
+        register_selector_plan(experiment_ledger_path, manifest)
     if write:
         _publish_plan(output_root, manifest)
         manifest = {
@@ -545,6 +550,7 @@ def _build_component_plan_row(
         "model_id": model_id,
         "decision_date": decision_date,
         "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_checksum": dataset_manifest["dataset_checksum"],
         "dataset_manifest_path": str(dataset_manifest["dataset_manifest_path"]),
         "daily_spine_id": dataset_manifest["daily_spine_id"],
         "daily_spine_manifest_path": str(dataset_manifest["daily_spine_manifest_path"]),
@@ -632,7 +638,7 @@ def _validate_component_plan_rows(rows):
         raise ValueError("component plan ordering mismatch")
     required = {
         "component_id", "experiment_id", "campaign_id", "model_id", "decision_date",
-        "dataset_id", "dataset_manifest_path", "daily_spine_id",
+        "dataset_id", "dataset_checksum", "dataset_manifest_path", "daily_spine_id",
         "daily_spine_manifest_path", "symbol_registry_id",
         "symbol_registry_manifest_path", "feature_schema_id",
         "feature_schema_hash", "target_contract_id", "target_contract_hash",

@@ -20,6 +20,7 @@ def main() -> int:
     parser.add_argument("--momentum-manifest", action="append", type=Path, default=[])
     parser.add_argument("--thresholds", type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--experiment-ledger", required=True, type=Path)
     args = parser.parse_args()
     manifests = list(args.component_manifest)
     if args.campaign_root:
@@ -30,6 +31,7 @@ def main() -> int:
         momentum_manifest_paths=args.momentum_manifest,
         thresholds=json.loads(args.thresholds.read_text()) if args.thresholds else None,
         output_root=args.output_root,
+        experiment_ledger_path=args.experiment_ledger,
     )
     print(json.dumps(result, sort_keys=True))
     return 0 if result["primary_status"] in {"READY_FOR_PORTFOLIO_REPLAY", "REJECTED"} else 2

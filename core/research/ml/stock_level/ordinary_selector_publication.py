@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from core.research.ml.artifact_lineage import VERIFIED_STRICT_OOS, build_artifact_link, verify_selector_artifact
 from core.research.ml.experiment_ledger import append_ledger_event, experiment_spec_hash
+from core.research.ml.experiment_ledger import require_selector_experiment
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
@@ -33,6 +34,8 @@ def publish_planned_ordinary_component(
     random_seed: int = 42,
     sklearn_n_jobs: int = 1,
 ) -> dict[str, Any]:
+    if job.get("experiment_id"):
+        require_selector_experiment(ledger_path, job, required_status="SUCCEEDED")
     gate = _json(parent_gate_path)
     model_id = str(job.get("model_id", ""))
     prediction_date = str(job.get("prediction_date", ""))

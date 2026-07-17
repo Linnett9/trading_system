@@ -13,6 +13,7 @@ from statistics import mean, pstdev
 from typing import Any, Mapping, Sequence
 
 from core.research.ml.registries.io import canonical_hash
+from core.research.ml.experiment_ledger import read_selector_ledger, selector_trial_counts
 
 
 CONTRACT = "wave4_selector_campaign_gate.v1"
@@ -38,6 +39,7 @@ def evaluate_wave4_campaign(
     *, component_plan_path: Path, component_manifest_paths: Sequence[Path],
     output_root: Path, thresholds: Mapping[str, float] | None = None,
     momentum_manifest_paths: Sequence[Path] = (),
+    experiment_ledger_path: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and evaluate existing predictions. Never fits, executes, or publishes."""
     plan = _json(component_plan_path)
@@ -47,15 +49,29 @@ def evaluate_wave4_campaign(
         if unknown:
             raise ValueError(f"Unknown gate thresholds: {sorted(unknown)}")
         panel.update({key: float(value) for key, value in thresholds.items()})
-    report = _evaluate(plan, component_manifest_paths, momentum_manifest_paths, panel)
+    ledger_path = experiment_ledger_path or component_plan_path.with_name("selector_experiment_ledger.json")
+    report = _evaluate(plan, component_manifest_paths, momentum_manifest_paths, panel, ledger_path)
     _publish(output_root, report)
     return report
 
 
-def _evaluate(plan, manifest_paths, momentum_paths, thresholds):
+def _evaluate(plan, manifest_paths, momentum_paths, thresholds, ledger_path):
     blockers: list[str] = []
     blocker_class = "BLOCKED_INCOMPLETE"
     components = list(plan.get("components") or [])
+    ledger_rows = {}
+    trial_counts = {
+        "fitted_model_count": 0, "decision_date_count": 0, "seed_count": 0,
+        "hyperparameter_configuration_count": 0, "planned_material_trials": 0,
+        "executed_material_trials": 0, "failed_material_trials": 0,
+        "rejected_material_trials": 0,
+    }
+    try:
+        ledger = read_selector_ledger(ledger_path)
+        ledger_rows = {row["experiment_id"]: row for row in ledger["experiments"]}
+        trial_counts = selector_trial_counts(ledger)
+    except ValueError:
+        blockers.append("EXPERIMENT_LEDGER_EVIDENCE_MISSING_OR_INVALID")
     plan_checksum = str(plan.get("logical_checksum") or "")
     if (
         plan.get("plan_contract_version") != "selector_operational_component_plan.v1"
@@ -68,6 +84,16 @@ def _evaluate(plan, manifest_paths, momentum_paths, thresholds):
     expected = {(str(row.get("model_id")), str(row.get("decision_date"))): row for row in components}
     if len(expected) != len(components):
         blockers.append("DUPLICATE_PLANNED_MODEL_DATE")
+    for component in components:
+        evidence = ledger_rows.get(component.get("experiment_id"))
+        if not evidence:
+            blockers.append(f"EXPERIMENT_LEDGER_EVIDENCE_MISSING:{component.get('experiment_id')}")
+        elif evidence.get("component_id") != component.get("component_id"):
+            blockers.append(f"EXPERIMENT_LEDGER_IDENTITY_MISMATCH:{component.get('experiment_id')}")
+        elif evidence.get("status") not in {"SUCCEEDED", "REJECTED", "ELIGIBLE_FOR_PORTFOLIO_REPLAY"}:
+            blockers.append(f"EXPERIMENT_LEDGER_STATUS_INCOMPLETE:{component.get('experiment_id')}")
+    if trial_counts["planned_material_trials"] != 15:
+        blockers.append("EXPERIMENT_LEDGER_TRIAL_COUNT_MISMATCH")
     paths = sorted(Path(path) for path in manifest_paths)
     if len(paths) < len(components):
         blockers.append("PLANNED_COMPONENTS_MISSING")
@@ -94,7 +120,7 @@ def _evaluate(plan, manifest_paths, momentum_paths, thresholds):
         "STRICT_OOS", "PROVENANCE", "DATASET", "SPINE", "REGISTRY", "FEATURE",
         "TARGET", "RANKING", "FOLD", "SOURCE_COMMIT", "CAMPAIGN_ID_MISMATCH",
         "PLAN_COMPONENT_ID", "COMPONENT_PLAN_INVALID",
-        "EXPERIMENT_ID",
+        "EXPERIMENT_ID", "EXPERIMENT_LEDGER",
     )
     metric_codes = (
         "NONFINITE", "DUPLICATE_ECONOMIC", "DEGENERATE", "PREDICTION_POPULATION",
@@ -135,6 +161,17 @@ def _evaluate(plan, manifest_paths, momentum_paths, thresholds):
             aggregates[model]["gate_reasons"] = reasons
             (eligible if not reasons else rejected).append(model)
         primary = "READY_FOR_PORTFOLIO_REPLAY" if eligible else "REJECTED"
+    transition_requests = []
+    if not blockers:
+        for component in components:
+            transition_requests.append({
+                "experiment_id": component["experiment_id"],
+                "requested_status": (
+                    "ELIGIBLE_FOR_PORTFOLIO_REPLAY"
+                    if component["model_id"] in eligible else "REJECTED"
+                ),
+                "reason": f"Wave 4 gate result for {component['model_id']}",
+            })
 
     material = {
         "component_plan_checksum": plan_checksum,
@@ -171,6 +208,8 @@ def _evaluate(plan, manifest_paths, momentum_paths, thresholds):
         "failure_blocker_reasons": sorted(set(blockers)),
         "effective_fitted_model_count": len(REQUIRED_MODELS) if not blockers else 0,
         "effective_material_trial_count": len(components),
+        "experiment_trial_counts": trial_counts,
+        "experiment_ledger_transition_requests": transition_requests,
         "primary_status": primary,
         "models_eligible_for_portfolio_replay": eligible,
         "models_rejected": rejected,

@@ -8,6 +8,7 @@ import pytest
 
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
+from core.research.ml.experiment_ledger import read_selector_ledger
 from core.research.ml.selector_operational_inputs import (
     DATES,
     MODELS,
@@ -125,6 +126,17 @@ def test_exact_fifteen_fitted_components_no_momentum_and_order(tmp_path):
     assert [(row["decision_date"], row["model_id"]) for row in plan["components"]] == [
         (date, model) for date in DATES for model in MODELS
     ]
+
+
+def test_planning_optionally_registers_all_fifteen_before_execution(tmp_path):
+    ledger_path = tmp_path / "selector_experiment_ledger.json"
+    plan = _plan(tmp_path, experiment_ledger_path=ledger_path)
+    ledger = read_selector_ledger(ledger_path)
+    assert {row["experiment_id"] for row in ledger["experiments"]} == {
+        row["experiment_id"] for row in plan["components"]
+    }
+    assert {row["status"] for row in ledger["experiments"]} == {"PLANNED"}
+    assert ledger["trial_counts"]["planned_material_trials"] == 15
 
 
 def test_repeated_planning_identical_ids_and_checksum(tmp_path):

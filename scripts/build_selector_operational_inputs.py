@@ -31,6 +31,7 @@ def main() -> int:
     parser.add_argument("--component-plan-only", action="store_true")
     parser.add_argument("--campaign-id")
     parser.add_argument("--source-commit")
+    parser.add_argument("--experiment-ledger", type=Path)
     args = parser.parse_args()
     if args.component_plan_only:
         plan_path = args.output_root / "component_plan.json"
@@ -44,6 +45,7 @@ def main() -> int:
                 campaign_id=args.campaign_id or args.selector_run_id,
                 selector_run_id=args.selector_run_id,
                 source_commit=args.source_commit or "",
+                experiment_ledger_path=args.experiment_ledger,
             )
     elif args.verify_only:
         result = validate_inventory(args.output_root / "inventory.json")

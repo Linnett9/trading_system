@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from core.research.ml.registries.io import canonical_hash
+from core.research.ml.experiment_ledger import (
+    register_selector_plan, transition_selector_experiment,
+)
 from core.research.ml.wave4_gate_campaign import DEFAULT_THRESHOLDS, evaluate_wave4_campaign
 
 DATES = ("2024-03-15", "2024-09-16", "2025-03-17", "2025-09-15", "2026-03-16")
@@ -32,6 +35,11 @@ def _fixture(tmp_path):
                 "target_provenance_contract_version": "stock_level_target_provenance_v2",
                 "ranking_contract_id": "daily_cross_sectional_ranking_problem_v1",
                 "fold_id": f"fold-{date}", "source_commit": "abc123",
+                "purge_sessions": 10, "embargo_sessions": 10,
+                "maximum_label_available_timestamp": f"{date}T00:00:00Z",
+                "hyperparameters": {}, "random_seed": 42,
+                "training_start": "2020-01-01", "training_end": "2023-01-01",
+                "planned_output_root": f"components/{model}/{date}",
             })
     plan = {
         "plan_contract_version": "selector_operational_component_plan.v1",
@@ -42,6 +50,18 @@ def _fixture(tmp_path):
     }
     plan["logical_checksum"] = canonical_hash(plan)
     plan_path = tmp_path / "component_plan.json"; _write_json(plan_path, plan)
+    ledger_path = tmp_path / "selector_experiment_ledger.json"
+    register_selector_plan(ledger_path, plan)
+    for component in components:
+        transition_selector_experiment(
+            ledger_path, experiment_id=component["experiment_id"],
+            to_status="RUNNING", component=component,
+        )
+        transition_selector_experiment(
+            ledger_path, experiment_id=component["experiment_id"],
+            to_status="SUCCEEDED", component=component,
+            component_manifest_path=f"{component['component_id']}/manifest.json",
+        )
     manifests = []
     for component in components:
         owner = tmp_path / "components" / component["component_id"]
