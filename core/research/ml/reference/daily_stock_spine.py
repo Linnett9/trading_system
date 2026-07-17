@@ -11,7 +11,6 @@ import shutil
 import sqlite3
 import tempfile
 import time as time_module
-import tracemalloc
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, time, timezone
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import yaml
 
@@ -547,9 +547,6 @@ def _streaming_preflight(
     effective_workers = 1 if memory_limit_mb is not None and memory_limit_mb < 512 else max_workers
     started = time_module.perf_counter()
     started_cpu = time_module.process_time()
-    tracing_was_active = tracemalloc.is_tracing()
-    if not tracing_was_active:
-        tracemalloc.start()
     peak_memory_bytes = _working_set_bytes()
     base_parquet, enriched_parquet = pq.ParquetFile(base_path), pq.ParquetFile(enriched_path)
     required = {"rebalance_date", "symbol"}
@@ -812,9 +809,9 @@ def _streaming_preflight(
             "elapsed_seconds": time_module.perf_counter() - started,
             "cpu_seconds": time_module.process_time() - started_cpu,
             "peak_working_set_memory_bytes": max(
-                peak_memory_bytes, _working_set_bytes(), tracemalloc.get_traced_memory()[1],
+                peak_memory_bytes, _working_set_bytes(),
             ),
-            "memory_measurement": "working_set_or_python_tracemalloc_peak",
+            "memory_measurement": "process_working_set_peak_without_allocation_tracing",
             "rows_scanned": sum(row_counts.values()),
             "bytes_scanned": base_path.stat().st_size + enriched_path.stat().st_size,
         },
@@ -994,7 +991,12 @@ def _stream_dataset_id(connection, side, kind, identity, schema):
 
 
 def _columnar_rows(batch: pa.RecordBatch):
-    columns = batch.to_pydict()
+    columns = {}
+    for index, name in enumerate(batch.schema.names):
+        column = batch.column(index)
+        if pa.types.is_timestamp(column.type):
+            column = pc.strftime(column, format="%Y-%m-%dT%H:%M:%SZ")
+        columns[name] = column.to_pylist()
     names = tuple(columns)
     for index in range(batch.num_rows):
         yield {name: columns[name][index] for name in names}
@@ -1031,7 +1033,10 @@ def _working_set_bytes() -> int:
     counters = _Counters()
     counters.cb = ctypes.sizeof(counters)
     handle = ctypes.windll.kernel32.GetCurrentProcess()
-    if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+    query = ctypes.windll.psapi.GetProcessMemoryInfo
+    query.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Counters), ctypes.c_ulong]
+    query.restype = ctypes.c_int
+    if query(handle, ctypes.byref(counters), counters.cb):
         return int(counters.WorkingSetSize)
     return 0
 
