@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -18,12 +19,140 @@ from core.research.ml.registries.io import canonical_hash
 PACKAGE_CONTRACT = "selector_component_input_package.v1"
 OUTCOME_CONTRACT = "selector_mature_outcomes.v1"
 INVENTORY_CONTRACT = "selector_operational_input_inventory.v1"
+PLAN_CONTRACT = "selector_operational_component_plan.v1"
 MODELS = ("ridge", "elastic_net", "ordered_logit_ranker")
 DATES = ("2024-03-15", "2024-09-16", "2025-03-17", "2025-09-15", "2026-03-16")
 TARGET = "forward_return_10d"
+TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v2"
 PURGE_SESSIONS = 10
 EMBARGO_SESSIONS = 10
 SELECTOR_RUN_ID = "20260716T091011Z"
+
+
+def build_selector_component_plan(
+    *,
+    dataset_manifest: Mapping[str, Any],
+    parent_gate: Mapping[str, Any],
+    output_root: Path,
+    campaign_id: str,
+    source_commit: str,
+    selector_run_id: str = SELECTOR_RUN_ID,
+    model_ids: Sequence[str] = MODELS,
+    decision_dates: Sequence[str] = DATES,
+    random_seed: int = 42,
+    write: bool = True,
+) -> dict[str, Any]:
+    """Build the deterministic first-campaign selector component plan.
+
+    This function is deliberately plan-only: it resolves registry identities and
+    output ownership, but never fits models, reads selector rows, publishes
+    components, launches subprocesses, or imports execution owners.
+    """
+    if not str(source_commit or "").strip():
+        raise ValueError("source_commit is required")
+    if not str(campaign_id or "").strip():
+        raise ValueError("campaign_id is required")
+    _validate_plan_parents(
+        dataset_manifest=dataset_manifest,
+        parent_gate=parent_gate,
+        selector_run_id=selector_run_id,
+        decision_dates=decision_dates,
+    )
+    resolver = RegistryResolver(load_registry_bundle())
+    target = resolver.resolve(
+        "target_contracts",
+        str(dataset_manifest.get("target_contract_id") or TARGET),
+        role="selector",
+    )
+    if target.canonical_id != TARGET:
+        raise ValueError("Target contract mismatch")
+    target_hash = str(dataset_manifest.get("target_contract_hash") or "")
+    if target_hash != target.entry.entry_hash:
+        raise ValueError("Target contract hash mismatch")
+    folds = _folds_by_date(parent_gate)
+    rows: list[dict[str, Any]] = []
+    for decision_date in decision_dates:
+        fold = folds.get(str(decision_date))
+        if not fold:
+            raise ValueError(f"Strict-OOS fold missing: {decision_date}")
+        for model_id in model_ids:
+            rows.append(
+                _build_component_plan_row(
+                    resolver=resolver,
+                    dataset_manifest=dataset_manifest,
+                    parent_gate=parent_gate,
+                    target_hash=target_hash,
+                    output_root=output_root,
+                    campaign_id=campaign_id,
+                    selector_run_id=selector_run_id,
+                    model_id=str(model_id),
+                    decision_date=str(decision_date),
+                    fold=fold,
+                    random_seed=random_seed,
+                    source_commit=str(source_commit),
+                )
+            )
+    _validate_component_plan_rows(rows)
+    manifest = {
+        "plan_contract_version": PLAN_CONTRACT,
+        "campaign_id": campaign_id,
+        "selector_run_id": selector_run_id,
+        "component_count": len(rows),
+        "fitted_component_count": len(rows),
+        "control_models": ["momentum"],
+        "fitted_models": list(model_ids),
+        "decision_dates": list(decision_dates),
+        "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_manifest_path": str(dataset_manifest["dataset_manifest_path"]),
+        "daily_spine_id": dataset_manifest["daily_spine_id"],
+        "daily_spine_manifest_path": str(dataset_manifest["daily_spine_manifest_path"]),
+        "symbol_registry_id": dataset_manifest["symbol_registry_id"],
+        "symbol_registry_manifest_path": str(dataset_manifest["symbol_registry_manifest_path"]),
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "parent_gate_logical_checksum": parent_gate["logical_checksum"],
+        "source_commit": str(source_commit),
+        "plans_only": True,
+        "model_fitting_performed": False,
+        "prediction_generation_performed": False,
+        "component_publication_performed": False,
+        "components": rows,
+    }
+    manifest["logical_checksum"] = _logical(manifest)
+    if write:
+        _publish_plan(output_root, manifest)
+        manifest = {
+            **manifest,
+            "component_plan_path": str(output_root / "component_plan.json"),
+            "component_plan_markdown_path": str(output_root / "component_plan.md"),
+        }
+    return manifest
+
+
+def validate_selector_component_plan(path: Path) -> dict[str, Any]:
+    reasons: list[str] = []
+    try:
+        payload = _json(path)
+        if payload.get("plan_contract_version") != PLAN_CONTRACT:
+            reasons.append("PLAN_CONTRACT_MISMATCH")
+        if payload.get("logical_checksum") != _logical(payload):
+            reasons.append("PLAN_CHECKSUM_MISMATCH")
+        rows = list(payload.get("components") or [])
+        try:
+            _validate_component_plan_rows(rows)
+        except ValueError as exc:
+            reasons.append(str(exc).upper().replace(" ", "_"))
+        if payload.get("component_count") != 15 or len(rows) != 15:
+            reasons.append("PLAN_COMPONENT_COUNT_MISMATCH")
+        if "momentum" in set(payload.get("fitted_models") or []):
+            reasons.append("MOMENTUM_IS_NOT_FITTED")
+    except (OSError, ValueError, TypeError):
+        payload = {}
+        reasons.append("PLAN_MISSING_OR_CORRUPT")
+    return {
+        "status": "READY" if not reasons else "BLOCKED",
+        "reasons": sorted(set(reasons)),
+        "plan": payload,
+    }
 
 
 def build_operational_inputs(
@@ -31,7 +160,10 @@ def build_operational_inputs(
     parent_gate: Mapping[str, Any], rows: Sequence[Mapping[str, Any]],
     output_root: Path, evaluation_cutoff: str, source_git_commit: str | None = None,
     selector_run_id: str = SELECTOR_RUN_ID,
+    max_workers: int = 4,
 ) -> dict[str, Any]:
+    if max_workers < 1 or max_workers > 6:
+        raise ValueError("max_workers must be between 1 and 6")
     jobs = list(plan.get("production_plan") or [])
     _validate_plan(jobs)
     _validate_parents(dataset_manifest, parent_gate)
@@ -41,16 +173,19 @@ def build_operational_inputs(
     target = RegistryResolver(load_registry_bundle()).resolve("target_contracts", TARGET, role="selector")
     packages = []
     date_populations: dict[str, str] = {}
-    for job in sorted(jobs, key=lambda row: str(row["job_id"])):
-        package = _build_package(
+    def build(job):
+        return _build_package(
             job=job, rows=canonical_rows, dataset=dataset_manifest, gate=parent_gate,
             target_hash=target.entry.entry_hash, output_root=output_root,
             source_commit=source_commit,
         )
+    ordered_jobs = sorted(jobs, key=lambda row: str(row["job_id"]))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        packages = list(pool.map(build, ordered_jobs))
+    for job, package in zip(ordered_jobs, packages):
         prior = date_populations.setdefault(job["prediction_date"], package["prediction_ordered_population_checksum"])
         if prior != package["prediction_ordered_population_checksum"]:
             raise ValueError("Model-specific prediction populations differ")
-        packages.append(package)
     outcomes = _build_outcomes(
         rows=canonical_rows, dataset=dataset_manifest, target_hash=target.entry.entry_hash,
         output_root=output_root, evaluation_cutoff=evaluation_cutoff,
@@ -79,6 +214,7 @@ def build_operational_inputs(
         "mature_outcome_checksum": outcomes["artifact_checksum"],
         "mature_outcome_manifest_path": outcomes["manifest_path"],
         "evaluation_cutoff": evaluation_cutoff,
+        "selector_dataset_scan_count": 1,
     }
     inventory["logical_checksum"] = _logical(inventory)
     path = output_root / "inventory.json"
@@ -292,6 +428,260 @@ def _validate_parents(dataset, gate):
         raise ValueError("Parent gate is not READY")
     if gate.get("selector_dataset_id") != dataset.get("dataset_id") or gate.get("selector_dataset_artifact_checksum") != dataset.get("dataset_checksum"):
         raise ValueError("Dataset identity mismatch")
+
+
+def _validate_plan_parents(*, dataset_manifest, parent_gate, selector_run_id, decision_dates):
+    if parent_gate.get("gate_contract_version") != "selector_parent_publication_gate.v1" or parent_gate.get("status") != "READY":
+        raise ValueError("Stage 10 parent gate is not READY")
+    if not parent_gate.get("logical_checksum"):
+        raise ValueError("Parent gate is incomplete")
+    if parent_gate.get("selector_run_id") != selector_run_id:
+        raise ValueError("Parent gate belongs to another run")
+    if dataset_manifest.get("dataset_contract_version") != "canonical_v2_selector_dataset.v1":
+        raise ValueError("Canonical-v2 dataset identity is required")
+    if dataset_manifest.get("dataset_id") != parent_gate.get("selector_dataset_id"):
+        raise ValueError("Dataset identity mismatch")
+    if dataset_manifest.get("dataset_checksum") != parent_gate.get("selector_dataset_artifact_checksum"):
+        raise ValueError("Dataset identity mismatch")
+    required = {
+        "dataset_manifest_path", "daily_spine_id", "daily_spine_manifest_path",
+        "symbol_registry_id", "symbol_registry_manifest_path",
+        "target_contract_id", "target_contract_hash",
+        "target_provenance_contract_version",
+    }
+    missing = sorted(key for key in required if not dataset_manifest.get(key))
+    if missing:
+        raise ValueError(f"Dataset lineage missing: {','.join(missing)}")
+    if dataset_manifest.get("target_provenance_contract_version") != TARGET_PROVENANCE_CONTRACT_VERSION:
+        raise ValueError("Target provenance v2 is required")
+    if parent_gate.get("target_provenance_contract_version") != TARGET_PROVENANCE_CONTRACT_VERSION:
+        raise ValueError("Target provenance v2 is required")
+    if parent_gate.get("daily_spine_id") != dataset_manifest.get("daily_spine_id"):
+        raise ValueError("Daily-spine identity mismatch")
+    if parent_gate.get("canonical_registry_id") != dataset_manifest.get("symbol_registry_id"):
+        raise ValueError("Symbol-registry identity mismatch")
+    available = set(parent_gate.get("available_operational_dates") or parent_gate.get("required_operational_dates") or [])
+    if not set(map(str, decision_dates)).issubset(available):
+        raise ValueError("Required operational dates are absent")
+    _folds_by_date(parent_gate)
+
+
+def _folds_by_date(parent_gate):
+    raw = parent_gate.get("strict_oos_folds")
+    if isinstance(raw, Mapping):
+        items = raw.items()
+    else:
+        items = ((row.get("decision_date"), row) for row in (raw or []) if isinstance(row, Mapping))
+    folds = {str(date): dict(row) for date, row in items if date}
+    required = {
+        "fold_id", "training_start", "training_end", "validation_date",
+        "maximum_label_available_timestamp", "purge_sessions", "embargo_sessions",
+    }
+    for date, fold in folds.items():
+        missing = sorted(key for key in required if fold.get(key) in {None, ""})
+        if missing:
+            raise ValueError(f"Strict-OOS fold incomplete: {date}")
+        if int(fold["purge_sessions"]) != PURGE_SESSIONS or int(fold["embargo_sessions"]) != EMBARGO_SESSIONS:
+            raise ValueError(f"Strict-OOS fold purge/embargo mismatch: {date}")
+        if not (
+            str(fold["training_start"]) <= str(fold["training_end"])
+            < str(fold["validation_date"]) <= date
+        ):
+            raise ValueError(f"Strict-OOS fold temporal order invalid: {date}")
+        if str(fold["maximum_label_available_timestamp"]) > str(fold["training_end"]):
+            raise ValueError(f"Strict-OOS fold label availability invalid: {date}")
+    return folds
+
+
+def _build_component_plan_row(
+    *, resolver, dataset_manifest, parent_gate, target_hash, output_root,
+    campaign_id, selector_run_id, model_id, decision_date, fold, random_seed,
+    source_commit,
+):
+    model_resolution = resolver.resolve("selector_models", model_id, role="selector")
+    model_payload = model_resolution.entry.payload
+    if not model_payload.get("ordinary_runner_support"):
+        raise ValueError(f"Requested model is not ordinary-fittable: {model_id}")
+    feature_schema_id = str(model_payload["feature_schema"])
+    feature_schema_hash = _sha(Path(feature_schema_id))
+    ranking_contract_id = str(
+        model_payload.get("ranking_problem_contract")
+        or "pointwise_forward_return_regression_ranking_v1"
+    )
+    identity = {
+        "campaign_id": campaign_id,
+        "selector_run_id": selector_run_id,
+        "model_id": model_id,
+        "decision_date": decision_date,
+        "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_checksum": dataset_manifest["dataset_checksum"],
+        "daily_spine_id": dataset_manifest["daily_spine_id"],
+        "symbol_registry_id": dataset_manifest["symbol_registry_id"],
+        "feature_schema_id": feature_schema_id,
+        "feature_schema_hash": feature_schema_hash,
+        "target_contract_id": TARGET,
+        "target_contract_hash": target_hash,
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "ranking_contract_id": ranking_contract_id,
+        "fold_id": fold["fold_id"],
+        "purge_sessions": int(fold["purge_sessions"]),
+        "embargo_sessions": int(fold["embargo_sessions"]),
+        "random_seed": int(random_seed),
+        "source_commit": source_commit,
+    }
+    component_id = f"selector-component-{canonical_hash(identity)[:24].lower()}"
+    identity = {**identity, "component_id": component_id}
+    base_owner = output_root / "components" / campaign_id / f"date={decision_date}" / f"model={model_id}" / component_id
+    resume = _resume_evidence(base_owner, identity, campaign_id)
+    owner = (
+        base_owner
+        if resume["compatible"] or resume["state"] == "MISSING"
+        else base_owner.with_name(f"{component_id}-planned")
+    )
+    row = {
+        "component_id": component_id,
+        "experiment_id": f"selector-experiment-{canonical_hash({'component_id': component_id, 'model_id': model_id})[:24].lower()}",
+        "campaign_id": campaign_id,
+        "model_id": model_id,
+        "decision_date": decision_date,
+        "dataset_id": dataset_manifest["dataset_id"],
+        "dataset_manifest_path": str(dataset_manifest["dataset_manifest_path"]),
+        "daily_spine_id": dataset_manifest["daily_spine_id"],
+        "daily_spine_manifest_path": str(dataset_manifest["daily_spine_manifest_path"]),
+        "symbol_registry_id": dataset_manifest["symbol_registry_id"],
+        "symbol_registry_manifest_path": str(dataset_manifest["symbol_registry_manifest_path"]),
+        "feature_schema_id": feature_schema_id,
+        "feature_schema_hash": feature_schema_hash,
+        "target_contract_id": TARGET,
+        "target_contract_hash": target_hash,
+        "target_provenance_contract_version": TARGET_PROVENANCE_CONTRACT_VERSION,
+        "ranking_contract_id": ranking_contract_id,
+        "fold_id": fold["fold_id"],
+        "training_start": fold["training_start"],
+        "training_end": fold["training_end"],
+        "validation_date": fold["validation_date"],
+        "purge_sessions": int(fold["purge_sessions"]),
+        "embargo_sessions": int(fold["embargo_sessions"]),
+        "maximum_label_available_timestamp": fold["maximum_label_available_timestamp"],
+        "random_seed": int(random_seed),
+        "source_commit": source_commit,
+        "planned_output_root": str(owner),
+        "status": "COMPLETE_COMPATIBLE" if resume["compatible"] else "PLANNED",
+        "resume_evidence": resume,
+        "parent_gate_checksum": parent_gate["logical_checksum"],
+        "model_entry_hash": model_resolution.entry.entry_hash,
+    }
+    row["plan_checksum"] = _logical({**row, "material_identity": identity})
+    return row
+
+
+def _resume_evidence(owner: Path, identity: Mapping[str, Any], campaign_id: str) -> dict[str, Any]:
+    manifest_path = owner / "manifest.json"
+    if not manifest_path.exists():
+        return {"compatible": False, "state": "MISSING", "manifest_path": str(manifest_path)}
+    try:
+        manifest = _json(manifest_path)
+    except (OSError, ValueError):
+        return {"compatible": False, "state": "CORRUPT", "manifest_path": str(manifest_path)}
+    manifest_checksum = manifest.get("manifest_checksum") or manifest.get("logical_checksum")
+    checksum_ok = manifest_checksum in {
+        canonical_hash({key: value for key, value in manifest.items() if key not in {"manifest_checksum", "logical_checksum"}}),
+        _logical(manifest),
+    }
+    prediction_path = Path(str(manifest.get("prediction_artifact_path") or owner / "predictions.csv"))
+    compatible = bool(
+        checksum_ok
+        and manifest.get("component_id") == identity["component_id"]
+        and manifest.get("campaign_id") == campaign_id
+        and manifest.get("selector_model_identity") == identity["model_id"]
+        and manifest.get("prediction_date") == identity["decision_date"]
+        and (manifest.get("frozen_selector_dataset_identity") or {}).get("dataset_id") == identity["dataset_id"]
+        and (manifest.get("frozen_selector_dataset_identity") or {}).get("dataset_checksum") == identity["dataset_checksum"]
+        and manifest.get("feature_contract_version") in {identity["feature_schema_id"], Path(identity["feature_schema_id"]).stem}
+        and manifest.get("target_contract_version") == identity["target_contract_id"]
+        and manifest.get("target_provenance_contract_version") == TARGET_PROVENANCE_CONTRACT_VERSION
+        and manifest.get("fold_identity") == identity["fold_id"]
+        and manifest.get("git_commit") == identity["source_commit"]
+        and manifest.get("publication_status") in {"complete", "COMPLETE"}
+        and manifest.get("validation_status") == "VERIFIED_STRICT_OOS"
+        and prediction_path.exists()
+    )
+    return {
+        "compatible": compatible,
+        "state": "COMPLETE_COMPATIBLE" if compatible else "INCOMPATIBLE_COMPLETE",
+        "manifest_path": str(manifest_path),
+        "checksum_valid": bool(checksum_ok),
+    }
+
+
+def _validate_component_plan_rows(rows):
+    if len(rows) != 15:
+        raise ValueError("component plan must contain exactly 15 fitted components")
+    ids = [str(row.get("component_id")) for row in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate component IDs")
+    owners = [str(row.get("planned_output_root")) for row in rows]
+    if len(owners) != len(set(owners)):
+        raise ValueError("duplicate output ownership")
+    triples = [(row.get("model_id"), row.get("decision_date"), row.get("planned_output_root")) for row in rows]
+    if len(triples) != len(set(triples)):
+        raise ValueError("duplicate model/date/output ownership")
+    expected = [(date, model) for date in DATES for model in MODELS]
+    actual = [(row.get("decision_date"), row.get("model_id")) for row in rows]
+    if actual != expected:
+        raise ValueError("component plan ordering mismatch")
+    required = {
+        "component_id", "experiment_id", "campaign_id", "model_id", "decision_date",
+        "dataset_id", "dataset_manifest_path", "daily_spine_id",
+        "daily_spine_manifest_path", "symbol_registry_id",
+        "symbol_registry_manifest_path", "feature_schema_id",
+        "feature_schema_hash", "target_contract_id", "target_contract_hash",
+        "target_provenance_contract_version", "ranking_contract_id", "fold_id",
+        "training_start", "training_end", "validation_date", "purge_sessions",
+        "embargo_sessions", "maximum_label_available_timestamp", "random_seed",
+        "source_commit", "planned_output_root", "status", "plan_checksum",
+    }
+    for row in rows:
+        missing = sorted(key for key in required if row.get(key) in {None, ""})
+        if missing:
+            raise ValueError(f"component plan field missing: {','.join(missing)}")
+        if row.get("target_provenance_contract_version") != TARGET_PROVENANCE_CONTRACT_VERSION:
+            raise ValueError("target provenance v2 is required")
+
+
+def _publish_plan(output_root: Path, manifest: Mapping[str, Any]) -> None:
+    output_root.mkdir(parents=True, exist_ok=True)
+    json_path = output_root / "component_plan.json"
+    md_path = output_root / "component_plan.md"
+    temp = output_root / f".component_plan.{uuid.uuid4().hex}.tmp"
+    temp.mkdir(parents=True, exist_ok=False)
+    try:
+        _write_json(temp / "component_plan.json", manifest)
+        (temp / "component_plan.md").write_text(_component_plan_markdown(manifest), encoding="utf-8")
+        os.replace(temp / "component_plan.json", json_path)
+        os.replace(temp / "component_plan.md", md_path)
+        shutil.rmtree(temp)
+    except BaseException:
+        if temp.exists():
+            shutil.rmtree(temp)
+        raise
+
+
+def _component_plan_markdown(manifest: Mapping[str, Any]) -> str:
+    lines = [
+        "# Selector operational component plan",
+        "",
+        f"- Contract: `{manifest.get('plan_contract_version')}`",
+        f"- Campaign: `{manifest.get('campaign_id')}`",
+        f"- Components: `{manifest.get('component_count')}`",
+        f"- Plans only: `{str(manifest.get('plans_only')).lower()}`",
+        "",
+        "| decision_date | model_id | status | component_id |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in manifest.get("components", []):
+        lines.append(f"| {row['decision_date']} | {row['model_id']} | {row['status']} | {row['component_id']} |")
+    return "\n".join(lines) + "\n"
 
 
 def _validate_source_rows(rows):
