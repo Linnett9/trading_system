@@ -1,0 +1,54 @@
+paper_candidate_id: ticket_6d_alpha_only_resume
+alpaca:
+  api_key: ''
+  secret_key: ''
+ml:
+  enabled: false
+  mode: research
+  output_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark
+  stock_alpha_report_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+  stock_alpha_output_dir_override: true
+  stock_alpha_run_size: benchmark
+  stock_alpha_run_profile: ticket_6d_alpha_only_resume
+  stock_level_artifact_format: parquet
+  stock_level_parquet_compression: zstd
+  stock_level_base_prediction_artifacts_path: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet
+  stock_level_prediction_artifacts_path: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts_enriched.parquet
+  stock_alpha_feature_partitioned_resume: true
+  stock_alpha_feature_n_jobs: 6
+  stock_ranker_spy_symbol: SPY
+  stock_ranker_market_symbol: SPY
+  stock_selector_market_data_source: canonical_daily_v2
+  canonical_daily_v2_root: data/processed/market_data/canonical_daily_v2/full
+  canonical_daily_v2_manifest_path: reports/data_lineage/canonical_daily_v2/build_manifest.json
+  stooq_parquet_dir: data/processed/market_data/canonical_daily_v2/full
+  canonical_v2_labeled_spine_root: reports/ml/readiness/selector_spine_extension/labeled_selector_spine_partitions
+  canonical_v2_labeled_spine_manifest_path: reports/ml/readiness/selector_spine_extension/labeled_spine_manifest.json
+  canonical_v2_inference_spine_manifest_path: reports/ml/readiness/selector_spine_extension/inference_spine_manifest.json
+  canonical_v2_alpha_report_root: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/alpha_enrichment
+  stock_alpha_stages:
+    stock_artifact: false
+    alpha_features: true
+    baseline_benchmark: false
+    enriched_benchmark: false
+    target_comparison: false
+    portfolio_replay: false
+    portfolio_policy_sweep: false
+    experiment_report: false
+    attribution: false
+  stock_alpha_overnight_stage_n_jobs: 1
+  stock_ranker_model_n_jobs: 1
+  sklearn_n_jobs: 1
+  torch_num_threads: 1
+  numpy_num_threads: 1
+  stock_ranker_target_comparison_enabled: false
+  stock_alpha_overnight_run_attribution: false
+  stock_alpha_overnight_run_portfolio_replay: false
+  stock_alpha_overnight_run_portfolio_policy_sweep: false
+reports:
+  ml_dir: reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+cache:
+  enabled: true
+  ml_dir: cache/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2
+research:
+  profile: ticket_6d_alpha_only_resume

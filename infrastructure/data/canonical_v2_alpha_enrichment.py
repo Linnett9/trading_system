@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import heapq
 import json
 import math
+import multiprocessing
+import os
+import pickle
 import traceback
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+import uuid
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -46,6 +52,14 @@ DEFAULT_REPORT_ROOT = Path("reports/ml/development/ticket_7b3_daily_large_histor
 EXPECTED_CANONICAL_HASH = "c2ab57992c9363c118d854f01da18ea34122b9c0775af3d0676afe5ff80bad56"
 EXPECTED_BASE_HASH = "739a2b984cdd0a160d65ea546d9523b75637be3921c14734dd5483a093357e89"
 ALPHA_ENRICHMENT_CONTRACT_VERSION = "canonical_v2_alpha_enrichment_v2"
+ALPHA_BASE_CONTRACT_VERSION = "canonical_v2_alpha_base_v1"
+TARGET_PROVENANCE_V2 = "stock_level_target_provenance_v2"
+REQUIRED_BASE_COLUMNS = {
+    "rebalance_date",
+    "symbol",
+    "decision_timestamp",
+    "target_provenance_contract_version",
+}
 BOOL_COLUMNS = {"selector_eligible", "provider_transition_flag"}
 INT_COLUMNS = {
     "target_horizon_trading_days",
@@ -84,37 +98,212 @@ class PartitionBuildError(RuntimeError):
         super().__init__(str(payload.get("exception_message", "")))
 
 
-def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> StockLevelAlphaFeaturePaths:
+_ALPHA_WORKER_CONFIG: dict[str, Any] | None = None
+_ALPHA_WORKER_SPY: list[dict[str, float | str]] | None = None
+_ALPHA_WORKER_INPUT_RESOLUTION: dict[str, Any] | None = None
+
+
+def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate an immutable alpha parent without materialising the base table."""
+    settings = StockLevelResearchConfig.from_mapping(config)
+    path = settings.base_artifact_path
+    if path.name.startswith(".") or ".tmp" in path.name.lower() or path.suffix.lower() != ".parquet":
+        raise ValueError(f"alpha base must be a published Parquet path, not a temporary path: {path}")
+    if not path.is_file():
+        raise FileNotFoundError(f"alpha base artifact is missing: {path}")
+    try:
+        parquet = pq.ParquetFile(path)
+        metadata = parquet.metadata
+        schema = parquet.schema_arrow
+    except Exception as exc:
+        raise ValueError(f"alpha base Parquet metadata is unreadable: {path}: {exc}") from exc
+    if metadata.num_rows <= 0:
+        raise ValueError("alpha base artifact has zero rows")
+    missing = sorted(REQUIRED_BASE_COLUMNS - set(schema.names))
+    if missing:
+        raise ValueError(f"alpha base artifact is missing required columns: {missing}")
+
+    sidecar_path = path.with_name("stock_level_prediction_artifacts.json")
+    sidecar = _read_json(sidecar_path)
+    identity = dict(sidecar.get("canonical_artifact", {}) or {})
+    if not sidecar or not identity:
+        raise ValueError(f"alpha base publication identity is missing: {sidecar_path}")
+    if identity.get("completion_status") != "complete":
+        raise ValueError("alpha base publication is not complete")
+    if int(identity.get("row_count", -1)) != metadata.num_rows:
+        raise ValueError("alpha base publication row count does not match Parquet metadata")
+    recorded_path = Path(str(identity.get("resolved_artifact_path", "")))
+    if recorded_path and recorded_path.resolve() != path.resolve():
+        raise ValueError("alpha base publication identity points to a different artifact")
+    recorded_sha256 = str(identity.get("sha256", "")).lower()
+    if len(recorded_sha256) != 64:
+        raise ValueError("alpha base publication checksum is missing or malformed")
+    if int(identity.get("file_size_bytes", -1)) != path.stat().st_size:
+        raise ValueError("alpha base publication size does not match the artifact")
+    observed_sha256 = _file_sha256(path)
+    if observed_sha256 != recorded_sha256:
+        raise ValueError("alpha base publication checksum does not match the artifact")
+
+    versions: set[str] = set()
+    key_hasher = hashlib.sha256()
+    observed_rows = 0
+    for batch in parquet.iter_batches(
+        batch_size=int(dict(config.get("ml", {}) or {}).get("canonical_v2_alpha_validation_batch_rows", 65_536)),
+        columns=["rebalance_date", "symbol", "target_provenance_contract_version"],
+    ):
+        dates = batch.column(0).to_pylist()
+        symbols = batch.column(1).to_pylist()
+        provenance = batch.column(2).to_pylist()
+        observed_rows += batch.num_rows
+        for date, symbol, version in zip(dates, symbols, provenance):
+            versions.add(str(version or ""))
+            key_hasher.update(f"{str(date)[:10]}\x1f{str(symbol).upper()}\n".encode("utf-8"))
+    if observed_rows != metadata.num_rows:
+        raise ValueError("alpha base projected scan row count mismatch")
+    if versions != {TARGET_PROVENANCE_V2}:
+        raise ValueError(
+            "alpha base target provenance must contain only "
+            f"{TARGET_PROVENANCE_V2}; observed={sorted(versions)}"
+        )
+    return {
+        "status": "VALID",
+        "contract_version": ALPHA_BASE_CONTRACT_VERSION,
+        "path": str(path),
+        "resolved_path": str(path.resolve()),
+        "row_count": metadata.num_rows,
+        "column_count": len(schema.names),
+        "required_columns": sorted(REQUIRED_BASE_COLUMNS),
+        "schema_fingerprint": _schema_fingerprint(schema),
+        "sha256": observed_sha256,
+        "logical_content_sha256": identity.get("logical_content_sha256"),
+        "economic_key_sha256": key_hasher.hexdigest(),
+        "target_provenance_contract_versions": sorted(versions),
+        "publication_identity_path": str(sidecar_path),
+        "publication_complete": True,
+        "full_table_materialized": False,
+        "validation_projection": [
+            "rebalance_date",
+            "symbol",
+            "target_provenance_contract_version",
+        ],
+    }
+
+
+def write_partitioned_canonical_v2_alpha_features(
+    config: dict[str, Any],
+) -> StockLevelAlphaFeaturePaths:
+    ml = dict(config.get("ml", {}) or {})
+    report_root = Path(
+        str(
+            ml.get(
+                "canonical_v2_alpha_report_root",
+                DEFAULT_REPORT_ROOT / "alpha_enrichment",
+            )
+        )
+    )
+    report_root.mkdir(parents=True, exist_ok=True)
+    run_id = f"alpha-only-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    manifest_path = report_root / "alpha_only_run_manifest.json"
+    base = validate_alpha_base_artifact(config)
+    state = {
+        "contract_version": "canonical_v2_alpha_only_run.v1",
+        "run_id": run_id,
+        "mode": "ml-stock-level-alpha-features",
+        "status": "RUNNING",
+        "source_commit": _source_commit(config),
+        "immutable_parent": base,
+        "stages": {
+            "stock_artifact": {
+                "status": "completed_existing",
+                "path": base["path"],
+                "sha256": base["sha256"],
+            },
+            "alpha_features": {"status": "running"},
+        },
+        "stock_artifact_generation_invoked": False,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_json(manifest_path, state)
+    try:
+        result = _write_partitioned_canonical_v2_alpha_features(config)
+    except BaseException as exc:
+        state["status"] = "FAILED"
+        state["stages"]["alpha_features"] = {
+            "status": "failed",
+            "exception_type": type(exc).__name__,
+            "exception_message": str(exc),
+        }
+        state["ended_at"] = datetime.now(timezone.utc).isoformat()
+        _write_json(manifest_path, state)
+        raise
+    state["status"] = "COMPLETE"
+    state["stages"]["alpha_features"] = {
+        "status": "completed",
+        "output_paths": _path_payload_for_alpha(result),
+    }
+    state["ended_at"] = datetime.now(timezone.utc).isoformat()
+    _write_json(manifest_path, state)
+    return result
+
+
+def _path_payload_for_alpha(paths: StockLevelAlphaFeaturePaths) -> dict[str, str]:
+    return {
+        name: str(value)
+        for name, value in vars(paths).items()
+        if isinstance(value, Path)
+    }
+
+
+def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> StockLevelAlphaFeaturePaths:
+    config = {**config, "ml": dict(config.get("ml", {}) or {})}
     settings = StockLevelResearchConfig.from_mapping(config)
     apply_stock_alpha_worker_caps(config)
-    ml = dict(config.get("ml", {}) or {})
+    ml = config["ml"]
     report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
     report_root.mkdir(parents=True, exist_ok=True)
+    base_validation = validate_alpha_base_artifact(config)
+    config["ml"]["canonical_v2_alpha_validated_base_sha256"] = base_validation["sha256"]
+    config["ml"]["canonical_v2_alpha_validated_base_key_sha256"] = base_validation["economic_key_sha256"]
     input_resolution = resolve_inputs(config)
+    input_resolution["validated_alpha_base"] = base_validation
     _write_json(report_root / "input_resolution.json", input_resolution)
     if not input_resolution["gates_passed"]:
         raise ValueError(f"canonical-v2 alpha input gates failed: {input_resolution['blocking_issues']}")
+    base_partition_manifest = prepare_alpha_base_partitions(
+        config,
+        base_validation=base_validation,
+    )
+    config["ml"]["canonical_v2_alpha_base_partition_root"] = base_partition_manifest["path"]
 
     output_dir = settings.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    partition_root = report_root / "partitions"
-    manifest_root = report_root / "partition_manifests"
-    base_partition_root = Path(str(ml.get("canonical_v2_base_partition_root", report_root / "base_partitions")))
+    partition_namespace = (
+        report_root
+        / "alpha_partitions_v2"
+        / str(base_validation["sha256"])
+        / _feature_schema_identity()
+    )
+    partition_root = partition_namespace / "partitions"
+    manifest_root = partition_namespace / "partition_manifests"
+    base_partition_root = Path(str(base_partition_manifest["path"]))
     partition_root.mkdir(parents=True, exist_ok=True)
     manifest_root.mkdir(parents=True, exist_ok=True)
 
     base_path = settings.base_artifact_path
-    spine_index = _symbol_spine_index(config)
+    available_symbols = {
+        str(row["symbol"]).upper()
+        for row in base_partition_manifest["partitions"]
+    }
 
     configured_symbols = ml.get("canonical_v2_alpha_symbols")
     if configured_symbols:
         requested = {str(symbol).upper() for symbol in configured_symbols}
-        symbols = [symbol for symbol in sorted(requested) if symbol in spine_index]
+        symbols = [symbol for symbol in sorted(requested) if symbol in available_symbols]
         missing = sorted(requested - set(symbols))
         if missing:
-            raise ValueError(f"missing labeled spine partition for requested symbols: {missing[:10]}")
+            raise ValueError(f"missing certified base partition for requested symbols: {missing[:10]}")
     else:
-        symbols = sorted(spine_index)
+        symbols = sorted(available_symbols)
     completed_before = _completed_compatible_symbols(manifest_root, config)
     pending = [symbol for symbol in symbols if symbol not in completed_before]
     workers = settings.alpha_feature_n_jobs
@@ -128,13 +317,14 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
         "partition_root": str(partition_root),
         "manifest_root": str(manifest_root),
         "base_artifact_path": str(base_path),
+        "base_artifact_sha256": base_validation["sha256"],
+        "base_economic_key_sha256": base_validation["economic_key_sha256"],
         "base_partition_root": str(base_partition_root),
-        "source_mode": "labeled_spine_partition",
-        "labeled_spine_manifest_path": str(ml.get("canonical_v2_labeled_spine_manifest_path", "reports/ml/readiness/selector_spine_extension/labeled_spine_manifest.json")),
+        "source_mode": "certified_published_base_partition",
         "canonical_price_root": str(settings.parquet_dir),
         "monolithic_base_read": False,
         "resume_enabled": True,
-        "retry_only_failed_command": "python .\\main.py --mode ml-stock-level-alpha-features --config .\\config\\config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml",
+        "retry_only_failed_command": "python .\\main.py --mode ml-stock-level-alpha-features --config .\\config\\config.ticket_6d_alpha_only_resume.yaml",
     }
     _write_json(report_root / "partition_plan.json", plan)
     _write_json(report_root / "failed_partitions.json", {"failed_partition_count": 0, "failed_partitions": []})
@@ -147,12 +337,19 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
     tasks_cancelled = 0
     fail_fast = _fail_fast_settings(ml)
     if pending:
-        prepared_spy = _prepare_history(_load_price_histories(settings.parquet_dir, [settings.spy_symbol]).get(settings.spy_symbol, []))
         effective_workers = min(max(1, workers), len(pending))
         if effective_workers == 1:
+            prepared_spy = _prepare_history(_load_price_histories(settings.parquet_dir, [settings.spy_symbol]).get(settings.spy_symbol, []))
             for symbol in pending:
                 try:
-                    result = _build_partition(symbol, config, prepared_spy, partition_root, manifest_root)
+                    result = _build_partition(
+                        symbol,
+                        config,
+                        prepared_spy,
+                        partition_root,
+                        manifest_root,
+                        input_resolution=input_resolution,
+                    )
                     rows_processed += int(result["row_count"])
                 except Exception as exc:
                     failed.append(_failure_record(symbol, exc))
@@ -161,44 +358,24 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
                     raise
                 _progress(report_root, len(symbols), len(_completed_compatible_symbols(manifest_root, config)), len(failed), rows_processed, started)
         else:
-            with ProcessPoolExecutor(max_workers=effective_workers) as executor:
-                futures = {
-                    executor.submit(_build_partition, symbol, config, prepared_spy, partition_root, manifest_root): symbol
-                    for symbol in pending
-                }
-                for future in as_completed(futures):
-                    symbol = futures[future]
-                    try:
-                        result = future.result()
-                        rows_processed += int(result["row_count"])
-                    except Exception as exc:  # pragma: no cover - exercised by integration failures.
-                        failed.append(_failure_record(symbol, exc))
-                        _write_json(report_root / "failed_partitions.json", {"failed_partition_count": len(failed), "failed_partitions": failed})
-                        should_abort, abort_reason, dominant_signature = _should_abort_fail_fast(
-                            failed,
-                            completed=len(_completed_compatible_symbols(manifest_root, config)),
-                            settings=fail_fast,
-                        )
-                        if should_abort:
-                            aborted_early = True
-                            for pending_future in futures:
-                                if not pending_future.done() and pending_future.cancel():
-                                    tasks_cancelled += 1
-                    _progress(
-                        report_root,
-                        len(symbols),
-                        len(_completed_compatible_symbols(manifest_root, config)),
-                        len(failed),
-                        rows_processed,
-                        started,
-                        aborted_early=aborted_early,
-                        abort_reason=abort_reason,
-                        dominant_failure_signature=dominant_signature,
-                        tasks_cancelled=tasks_cancelled,
-                    )
-                    if aborted_early:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        break
+            execution = _execute_alpha_process_pool(
+                pending,
+                config=config,
+                input_resolution=input_resolution,
+                partition_root=partition_root,
+                manifest_root=manifest_root,
+                report_root=report_root,
+                workers=effective_workers,
+                fail_fast=fail_fast,
+                planned_partitions=len(symbols),
+                started=started,
+            )
+            failed.extend(execution["failures"])
+            rows_processed += int(execution["rows_processed"])
+            aborted_early = bool(execution["aborted_early"])
+            abort_reason = str(execution["abort_reason"])
+            dominant_signature = str(execution["dominant_signature"])
+            tasks_cancelled += int(execution["tasks_cancelled"])
     _write_json(report_root / "failed_partitions.json", {"failed_partition_count": len(failed), "failed_partitions": failed})
     if aborted_early:
         raise RuntimeError(f"canonical-v2 alpha aborted early: {abort_reason}; dominant_signature={dominant_signature}")
@@ -219,24 +396,6 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
             **partition_validation,
         },
     )
-    rows = _read_partition_rows(partition_root)
-    rows.sort(key=lambda row: (str(row.get("rebalance_date", "")), str(row.get("symbol", "")).upper()))
-    _add_cross_sectional_features(rows)
-    source_rows = _read_partition_rows(base_partition_root)
-    price_histories = _load_price_histories(settings.parquet_dir, sorted({*symbols, settings.spy_symbol}))
-    prepared_histories = {symbol.upper(): _prepare_history(history) for symbol, history in price_histories.items()}
-    audit = _audit(source_rows, rows, prepared_histories, str(base_path), workers)
-    audit["parallelism"].update(
-        {
-            "requested_workers": workers,
-            "effective_workers": plan["effective_workers"],
-            "partition": "symbol",
-            "symbol_count": len(symbols),
-            "partitioned_resume": True,
-        }
-    )
-    audit.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=base_path))
-    audit["canonical_v2_input_resolution"] = input_resolution
     paths = StockLevelAlphaFeaturePaths(
         enriched_parquet_path=canonical_artifact_path(output_dir, "stock_level_prediction_artifacts_enriched", config),
         audit_csv_path=output_dir / "stock_level_alpha_feature_audit.csv",
@@ -268,6 +427,30 @@ def write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> Sto
             },
         )
         raise
+    audit = {
+        "mode": "stock_level_alpha_features_research_only",
+        "source_path": str(base_path),
+        "source_base_sha256": base_validation["sha256"],
+        "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+        "row_count": identity["row_count"],
+        "features": identity.pop("feature_coverage"),
+        "parallelism": {
+            "requested_workers": workers,
+            "effective_workers": plan["effective_workers"],
+            "partition": "symbol",
+            "symbol_count": len(symbols),
+            "partitioned_resume": True,
+            "worker_local_initialization": True,
+            "bounded_in_flight_tasks": True,
+        },
+        "bounded_memory": {
+            "full_base_materialization": False,
+            "full_enriched_materialization": False,
+            "maximum_cross_section_rows": len(symbols),
+        },
+    }
+    audit.update(stock_alpha_report_metadata(config, output_dir, source_artifact_path=base_path))
+    audit["canonical_v2_input_resolution"] = input_resolution
     audit["canonical_artifact"] = identity
     audit["artifact_format"] = identity["artifact_format"]
     audit["artifact_path"] = identity["resolved_artifact_path"]
@@ -388,6 +571,431 @@ def resolve_inputs(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def prepare_alpha_base_partitions(
+    config: Mapping[str, Any],
+    *,
+    base_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Stream the immutable published base into a checksum-owned symbol dataset."""
+    settings = StockLevelResearchConfig.from_mapping(config)
+    ml = dict(config.get("ml", {}) or {})
+    report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
+    checksum = str(base_validation["sha256"])
+    configured_root = ml.get("canonical_v2_alpha_base_partition_root")
+    target_root = (
+        Path(str(configured_root))
+        if configured_root
+        else report_root / "alpha_base_partitions_v2" / checksum
+    )
+    manifest_path = target_root / "base_partition_manifest.json"
+    existing = _read_json(manifest_path)
+    if (
+        existing.get("status") == "COMPLETE"
+        and existing.get("source_base_sha256") == checksum
+        and int(existing.get("row_count", -1)) == int(base_validation["row_count"])
+        and all(Path(str(row.get("path", ""))).is_file() for row in existing.get("partitions", []))
+    ):
+        return existing
+
+    attempt_root = target_root.with_name(
+        f".{target_root.name}.attempt-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+    attempt_root.mkdir(parents=True, exist_ok=False)
+    parquet = pq.ParquetFile(settings.base_artifact_path)
+    compression = str(ml.get("stock_level_parquet_compression", "zstd")).lower()
+    writers: dict[str, pq.ParquetWriter] = {}
+    row_counts: dict[str, int] = {}
+    paths: dict[str, Path] = {}
+    try:
+        for batch in parquet.iter_batches(
+            batch_size=int(ml.get("canonical_v2_alpha_base_partition_batch_rows", 32_768))
+        ):
+            table = pa.Table.from_batches([batch])
+            for scalar in pc.unique(table["symbol"]):
+                symbol = str(scalar.as_py() or "").upper()
+                if not symbol:
+                    raise ValueError("alpha base contains a blank symbol")
+                selected = table.filter(pc.equal(table["symbol"], pa.scalar(scalar.as_py())))
+                path = attempt_root / f"symbol={_safe_symbol(symbol)}" / "rows.parquet"
+                if symbol not in writers:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    writers[symbol] = pq.ParquetWriter(path, parquet.schema_arrow, compression=compression)
+                    paths[symbol] = path
+                    row_counts[symbol] = 0
+                writers[symbol].write_table(selected)
+                row_counts[symbol] += selected.num_rows
+    finally:
+        for writer in writers.values():
+            writer.close()
+    observed_rows = sum(row_counts.values())
+    if observed_rows != int(base_validation["row_count"]):
+        raise ValueError(
+            f"alpha base partition row count {observed_rows} does not match "
+            f"validated base row count {base_validation['row_count']}"
+        )
+    partitions: list[dict[str, Any]] = []
+    for symbol in sorted(paths):
+        path = paths[symbol]
+        identity = {
+            "contract_version": ALPHA_BASE_CONTRACT_VERSION,
+            "status": "COMPLETE",
+            "symbol": symbol,
+            "path": str(path),
+            "row_count": row_counts[symbol],
+            "sha256": _file_sha256(path),
+            "source_base_sha256": checksum,
+            "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
+            "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+        }
+        _write_json(_base_partition_identity_path(path), identity)
+        partitions.append(identity)
+    payload = {
+        "contract_version": ALPHA_BASE_CONTRACT_VERSION,
+        "status": "COMPLETE",
+        "path": str(target_root),
+        "source_base_path": str(settings.base_artifact_path),
+        "source_base_sha256": checksum,
+        "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
+        "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+        "row_count": observed_rows,
+        "symbol_count": len(partitions),
+        "partition_count": len(partitions),
+        "partitions": partitions,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "streaming_source_read": True,
+        "full_table_materialized": False,
+    }
+    _write_json(attempt_root / manifest_path.name, payload)
+    target_root.parent.mkdir(parents=True, exist_ok=True)
+    if target_root.exists():
+        raise FileExistsError(
+            f"incompatible alpha base partition root already exists: {target_root}"
+        )
+    os.replace(attempt_root, target_root)
+    for row in payload["partitions"]:
+        relative = Path(str(row["path"])).relative_to(attempt_root)
+        row["path"] = str(target_root / relative)
+        _write_json(_base_partition_identity_path(Path(str(row["path"]))), row)
+    _write_json(manifest_path, payload)
+    return payload
+
+
+def _small_alpha_worker_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    ml = dict(config.get("ml", {}) or {})
+    allowed = {
+        "output_dir",
+        "stooq_parquet_dir",
+        "stock_ranker_spy_symbol",
+        "stock_ranker_market_symbol",
+        "stock_level_base_prediction_artifacts_path",
+        "stock_level_artifact_format",
+        "stock_level_parquet_compression",
+        "stock_alpha_feature_n_jobs",
+        "canonical_v2_alpha_report_root",
+        "canonical_v2_alpha_base_partition_root",
+        "canonical_v2_alpha_validated_base_sha256",
+        "canonical_v2_alpha_validated_base_key_sha256",
+        "canonical_daily_v2_root",
+        "canonical_daily_v2_manifest_path",
+        "canonical_v2_labeled_spine_root",
+        "canonical_v2_labeled_spine_manifest_path",
+        "canonical_v2_inference_spine_manifest_path",
+        "sector_reference_path",
+        "sector_by_symbol",
+        "feature_lookback_days",
+    }
+    payload = {"ml": {key: value for key, value in ml.items() if key in allowed}}
+    encoded = pickle.dumps(payload)
+    if len(encoded) > 131_072:
+        raise ValueError(f"alpha worker configuration payload is too large: {len(encoded)} bytes")
+    return payload
+
+
+def _alpha_worker_initialize(
+    worker_config: dict[str, Any],
+    input_resolution: dict[str, Any],
+    startup_root: str,
+) -> None:
+    global _ALPHA_WORKER_CONFIG, _ALPHA_WORKER_SPY, _ALPHA_WORKER_INPUT_RESOLUTION
+    pid = os.getpid()
+    path = Path(startup_root) / f"{pid}.json"
+    try:
+        settings = StockLevelResearchConfig.from_mapping(worker_config)
+        _ALPHA_WORKER_CONFIG = worker_config
+        _ALPHA_WORKER_INPUT_RESOLUTION = input_resolution
+        _ALPHA_WORKER_SPY = _prepare_history(
+            _load_price_histories(settings.parquet_dir, [settings.spy_symbol]).get(
+                settings.spy_symbol, []
+            )
+        )
+        _write_json(
+            path,
+            {
+                "status": "STARTED",
+                "worker_pid": pid,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "prepared_spy_rows": len(_ALPHA_WORKER_SPY),
+            },
+        )
+    except BaseException as exc:
+        _write_json(
+            path,
+            {
+                "status": "FAILED",
+                "worker_pid": pid,
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "traceback": traceback.format_exc(),
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        raise
+
+
+def _alpha_worker_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    if _ALPHA_WORKER_CONFIG is None or _ALPHA_WORKER_SPY is None or _ALPHA_WORKER_INPUT_RESOLUTION is None:
+        raise RuntimeError("alpha worker was not initialized")
+    symbol = str(task["symbol"])
+    event_root = Path(str(task["event_root"]))
+    _write_json(
+        event_root / f"{_safe_symbol(symbol)}.json",
+        {
+            "status": "STARTED",
+            "symbol": symbol,
+            "worker_pid": os.getpid(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    result = _build_partition(
+        symbol,
+        _ALPHA_WORKER_CONFIG,
+        _ALPHA_WORKER_SPY,
+        Path(str(task["partition_root"])),
+        Path(str(task["manifest_root"])),
+        input_resolution=_ALPHA_WORKER_INPUT_RESOLUTION,
+    )
+    result["worker_pid"] = os.getpid()
+    _write_json(
+        event_root / f"{_safe_symbol(symbol)}.json",
+        {
+            "status": "COMPLETED",
+            "symbol": symbol,
+            "worker_pid": os.getpid(),
+            "row_count": result["row_count"],
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return result
+
+
+def _execute_alpha_process_pool(
+    symbols: Sequence[str],
+    *,
+    config: Mapping[str, Any],
+    input_resolution: Mapping[str, Any],
+    partition_root: Path,
+    manifest_root: Path,
+    report_root: Path,
+    workers: int,
+    fail_fast: Mapping[str, Any],
+    planned_partitions: int,
+    started: float,
+    executor_cls: type = ProcessPoolExecutor,
+) -> dict[str, Any]:
+    startup_root = report_root / "worker_startup"
+    event_root = report_root / "worker_tasks"
+    startup_root.mkdir(parents=True, exist_ok=True)
+    event_root.mkdir(parents=True, exist_ok=True)
+    worker_config = _small_alpha_worker_config(config)
+    source_commit = _source_commit(config)
+    context = multiprocessing.get_context("spawn")
+    maximum_in_flight = max(workers, workers * 2)
+    queue = iter(symbols)
+    futures: dict[Any, str] = {}
+    failures: list[dict[str, Any]] = []
+    rows_processed = 0
+    submitted = 0
+    started_count = 0
+    completed = 0
+    cancelled = 0
+    aborted = False
+    abort_reason = ""
+    dominant = ""
+    worker_exit_information: list[dict[str, Any]] = []
+    executor_phase = "creation"
+    executor = executor_cls(
+        max_workers=workers,
+        mp_context=context,
+        initializer=_alpha_worker_initialize,
+        initargs=(worker_config, dict(input_resolution), str(startup_root)),
+    )
+    try:
+        executor_phase = "submission"
+
+        def submit_one(symbol: str) -> None:
+            nonlocal submitted
+            task = {
+                "symbol": symbol,
+                "partition_root": str(partition_root),
+                "manifest_root": str(manifest_root),
+                "event_root": str(event_root),
+            }
+            if len(pickle.dumps(task)) > 16_384:
+                raise ValueError(f"alpha task payload is too large for {symbol}")
+            futures[executor.submit(_alpha_worker_task, task)] = symbol
+            submitted += 1
+
+        for _ in range(min(maximum_in_flight, len(symbols))):
+            submit_one(next(queue))
+        executor_phase = "collection"
+        while futures and not aborted:
+            done, _ = wait(set(futures), return_when=FIRST_COMPLETED)
+            for future in done:
+                symbol = futures.pop(future)
+                event = _read_json(event_root / f"{_safe_symbol(symbol)}.json")
+                if event.get("status") in {"STARTED", "COMPLETED"}:
+                    started_count += 1
+                if future.cancelled():
+                    cancelled += 1
+                    continue
+                try:
+                    result = future.result()
+                    completed += 1
+                    rows_processed += int(result["row_count"])
+                except Exception as exc:
+                    failure = _failure_record(symbol, exc)
+                    failure.update(
+                        {
+                            "task_identity": f"alpha-symbol:{symbol}",
+                            "partition_identity": symbol,
+                            "worker_pid": event.get("worker_pid"),
+                            "executor_phase": executor_phase,
+                            "worker_count": workers,
+                            "multiprocessing_start_method": context.get_start_method(),
+                            "source_commit": source_commit,
+                            "parent_memory": _parent_memory_snapshot(),
+                            "worker_startup_diagnostics": (
+                                _worker_startup_diagnostics(startup_root)
+                            ),
+                        }
+                    )
+                    failures.append(failure)
+                    should_abort, abort_reason, dominant = _should_abort_fail_fast(
+                        failures,
+                        completed=completed,
+                        settings=fail_fast,
+                    )
+                    if isinstance(exc, BrokenProcessPool):
+                        should_abort = len(failures) >= min(3, len(symbols))
+                        abort_reason = (
+                            f"{completed} completed partitions and {len(failures)} "
+                            "broken-pool failures"
+                        )
+                        dominant = failure["failure_signature"]
+                    aborted = should_abort
+                if aborted:
+                    break
+                if not aborted:
+                    try:
+                        submit_one(next(queue))
+                    except StopIteration:
+                        pass
+            _write_json(
+                report_root / "executor_lifecycle.json",
+                {
+                    "status": "ABORTING" if aborted else "RUNNING",
+                    "worker_count": workers,
+                    "multiprocessing_start_method": context.get_start_method(),
+                    "maximum_in_flight": maximum_in_flight,
+                    "submitted": submitted,
+                    "started": started_count,
+                    "completed": completed,
+                    "failed": len(failures),
+                    "cancelled": cancelled,
+                    "executor_phase": executor_phase,
+                    "source_commit": source_commit,
+                    "worker_startup_diagnostics": _worker_startup_diagnostics(startup_root),
+                    "worker_exit_information": _executor_process_snapshot(executor),
+                },
+            )
+        if aborted:
+            for future in futures:
+                future.cancel()
+                cancelled += 1
+    finally:
+        executor_phase = "shutdown"
+        worker_exit_information = _executor_process_snapshot(executor)
+        executor.shutdown(wait=True, cancel_futures=True)
+        _write_json(
+            report_root / "executor_lifecycle.json",
+            {
+                "status": "FAILED" if failures else "COMPLETE",
+                "worker_count": workers,
+                "multiprocessing_start_method": context.get_start_method(),
+                "maximum_in_flight": maximum_in_flight,
+                "submitted": submitted,
+                "started": started_count,
+                "completed": completed,
+                "failed": len(failures),
+                "cancelled": cancelled,
+                "executor_phase": "shutdown_complete",
+                "source_commit": source_commit,
+                "worker_startup_diagnostics": _worker_startup_diagnostics(startup_root),
+                "worker_exit_information": worker_exit_information,
+            },
+        )
+    return {
+        "failures": failures,
+        "rows_processed": rows_processed,
+        "aborted_early": aborted,
+        "abort_reason": abort_reason,
+        "dominant_signature": dominant,
+        "tasks_cancelled": cancelled,
+    }
+
+
+def _worker_startup_diagnostics(root: Path) -> list[dict[str, Any]]:
+    return [_read_json(path) for path in sorted(root.glob("*.json"))][-64:]
+
+
+def _executor_process_snapshot(executor: Any) -> list[dict[str, Any]]:
+    processes = getattr(executor, "_processes", None) or {}
+    return [
+        {"worker_pid": process.pid, "exitcode": process.exitcode}
+        for process in processes.values()
+    ]
+
+
+def _parent_memory_snapshot() -> dict[str, Any]:
+    try:
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        memory = process.memory_info()
+        return {
+            "parent_pid": os.getpid(),
+            "rss_bytes": memory.rss,
+            "vms_bytes": memory.vms,
+            "available_bytes": psutil.virtual_memory().available,
+        }
+    except Exception:
+        return {"parent_pid": os.getpid(), "available": False}
+
+
+def _source_commit(config: Mapping[str, Any]) -> str:
+    configured = dict(config.get("ml", {}) or {}).get("source_commit")
+    if configured:
+        return str(configured)
+    head = Path(".git/HEAD")
+    try:
+        value = head.read_text(encoding="utf-8").strip()
+        if value.startswith("ref: "):
+            return Path(".git").joinpath(value[5:]).read_text(encoding="utf-8").strip()
+        return value
+    except OSError:
+        return "unknown"
+
+
 def build_base_artifact_from_labeled_spines(config: Mapping[str, Any], *, input_resolution: Mapping[str, Any] | None = None) -> dict[str, Any]:
     settings = StockLevelResearchConfig.from_mapping(config)
     ml = dict(config.get("ml", {}) or {})
@@ -476,33 +1084,104 @@ def ensure_base_symbol_partitions(config: Mapping[str, Any], *, input_resolution
 
 
 def validate_enriched_artifact(path: Path, *, input_resolution: Mapping[str, Any]) -> dict[str, Any]:
-    rows = read_stock_level_artifact(path, required_columns={"rebalance_date", "symbol", "asset_id", "actual_forward_return_10d"})
-    keys = [(row.get("asset_id"), str(row.get("rebalance_date"))[:10]) for row in rows]
-    symbol_keys = [(str(row.get("symbol", "")).upper(), str(row.get("rebalance_date"))[:10]) for row in rows]
-    feature_missingness = {}
-    for feature in ENGINEERED_FEATURE_COLUMNS:
-        missing = sum(1 for row in rows if row.get(feature) in (None, "", "nan"))
-        feature_missingness[feature] = missing
-    tier_d_rows = sum(1 for row in rows if row.get("compatibility_tier") == "TIER_D_SYMBOL_QUARANTINE")
-    quarantined_rows = sum(1 for row in rows if str(row.get("eligibility_reason", "")).startswith("quarantined:"))
-    label_violations = sum(
-        1
-        for row in rows
-        if str(row.get("label_available_timestamp", ""))[:10] < str(row.get("decision_timestamp", ""))[:10]
+    parquet = pq.ParquetFile(path)
+    required = {
+        "rebalance_date",
+        "symbol",
+        "asset_id",
+        "actual_forward_return_10d",
+        "target_provenance_contract_version",
+        *ENGINEERED_FEATURE_COLUMNS,
+    }
+    missing_columns = sorted(required - set(parquet.schema_arrow.names))
+    if missing_columns:
+        raise ValueError(f"enriched artifact is missing required columns: {missing_columns}")
+    feature_missingness = {feature: 0 for feature in ENGINEERED_FEATURE_COLUMNS}
+    previous_asset_key: tuple[Any, str] | None = None
+    previous_symbol_key: tuple[str, str] | None = None
+    duplicate_asset = 0
+    duplicate_symbol = 0
+    symbols: set[str] = set()
+    dates: set[str] = set()
+    versions: set[str] = set()
+    tier_d_rows = 0
+    quarantined_rows = 0
+    label_violations = 0
+    row_count = 0
+    key_hasher = hashlib.sha256()
+    columns = [
+        name
+        for name in (
+            "rebalance_date",
+            "symbol",
+            "asset_id",
+            "target_provenance_contract_version",
+            "compatibility_tier",
+            "eligibility_reason",
+            "label_available_timestamp",
+            "decision_timestamp",
+            *ENGINEERED_FEATURE_COLUMNS,
+        )
+        if name in parquet.schema_arrow.names
+    ]
+    for batch in parquet.iter_batches(batch_size=65_536, columns=columns):
+        for row in pa.Table.from_batches([batch]).to_pylist():
+            row_count += 1
+            symbol = str(row.get("symbol", "")).upper()
+            date = str(row.get("rebalance_date", ""))[:10]
+            asset_key = (row.get("asset_id"), date)
+            symbol_key = (symbol, date)
+            if asset_key == previous_asset_key:
+                duplicate_asset += 1
+            if symbol_key == previous_symbol_key:
+                duplicate_symbol += 1
+            previous_asset_key = asset_key
+            previous_symbol_key = symbol_key
+            symbols.add(symbol)
+            dates.add(date)
+            versions.add(str(row.get("target_provenance_contract_version") or ""))
+            key_hasher.update(f"{date}\x1f{symbol}\n".encode("utf-8"))
+            for feature in ENGINEERED_FEATURE_COLUMNS:
+                if row.get(feature) in (None, "", "nan"):
+                    feature_missingness[feature] += 1
+            tier_d_rows += row.get("compatibility_tier") == "TIER_D_SYMBOL_QUARANTINE"
+            quarantined_rows += str(row.get("eligibility_reason", "")).startswith("quarantined:")
+            label_available = str(row.get("label_available_timestamp", ""))[:10]
+            decision = str(row.get("decision_timestamp", ""))[:10]
+            label_violations += bool(
+                label_available and decision and label_available < decision
+            )
+    base = dict(input_resolution.get("validated_alpha_base", {}) or {})
+    economic_alignment = (
+        not base.get("economic_key_sha256")
+        or key_hasher.hexdigest() == base["economic_key_sha256"]
     )
     return {
-        "valid": len(keys) == len(set(keys)) and len(symbol_keys) == len(set(symbol_keys)) and tier_d_rows == 0 and quarantined_rows == 0 and label_violations == 0,
+        "valid": (
+            duplicate_asset == 0
+            and duplicate_symbol == 0
+            and tier_d_rows == 0
+            and quarantined_rows == 0
+            and label_violations == 0
+            and versions == {TARGET_PROVENANCE_V2}
+            and economic_alignment
+            and row_count == parquet.metadata.num_rows
+        ),
         "path": str(path),
-        "row_count": len(rows),
-        "symbol_count": len({str(row.get("symbol", "")).upper() for row in rows if row.get("symbol")}),
-        "date_min": min((str(row.get("rebalance_date"))[:10] for row in rows), default=None),
-        "date_max": max((str(row.get("rebalance_date"))[:10] for row in rows), default=None),
-        "duplicate_asset_session_rows": len(keys) - len(set(keys)),
-        "duplicate_symbol_session_rows": len(symbol_keys) - len(set(symbol_keys)),
+        "row_count": row_count,
+        "symbol_count": len(symbols),
+        "date_min": min(dates, default=None),
+        "date_max": max(dates, default=None),
+        "duplicate_asset_session_rows": duplicate_asset,
+        "duplicate_symbol_session_rows": duplicate_symbol,
         "tier_d_rows": tier_d_rows,
         "quarantined_rows": quarantined_rows,
         "label_availability_violations": label_violations,
         "feature_missingness": feature_missingness,
+        "target_provenance_contract_versions": sorted(versions),
+        "economic_key_sha256": key_hasher.hexdigest(),
+        "economic_key_alignment_valid": economic_alignment,
+        "full_table_materialized": False,
         "canonical_source_identity": dict(input_resolution.get("canonical_dataset", {})),
     }
 
@@ -513,12 +1192,29 @@ def _build_partition(
     prepared_spy: list[dict[str, float | str]],
     partition_root: Path,
     manifest_root: Path,
+    *,
+    input_resolution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     settings = StockLevelResearchConfig.from_mapping(config)
+    ml = dict(config.get("ml", {}) or {})
     started = time.perf_counter()
     timings: dict[str, float] = {}
-    source = _resolve_symbol_source(config, symbol)
-    source_mode = "labeled_spine_partition"
+    certified_base_sha = str(ml.get("canonical_v2_alpha_validated_base_sha256", ""))
+    if certified_base_sha:
+        source_base_partition_path = str(
+            Path(str(ml["canonical_v2_alpha_base_partition_root"]))
+            / f"symbol={_safe_symbol(symbol)}"
+            / "rows.parquet"
+        )
+        source = {
+            "base_partition_reused": True,
+            "base_partition_path": source_base_partition_path,
+            "spine_path": "",
+        }
+        source_mode = "certified_published_base_partition"
+    else:
+        source = _resolve_symbol_source(config, symbol)
+        source_mode = "labeled_spine_partition"
     monolithic_base_read = False
     base_partition_reused = source["base_partition_reused"]
     source_base_partition_path = source["base_partition_path"]
@@ -528,13 +1224,34 @@ def _build_partition(
     price_history_rows_read = 0
     try:
         phase_started = time.perf_counter()
-        rows, source_meta = _read_symbol_source_rows_from_spine(
-            symbol,
-            Path(source_spine_path),
-            Path(source_base_partition_path),
-            config=config,
-            input_resolution=resolve_inputs(config),
-        )
+        if certified_base_sha:
+            base_identity = _read_json(
+                _base_partition_identity_path(Path(source_base_partition_path))
+            )
+            if (
+                base_identity.get("status") != "COMPLETE"
+                or base_identity.get("source_base_sha256") != certified_base_sha
+            ):
+                raise ValueError(
+                    f"certified alpha base partition identity mismatch for {symbol}"
+                )
+            rows = _read_parquet_file(Path(source_base_partition_path))
+            if {str(row.get("symbol", "")).upper() for row in rows} != {symbol.upper()}:
+                raise ValueError(f"certified alpha base partition symbol mismatch for {symbol}")
+            source_meta = {
+                "spine_read_seconds": 0.0,
+                "base_derivation_seconds": 0.0,
+                "base_partition_reused": True,
+                "source_rows_read": len(rows),
+            }
+        else:
+            rows, source_meta = _read_symbol_source_rows_from_spine(
+                symbol,
+                Path(source_spine_path),
+                Path(source_base_partition_path),
+                config=config,
+                input_resolution=input_resolution or resolve_inputs(config),
+            )
         timings["spine_read_seconds"] = float(source_meta.get("spine_read_seconds", time.perf_counter() - phase_started) or 0.0)
         timings["base_derivation_seconds"] = float(source_meta.get("base_derivation_seconds", 0.0) or 0.0)
         base_partition_reused = bool(source_meta["base_partition_reused"])
@@ -1001,48 +1718,114 @@ def _consolidate_partition_parquets(
 ) -> dict[str, Any]:
     if not partition_paths:
         raise ValueError("no completed alpha partitions available for consolidation")
-    compression = str(dict(config.get("ml", {}) or {}).get("stock_level_parquet_compression", "zstd")).lower()
+    ml = dict(config.get("ml", {}) or {})
+    compression = str(ml.get("stock_level_parquet_compression", "zstd")).lower()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_suffix(output_path.suffix + ".tmp")
     if tmp.exists():
         tmp.unlink()
-    first = pq.ParquetFile(partition_paths[0]).read()
-    canonical_schema = _schema_for_fieldnames(first.schema.names)
-    reports: list[dict[str, Any]] = []
+    canonical_schema = _schema_for_fieldnames(
+        pq.ParquetFile(partition_paths[0]).schema_arrow.names
+    )
     row_count = 0
-    seen_keys: set[tuple[str, str]] = set()
     duplicate_keys = 0
+    previous_key: tuple[str, str] | None = None
+    key_hasher = hashlib.sha256()
+    symbols_seen: set[str] = set()
+    dates_seen: set[str] = set()
+    target_versions: set[str] = set()
+    dataset_hashes: set[str] = set()
+    feature_non_null = {feature: 0 for feature in ENGINEERED_FEATURE_COLUMNS}
     writer: pq.ParquetWriter | None = None
+    promoted: pq.ParquetFile | None = None
     try:
         writer = pq.ParquetWriter(tmp, canonical_schema, compression=compression)
-        for path in partition_paths:
-            table = pq.ParquetFile(path).read()
-            report, casted = _validate_and_cast_partition_table(path, table, canonical_schema)
-            reports.append(report)
-            symbols = casted["symbol"] if "symbol" in casted.column_names else None
-            dates = casted["rebalance_date"] if "rebalance_date" in casted.column_names else None
-            if symbols is not None and dates is not None:
-                for symbol, date in zip(_iter_chunked_values(symbols), _iter_chunked_values(dates)):
-                    key = (str(symbol).upper(), str(date)[:10])
-                    if key in seen_keys:
-                        duplicate_keys += 1
-                    seen_keys.add(key)
-            if duplicate_keys:
-                raise ValueError(f"duplicate symbol/date keys during consolidation: {duplicate_keys}")
-            writer.write_table(casted)
-            row_count += casted.num_rows
+        date_rows: list[dict[str, Any]] = []
+        active_date: str | None = None
+        for row in _iter_partition_rows_date_major(
+            partition_paths,
+            batch_rows=int(
+                ml.get("canonical_v2_alpha_consolidation_batch_rows", 16_384)
+            ),
+        ):
+            date = str(row.get("rebalance_date", ""))[:10]
+            if active_date is not None and date != active_date:
+                _add_cross_sectional_features(date_rows)
+                writer.write_table(_rows_to_table(date_rows, canonical_schema))
+                date_rows = []
+            active_date = date
+            date_rows.append(row)
+        if date_rows:
+            _add_cross_sectional_features(date_rows)
+            writer.write_table(_rows_to_table(date_rows, canonical_schema))
         writer.close()
         writer = None
+
+        promoted = pq.ParquetFile(tmp)
+        promoted_metadata = promoted.metadata
+        promoted_schema = promoted.schema_arrow
+        for batch in promoted.iter_batches(
+            batch_size=int(
+                ml.get("canonical_v2_alpha_validation_batch_rows", 65_536)
+            )
+        ):
+            for row in _batch_rows(batch):
+                symbol = str(row.get("symbol", "")).upper()
+                date = str(row.get("rebalance_date", ""))[:10]
+                key = (date, symbol)
+                if previous_key == key:
+                    duplicate_keys += 1
+                if previous_key is not None and key < previous_key:
+                    raise ValueError(
+                        "enriched artifact economic keys are not date-major sorted"
+                    )
+                previous_key = key
+                key_hasher.update(
+                    f"{date}\x1f{symbol}\n".encode("utf-8")
+                )
+                symbols_seen.add(symbol)
+                dates_seen.add(date)
+                target_versions.add(
+                    str(row.get("target_provenance_contract_version") or "")
+                )
+                dataset_hash = str(row.get("source_dataset_hash") or "")
+                if dataset_hash:
+                    dataset_hashes.add(dataset_hash)
+                for feature in ENGINEERED_FEATURE_COLUMNS:
+                    if row.get(feature) not in (None, "", "nan"):
+                        feature_non_null[feature] += 1
+                row_count += 1
+        promoted.close()
+        promoted = None
+        if duplicate_keys:
+            raise ValueError(
+                f"duplicate symbol/date keys during consolidation: {duplicate_keys}"
+            )
         if row_count != expected_row_count:
             raise ValueError(f"consolidated row count {row_count} does not match expected {expected_row_count}")
-        promoted_metadata = pq.read_metadata(tmp)
-        promoted_schema = pq.read_schema(tmp)
         if promoted_metadata.num_rows != expected_row_count:
             raise ValueError(f"temporary artifact row count {promoted_metadata.num_rows} does not match expected {expected_row_count}")
         if _schema_fingerprint(promoted_schema) != _schema_fingerprint(canonical_schema):
             raise ValueError("temporary artifact schema fingerprint mismatch")
+        expected_keys = str(
+            ml.get("canonical_v2_alpha_validated_base_key_sha256", "")
+        )
+        if expected_keys and key_hasher.hexdigest() != expected_keys:
+            raise ValueError(
+                "enriched artifact economic keys do not align with the certified base"
+            )
+        if (
+            ml.get("canonical_v2_alpha_validated_base_sha256")
+            and target_versions != {TARGET_PROVENANCE_V2}
+        ):
+            raise ValueError(
+                "enriched artifact target provenance mismatch: "
+                f"{sorted(target_versions)}"
+            )
         tmp.replace(output_path)
     except Exception:
+        if promoted is not None:
+            promoted.close()
         if writer is not None:
             writer.close()
         if tmp.exists():
@@ -1052,11 +1835,19 @@ def _consolidate_partition_parquets(
         _write_parquet_sample_csv(output_path, sample_path, limit=100)
     parquet = pq.ParquetFile(output_path)
     column_order = list(parquet.schema_arrow.names)
-    decision_dates = _column_values(output_path, "rebalance_date")
-    symbols = _column_values(output_path, "symbol")
-    target_versions = sorted(set(_column_values(output_path, "target_provenance_contract_version")))
-    dataset_hashes = sorted(set(_column_values(output_path, "source_dataset_hash")))
     file_hash = _file_sha256(output_path)
+    feature_coverage = [
+        {
+            "feature": feature,
+            "definition": "",
+            "populated_count": feature_non_null[feature],
+            "missing_count": row_count - feature_non_null[feature],
+            "availability_rate": (
+                feature_non_null[feature] / row_count if row_count else 0.0
+            ),
+        }
+        for feature in ENGINEERED_FEATURE_COLUMNS
+    ]
     identity = {
         "artifact_format": "parquet",
         "compression": compression,
@@ -1068,15 +1859,22 @@ def _consolidate_partition_parquets(
         "stable_column_order": column_order,
         "row_count": parquet.metadata.num_rows,
         "column_count": len(column_order),
-        "symbol_count": len({str(value).upper() for value in symbols if value}),
-        "decision_date_count": len({str(value)[:10] for value in decision_dates if value}),
-        "minimum_decision_timestamp": min((str(value) for value in decision_dates if value), default=None),
-        "maximum_decision_timestamp": max((str(value) for value in decision_dates if value), default=None),
-        "target_contract_version": target_versions[0] if len(target_versions) == 1 else None,
-        "target_contract_versions": target_versions,
+        "symbol_count": len(symbols_seen),
+        "decision_date_count": len(dates_seen),
+        "minimum_decision_timestamp": min(dates_seen, default=None),
+        "maximum_decision_timestamp": max(dates_seen, default=None),
+        "target_contract_version": next(iter(target_versions)) if len(target_versions) == 1 else None,
+        "target_contract_versions": sorted(target_versions),
         "benchmark_contract_version": "stock_level_benchmark_return_10d_v1",
         "source_dataset_hash_count": len(dataset_hashes),
-        "source_dataset_hashes": dataset_hashes[:10],
+        "source_dataset_hashes": sorted(dataset_hashes)[:10],
+        "source_base_sha256": ml.get("canonical_v2_alpha_validated_base_sha256"),
+        "source_base_economic_key_sha256": ml.get(
+            "canonical_v2_alpha_validated_base_key_sha256"
+        ),
+        "economic_key_sha256": key_hasher.hexdigest(),
+        "economic_key_alignment_valid": True,
+        "feature_coverage": feature_coverage,
         "completion_status": "complete",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_mode": "validated_symbol_partitions",
@@ -1091,11 +1889,79 @@ def _consolidate_partition_parquets(
                 "partition_count": len(partition_paths),
                 "duplicate_symbol_date_keys": duplicate_keys,
                 "schema_fingerprint": identity["schema_fingerprint"],
-                "partitions": reports,
+                "source_base_sha256": identity["source_base_sha256"],
+                "economic_key_alignment_valid": True,
                 "artifact": identity,
             },
         )
     return identity
+
+
+def _iter_partition_rows_date_major(
+    partition_paths: Sequence[Path],
+    *,
+    batch_rows: int,
+):
+    iterators = [
+        iter(_iter_parquet_rows(path, batch_rows=batch_rows))
+        for path in partition_paths
+    ]
+    heap: list[tuple[str, str, int, dict[str, Any]]] = []
+    for index, iterator in enumerate(iterators):
+        try:
+            row = next(iterator)
+        except StopIteration:
+            continue
+        heapq.heappush(
+            heap,
+            (
+                str(row.get("rebalance_date", ""))[:10],
+                str(row.get("symbol", "")).upper(),
+                index,
+                row,
+            ),
+        )
+    while heap:
+        _date, _symbol, index, row = heapq.heappop(heap)
+        yield row
+        try:
+            next_row = next(iterators[index])
+        except StopIteration:
+            continue
+        heapq.heappush(
+            heap,
+            (
+                str(next_row.get("rebalance_date", ""))[:10],
+                str(next_row.get("symbol", "")).upper(),
+                index,
+                next_row,
+            ),
+        )
+
+
+def _iter_parquet_rows(path: Path, *, batch_rows: int):
+    previous: tuple[str, str] | None = None
+    parquet = pq.ParquetFile(path)
+    for batch in parquet.iter_batches(batch_size=batch_rows):
+        for row in _batch_rows(batch):
+            key = (
+                str(row.get("rebalance_date", ""))[:10],
+                str(row.get("symbol", "")).upper(),
+            )
+            if previous is not None and key < previous:
+                raise ValueError(
+                    f"alpha partition is not deterministically sorted: {path}"
+                )
+            previous = key
+            yield row
+
+
+def _batch_rows(batch: pa.RecordBatch) -> list[dict[str, Any]]:
+    return pa.Table.from_batches([batch]).to_pylist()
+
+
+def _rows_to_table(rows: list[dict[str, Any]], schema: pa.Schema) -> pa.Table:
+    return pa.Table.from_pylist(rows, schema=schema)
 
 
 def _validate_and_cast_partition_table(path: Path, table: pa.Table, canonical_schema: pa.Schema) -> tuple[dict[str, Any], pa.Table]:
@@ -1169,7 +2035,12 @@ def _iter_chunked_values(column: pa.ChunkedArray):
 
 
 def _write_parquet_sample_csv(path: Path, sample_path: Path, *, limit: int) -> None:
-    table = pq.ParquetFile(path).read().slice(0, limit)
+    parquet = pq.ParquetFile(path)
+    table = (
+        parquet.read_row_group(0).slice(0, limit)
+        if parquet.metadata.num_row_groups
+        else pa.Table.from_batches([], schema=parquet.schema_arrow)
+    )
     fieldnames = table.column_names
     rows: list[dict[str, Any]] = []
     columns = {name: table[name].to_pylist() for name in fieldnames}
@@ -1504,6 +2375,16 @@ def _partition_compatibility_identity(
     return {
         "alpha_enrichment_contract_version": ALPHA_ENRICHMENT_CONTRACT_VERSION,
         "target_provenance_contract_version": _target_provenance_contract_version(),
+        "source_base_artifact_sha256": str(
+            dict(config.get("ml", {}) or {}).get(
+                "canonical_v2_alpha_validated_base_sha256", ""
+            )
+        ),
+        "source_base_economic_key_sha256": str(
+            dict(config.get("ml", {}) or {}).get(
+                "canonical_v2_alpha_validated_base_key_sha256", ""
+            )
+        ),
         "feature_schema_identity": _feature_schema_identity(),
         "configuration_identity": _alpha_configuration_identity(config),
         "implementation_identity": "canonical_v2_alpha_enrichment.partitioned.v2",
@@ -1529,6 +2410,12 @@ def _alpha_configuration_identity(config: Mapping[str, Any]) -> str:
         "stock_level_parquet_compression": ml.get("stock_level_parquet_compression", "zstd"),
         "canonical_v2_labeled_spine_manifest_path": ml.get("canonical_v2_labeled_spine_manifest_path"),
         "canonical_v2_labeled_spine_root": ml.get("canonical_v2_labeled_spine_root"),
+        "canonical_v2_alpha_validated_base_sha256": ml.get(
+            "canonical_v2_alpha_validated_base_sha256"
+        ),
+        "canonical_v2_alpha_validated_base_key_sha256": ml.get(
+            "canonical_v2_alpha_validated_base_key_sha256"
+        ),
         "stooq_parquet_dir": ml.get("stooq_parquet_dir"),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
