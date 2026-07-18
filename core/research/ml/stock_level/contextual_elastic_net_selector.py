@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
+from core.research.ml.selector_component_rows import validate_model_row_roles
+
 import numpy as np
 
 
@@ -140,9 +142,14 @@ def contextual_elastic_net_input(
         context_ids = [str(value) for value in raw.get("market_context_ids", ())]
         stock_values = _finite(raw.get("stock_feature_values", ()), "STOCK_FEATURE")
         context_values = _finite(raw.get("market_context_values", ()), "CONTEXT_FEATURE")
-        target = float(raw.get("target_value"))
+        target = (
+            float(raw["target_value"])
+            if split in {"TRAINING", "FIT_VALIDATION", "VALIDATION"} else None
+        )
         weight = float(raw.get("sample_weight", 1.0))
-        if not row_id or not asset or split not in {"TRAINING", "VALIDATION"}:
+        if not row_id or not asset or split not in {
+            "TRAINING", "FIT_VALIDATION", "PREDICTION", "VALIDATION"
+        }:
             raise ContextualElasticNetError("INVALID_INPUT", "ROW_IDENTITY_OR_SPLIT_INVALID")
         if stock_ids != sorted(stock_ids) or len(stock_ids) != len(stock_values) or len(set(stock_ids)) != len(stock_ids):
             raise ContextualElasticNetError("FEATURE_SCHEMA_MISMATCH", "STOCK_FEATURE_SCHEMA_INVALID")
@@ -154,13 +161,14 @@ def contextual_elastic_net_input(
             raise ContextualElasticNetError("FEATURE_SCHEMA_MISMATCH", "STOCK_FEATURE_ORDER_MISMATCH")
         elif context_ids != context_order:
             raise ContextualElasticNetError("CONTEXT_SCHEMA_MISMATCH", "CONTEXT_FEATURE_ORDER_MISMATCH")
-        if not math.isfinite(target):
+        if target is not None and not math.isfinite(target):
             raise ContextualElasticNetError("INVALID_INPUT", "TARGET_NON_FINITE")
         if not math.isfinite(weight) or weight <= 0:
             raise ContextualElasticNetError("INVALID_INPUT", "SAMPLE_WEIGHT_INVALID")
         if _time(availability) > _time(decision):
             raise ContextualElasticNetError("TEMPORAL_VIOLATION", "FEATURE_AVAILABLE_AFTER_DECISION")
-        _time(maturity)
+        if split != "PREDICTION":
+            _time(maturity)
         context_tuple = tuple(context_values)
         if decision in contexts_by_date and contexts_by_date[decision] != context_tuple:
             raise ContextualElasticNetError("INCONSISTENT_DATE_CONTEXT", "MULTIPLE_CONTEXT_VECTORS_FOR_DATE")
@@ -171,13 +179,23 @@ def contextual_elastic_net_input(
             "feature_availability_timestamp": availability,
             "stock_feature_ids": stock_ids, "stock_feature_values": stock_values,
             "market_context_ids": context_ids, "market_context_values": context_values,
-            "target_value": target, "target_maturity_timestamp": maturity,
             "sample_weight": weight, "split": split,
         })
+        if split != "PREDICTION":
+            normalised[-1].update(
+                target_value=target, target_maturity_timestamp=maturity
+            )
     if not normalised or len(row_ids) != len(set(row_ids)):
         raise ContextualElasticNetError("INVALID_INPUT", "ROW_IDENTITIES_NOT_UNIQUE")
     if normalised != sorted(normalised, key=lambda row: (row["decision_timestamp"], row["asset_id"], row["row_id"])):
         raise ContextualElasticNetError("INVALID_INPUT", "ROWS_NOT_DETERMINISTICALLY_ORDERED")
+    strengthened = not any(row["split"] == "VALIDATION" for row in normalised)
+    if strengthened:
+        validate_model_row_roles(
+            normalised, role_field="split",
+            target_fields=("target_value", "target_maturity_timestamp"),
+            require_prediction=False,
+        )
     logical = {
         "contract_version": INPUT_CONTRACT, "rows": normalised,
         "ordered_stock_feature_ids": stock_order,
@@ -194,6 +212,10 @@ def contextual_elastic_net_input(
         "stock_schema_checksum": canonical_hash({"identity": stock_feature_schema_identity, "ids": stock_order}),
         "context_schema_checksum": canonical_hash({"identity": market_context_schema_identity, "ids": context_order}),
         "input_value_checksum": canonical_hash(normalised),
+        "row_contract_version": (
+            "selector_component_rows.v2"
+            if strengthened else "legacy_wave4_validation_rows.v1"
+        ),
     }
     logical["logical_input_checksum"] = canonical_hash(logical)
     return logical
@@ -233,7 +255,10 @@ def fit_contextual_elastic_net(
         if alpha < 0 or not 0 <= l1_ratio <= 1 or tolerance <= 0 or maximum_iterations < 1 or selection not in {"cyclic", "random"}:
             raise ContextualElasticNetError("INVALID_INPUT", "ELASTIC_NET_CONFIGURATION_INVALID")
         training = [row for row in base["rows"] if row["split"] == "TRAINING"]
-        validation = [row for row in base["rows"] if row["split"] == "VALIDATION"]
+        validation = [
+            row for row in base["rows"]
+            if row["split"] in {"PREDICTION", "VALIDATION"}
+        ]
         if len(training) < minimum_training_rows:
             raise ContextualElasticNetError("INSUFFICIENT_DATA", "TRAINING_SAMPLE_INADEQUATE")
         if not validation:

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
+from core.research.ml.selector_component_rows import validate_model_row_roles
+
 import numpy as np
 
 
@@ -67,10 +69,15 @@ def huber_selector_input(
         availability = str(raw.get("feature_availability_timestamp") or decision)
         feature_ids = [str(value) for value in raw.get("feature_ids", ())]
         values = [float(value) for value in raw.get("feature_values", ())]
-        target = float(raw.get("target_value"))
-        weight = float(raw.get("sample_weight", 1.0))
         split = str(raw.get("split") or "")
-        if not row_id or not asset_id or split not in {"TRAINING", "VALIDATION"}:
+        target = (
+            float(raw["target_value"])
+            if split in {"TRAINING", "FIT_VALIDATION", "VALIDATION"} else None
+        )
+        weight = float(raw.get("sample_weight", 1.0))
+        if not row_id or not asset_id or split not in {
+            "TRAINING", "FIT_VALIDATION", "PREDICTION", "VALIDATION"
+        }:
             raise HuberSelectorError("INVALID_INPUT", "ROW_IDENTITY_OR_SPLIT_INVALID")
         if len(feature_ids) != len(values) or not feature_ids or len(feature_ids) != len(set(feature_ids)):
             raise HuberSelectorError("FEATURE_SCHEMA_MISMATCH", "FEATURE_DIMENSION_OR_IDENTITY_INVALID")
@@ -82,25 +89,36 @@ def huber_selector_input(
             raise HuberSelectorError("FEATURE_SCHEMA_MISMATCH", "FEATURE_ORDER_MISMATCH")
         if not all(math.isfinite(value) for value in values):
             raise HuberSelectorError("INVALID_INPUT", "FEATURE_VALUE_NON_FINITE")
-        if not math.isfinite(target):
+        if target is not None and not math.isfinite(target):
             raise HuberSelectorError("INVALID_INPUT", "TARGET_VALUE_NON_FINITE")
         if not math.isfinite(weight) or weight <= 0:
             raise HuberSelectorError("INVALID_INPUT", "SAMPLE_WEIGHT_INVALID")
         if _time(availability) > _time(decision):
             raise HuberSelectorError("TEMPORAL_VIOLATION", "FEATURE_AVAILABLE_AFTER_DECISION")
-        _time(maturity)
+        if split != "PREDICTION":
+            _time(maturity)
         row_ids.append(row_id)
         normalised.append({
             "row_id": row_id, "asset_id": asset_id, "decision_timestamp": decision,
             "feature_availability_timestamp": availability, "feature_ids": feature_ids,
-            "feature_values": values, "target_value": target,
-            "target_maturity_timestamp": maturity, "sample_weight": weight, "split": split,
+            "feature_values": values, "sample_weight": weight, "split": split,
         })
+        if split != "PREDICTION":
+            normalised[-1].update(
+                target_value=target, target_maturity_timestamp=maturity
+            )
     if not normalised or len(row_ids) != len(set(row_ids)):
         raise HuberSelectorError("INVALID_INPUT", "ROW_IDENTITIES_NOT_UNIQUE")
     ordered = sorted(normalised, key=lambda row: (row["decision_timestamp"], row["asset_id"], row["row_id"]))
     if normalised != ordered:
         raise HuberSelectorError("INVALID_INPUT", "ROWS_NOT_DETERMINISTICALLY_ORDERED")
+    strengthened = not any(row["split"] == "VALIDATION" for row in normalised)
+    if strengthened:
+        validate_model_row_roles(
+            normalised, role_field="split",
+            target_fields=("target_value", "target_maturity_timestamp"),
+            require_prediction=False,
+        )
     logical = {
         "contract_version": INPUT_CONTRACT, "rows": normalised,
         "ordered_feature_ids": expected_features, "target_horizon": str(target_horizon),
@@ -114,6 +132,10 @@ def huber_selector_input(
         "feature_schema_checksum": canonical_hash({"identity": feature_schema_identity, "feature_ids": expected_features}),
         "target_contract_checksum": canonical_hash({"identity": target_contract_identity, "horizon": target_horizon}),
         "input_value_checksum": canonical_hash(normalised),
+        "row_contract_version": (
+            "selector_component_rows.v2"
+            if strengthened else "legacy_wave4_validation_rows.v1"
+        ),
     }
     logical["logical_input_checksum"] = canonical_hash(logical)
     return logical
@@ -146,7 +168,10 @@ def fit_huber_selector(
         if epsilon < 1 or alpha < 0 or tolerance <= 0 or maximum_iterations < 1:
             raise HuberSelectorError("INVALID_INPUT", "HUBER_CONFIGURATION_INVALID")
         training = [row for row in base["rows"] if row["split"] == "TRAINING"]
-        validation = [row for row in base["rows"] if row["split"] == "VALIDATION"]
+        validation = [
+            row for row in base["rows"]
+            if row["split"] in {"PREDICTION", "VALIDATION"}
+        ]
         if len(training) < minimum_training_rows:
             raise HuberSelectorError("INSUFFICIENT_DATA", "TRAINING_SAMPLE_INADEQUATE")
         if not validation:

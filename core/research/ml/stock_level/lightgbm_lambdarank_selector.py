@@ -13,6 +13,7 @@ from core.research.ml.stock_level.lightgbm_rank_xendcg_selector import (
     _cosine,
     _feature_importance,
     _predict,
+    _prediction_score_diagnostics,
     _rank_signature,
     _ranking_diagnostics,
     _spearman,
@@ -103,7 +104,10 @@ def validate_lambdarank_input(
         supplied = dict(gain_policy) if gain_policy is not None else expected_gain
         if supplied != expected_gain:
             raise LambdaRankError("LABEL_GAIN_MISMATCH", "GAIN_POLICY_IDENTITY_OR_ORDER_MISMATCH")
-        labels = [row["label"] for row in dataset["rows"]]
+        labels = [
+            row["label"] for row in dataset["rows"]
+            if row["split_role"] != "PREDICTION"
+        ]
         if set(labels) - set(expected_gain["ordered_relevance_levels"]):
             raise LambdaRankError("LABEL_GAIN_MISMATCH", "LABEL_EXCEEDS_GAIN_TABLE")
         if set(range(max(labels) + 1)) - set(expected_gain["ordered_relevance_levels"]):
@@ -145,7 +149,10 @@ def fit_synthetic_lambdarank_selector(
         )
         parameters = configuration["parameters"]
         train_rows = [row for row in dataset["rows"] if row["split_role"] == "TRAINING"]
-        validation_rows = [row for row in dataset["rows"] if row["split_role"] == "VALIDATION"]
+        validation_rows = [
+            row for row in dataset["rows"]
+            if row["split_role"] in {"PREDICTION", "VALIDATION"}
+        ]
         x_train = np.asarray([row["feature_values"] for row in train_rows], dtype=float)
         y_train = np.asarray([row["label"] for row in train_rows], dtype=int)
         x_validation = np.asarray([row["feature_values"] for row in validation_rows], dtype=float)
@@ -221,9 +228,23 @@ def fit_synthetic_lambdarank_selector(
                 _ranking_diagnostics(train_rows, _predict(first, x_train), input_contract["training_group_sizes"]),
                 train_rows, configuration["gain_policy"],
             ),
-            "validation": _with_gain_distribution(
-                _ranking_diagnostics(validation_rows, first_scores, input_contract["validation_group_sizes"]),
-                validation_rows, configuration["gain_policy"],
+            **(
+                {
+                    "validation": _with_gain_distribution(
+                        _ranking_diagnostics(
+                            validation_rows, first_scores,
+                            input_contract["validation_group_sizes"],
+                        ),
+                        validation_rows, configuration["gain_policy"],
+                    )
+                }
+                if all("label" in row for row in validation_rows)
+                else {
+                    "prediction": _prediction_score_diagnostics(
+                        validation_rows, first_scores,
+                        input_contract["validation_group_sizes"],
+                    )
+                }
             ),
             "feature_importance": first_importance,
             "tree_model": _tree_diagnostics(first, parameters, model_text),

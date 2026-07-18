@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
+from core.research.ml.selector_component_rows import validate_model_row_roles
+
 
 PERCENTILE_CONTRACT = "continuous_percentile_relevance_v1"
 PAIRWISE_CONTRACT = "pairwise_return_margin_v1"
@@ -271,7 +273,9 @@ def grouped_ranking_dataset(
             label = raw.get("label")
             availability = str(raw.get("feature_availability_timestamp") or "")
             maturity = str(raw.get("target_maturity_timestamp") or "")
-            if not row_id or not asset or role not in {"TRAINING", "VALIDATION"}:
+            if not row_id or not asset or role not in {
+                "TRAINING", "FIT_VALIDATION", "PREDICTION", "VALIDATION"
+            }:
                 raise RankingLabelError("INVALID_INPUT", "DATASET_ROW_IDENTITY_INVALID")
             if row_id in seen_rows or (decision, asset) in seen_asset_dates:
                 raise RankingLabelError("SPLIT_OVERLAP", "DUPLICATE_ROW_OR_ASSET_DATE")
@@ -284,19 +288,24 @@ def grouped_ranking_dataset(
                 raise RankingLabelError("FEATURE_SCHEMA_MISMATCH", "FEATURE_ORDER_MISMATCH")
             if not all(math.isfinite(value) for value in features):
                 raise RankingLabelError("INVALID_INPUT", "FEATURE_NON_FINITE")
-            label = _validate_label(label, label_type)
+            if role != "PREDICTION":
+                label = _validate_label(label, label_type)
             if _time(availability) > _time(decision):
                 raise RankingLabelError("INVALID_INPUT", "FEATURE_AVAILABLE_AFTER_DECISION")
-            if _time(maturity) > _time(allowed_cutoff):
+            if role != "PREDICTION" and _time(maturity) > _time(allowed_cutoff):
                 raise RankingLabelError("IMMATURE_TARGET", "TARGET_MATURES_AFTER_ALLOWED_CUTOFF")
             normalised.append({
                 "row_id": row_id, "asset_id": asset, "decision_date": decision,
                 "feature_names": names, "feature_values": features,
-                "feature_availability_timestamp": availability, "label": label,
-                "label_type": label_type, "target_maturity_timestamp": maturity,
+                "feature_availability_timestamp": availability,
+                "label_type": label_type,
                 "split_identity": split_identity, "split_role": role,
                 "group_id": f"decision_date:{decision}",
             })
+            if role != "PREDICTION":
+                normalised[-1].update(
+                    label=label, target_maturity_timestamp=maturity
+                )
         ordered = sorted(normalised, key=lambda row: (row["decision_date"], row["asset_id"], row["row_id"]))
         groups = _dataset_groups(ordered, minimum_group_size)
         roles_by_date = {}
@@ -305,10 +314,25 @@ def grouped_ranking_dataset(
         if any(len(roles) != 1 for roles in roles_by_date.values()):
             raise RankingLabelError("SPLIT_OVERLAP", "DECISION_DATE_MIXES_SPLIT_ROLES")
         training_dates = [date for date, roles in roles_by_date.items() if roles == {"TRAINING"}]
-        validation_dates = [date for date, roles in roles_by_date.items() if roles == {"VALIDATION"}]
+        validation_dates = [
+            date for date, roles in roles_by_date.items()
+            if roles in ({"PREDICTION"}, {"VALIDATION"})
+        ]
         if training_dates and validation_dates and max(training_dates) >= min(validation_dates):
             raise RankingLabelError("SPLIT_OVERLAP", "TRAINING_VALIDATION_DATE_OVERLAP")
         group_sizes = [group["group_size"] for group in groups]
+        strengthened = not any(
+            row["split_role"] == "VALIDATION" for row in ordered
+        )
+        if strengthened:
+            validate_model_row_roles(
+                ordered, role_field="split_role",
+                target_fields=("label", "target_maturity_timestamp"),
+                require_prediction=False,
+            )
+        labeled_rows = [
+            row for row in ordered if row["split_role"] != "PREDICTION"
+        ]
         logical = {
             "contract_version": GROUPED_DATASET_CONTRACT, "status": "READY", "valid": True,
             "blocking_reasons": [], "warnings": [],
@@ -324,7 +348,9 @@ def grouped_ranking_dataset(
             "target_contract_checksum": canonical_hash({"identity": target_contract_identity}),
             "ranking_label_contract_checksum": canonical_hash({"identity": ranking_label_contract_identity, "label_type": label_type}),
             "ordered_row_population_checksum": canonical_hash([row["row_id"] for row in ordered]),
-            "ordered_label_checksum": canonical_hash([row["label"] for row in ordered]),
+            "ordered_label_checksum": canonical_hash(
+                [row["label"] for row in labeled_rows]
+            ),
             "decision_date_population_checksum": canonical_hash(sorted(roles_by_date)),
             "group_size_vector_checksum": canonical_hash(group_sizes),
             "split_checksum": canonical_hash({
@@ -332,6 +358,10 @@ def grouped_ranking_dataset(
                 "roles": [(row["row_id"], row["split_role"]) for row in ordered],
             }),
             "allowed_cutoff": allowed_cutoff,
+            "row_contract_version": (
+                "selector_component_rows.v2"
+                if strengthened else "legacy_grouped_validation_rows.v1"
+            ),
         }
         logical["dataset_checksum"] = canonical_hash(logical)
         logical["logical_result_checksum"] = canonical_hash(logical)

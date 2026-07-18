@@ -104,7 +104,8 @@ def validate_rank_xendcg_input(
                 raise SelectorError("SPLIT_OVERLAP", "GROUP_MIXES_SPLIT_ROLES")
             destination_rows, destination_groups = (
                 (train_rows, train_groups) if roles == {"TRAINING"} else
-                (validation_rows, validation_groups) if roles == {"VALIDATION"} else (None, None)
+                (validation_rows, validation_groups)
+                if roles in ({"PREDICTION"}, {"VALIDATION"}) else (None, None)
             )
             if destination_rows is None:
                 raise SelectorError("INVALID_INPUT", "SPLIT_ROLE_INVALID")
@@ -125,16 +126,28 @@ def validate_rank_xendcg_input(
                 raise SelectorError("FEATURE_SCHEMA_MISMATCH", "FEATURE_ORDER_OR_DIMENSION_MISMATCH")
             if not all(math.isfinite(float(value)) for value in row["feature_values"]):
                 raise SelectorError("NUMERICAL_FAILURE", "FEATURE_NONFINITE")
-            label = row.get("label")
-            if isinstance(label, bool) or not isinstance(label, int) or label < 0:
-                raise SelectorError("UNSUPPORTED_LABEL_CONTRACT", "NONNEGATIVE_INTEGER_LABEL_REQUIRED")
+            if row["split_role"] != "PREDICTION":
+                label = row.get("label")
+                if (
+                    isinstance(label, bool)
+                    or not isinstance(label, int) or label < 0
+                ):
+                    raise SelectorError(
+                        "UNSUPPORTED_LABEL_CONTRACT",
+                        "NONNEGATIVE_INTEGER_LABEL_REQUIRED",
+                    )
         cutoff = _time(training_cutoff)
         training_maturities = [_time(row["target_maturity_timestamp"]) for row in train_rows]
         if any(value > cutoff for value in training_maturities):
             raise SelectorError("IMMATURE_TARGET", "TRAINING_LABEL_MATURES_AFTER_CUTOFF")
         if dataset.get("ordered_row_population_checksum") != canonical_hash([row["row_id"] for row in rows]):
             raise SelectorError("INVALID_INPUT", "ROW_POPULATION_CHECKSUM_MISMATCH")
-        if dataset.get("ordered_label_checksum") != canonical_hash([row["label"] for row in rows]):
+        labeled_rows = [
+            row for row in rows if row["split_role"] != "PREDICTION"
+        ]
+        if dataset.get("ordered_label_checksum") != canonical_hash(
+            [row["label"] for row in labeled_rows]
+        ):
             raise SelectorError("INVALID_INPUT", "LABEL_CHECKSUM_MISMATCH")
         if dataset.get("group_size_vector_checksum") != canonical_hash(dataset["group_size_vector"]):
             raise SelectorError("GROUP_STRUCTURE_INVALID", "GROUP_CHECKSUM_MISMATCH")
@@ -203,11 +216,13 @@ def fit_synthetic_rank_xendcg_selector(
         configuration = fixed_rank_xendcg_configuration(num_threads=num_threads)
         parameters = configuration["parameters"]
         train_rows = [row for row in dataset["rows"] if row["split_role"] == "TRAINING"]
-        validation_rows = [row for row in dataset["rows"] if row["split_role"] == "VALIDATION"]
+        validation_rows = [
+            row for row in dataset["rows"]
+            if row["split_role"] in {"PREDICTION", "VALIDATION"}
+        ]
         x_train = np.asarray([row["feature_values"] for row in train_rows], dtype=float)
         y_train = np.asarray([row["label"] for row in train_rows], dtype=int)
         x_validation = np.asarray([row["feature_values"] for row in validation_rows], dtype=float)
-        y_validation = np.asarray([row["label"] for row in validation_rows], dtype=int)
         fit_started = time.perf_counter()
         first = _fit(parameters, x_train, y_train, input_contract["training_group_sizes"])
         first_fit_seconds = time.perf_counter() - fit_started
@@ -286,7 +301,21 @@ def fit_synthetic_rank_xendcg_selector(
         }
         ranking_diagnostics = {
             "training": _ranking_diagnostics(train_rows, _predict(first, x_train), input_contract["training_group_sizes"]),
-            "validation": _ranking_diagnostics(validation_rows, first_scores, input_contract["validation_group_sizes"]),
+            (
+                "validation"
+                if all("label" in row for row in validation_rows)
+                else "prediction"
+            ): (
+                _ranking_diagnostics(
+                    validation_rows, first_scores,
+                    input_contract["validation_group_sizes"],
+                )
+                if all("label" in row for row in validation_rows)
+                else _prediction_score_diagnostics(
+                    validation_rows, first_scores,
+                    input_contract["validation_group_sizes"],
+                )
+            ),
         }
         tree_diagnostics = _tree_diagnostics(first, parameters, model_text)
         diagnostics = {
@@ -481,6 +510,21 @@ def _ranking_diagnostics(rows, scores, group_sizes):
         "spearman_rank_ic": _spearman(score_list, labels),
         "top_3_overlap": statistics.fmean(top_overlap),
         "group_ndcg_at_3_standard_deviation": statistics.pstdev(per_group_ndcg),
+    }
+
+
+def _prediction_score_diagnostics(rows, scores, group_sizes):
+    values = [float(value) for value in scores]
+    return {
+        "row_count": len(rows),
+        "query_group_count": len(group_sizes),
+        "group_sizes": list(group_sizes),
+        "score_mean": statistics.fmean(values),
+        "score_standard_deviation": (
+            statistics.pstdev(values) if len(values) > 1 else 0.0
+        ),
+        "labels_consumed": False,
+        "evaluation_performed": False,
     }
 
 

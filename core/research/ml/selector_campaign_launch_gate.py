@@ -14,6 +14,7 @@ from core.research.ml.selector_research_campaign import (
 from core.research.ml.selector_research_protocol import (
     validate_selector_research_protocol,
 )
+from core.research.ml.selector_wave4_input_packages import RESULT_CONTRACT
 
 
 READINESS_CONTRACT = "selector_campaign_launch_readiness.v1"
@@ -39,6 +40,7 @@ def build_selector_campaign_launch_readiness(
     source_commit: str,
     max_component_workers: int = 3,
     weighted_capacity: int = 4,
+    package_publication: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate launch structure without reading datasets or fitting models."""
     try:
@@ -75,7 +77,52 @@ def build_selector_campaign_launch_readiness(
     inputs = dict(operational_inputs or {})
     missing = [name for name in REQUIRED_OPERATIONAL_INPUTS if not inputs.get(name)]
     if not status:
-        if not operational_inputs:
+        if package_publication is not None:
+            package_payload = {
+                key: value for key, value in package_publication.items()
+                if key != "logical_checksum"
+            }
+            package_report_valid = (
+                package_publication.get("result_contract_version")
+                == RESULT_CONTRACT
+                and package_publication.get("logical_checksum")
+                == hashlib.sha256(
+                    json.dumps(
+                        package_payload, sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest().upper()
+            )
+            expected_count = campaign.get("expected_component_count")
+            completed_count = (
+                int(package_publication.get("packages_published") or 0)
+                + int(
+                    package_publication.get(
+                        "packages_skipped_compatible"
+                    ) or 0
+                )
+            )
+            if (
+                not package_report_valid
+                or package_publication.get("expected_jobs")
+                != expected_count
+                or package_publication.get("campaign_identity")
+                != campaign.get("campaign_identity")
+                or package_publication.get("invalid_jobs")
+                or package_publication.get(
+                    "packages_blocked_source_schema"
+                )
+                or package_publication.get(
+                    "packages_blocked_parent_identities"
+                )
+                or completed_count != expected_count
+            ):
+                status = "BLOCKED_INPUTS"
+            elif package_publication.get("all_packages_complete") is True:
+                status = "READY_TO_LAUNCH"
+            else:
+                status = "BLOCKED_INPUTS"
+        elif not operational_inputs:
             status = "READY_FOR_OPERATIONAL_INPUTS"
         elif missing:
             status = "BLOCKED_INPUTS"

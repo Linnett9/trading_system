@@ -11,6 +11,10 @@ from core.research.ml.selector_research_campaign import (
     BASELINE_CAMPAIGN_ID,
     validate_selector_campaign,
 )
+from core.research.ml.selector_wave4_input_packages import (
+    PACKAGE_CONTRACT as V2_PACKAGE_CONTRACT,
+    validate_v2_package,
+)
 from core.research.ml.selector_panel_preflight import (
     CHALLENGERS, PRIMARY_MODEL, discover_selector_components, freeze_panel,
     resolve_authoritative_panel, run_preflight,
@@ -219,7 +223,10 @@ def dispatch_selector_component_publication(
     operational_identity = str(package["package_id"])
     evidence = {
         "campaign_identity": supplied_campaign_identity,
-        "plan_job_identity": supplied_plan_job_identity,
+        "plan_job_identity": str(
+            package.get("plan_job_identity")
+            or supplied_plan_job_identity
+        ),
         "declared_component_runner": declared_runner,
         "operational_input_identity": operational_identity,
     }
@@ -297,6 +304,37 @@ def _validate_operational_package(
     job: Mapping[str, Any],
     parent_gate: Mapping[str, Any],
 ) -> None:
+    if package.get("package_contract_version") == V2_PACKAGE_CONTRACT:
+        manifest_path = package.get("package_manifest_path")
+        if not manifest_path:
+            raise ValueError("V2 operational package manifest path is missing")
+        validated = validate_v2_package(Path(str(manifest_path)))
+        if validated != dict(package):
+            raise ValueError("V2 operational package differs from manifest")
+        checks = {
+            "production_plan_job_id": job.get("job_id"),
+            "model_id": job.get("model_id"),
+            "prediction_date": job.get("prediction_date"),
+            "selector_dataset_checksum": parent_gate.get(
+                "selector_dataset_artifact_checksum"
+            ),
+        }
+        mismatches = [
+            field for field, expected_value in checks.items()
+            if package.get(field) != expected_value
+        ]
+        if mismatches:
+            raise ValueError(
+                "Operational-input package identity mismatch: "
+                + ",".join(mismatches)
+            )
+        if (
+            package.get("component_runner")
+            != package.get("declared_component_runner")
+            or not package.get("resolved_runtime_owner")
+        ):
+            raise ValueError("V2 package runner ownership mismatch")
+        return
     expected = canonical_hash({
         key: value for key, value in package.items()
         if key != "logical_checksum"

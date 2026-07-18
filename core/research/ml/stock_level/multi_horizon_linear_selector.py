@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping, Sequence
 
+from core.research.ml.selector_component_rows import validate_model_row_roles
+
 import numpy as np
 
 
@@ -126,7 +128,9 @@ def multi_horizon_linear_input(
         maturities = {str(key): str(value) for key, value in (raw.get("target_maturity_timestamps") or {}).items()}
         states = {str(key): str(value) for key, value in (raw.get("target_availability_state") or {}).items()}
         weight = float(raw.get("sample_weight", 1.0))
-        if not row_id or not asset or split not in {"TRAINING", "VALIDATION"}:
+        if not row_id or not asset or split not in {
+            "TRAINING", "FIT_VALIDATION", "PREDICTION", "VALIDATION"
+        }:
             raise MultiHorizonError("INVALID_INPUT", "ROW_IDENTITY_OR_SPLIT_INVALID")
         if feature_ids != sorted(feature_ids) or len(feature_ids) != len(features) or len(set(feature_ids)) != len(feature_ids):
             raise MultiHorizonError("FEATURE_SCHEMA_MISMATCH", "FEATURE_SCHEMA_INVALID")
@@ -136,9 +140,14 @@ def multi_horizon_linear_input(
             raise MultiHorizonError("FEATURE_SCHEMA_MISMATCH", "FEATURE_ORDER_MISMATCH")
         if not all(math.isfinite(value) for value in features):
             raise MultiHorizonError("INVALID_INPUT", "FEATURE_NON_FINITE")
-        if set(targets) != set(HORIZON_IDS) or set(maturities) != set(HORIZON_IDS) or set(states) != set(HORIZON_IDS):
+        labeled = split != "PREDICTION"
+        if labeled and (
+            set(targets) != set(HORIZON_IDS)
+            or set(maturities) != set(HORIZON_IDS)
+            or set(states) != set(HORIZON_IDS)
+        ):
             raise MultiHorizonError("TARGET_CONTRACT_MISMATCH", "ROW_HORIZON_SET_MISMATCH")
-        for horizon_id in HORIZON_IDS:
+        for horizon_id in HORIZON_IDS if labeled else ():
             state = states[horizon_id]
             if state not in {"MATURE", "IMMATURE", "INVALID"}:
                 raise MultiHorizonError("TARGET_CONTRACT_MISMATCH", "TARGET_AVAILABILITY_STATE_INVALID")
@@ -157,14 +166,29 @@ def multi_horizon_linear_input(
         normalised.append({
             "row_id": row_id, "asset_id": asset, "decision_timestamp": decision,
             "feature_availability_timestamp": availability, "feature_ids": feature_ids,
-            "feature_values": features, "target_values": targets,
-            "target_maturity_timestamps": maturities, "target_availability_state": states,
+            "feature_values": features,
             "sample_weight": weight, "split": split,
         })
+        if labeled:
+            normalised[-1].update(
+                target_values=targets,
+                target_maturity_timestamps=maturities,
+                target_availability_state=states,
+            )
     if not normalised or len(row_ids) != len(set(row_ids)):
         raise MultiHorizonError("INVALID_INPUT", "ROW_IDENTITIES_NOT_UNIQUE")
     if normalised != sorted(normalised, key=lambda row: (row["decision_timestamp"], row["asset_id"], row["row_id"])):
         raise MultiHorizonError("INVALID_INPUT", "ROWS_NOT_DETERMINISTICALLY_ORDERED")
+    strengthened = not any(row["split"] == "VALIDATION" for row in normalised)
+    if strengthened:
+        validate_model_row_roles(
+            normalised, role_field="split",
+            target_fields=(
+                "target_values", "target_maturity_timestamps",
+                "target_availability_state",
+            ),
+            require_prediction=False,
+        )
     logical = {
         "contract_version": INPUT_CONTRACT, "rows": normalised,
         "target_contract": panel, "ordered_feature_ids": feature_order,
@@ -174,6 +198,10 @@ def multi_horizon_linear_input(
         "source_population_checksum": str(source_population_checksum),
         "row_population_checksum": canonical_hash(row_ids),
         "input_value_checksum": canonical_hash(normalised),
+        "row_contract_version": (
+            "selector_component_rows.v2"
+            if strengthened else "legacy_wave4_validation_rows.v1"
+        ),
     }
     logical["logical_input_checksum"] = canonical_hash(logical)
     return logical
@@ -239,7 +267,10 @@ def fit_multi_horizon_linear_selector(
         families = tuple(model_families)
         if not families or any(value not in {"ridge", "elastic_net"} for value in families):
             raise MultiHorizonError("INVALID_INPUT", "MODEL_FAMILY_PANEL_INVALID")
-        validation = [row for row in base["rows"] if row["split"] == "VALIDATION"]
+        validation = [
+            row for row in base["rows"]
+            if row["split"] in {"PREDICTION", "VALIDATION"}
+        ]
         if not validation:
             raise MultiHorizonError("INSUFFICIENT_DATA", "VALIDATION_POPULATION_EMPTY")
         validation_start = min(_time(row["decision_timestamp"]) for row in validation)
@@ -359,6 +390,7 @@ def fit_multi_horizon_linear_selector(
             available_horizons.append(horizon_id)
             validation_targets = np.asarray([
                 row["target_values"][horizon_id] for row in validation
+                if "target_values" in row
                 if row["target_availability_state"][horizon_id] == "MATURE"
             ])
             diagnostics[horizon_id] = {
