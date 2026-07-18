@@ -3,6 +3,9 @@ from __future__ import annotations
 import inspect
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pyarrow as pa
@@ -10,6 +13,16 @@ import pyarrow.parquet as pq
 import pytest
 
 from scripts import repair_stock_artifact_target_provenance_v2 as repair
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = Path("scripts/repair_stock_artifact_target_provenance_v2.py")
+
+
+def _direct_script_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    return environment
 
 
 def _row(
@@ -273,6 +286,54 @@ def test_dry_run_writes_report_but_no_repaired_artifact(tmp_path: Path) -> None:
     assert report["blank_or_null_rows_found"] == 2
     assert report["approved_boundary_population"] == 2
     assert (tmp_path / "report" / "target_provenance_repair_report.json").exists()
+
+
+def test_direct_script_help_resolves_repository_imports() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--help"],
+        cwd=REPO_ROOT,
+        env=_direct_script_environment(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Repair approved blank target-provenance boundary rows." in result.stdout
+
+
+def test_direct_script_dry_run_with_temporary_artifact(tmp_path: Path) -> None:
+    source = tmp_path / "source.parquet"
+    report_root = tmp_path / "report"
+    _write(
+        source,
+        [_row("AAA", status="unrealized_boundary", provenance=None)],
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--input",
+            str(source),
+            "--report-root",
+            str(report_root),
+            "--dry-run",
+            "--batch-rows",
+            "1",
+        ],
+        cwd=REPO_ROOT,
+        env=_direct_script_environment(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["status"] == "DRY_RUN_COMPLETE"
+    assert json.loads(
+        (report_root / "target_provenance_repair_report.json").read_text()
+    )["status"] == "DRY_RUN_COMPLETE"
 
 
 def test_side_by_side_repair_preserves_source(tmp_path: Path) -> None:

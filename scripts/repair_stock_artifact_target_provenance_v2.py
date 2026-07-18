@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 import uuid
 from collections import Counter
@@ -16,6 +17,10 @@ from typing import Any, Iterable
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from core.research.ml.stock_level.stock_level_artifact_io import (
     bounded_parquet_artifact_identity,
