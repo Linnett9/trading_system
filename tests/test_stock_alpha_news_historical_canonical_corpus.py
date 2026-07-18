@@ -11,13 +11,16 @@ from core.research.ml.stock_level.news_sources.historical_canonical_corpus impor
     CANONICAL_CORPUS_CSV,
     CANONICAL_CORPUS_MANIFEST_JSON,
     HISTORICAL_CANONICAL_TRANSFORMATION_VERSION,
+    LEGACY_HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
     HistoricalCanonicalCorpusConfig,
     HistoricalCanonicalCorpusError,
     build_historical_canonical_rows,
+    canonical_rows_logical_checksum,
     historical_assembly_row_to_compatibility,
     materialize_historical_canonical_corpus,
     materialize_historical_canonical_corpus_from_config,
     sha256_file,
+    verify_canonical_corpus_inventory,
 )
 
 
@@ -144,6 +147,14 @@ def test_materialize_validates_checksum_and_writes_separate_canonical_bundle(tmp
     assert rows[0]["source_assembly_checksum"] == checksum
     assert rows[0]["conversion_status"] == "converted"
     assert str(output_dir) in manifest["output_files"]["canonical_corpus_csv"]
+    assert manifest["canonical_corpus_checksum"] == sha256_file(corpus_path)
+    assert manifest["canonical_rows_logical_checksum"]
+    assert manifest["canonical_corpus_identity"]
+    assert manifest["canonical_schema_checksum"]
+    assert manifest["logical_manifest_checksum"]
+    assert verify_canonical_corpus_inventory(
+        manifest, corpus_path=corpus_path
+    )["inventory_certified"] is True
 
 
 def test_materialize_from_config_uses_explicit_write_enable(tmp_path: Path) -> None:
@@ -202,6 +213,132 @@ def test_materialize_is_disabled_by_default(tmp_path: Path) -> None:
             output_dir=tmp_path / "derived",
             expected_source_checksum=sha256_file(source_csv),
         )
+
+
+def test_materialize_requires_deterministic_ingestion_timestamp(tmp_path):
+    source_csv = tmp_path / "frozen" / "assembly.csv"
+    metadata_json = tmp_path / "frozen" / "assembly.json"
+    _write_csv(source_csv, [_assembly_row("AAPL", provider_article_id="a1")])
+    checksum = sha256_file(source_csv)
+    metadata_json.write_text(
+        json.dumps({"assembly_checksum": checksum}), encoding="utf-8"
+    )
+    with pytest.raises(HistoricalCanonicalCorpusError, match="ingested_at_utc"):
+        materialize_historical_canonical_corpus(
+            source_assembly_csv_path=source_csv,
+            source_assembly_metadata_json_path=metadata_json,
+            output_dir=tmp_path / "derived",
+            expected_source_checksum=checksum,
+            write_enabled=True,
+        )
+
+
+def test_reordered_source_rows_have_same_logical_inventory_checksum(tmp_path):
+    rows = [
+        _assembly_row("MSFT", provider_article_id="a2"),
+        _assembly_row("AAPL", provider_article_id="a1"),
+    ]
+    left, _ = build_historical_canonical_rows(
+        rows,
+        source_assembly_path=tmp_path / "assembly.csv",
+        source_assembly_checksum="SOURCE",
+        ingested_at_utc="2026-07-10T00:00:00Z",
+    )
+    right, _ = build_historical_canonical_rows(
+        list(reversed(rows)),
+        source_assembly_path=tmp_path / "assembly.csv",
+        source_assembly_checksum="SOURCE",
+        ingested_at_utc="2026-07-10T00:00:00Z",
+    )
+    assert canonical_rows_logical_checksum(left) == canonical_rows_logical_checksum(
+        right
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"headline": "changed transformed headline"},
+        {"provider_article_id": "changed-article-id", "article_id": "changed"},
+        {"symbol": "TSLA", "provider_symbols": "TSLA"},
+        {"published_at_utc": "2024-01-03T14:30:00Z"},
+        {"collected_at_utc": "2026-07-11T12:00:00Z"},
+    ],
+)
+def test_relevant_canonical_content_changes_logical_checksum(tmp_path, change):
+    base = _assembly_row("AAPL", provider_article_id="a1")
+    changed = {**base, **change}
+    left, _ = build_historical_canonical_rows(
+        [base],
+        source_assembly_path=tmp_path / "assembly.csv",
+        source_assembly_checksum="SOURCE",
+        ingested_at_utc="2026-07-10T00:00:00Z",
+    )
+    right, _ = build_historical_canonical_rows(
+        [changed],
+        source_assembly_path=tmp_path / "assembly.csv",
+        source_assembly_checksum="SOURCE",
+        ingested_at_utc="2026-07-10T00:00:00Z",
+    )
+    assert canonical_rows_logical_checksum(left) != canonical_rows_logical_checksum(
+        right
+    )
+
+
+def test_legacy_manifest_is_readable_but_not_inventory_certified():
+    result = verify_canonical_corpus_inventory(
+        {
+            "schema_version": LEGACY_HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+            "canonical_row_count": 1,
+            "source_assembly_checksum": "SOURCE",
+        }
+    )
+    assert result["readable"] is True
+    assert result["inventory_certified"] is False
+    assert result["reasons"] == ["STRENGTHENED_INVENTORY_IDENTITY_MISSING"]
+
+
+def test_compatible_skip_and_incompatible_existing_output_fail_closed(tmp_path):
+    source_csv = tmp_path / "frozen" / "assembly.csv"
+    metadata_json = tmp_path / "frozen" / "assembly.json"
+    output_dir = tmp_path / "canonical"
+    _write_csv(source_csv, [_assembly_row("AAPL", provider_article_id="a1")])
+    checksum = sha256_file(source_csv)
+    metadata_json.write_text(
+        json.dumps({"assembly_checksum": checksum}), encoding="utf-8"
+    )
+    values = {
+        "source_assembly_csv_path": source_csv,
+        "source_assembly_metadata_json_path": metadata_json,
+        "output_dir": output_dir,
+        "expected_source_checksum": checksum,
+        "write_enabled": True,
+        "ingested_at_utc": "2026-07-10T00:00:00Z",
+    }
+    first = materialize_historical_canonical_corpus(**values)
+    second = materialize_historical_canonical_corpus(**values)
+    assert first["canonical_corpus_checksum"] == second["canonical_corpus_checksum"]
+    assert (
+        first["canonical_rows_logical_checksum"]
+        == second["canonical_rows_logical_checksum"]
+    )
+    assert second["publication_result"] == "SKIPPED_COMPATIBLE"
+
+    (output_dir / CANONICAL_CORPUS_CSV).write_text(
+        "incompatible\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        HistoricalCanonicalCorpusError, match="incompatible existing"
+    ):
+        materialize_historical_canonical_corpus(**values)
+
+
+def test_corpus_publisher_has_no_finbert_or_training_dependency():
+    source = Path(
+        "core/research/ml/stock_level/news_sources/historical_canonical_corpus.py"
+    ).read_text(encoding="utf-8").lower()
+    for forbidden in ("finbert", "transformers", "torch", "score_batch", "fit("):
+        assert forbidden not in source
 
 
 def _assembly_row(symbol: str, *, provider_article_id: str) -> dict[str, str]:

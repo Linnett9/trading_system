@@ -6,8 +6,11 @@ import csv
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import io
 import json
+import os
 from pathlib import Path
+import subprocess
 from typing import Any, Iterable, Mapping, Sequence
 
 from core.research.framework.reporting import ResearchArtifactWriter
@@ -22,8 +25,14 @@ from core.research.ml.stock_level.news_sources.normalization import (
 )
 
 
-HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION = "stock_alpha_news.historical_canonical_corpus.v1"
+HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION = "stock_alpha_news.historical_canonical_corpus.v2"
+LEGACY_HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION = "stock_alpha_news.historical_canonical_corpus.v1"
 HISTORICAL_CANONICAL_TRANSFORMATION_VERSION = "stock_alpha_news.historical_assembly_to_canonical.v1"
+CANONICAL_ROW_ORDERING_POLICY = (
+    "canonical_story_id,story_symbol_id,provider,provider_article_id,symbol,"
+    "published_at_utc,canonical_row_logical_payload"
+)
+CHECKSUM_ALGORITHM = "sha256"
 
 CANONICAL_CORPUS_CSV = "stock_alpha_news_canonical_corpus.csv"
 CANONICAL_CORPUS_MANIFEST_JSON = "stock_alpha_news_canonical_corpus_manifest.json"
@@ -238,7 +247,13 @@ def materialize_historical_canonical_corpus(
         raise HistoricalCanonicalCorpusError("source checksum does not match metadata checksum")
 
     rows = _read_csv_rows(source_path)
-    ingested = _utc_now() if ingested_at_utc is None else _format_utc(ingested_at_utc)
+    if ingested_at_utc is None:
+        ingested_at_utc = _text(metadata.get("ingested_at_utc"))
+    if not ingested_at_utc:
+        raise HistoricalCanonicalCorpusError(
+            "ingested_at_utc is required for deterministic canonical publication"
+        )
+    ingested = _format_utc(ingested_at_utc)
     canonical_rows, audit = build_historical_canonical_rows(
         rows,
         source_assembly_path=source_path,
@@ -248,6 +263,21 @@ def materialize_historical_canonical_corpus(
     )
     if audit["failed_row_count"]:
         raise HistoricalCanonicalCorpusError("canonical conversion failed for one or more source rows")
+    canonical_rows = sorted(canonical_rows, key=_canonical_row_order_key)
+    output_root.mkdir(parents=True, exist_ok=True)
+    corpus_path = output_root / CANONICAL_CORPUS_CSV
+    manifest_path = output_root / CANONICAL_CORPUS_MANIFEST_JSON
+    audit_path = output_root / CANONICAL_CORPUS_AUDIT_JSON
+    summary_path = output_root / CANONICAL_CORPUS_SUMMARY_MD
+    corpus_bytes = _canonical_csv_bytes(canonical_rows)
+    corpus_checksum = hashlib.sha256(corpus_bytes).hexdigest()
+    rows_logical_checksum = canonical_rows_logical_checksum(canonical_rows)
+    schema_checksum = _hash_payload(
+        {
+            "canonical_schema_version": CANONICAL_NEWS_SCHEMA_VERSION,
+            "fieldnames": CANONICAL_CORPUS_FIELDNAMES,
+        }
+    )
     manifest = _manifest(
         source_path=source_path,
         metadata_path=metadata_path,
@@ -258,26 +288,30 @@ def materialize_historical_canonical_corpus(
         audit=audit,
         ingested_at_utc=ingested,
         transformation_version=transformation_version,
+        corpus_path=corpus_path,
+        corpus_checksum=corpus_checksum,
+        rows_logical_checksum=rows_logical_checksum,
+        schema_checksum=schema_checksum,
     )
-
-    output_root.mkdir(parents=True, exist_ok=True)
-    writer = ResearchArtifactWriter()
-    corpus_path = output_root / CANONICAL_CORPUS_CSV
-    manifest_path = output_root / CANONICAL_CORPUS_MANIFEST_JSON
-    audit_path = output_root / CANONICAL_CORPUS_AUDIT_JSON
-    summary_path = output_root / CANONICAL_CORPUS_SUMMARY_MD
-    writer.write_csv(corpus_path, canonical_rows, fieldnames=CANONICAL_CORPUS_FIELDNAMES)
     manifest["output_files"] = {
         "canonical_corpus_csv": str(corpus_path),
         "manifest_json": str(manifest_path),
         "audit_json": str(audit_path),
         "summary_markdown": str(summary_path),
     }
+    manifest["logical_manifest_checksum"] = _logical_manifest_checksum(manifest)
     audit["output_files"] = dict(manifest["output_files"])
-    writer.write_json(manifest_path, manifest)
-    writer.write_json(audit_path, audit)
-    writer.write_markdown(summary_path, _markdown(manifest, audit))
-    return manifest
+    publication_result = _publish_canonical_bundle(
+        corpus_path=corpus_path,
+        corpus_bytes=corpus_bytes,
+        manifest_path=manifest_path,
+        manifest=manifest,
+        audit_path=audit_path,
+        audit=audit,
+        summary_path=summary_path,
+        summary=_markdown(manifest, audit),
+    )
+    return {**manifest, "publication_result": publication_result}
 
 
 def sha256_file(path: str | Path) -> str:
@@ -286,6 +320,61 @@ def sha256_file(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def canonical_rows_logical_checksum(
+    rows: Sequence[Mapping[str, Any]],
+) -> str:
+    payloads = sorted(
+        (_canonical_row_logical_payload(row) for row in rows),
+        key=_canonical_json,
+    )
+    return _hash_payload(payloads)
+
+
+def verify_canonical_corpus_inventory(
+    manifest: Mapping[str, Any], *, corpus_path: Path | None = None
+) -> dict[str, Any]:
+    required = (
+        "canonical_corpus_contract",
+        "canonical_corpus_identity",
+        "canonical_corpus_checksum",
+        "canonical_rows_logical_checksum",
+        "canonical_schema_checksum",
+        "canonical_row_ordering_policy",
+        "logical_manifest_checksum",
+    )
+    reasons = []
+    if manifest.get("schema_version") not in {
+        HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+        LEGACY_HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+    }:
+        reasons.append("CORPUS_MANIFEST_CONTRACT_UNKNOWN")
+    missing = [field for field in required if not manifest.get(field)]
+    if missing:
+        reasons.append("STRENGTHENED_INVENTORY_IDENTITY_MISSING")
+    elif manifest.get("logical_manifest_checksum") != _logical_manifest_checksum(manifest):
+        reasons.append("LOGICAL_MANIFEST_CHECKSUM_MISMATCH")
+    if corpus_path is not None and not missing:
+        try:
+            if sha256_file(corpus_path) != manifest["canonical_corpus_checksum"]:
+                reasons.append("CANONICAL_CORPUS_ARTIFACT_CHECKSUM_MISMATCH")
+            rows = _read_csv_rows(corpus_path)
+            if (
+                canonical_rows_logical_checksum(rows)
+                != manifest["canonical_rows_logical_checksum"]
+            ):
+                reasons.append("CANONICAL_ROWS_LOGICAL_CHECKSUM_MISMATCH")
+        except OSError:
+            reasons.append("CANONICAL_CORPUS_ARTIFACT_MISSING")
+    return {
+        "readable": manifest.get("schema_version") in {
+            HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+            LEGACY_HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+        },
+        "inventory_certified": not reasons,
+        "reasons": sorted(set(reasons)),
+    }
 
 
 CANONICAL_CORPUS_FIELDNAMES = [
@@ -412,11 +501,38 @@ def _manifest(
     audit: Mapping[str, Any],
     ingested_at_utc: str,
     transformation_version: str,
+    corpus_path: Path,
+    corpus_checksum: str,
+    rows_logical_checksum: str,
+    schema_checksum: str,
 ) -> dict[str, Any]:
+    identity_payload = {
+        "contract": HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+        "canonical_schema_version": CANONICAL_NEWS_SCHEMA_VERSION,
+        "canonical_schema_checksum": schema_checksum,
+        "transformation_version": transformation_version,
+        "source_assembly_checksum": source_checksum,
+        "canonical_rows_logical_checksum": rows_logical_checksum,
+    }
     return {
         "schema_version": HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+        "canonical_corpus_contract": HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
+        "canonical_corpus_identity": _hash_payload(identity_payload),
+        "canonical_corpus_checksum": corpus_checksum,
+        "canonical_rows_logical_checksum": rows_logical_checksum,
+        "canonical_artifact_path": str(corpus_path),
+        "canonical_artifact_checksum_algorithm": CHECKSUM_ALGORITHM,
+        "canonical_row_ordering_policy": CANONICAL_ROW_ORDERING_POLICY,
         "canonical_schema_version": CANONICAL_NEWS_SCHEMA_VERSION,
+        "canonical_schema_checksum": schema_checksum,
+        "transformation_contract": HISTORICAL_CANONICAL_TRANSFORMATION_VERSION,
         "transformation_version": transformation_version,
+        "source_assembly_identity": _hash_payload(
+            {
+                "source_assembly_checksum": source_checksum,
+                "source_row_count": int(audit["source_row_count"]),
+            }
+        ),
         "source_assembly_path": str(source_path),
         "source_assembly_metadata_path": str(metadata_path),
         "source_assembly_checksum": source_checksum,
@@ -429,12 +545,151 @@ def _manifest(
         "unique_story_symbol_count": len({row["story_symbol_id"] for row in canonical_rows}),
         "duplicate_group_count": len({row["duplicate_group_id"] for row in canonical_rows}),
         "ingested_at_utc": ingested_at_utc,
+        "publication_timestamp": ingested_at_utc,
+        "source_git_commit": _git_commit(),
         "features_generated": False,
         "model_training_invoked": False,
         "model_inference_invoked": False,
         "output_files": {},
         "safety_flags": _safety_flags(),
     }
+
+
+def _canonical_row_logical_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    fields = (
+        "canonical_schema_version",
+        "transformation_version",
+        "canonical_story_id",
+        "story_symbol_id",
+        "provider",
+        "provider_article_id",
+        "provider_original_article_id",
+        "provider_symbols",
+        "symbol",
+        "published_at_utc",
+        "provider_available_at_utc",
+        "updated_at_utc",
+        "collected_at_utc",
+        "headline",
+        "normalized_headline",
+        "summary",
+        "body_or_full_text",
+        "source",
+        "normalized_source",
+        "source_type",
+        "delivery_provider",
+        "original_source",
+        "publisher",
+        "normalized_publisher",
+        "author",
+        "provider_url",
+        "normalized_url",
+        "language",
+        "duplicate_group_id",
+        "duplicate_group_method",
+        "duplicate_group_version",
+        "relevance_status",
+        "relevance_evidence",
+        "relevance_method",
+        "relevance_version",
+        "event_type",
+        "event_status",
+        "conversion_status",
+        "missing_field_states",
+    )
+    return {field: row.get(field, "") for field in fields}
+
+
+def _canonical_row_order_key(row: Mapping[str, Any]) -> tuple[str, ...]:
+    return (
+        _text(row.get("canonical_story_id")),
+        _text(row.get("story_symbol_id")),
+        _text(row.get("provider")),
+        _text(row.get("provider_article_id")),
+        _text(row.get("symbol")),
+        _text(row.get("published_at_utc")),
+        _canonical_json(_canonical_row_logical_payload(row)),
+    )
+
+
+def _canonical_csv_bytes(rows: Sequence[Mapping[str, Any]]) -> bytes:
+    handle = io.StringIO(newline="")
+    writer = csv.DictWriter(handle, fieldnames=CANONICAL_CORPUS_FIELDNAMES)
+    writer.writeheader()
+    writer.writerows(rows)
+    return handle.getvalue().encode("utf-8")
+
+
+def _publish_canonical_bundle(
+    *,
+    corpus_path: Path,
+    corpus_bytes: bytes,
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    audit_path: Path,
+    audit: Mapping[str, Any],
+    summary_path: Path,
+    summary: str,
+) -> str:
+    desired = {
+        corpus_path: corpus_bytes,
+        manifest_path: json.dumps(
+            manifest, indent=2, sort_keys=True
+        ).encode("utf-8"),
+        audit_path: json.dumps(audit, indent=2, sort_keys=True).encode("utf-8"),
+        summary_path: summary.encode("utf-8"),
+    }
+    existing = [path for path in desired if path.exists()]
+    if existing:
+        if len(existing) != len(desired) or any(
+            path.read_bytes() != payload for path, payload in desired.items()
+        ):
+            raise HistoricalCanonicalCorpusError(
+                "incompatible existing canonical corpus publication"
+            )
+        return "SKIPPED_COMPATIBLE"
+    for path, payload in desired.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        temporary.write_bytes(payload)
+        os.replace(temporary, path)
+    return "PUBLISHED"
+
+
+def _logical_manifest_checksum(manifest: Mapping[str, Any]) -> str:
+    excluded = {
+        "logical_manifest_checksum",
+        "output_dir",
+        "output_files",
+        "canonical_artifact_path",
+        "source_assembly_path",
+        "source_assembly_metadata_path",
+        "publication_timestamp",
+        "ingested_at_utc",
+        "publication_result",
+    }
+    return _hash_payload(
+        {key: value for key, value in manifest.items() if key not in excluded}
+    )
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _hash_payload(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _git_commit() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, Any]]:
