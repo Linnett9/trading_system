@@ -128,6 +128,11 @@ def publish_wave4_component(
     fit_options: Mapping[str, Any] | None = None,
     campaign_identity: str | None = None,
     production_plan_job_checksum: str | None = None,
+    plan_job_identity: str | None = None,
+    declared_component_runner: str | None = None,
+    resolved_runtime_owner: str | None = None,
+    operational_input_identity: str | None = None,
+    component_owner: Path | None = None,
 ) -> dict[str, Any]:
     """Fit and atomically publish one synthetic-or-production-ready Wave 4 component."""
     if model_id not in MODEL_FAMILIES:
@@ -158,6 +163,27 @@ def publish_wave4_component(
             )
     target_id = HORIZON_TARGETS[horizon_id] if horizon_id else str(model.entry.payload["target_contract"])
     target = resolver.resolve("target_contracts", target_id, role="selector")
+    runner_evidence = {
+        "campaign_identity": campaign_identity or "legacy_direct_wave4.v1",
+        "plan_job_identity": plan_job_identity or (
+            f"wave4:{prediction_date}:{model_id}:{horizon_id or 'default'}"
+        ),
+        "production_plan_job_checksum": (
+            production_plan_job_checksum or "legacy-direct-wave4"
+        ),
+        "declared_component_runner": declared_component_runner or (
+            "core.research.ml.stock_level.wave4_selector_integration:"
+            "publish_wave4_component"
+        ),
+        "resolved_runtime_owner": resolved_runtime_owner or (
+            "core.research.ml.stock_level.wave4_selector_integration:"
+            "publish_wave4_component"
+        ),
+        "operational_input_identity": operational_input_identity or (
+            (fit_options or {}).get("operational_input_identity")
+            or f"legacy-fit-input:{fit_input.get('logical_input_checksum')}"
+        ),
+    }
     identity = {
         "model_id": model.canonical_id, "model_entry_hash": model.entry.entry_hash,
         "horizon_id": horizon_id, "target_contract": target.canonical_id,
@@ -168,6 +194,7 @@ def publish_wave4_component(
         "parent_gate_checksum": parent_gate["logical_checksum"],
         "fit_input_checksum": fit_input.get("logical_input_checksum"),
         "fit_options": dict(fit_options or {}),
+        **runner_evidence,
     }
     if dependency_preflight:
         identity.update(
@@ -196,13 +223,17 @@ def publish_wave4_component(
                 ],
                 "seed": 1729,
                 "inner_n_jobs": 1,
-                "campaign_identity": campaign_identity,
-                "production_plan_job_checksum": production_plan_job_checksum,
             }
         )
     spec_hash = experiment_spec_hash(identity)
     run_id = f"wave4-{spec_hash[:20].lower()}"
-    owner = output_root / f"model={model_id}" / (f"horizon={horizon_id}/date={prediction_date}" if horizon_id else f"date={prediction_date}")
+    owner = component_owner or (
+        output_root / f"model={model_id}"
+        / (
+            f"horizon={horizon_id}/date={prediction_date}"
+            if horizon_id else f"date={prediction_date}"
+        )
+    )
     existing = _compatible(owner, identity)
     if existing:
         _event(ledger_path, spec_hash, run_id, "SKIPPED_COMPLETE", model_id, horizon_id, identity, (str(owner / "manifest.json"),))
@@ -213,9 +244,18 @@ def publish_wave4_component(
     _event(ledger_path, spec_hash, run_id, "STARTED", model_id, horizon_id, identity)
     temp = owner.with_name(f".{owner.name}.{uuid.uuid4().hex}.tmp")
     try:
+        publication_option_names = {
+            "operational_input_identity", "operational_input_checksum",
+            "training_boundary_identity", "training_cutoff",
+            "purge_sessions", "embargo_sessions", "source_commit",
+        }
+        model_fit_options = {
+            key: value for key, value in (fit_options or {}).items()
+            if key not in publication_option_names
+        }
         result, predictions, diagnostics = _fit_and_select(
             model_id, horizon_id, fit_input, interaction_contract,
-            fit_options or {}, authoritative_context=(
+            model_fit_options, authoritative_context=(
                 {
                     "selector_dataset_identity": parent_gate[
                         "selector_dataset_id"
@@ -379,6 +419,7 @@ def publish_wave4_component(
             "non_production_smoke": False,
             "parent_gate_logical_checksum": parent_gate["logical_checksum"],
             "experiment_spec_hash": spec_hash, "experiment_run_id": run_id,
+            **runner_evidence,
             "metrics_path": str(owner / "metrics.json"),
         }
         manifest["wave4_identity"] = identity

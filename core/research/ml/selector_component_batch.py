@@ -39,11 +39,29 @@ def run_stage10_component_batch(
     )
     if set(packages) != {str(job.get("job_id")) for job in jobs}:
         raise ValueError("Stage-10 input-package coverage mismatch")
+    if runner is None and any(
+        not package.get("package_manifest_path")
+        for package in packages.values()
+    ):
+        raise ValueError(
+            "Default component dispatch requires package_manifest_path"
+        )
     output_root.mkdir(parents=True, exist_ok=True)
+    campaign_path = output_root / "campaign_manifest.json"
+    if campaign_manifest is None:
+        raise ValueError("A frozen selector campaign manifest is required")
+    _atomic_json(campaign_path, campaign_manifest)
+    campaign_runners = {
+        str(row["job_id"]): str(row.get("component_runner") or "")
+        for row in campaign_manifest.get("fitted_component_matrix", ())
+    }
     invoke = runner or _subprocess_runner(
         parent_gate_path=parent_gate_path,
         ledger_path=ledger_path,
         output_root=output_root,
+        campaign_manifest_path=campaign_path,
+        campaign_identity=str(campaign_manifest.get("campaign_identity") or ""),
+        component_runners=campaign_runners,
     )
 
     evidence = run_component_jobs(
@@ -99,7 +117,13 @@ def _packages(
 
 
 def _subprocess_runner(
-    *, parent_gate_path: Path, ledger_path: Path, output_root: Path
+    *,
+    parent_gate_path: Path,
+    ledger_path: Path,
+    output_root: Path,
+    campaign_manifest_path: Path,
+    campaign_identity: str,
+    component_runners: Mapping[str, str],
 ) -> Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]:
     def invoke(
         job: Mapping[str, Any], package: Mapping[str, Any]
@@ -112,6 +136,13 @@ def _subprocess_runner(
         command = [
             sys.executable, "main.py", "--mode", "ml-selector-component-publish",
             "--production-plan-job", str(job_path),
+            "--campaign-manifest", str(campaign_manifest_path),
+            "--campaign-identity", campaign_identity,
+            "--plan-job-identity", str(job["job_id"]),
+            "--component-runner", component_runners.get(
+                str(job["job_id"]), ""
+            ),
+            "--operational-input-package", str(package["package_manifest_path"]),
             "--parent-gate", str(parent_gate_path),
             "--training-rows-json", str(package["training_rows_path"]),
             "--prediction-rows-json", str(package["prediction_rows_path"]),

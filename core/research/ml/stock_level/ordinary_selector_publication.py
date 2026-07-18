@@ -33,6 +33,11 @@ def publish_planned_ordinary_component(
     ledger_path: Path,
     random_seed: int = 42,
     sklearn_n_jobs: int = 1,
+    campaign_identity: str | None = None,
+    plan_job_identity: str | None = None,
+    declared_component_runner: str | None = None,
+    resolved_runtime_owner: str | None = None,
+    operational_input_identity: str | None = None,
 ) -> dict[str, Any]:
     if job.get("experiment_id"):
         require_selector_experiment(ledger_path, job, required_status="SUCCEEDED")
@@ -58,7 +63,25 @@ def publish_planned_ordinary_component(
     if model_payload.get("ranking_problem_contract") != job.get("ranking_contract"):
         raise ValueError("Ranking-contract mismatch")
 
-    identity = _identity(job, gate, model_resolution.entry.entry_hash, target.entry.entry_hash)
+    runner_evidence = {
+        "campaign_identity": campaign_identity or "legacy_direct_ordinary.v1",
+        "plan_job_identity": plan_job_identity or str(job["job_id"]),
+        "declared_component_runner": declared_component_runner or (
+            "core.research.ml.stock_level_benchmark_models:"
+            "TabularModelFactory/SequenceModelFactory"
+        ),
+        "resolved_runtime_owner": resolved_runtime_owner or (
+            "core.research.ml.stock_level.ordinary_selector_publication:"
+            "publish_planned_ordinary_component"
+        ),
+        "operational_input_identity": operational_input_identity or (
+            f"legacy-plan-job:{job['logical_checksum']}"
+        ),
+    }
+    identity = _identity(
+        job, gate, model_resolution.entry.entry_hash,
+        target.entry.entry_hash, runner_evidence,
+    )
     existing = _compatible(owner, identity)
     run_id = f"ordinary-{canonical_hash(identity)[:20].lower()}"
     spec_hash = experiment_spec_hash(identity)
@@ -195,6 +218,7 @@ def publish_planned_ordinary_component(
             "git_commit": _git_commit(), "non_production_smoke": False,
             "parent_gate_logical_checksum": gate["logical_checksum"],
             "production_plan_job_checksum": job["logical_checksum"],
+            **runner_evidence,
             "metrics_path": str(owner / "metrics.json"),
         }
         manifest["manifest_checksum"] = canonical_hash(manifest)
@@ -283,7 +307,7 @@ def _prediction_output(rows, scores, probabilities, model_id, date, gate, identi
     return output
 
 
-def _identity(job, gate, model_hash, target_hash):
+def _identity(job, gate, model_hash, target_hash, runner_evidence):
     return {
         "job_id": job["job_id"], "job_checksum": job["logical_checksum"],
         "model_id": job["model_id"], "model_entry_hash": model_hash,
@@ -294,6 +318,7 @@ def _identity(job, gate, model_hash, target_hash):
         "target_contract": job["target_contract"], "target_contract_hash": target_hash,
         "ranking_contract": job.get("ranking_contract"),
         "parent_gate_checksum": gate["logical_checksum"],
+        **runner_evidence,
     }
 
 
@@ -304,6 +329,14 @@ def _compatible(owner, identity):
             manifest.get("publication_status") == "complete"
             and manifest.get("validation_status") == VERIFIED_STRICT_OOS
             and manifest.get("production_plan_job_checksum") == identity["job_checksum"]
+            and all(
+                manifest.get(field) == identity.get(field)
+                for field in (
+                    "campaign_identity", "plan_job_identity",
+                    "declared_component_runner", "resolved_runtime_owner",
+                    "operational_input_identity",
+                )
+            )
             and _sha256(owner / "predictions.csv") == manifest.get("prediction_checksum")
         )
     except (OSError, ValueError):

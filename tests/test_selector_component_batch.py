@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -49,10 +50,41 @@ def _inventory(jobs):
                 "job_id": job["job_id"],
                 "training_rows_path": f"training/{job['job_id']}.json",
                 "prediction_rows_path": f"prediction/{job['job_id']}.json",
+                "package_manifest_path": f"packages/{job['job_id']}.json",
             }
             for job in jobs
         ]
     }
+
+
+def _campaign(jobs):
+    matrix = [
+        {
+            "job_id": job["job_id"], "model_id": job["model_id"],
+            "prediction_date": job["prediction_date"], "horizon_id": None,
+            "component_runner": (
+                "core.research.ml.stock_level_benchmark_models:"
+                "TabularModelFactory/SequenceModelFactory"
+            ),
+        }
+        for job in jobs
+    ]
+    campaign = {
+        "campaign_contract": "selector_research_campaign.v1",
+        "campaign_version": "v2", "campaign_id": "fixture",
+        "campaign_identity": "FIXTURE-CAMPAIGN",
+        "fitted_component_matrix": matrix,
+        "expected_component_count": len(matrix),
+    }
+    campaign["logical_checksum"] = hashlib.sha256(
+        json.dumps(
+            campaign, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest().upper()
+    for job in jobs:
+        job["campaign_identity"] = campaign["campaign_identity"]
+        job["component_runner"] = matrix[0]["component_runner"]
+    return campaign
 
 
 def _readiness(jobs):
@@ -130,6 +162,7 @@ def test_batch_forwards_jobs_records_skip_and_does_not_change_environment(
         ledger_path=tmp_path / "ledger.jsonl",
         output_root=tmp_path / "batch",
         runner=runner,
+        campaign_manifest=_campaign(jobs),
     )
     assert observed[0][0] == jobs[0]
     assert observed[0][1]["training_rows_path"].startswith("training/")
@@ -164,12 +197,17 @@ def test_default_runner_delegates_to_single_component_command_with_private_env(
         parent_gate_path=tmp_path / "gate.json",
         ledger_path=tmp_path / "ledger.jsonl",
         output_root=tmp_path / "batch",
+        campaign_manifest=_campaign(jobs),
     )
     assert report["status"] == "COMPLETED"
     assert len(calls) == 15
     command, kwargs = calls[0]
     assert command[command.index("--mode") + 1] == "ml-selector-component-publish"
     assert command[command.index("--training-rows-json") + 1].startswith("training/")
+    assert command[command.index("--campaign-identity") + 1] == "FIXTURE-CAMPAIGN"
+    assert command[command.index("--operational-input-package") + 1].startswith(
+        "packages/"
+    )
     assert all(kwargs["env"][name] == "1" for name in (
         "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
         "NUMEXPR_NUM_THREADS",
@@ -194,6 +232,7 @@ def test_failure_stops_safe_dispatch_and_retry_uses_existing_runner(tmp_path):
         ledger_path=tmp_path / "ledger.jsonl",
         output_root=tmp_path / "first",
         runner=failing,
+        campaign_manifest=_campaign(jobs),
     )
     assert first["status"] == "FAILED"
     assert first["jobs"][0]["status"] == "FAILED"
@@ -210,6 +249,7 @@ def test_failure_stops_safe_dispatch_and_retry_uses_existing_runner(tmp_path):
             "status": "SKIPPED_COMPATIBLE"
             if job["job_id"] in attempts[1:] else "COMPLETE"
         },
+        campaign_manifest=_campaign(jobs),
     )
     assert second["status"] == "COMPLETED"
     assert len(retried) == 15
