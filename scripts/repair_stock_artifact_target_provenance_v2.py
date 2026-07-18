@@ -22,7 +22,9 @@ TARGET_PROVENANCE_V2 = "stock_level_target_provenance_v2"
 PROVENANCE_COLUMN = "target_provenance_contract_version"
 STATUS_COLUMN = "target_status"
 ECONOMIC_KEY_COLUMNS = ("rebalance_date", "symbol")
-APPROVED_BLANK_STATUSES = frozenset({"unrealized_boundary"})
+APPROVED_BLANK_STATUSES = frozenset(
+    {"unrealized_boundary", "missing_source_price"}
+)
 REQUIRED_COLUMNS = {
     PROVENANCE_COLUMN,
     STATUS_COLUMN,
@@ -255,7 +257,9 @@ def _scan_projected(path: Path, *, batch_rows: int) -> dict[str, Any]:
         "blank_or_null_rows": provenance["<blank_or_null>"],
         "target_status_population": dict(sorted(statuses.items())),
         "blank_status_population": dict(sorted(blank_statuses.items())),
-        "approved_boundary_population": statuses["unrealized_boundary"],
+        "approved_boundary_population": sum(
+            statuses[status] for status in APPROVED_BLANK_STATUSES
+        ),
         "unapproved_blank_rows": sum(
             count
             for status, count in blank_statuses.items()

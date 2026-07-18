@@ -95,6 +95,31 @@ def test_approved_unrealized_boundary_rows_are_repaired(tmp_path: Path) -> None:
     assert report["approved_rows_repaired"] == 1
 
 
+def test_approved_missing_source_price_row_is_repaired(tmp_path: Path) -> None:
+    report, _source, output = _run(
+        tmp_path,
+        [_row("AAA", status="missing_source_price", provenance=None)],
+    )
+
+    assert _versions(output) == [repair.TARGET_PROVENANCE_V2]
+    assert report["approved_rows_repaired"] == 1
+
+
+def test_mixed_approved_status_populations_repair_successfully(
+    tmp_path: Path,
+) -> None:
+    report, _source, output = _run(
+        tmp_path,
+        [
+            _row("AAA", status="missing_source_price", provenance=None),
+            _row("BBB", status="unrealized_boundary", provenance=""),
+        ],
+    )
+
+    assert _versions(output) == [repair.TARGET_PROVENANCE_V2] * 2
+    assert report["approved_rows_repaired"] == 2
+
+
 def test_realized_blank_row_blocks(tmp_path: Path) -> None:
     source = tmp_path / "source.parquet"
     _write(source, [_row("AAA", status="realized", provenance=None)])
@@ -113,9 +138,12 @@ def test_realized_blank_row_blocks(tmp_path: Path) -> None:
     assert not (tmp_path / "out.parquet").exists()
 
 
-def test_unknown_target_status_blocks(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status", ["future_unknown", ""])
+def test_unknown_or_empty_target_status_blocks(
+    tmp_path: Path, status: str
+) -> None:
     source = tmp_path / "source.parquet"
-    _write(source, [_row("AAA", status="future_unknown", provenance="")])
+    _write(source, [_row("AAA", status=status, provenance="")])
 
     with pytest.raises(repair.RepairBlockedError) as exc:
         repair.repair_stock_artifact_target_provenance_v2(
@@ -181,7 +209,7 @@ def test_row_count_and_ordering_are_preserved(tmp_path: Path) -> None:
 def test_every_non_provenance_value_remains_identical(tmp_path: Path) -> None:
     rows = [
         _row("AAA", status="realized", provenance=repair.TARGET_PROVENANCE_V2),
-        _row("BBB", status="unrealized_boundary", provenance=None),
+        _row("BBB", status="missing_source_price", provenance=None),
     ]
     report, source, output = _run(tmp_path, rows)
     columns = [
@@ -223,13 +251,18 @@ def test_duplicate_economic_keys_block(tmp_path: Path) -> None:
 def test_dry_run_writes_report_but_no_repaired_artifact(tmp_path: Path) -> None:
     report, source, output = _run(
         tmp_path,
-        [_row("AAA", status="unrealized_boundary", provenance=None)],
+        [
+            _row("AAA", status="unrealized_boundary", provenance=None),
+            _row("BBB", status="missing_source_price", provenance=None),
+        ],
         dry_run=True,
     )
 
     assert source.exists()
     assert not output.exists()
     assert report["status"] == "DRY_RUN_COMPLETE"
+    assert report["blank_or_null_rows_found"] == 2
+    assert report["approved_boundary_population"] == 2
     assert (tmp_path / "report" / "target_provenance_repair_report.json").exists()
 
 
