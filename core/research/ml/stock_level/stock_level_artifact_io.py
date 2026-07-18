@@ -290,6 +290,118 @@ def artifact_identity(
     return identity
 
 
+def bounded_parquet_artifact_identity(
+    path: Path,
+    *,
+    batch_rows: int = 65_536,
+    resolved_artifact_path: Path | None = None,
+    artifact_format: str = "parquet",
+    compression: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical identity without materialising the full Parquet table."""
+    if batch_rows < 1:
+        raise ValueError("batch_rows must be at least one")
+    parquet = pq.ParquetFile(path)
+    schema = parquet.schema_arrow
+    column_order = list(schema.names)
+    logical_digest = hashlib.sha256()
+    logical_digest.update(b"[")
+    first_row = True
+    row_count = 0
+    symbols: set[str] = set()
+    decision_dates: set[str] = set()
+    decision_values: list[str] = []
+    realized_target_count = 0
+    keys: set[tuple[str, str]] = set()
+    duplicate_keys = 0
+    null_symbol_count = 0
+    null_decision_timestamp_count = 0
+    target_contract_versions: set[str] = set()
+    source_dataset_hashes: set[str] = set()
+    for batch in parquet.iter_batches(batch_size=batch_rows, use_threads=False):
+        for row in batch.to_pylist():
+            canonical_row = {
+                name: _canonical_json_value(row.get(name))
+                for name in column_order
+            }
+            if not first_row:
+                logical_digest.update(b",")
+            logical_digest.update(
+                json.dumps(
+                    canonical_row,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            first_row = False
+            row_count += 1
+            symbol = str(row.get("symbol") or "").upper()
+            decision = row.get("decision_timestamp") or row.get("rebalance_date")
+            decision_text = str(decision) if decision not in (None, "") else ""
+            if symbol:
+                symbols.add(symbol)
+            else:
+                null_symbol_count += 1
+            if decision_text:
+                decision_values.append(decision_text)
+                decision_dates.add(decision_text[:10])
+            else:
+                null_decision_timestamp_count += 1
+            if symbol and decision_text:
+                key = (symbol, decision_text)
+                if key in keys:
+                    duplicate_keys += 1
+                else:
+                    keys.add(key)
+            if row.get("actual_forward_return_10d") not in (None, ""):
+                realized_target_count += 1
+            target_version = row.get("target_provenance_contract_version")
+            if target_version not in (None, ""):
+                target_contract_versions.add(str(target_version))
+            source_hash = row.get("source_dataset_hash")
+            if source_hash not in (None, ""):
+                source_dataset_hashes.add(str(source_hash))
+    logical_digest.update(b"]")
+    if row_count != parquet.metadata.num_rows:
+        raise ValueError("Parquet identity scan row count does not match metadata")
+    compression_codecs = sorted({
+        str(parquet.metadata.row_group(group).column(column).compression)
+        for group in range(parquet.metadata.num_row_groups)
+        for column in range(parquet.metadata.row_group(group).num_columns)
+    })
+    versions = sorted(target_contract_versions)
+    dataset_hashes = sorted(source_dataset_hashes)
+    return {
+        "artifact_format": artifact_format,
+        "compression": compression,
+        "compression_codecs": compression_codecs,
+        "resolved_artifact_path": str(resolved_artifact_path or path),
+        "file_size_bytes": path.stat().st_size,
+        "sha256": file_sha256(path),
+        "logical_content_sha256": logical_digest.hexdigest(),
+        "schema_fingerprint": schema_fingerprint(column_order, schema),
+        "stable_column_order": column_order,
+        "row_count": row_count,
+        "column_count": len(column_order),
+        "symbol_count": len(symbols),
+        "decision_date_count": len(decision_dates),
+        "minimum_decision_timestamp": min(decision_values, default=None),
+        "maximum_decision_timestamp": max(decision_values, default=None),
+        "realized_target_count": realized_target_count,
+        "unrealized_boundary_count": row_count - realized_target_count,
+        "duplicate_symbol_decision_keys": duplicate_keys,
+        "null_symbol_count": null_symbol_count,
+        "null_decision_timestamp_count": null_decision_timestamp_count,
+        "target_contract_version": versions[0] if len(versions) == 1 else None,
+        "target_contract_versions": versions,
+        "benchmark_contract_version": "stock_level_benchmark_return_10d_v1",
+        "source_dataset_hash_count": len(dataset_hashes),
+        "source_dataset_hashes": dataset_hashes[:10],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "completion_status": "complete",
+    }
+
+
 def schema_fingerprint(column_order: Sequence[str], schema: pa.Schema | None) -> str:
     payload = {
         "columns": list(column_order),

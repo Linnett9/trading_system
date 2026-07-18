@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 import uuid
@@ -15,6 +16,10 @@ from typing import Any, Iterable
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+
+from core.research.ml.stock_level.stock_level_artifact_io import (
+    bounded_parquet_artifact_identity,
+)
 
 
 CONTRACT_VERSION = "stock_artifact_target_provenance_repair_v1"
@@ -47,6 +52,7 @@ def repair_stock_artifact_target_provenance_v2(
     promote: bool,
     batch_rows: int,
     writer_factory: type[pq.ParquetWriter] = pq.ParquetWriter,
+    publication_writer: Any = None,
 ) -> dict[str, Any]:
     if batch_rows < 1:
         raise ValueError("batch_rows must be at least one")
@@ -79,6 +85,11 @@ def repair_stock_artifact_target_provenance_v2(
 
     effective_dry_run = bool(dry_run or (output_path is None and not promote))
     if effective_dry_run:
+        publication_path = input_path.with_name("stock_level_prediction_artifacts.json")
+        previous_publication = _read_json(publication_path) if publication_path.exists() else None
+        observed_identity = bounded_parquet_artifact_identity(
+            input_path, batch_rows=batch_rows, resolved_artifact_path=input_path
+        )
         report.update(
             {
                 "status": "DRY_RUN_COMPLETE",
@@ -89,6 +100,14 @@ def repair_stock_artifact_target_provenance_v2(
                 "row_count_match": True,
                 "economic_key_match": True,
                 "invariant_column_checksum_match": True,
+                "previous_publication_identity": (
+                    previous_publication.get("canonical_artifact")
+                    if previous_publication else None
+                ),
+                "promoted_publication_identity": observed_identity,
+                "publication_identity_match": _publication_identity_matches(
+                    previous_publication, observed_identity
+                ),
             }
         )
         _write_json_atomic(report_path, report)
@@ -99,6 +118,47 @@ def repair_stock_artifact_target_provenance_v2(
     )
     if repair_output.resolve() == input_path.resolve():
         raise ValueError("output must be side-by-side; use --promote for canonical replacement")
+    publication_path = input_path.with_name("stock_level_prediction_artifacts.json")
+    previous_publication = (
+        _read_json(publication_path) if promote and publication_path.exists() else None
+    )
+    if promote and previous_publication is None:
+        raise ValueError(f"canonical publication sidecar is missing: {publication_path}")
+
+    if (
+        promote
+        and source["blank_or_null_rows"] == 0
+    ):
+        current_identity = bounded_parquet_artifact_identity(
+            input_path,
+            batch_rows=batch_rows,
+            resolved_artifact_path=input_path,
+            compression=_compression_codec(pq.ParquetFile(input_path)),
+        )
+        if _publication_identity_matches(previous_publication, current_identity):
+            report.update({
+                "status": "COMPLETE",
+                "output_path": str(input_path),
+                "repaired_checksum": source_checksum,
+                "approved_rows_repaired": 0,
+                "distinct_values_after": source["distinct_provenance_values"],
+                "row_count_match": True,
+                "economic_key_match": True,
+                "invariant_column_checksum_match": True,
+                "schema_match": True,
+                "column_order_match": True,
+                "null_populations_outside_provenance_match": True,
+                "promotion_status": "already_consistent",
+                "promoted_at": None,
+                "previous_publication_identity": previous_publication["canonical_artifact"],
+                "promoted_publication_identity": previous_publication["canonical_artifact"],
+                "publication_identity_match": True,
+                "backup_path": None,
+                "blockers": [],
+            })
+            _write_json_atomic(report_path, report)
+            return report
+
     temporary = repair_output.with_name(
         f".{repair_output.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
     )
@@ -133,16 +193,62 @@ def repair_stock_artifact_target_provenance_v2(
         raise
 
     promoted_at: str | None = None
-    publication_path = repair_output
+    publication_artifact_path = repair_output
+    promoted_identity: dict[str, Any] | None = None
+    backup_path: Path | None = None
     if promote:
-        os.replace(repair_output, input_path)
-        publication_path = input_path
+        identity_source = repair_output
+        if source["blank_or_null_rows"] == 0:
+            repair_output.unlink()
+            identity_source = input_path
+            repaired_checksum = source_checksum
+        promoted_identity = bounded_parquet_artifact_identity(
+            identity_source,
+            batch_rows=batch_rows,
+            resolved_artifact_path=input_path,
+            compression=_compression_codec(pq.ParquetFile(identity_source)),
+        )
+        promoted_publication = _refreshed_publication(
+            previous_publication or {}, promoted_identity
+        )
+        sidecar_temporary = publication_path.with_name(
+            f".{publication_path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+        )
+        writer = publication_writer or _write_json_file
+        rollback_temporary: Path | None = None
+        try:
+            writer(sidecar_temporary, promoted_publication)
+            backup_path = input_path.with_name(
+                f"{input_path.stem}.pre_target_provenance_repair{input_path.suffix}"
+            )
+            if not backup_path.exists():
+                backup_temporary = backup_path.with_name(f".{backup_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+                shutil.copy2(input_path, backup_temporary)
+                os.replace(backup_temporary, backup_path)
+            if identity_source != input_path:
+                rollback_temporary = input_path.with_name(
+                    f".{input_path.name}.{uuid.uuid4().hex[:8]}.rollback"
+                )
+                shutil.copy2(input_path, rollback_temporary)
+                os.replace(repair_output, input_path)
+            try:
+                os.replace(sidecar_temporary, publication_path)
+            except BaseException:
+                if rollback_temporary is not None:
+                    os.replace(rollback_temporary, input_path)
+                raise
+        finally:
+            if sidecar_temporary.exists():
+                sidecar_temporary.unlink()
+            if rollback_temporary is not None and rollback_temporary.exists():
+                rollback_temporary.unlink()
+        publication_artifact_path = input_path
         promoted_at = datetime.now(timezone.utc).isoformat()
 
     report.update(
         {
             "status": "COMPLETE",
-            "output_path": str(publication_path),
+            "output_path": str(publication_artifact_path),
             "repaired_checksum": repaired_checksum,
             "total_rows": repaired["row_count"],
             "approved_rows_repaired": source["blank_or_null_rows"],
@@ -168,6 +274,18 @@ def repair_stock_artifact_target_provenance_v2(
             ),
             "promotion_status": "promoted" if promote else "side_by_side",
             "promoted_at": promoted_at,
+            "previous_publication_identity": (
+                previous_publication.get("canonical_artifact")
+                if previous_publication else None
+            ),
+            "promoted_publication_identity": promoted_identity,
+            "publication_identity_match": (
+                _publication_identity_matches(
+                    _read_json(publication_path), promoted_identity
+                )
+                if promote and promoted_identity else None
+            ),
+            "backup_path": str(backup_path) if backup_path else None,
             "blockers": [],
         }
     )
@@ -467,6 +585,58 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"publication sidecar must contain an object: {path}")
+    return payload
+
+
+def _refreshed_publication(
+    previous: dict[str, Any], identity: dict[str, Any]
+) -> dict[str, Any]:
+    payload = dict(previous)
+    payload["canonical_artifact"] = dict(identity)
+    payload["artifact_format"] = identity["artifact_format"]
+    payload["artifact_path"] = identity["resolved_artifact_path"]
+    payload["schema_fingerprint"] = identity["schema_fingerprint"]
+    payload["artifact_sha256"] = identity["sha256"]
+    payload["logical_content_sha256"] = identity["logical_content_sha256"]
+    payload["target_contract_version"] = identity.get("target_contract_version")
+    payload["benchmark_contract_version"] = identity.get("benchmark_contract_version")
+    payload["completion_status"] = "complete"
+    return payload
+
+
+def _publication_identity_matches(
+    publication: dict[str, Any] | None, identity: dict[str, Any]
+) -> bool:
+    if not publication:
+        return False
+    canonical = dict(publication.get("canonical_artifact") or {})
+    coupled = (
+        "resolved_artifact_path",
+        "file_size_bytes",
+        "sha256",
+        "logical_content_sha256",
+        "schema_fingerprint",
+        "stable_column_order",
+        "row_count",
+        "column_count",
+        "completion_status",
+    )
+    return (
+        all(canonical.get(key) == identity.get(key) for key in coupled)
+        and publication.get("artifact_sha256") == identity["sha256"]
+        and publication.get("logical_content_sha256") == identity["logical_content_sha256"]
+        and publication.get("schema_fingerprint") == identity["schema_fingerprint"]
+    )
 
 
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:

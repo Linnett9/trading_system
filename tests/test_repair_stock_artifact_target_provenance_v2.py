@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 from pathlib import Path
 
@@ -61,6 +62,14 @@ def _run(
     source = tmp_path / "source.parquet"
     repaired = output or tmp_path / "repaired.parquet"
     _write(source, rows)
+    if promote:
+        identity = repair.bounded_parquet_artifact_identity(
+            source, batch_rows=1, resolved_artifact_path=source
+        )
+        (tmp_path / "stock_level_prediction_artifacts.json").write_text(
+            json.dumps(repair._refreshed_publication({}, identity)),
+            encoding="utf-8",
+        )
     report = repair.repair_stock_artifact_target_provenance_v2(
         input_path=source,
         output_path=repaired,
@@ -286,6 +295,89 @@ def test_explicit_promotion_atomically_replaces_source(tmp_path: Path) -> None:
     assert not output.exists()
     assert report["promotion_status"] == "promoted"
     assert report["promoted_at"]
+    assert Path(report["backup_path"]).exists()
+    sidecar = json.loads(
+        (tmp_path / "stock_level_prediction_artifacts.json").read_text()
+    )
+    assert sidecar["canonical_artifact"]["file_size_bytes"] == source.stat().st_size
+    assert sidecar["canonical_artifact"]["sha256"] == hashlib.sha256(
+        source.read_bytes()
+    ).hexdigest()
+    assert sidecar["artifact_sha256"] == sidecar["canonical_artifact"]["sha256"]
+
+
+def test_promotion_refreshes_exact_stale_sidecar_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.parquet"
+    _write(source, [_row("AAA", status="unrealized_boundary", provenance=None)])
+    stale = repair.bounded_parquet_artifact_identity(
+        source, batch_rows=1, resolved_artifact_path=source
+    )
+    stale["file_size_bytes"] = 1
+    stale["sha256"] = "0" * 64
+    sidecar_path = tmp_path / "stock_level_prediction_artifacts.json"
+    sidecar_path.write_text(
+        json.dumps(repair._refreshed_publication({}, stale)), encoding="utf-8"
+    )
+
+    first = repair.repair_stock_artifact_target_provenance_v2(
+        input_path=source,
+        output_path=tmp_path / "repaired.parquet",
+        report_root=tmp_path / "report",
+        dry_run=False,
+        promote=True,
+        batch_rows=1,
+    )
+    published = json.loads(sidecar_path.read_text())
+    assert first["previous_publication_identity"]["sha256"] == "0" * 64
+    assert published["canonical_artifact"] == first["promoted_publication_identity"]
+    assert published["canonical_artifact"]["row_count"] == 1
+    assert published["canonical_artifact"]["stable_column_order"] == pq.read_schema(source).names
+
+    second = repair.repair_stock_artifact_target_provenance_v2(
+        input_path=source,
+        output_path=tmp_path / "repaired.parquet",
+        report_root=tmp_path / "report-second",
+        dry_run=False,
+        promote=True,
+        batch_rows=1,
+    )
+    assert second["promotion_status"] == "already_consistent"
+    assert json.loads(sidecar_path.read_text()) == published
+
+
+def test_publication_generation_failure_preserves_parquet_and_sidecar(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.parquet"
+    _write(source, [_row("AAA", status="unrealized_boundary", provenance=None)])
+    identity = repair.bounded_parquet_artifact_identity(
+        source, batch_rows=1, resolved_artifact_path=source
+    )
+    sidecar_path = tmp_path / "stock_level_prediction_artifacts.json"
+    sidecar_path.write_text(
+        json.dumps(repair._refreshed_publication({}, identity)), encoding="utf-8"
+    )
+    parquet_before = source.read_bytes()
+    sidecar_before = sidecar_path.read_bytes()
+
+    def fail_publication(_path: Path, _payload: dict[str, object]) -> None:
+        raise OSError("synthetic publication failure")
+
+    with pytest.raises(OSError, match="synthetic publication failure"):
+        repair.repair_stock_artifact_target_provenance_v2(
+            input_path=source,
+            output_path=tmp_path / "repaired.parquet",
+            report_root=tmp_path / "report",
+            dry_run=False,
+            promote=True,
+            batch_rows=1,
+            publication_writer=fail_publication,
+        )
+
+    assert source.read_bytes() == parquet_before
+    assert sidecar_path.read_bytes() == sidecar_before
 
 
 def test_failed_write_preserves_source_and_prior_output(tmp_path: Path) -> None:
