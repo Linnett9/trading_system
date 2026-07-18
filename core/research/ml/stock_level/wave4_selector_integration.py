@@ -5,9 +5,11 @@ import hashlib
 import json
 import math
 import os
+import platform
 import shutil
 import subprocess
 import uuid
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -15,6 +17,10 @@ import numpy as np
 
 from core.research.ml.artifact_lineage import VERIFIED_STRICT_OOS, build_artifact_link, verify_selector_artifact
 from core.research.ml.experiment_ledger import append_ledger_event, experiment_spec_hash
+from core.research.ml.lightgbm_ranking_preflight import (
+    SUPPORTED_OBJECTIVES,
+    deterministic_ranker_configuration,
+)
 from core.research.ml.ranking import OrderedLogitRanker
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
@@ -32,11 +38,81 @@ AGGREGATION_CONTRACT = "wave4_multi_horizon_evidence.v1"
 MODEL_FAMILIES = {
     "huber", "contextual_elastic_net", "multi_horizon_ridge",
     "multi_horizon_elastic_net", "multi_horizon_ordered_logit",
+    "lightgbm_rank_xendcg", "lightgbm_lambdarank",
 }
 HORIZON_TARGETS = {
     "return_1s": "forward_return_1d", "return_5s": "forward_return_5d",
     "return_10s": "forward_return_10d", "return_20s": "forward_return_20d",
 }
+LIGHTGBM_PREFLIGHT_CONTRACT = "lightgbm_ranking_dependency_preflight_v2"
+
+
+def assess_lightgbm_ranking_dependency(
+    *,
+    objective: str,
+    num_threads: int = 1,
+    importer=import_module,
+) -> dict[str, Any]:
+    status, reasons, version, dependency = "READY", [], None, None
+    try:
+        dependency = importer("lightgbm")
+    except (ImportError, ModuleNotFoundError):
+        status, reasons = "MISSING_DEPENDENCY", ["LIGHTGBM_IMPORT_FAILED"]
+    if dependency is not None:
+        version = str(getattr(dependency, "__version__", ""))
+        if version != "4.6.0":
+            status, reasons = "UNSUPPORTED_VERSION", [
+                "LIGHTGBM_VERSION_REQUIRED:4.6.0"
+            ]
+        elif not callable(getattr(dependency, "LGBMRanker", None)):
+            status, reasons = "UNSUPPORTED_OBJECTIVE", [
+                "LGBMRANKER_API_MISSING"
+            ]
+    try:
+        configuration = deterministic_ranker_configuration(
+            objective=objective, num_threads=num_threads
+        )
+    except ValueError as exc:
+        configuration = None
+        status = (
+            "UNSUPPORTED_OBJECTIVE"
+            if objective not in SUPPORTED_OBJECTIVES
+            else "INVALID_CONFIGURATION"
+        )
+        reasons.append(str(exc))
+    if configuration is not None and configuration["n_jobs"] != 1:
+        status = "INVALID_CONFIGURATION"
+        reasons.append("INNER_N_JOBS_MUST_EQUAL_ONE")
+    logical = {
+        "contract_version": LIGHTGBM_PREFLIGHT_CONTRACT,
+        "status": status,
+        "valid": status == "READY",
+        "blocking_reasons": sorted(set(reasons)),
+        "dependency_available": dependency is not None,
+        "lightgbm_version": version,
+        "required_lightgbm_version": "4.6.0",
+        "objective": objective,
+        "objective_supported_by_registered_version": (
+            status == "READY" and objective in SUPPORTED_OBJECTIVES
+        ),
+        "grouped_ranker_api_available": (
+            dependency is not None
+            and callable(getattr(dependency, "LGBMRanker", None))
+        ),
+        "runtime_platform": {
+            "system": platform.system(),
+            "machine": platform.machine(),
+            "python_version": platform.python_version(),
+        },
+        "deterministic_configuration": configuration,
+        "inner_n_jobs": configuration.get("n_jobs") if configuration else None,
+        "fitting_performed": False,
+    }
+    logical["configuration_checksum"] = (
+        canonical_hash(configuration) if configuration else None
+    )
+    logical["logical_result_checksum"] = canonical_hash(logical)
+    return logical
 
 
 def publish_wave4_component(
@@ -50,6 +126,8 @@ def publish_wave4_component(
     horizon_id: str | None = None,
     interaction_contract: Mapping[str, Any] | None = None,
     fit_options: Mapping[str, Any] | None = None,
+    campaign_identity: str | None = None,
+    production_plan_job_checksum: str | None = None,
 ) -> dict[str, Any]:
     """Fit and atomically publish one synthetic-or-production-ready Wave 4 component."""
     if model_id not in MODEL_FAMILIES:
@@ -63,6 +141,21 @@ def publish_wave4_component(
 
     resolver = RegistryResolver(load_registry_bundle())
     model = resolver.resolve("selector_models", model_id, role="selector")
+    model_payload = model.entry.payload
+    dependency_preflight = None
+    if model_id.startswith("lightgbm_"):
+        if not campaign_identity or not production_plan_job_checksum:
+            raise ValueError(
+                "LightGBM components require campaign and plan-job identity"
+            )
+        dependency_preflight = assess_lightgbm_ranking_dependency(
+            objective=str(model_payload["objective"]), num_threads=1
+        )
+        if dependency_preflight["status"] != "READY":
+            raise ValueError(
+                "LightGBM dependency preflight not ready: "
+                + dependency_preflight["status"]
+            )
     target_id = HORIZON_TARGETS[horizon_id] if horizon_id else str(model.entry.payload["target_contract"])
     target = resolver.resolve("target_contracts", target_id, role="selector")
     identity = {
@@ -76,6 +169,37 @@ def publish_wave4_component(
         "fit_input_checksum": fit_input.get("logical_input_checksum"),
         "fit_options": dict(fit_options or {}),
     }
+    if dependency_preflight:
+        identity.update(
+            {
+                "ranking_objective_identity": model_payload[
+                    "objective_identity"
+                ],
+                "ranking_problem_contract": model_payload[
+                    "ranking_problem_contract"
+                ],
+                "relevance_contract": model_payload["relevance_contract"],
+                "grouped_query_contract": model_payload[
+                    "grouped_query_contract"
+                ],
+                "fitting_configuration_checksum": model_payload[
+                    "fitting_configuration_checksum"
+                ],
+                "dependency_preflight_identity": dependency_preflight[
+                    "contract_version"
+                ],
+                "dependency_version": dependency_preflight[
+                    "lightgbm_version"
+                ],
+                "dependency_preflight_checksum": dependency_preflight[
+                    "logical_result_checksum"
+                ],
+                "seed": 1729,
+                "inner_n_jobs": 1,
+                "campaign_identity": campaign_identity,
+                "production_plan_job_checksum": production_plan_job_checksum,
+            }
+        )
     spec_hash = experiment_spec_hash(identity)
     run_id = f"wave4-{spec_hash[:20].lower()}"
     owner = output_root / f"model={model_id}" / (f"horizon={horizon_id}/date={prediction_date}" if horizon_id else f"date={prediction_date}")
@@ -90,8 +214,68 @@ def publish_wave4_component(
     temp = owner.with_name(f".{owner.name}.{uuid.uuid4().hex}.tmp")
     try:
         result, predictions, diagnostics = _fit_and_select(
-            model_id, horizon_id, fit_input, interaction_contract, fit_options or {}
+            model_id, horizon_id, fit_input, interaction_contract,
+            fit_options or {}, authoritative_context=(
+                {
+                    "selector_dataset_identity": parent_gate[
+                        "selector_dataset_id"
+                    ],
+                    "selector_dataset_checksum": parent_gate[
+                        "selector_dataset_artifact_checksum"
+                    ],
+                    "operational_input_identity": (fit_options or {}).get(
+                        "operational_input_identity"
+                    ),
+                    "operational_input_checksum": (fit_options or {}).get(
+                        "operational_input_checksum"
+                    ),
+                    "campaign_identity": campaign_identity,
+                    "production_plan_job_checksum": production_plan_job_checksum,
+                    "model_registry_identity": model.entry.entry_hash,
+                    "ranking_contract_identity": model_payload.get(
+                        "ranking_problem_contract"
+                    ),
+                    "grouped_query_contract": model_payload.get(
+                        "grouped_query_contract"
+                    ),
+                    "relevance_label_contract": model_payload.get(
+                        "relevance_contract"
+                    ),
+                    "target_contract": target.canonical_id,
+                    "horizon_contract": horizon_id or "return_10s",
+                    "fold_identity": fit_input.get("split_identity"),
+                    "training_boundary_identity": (fit_options or {}).get(
+                        "training_boundary_identity"
+                    ),
+                    "outcome_maturity_cutoff": (fit_options or {}).get(
+                        "training_cutoff"
+                    ),
+                    "purge_sessions": (fit_options or {}).get("purge_sessions"),
+                    "embargo_sessions": (fit_options or {}).get(
+                        "embargo_sessions"
+                    ),
+                    "feature_schema": fit_input.get(
+                        "feature_schema_identity"
+                    ),
+                    "ordered_feature_checksum": canonical_hash(
+                        list(fit_input.get("feature_names") or ())
+                    ),
+                    "model_configuration_checksum": model_payload.get(
+                        "fitting_configuration_checksum"
+                    ),
+                    "seed": 1729,
+                    "source_commit": (fit_options or {}).get("source_commit"),
+                }
+                if model_id.startswith("lightgbm_") else None
+            ),
+            dependency_preflight=dependency_preflight,
         )
+        if model_id.startswith("lightgbm_") and {
+            str(row.get("decision_date") or "") for row in predictions
+        } != {prediction_date}:
+            raise ValueError(
+                "LightGBM validation rows must own the component prediction date"
+            )
         if not result.get("valid") or not predictions:
             reason = ";".join(result.get("blocking_reasons") or [str(result.get("status"))])
             _event(ledger_path, spec_hash, run_id, "REJECTED", model_id, horizon_id, identity, rejection_summary=reason)
@@ -173,6 +357,19 @@ def publish_wave4_component(
             "target_contract_version": target.canonical_id,
             "ranking_contract_version": model.entry.payload.get("ranking_problem_contract") or "ranking_metric_contract_v1",
             "relevance_contract_version": model.entry.payload.get("relevance_contract"),
+            "ranking_objective_identity": model.entry.payload.get(
+                "objective_identity"
+            ),
+            "grouped_query_contract": model.entry.payload.get(
+                "grouped_query_contract"
+            ),
+            "model_configuration_checksum": model.entry.payload.get(
+                "fitting_configuration_checksum"
+            ),
+            "dependency_preflight": dependency_preflight,
+            "production_capability_evidence": result.get(
+                "capability_evidence"
+            ),
             "prediction_row_count": len(output_rows),
             "prediction_population_checksum": population_checksum,
             "prediction_artifact_path": str(final_predictions),
@@ -243,7 +440,10 @@ def build_multi_horizon_evidence(component_manifests: Sequence[Path]) -> dict[st
     return logical
 
 
-def _fit_and_select(model_id, horizon_id, fit_input, interaction_contract, options):
+def _fit_and_select(
+    model_id, horizon_id, fit_input, interaction_contract, options,
+    *, authoritative_context=None, dependency_preflight=None,
+):
     if model_id == "huber":
         result = fit_huber_selector(fit_input, **options)
         return result, result.get("predictions", []), result.get("diagnostic_summary", {})
@@ -256,6 +456,23 @@ def _fit_and_select(model_id, horizon_id, fit_input, interaction_contract, optio
         result = fit_multi_horizon_linear_selector(fit_input, model_families=(family,), **options)
         selected = [row for row in result.get("predictions", []) if row["horizon_id"] == horizon_id]
         return result, selected, result.get("diagnostics", {}).get("per_horizon", {}).get(horizon_id, {})
+    if model_id in {
+        "lightgbm_rank_xendcg", "lightgbm_lambdarank"
+    }:
+        from core.research.ml.stock_level.lightgbm_production_selector import (
+            fit_production_lightgbm_selector,
+        )
+        result = fit_production_lightgbm_selector(
+            fit_input,
+            model_id=model_id,
+            authoritative_context=authoritative_context or {},
+            dependency_preflight=dependency_preflight or {},
+        )
+        return (
+            result,
+            result.get("prediction_contract", {}).get("rows", []),
+            result.get("capability_evidence", {}),
+        )
     return _fit_ordered_horizon(fit_input, horizon_id, options)
 
 
@@ -309,7 +526,10 @@ def _fit_ordered_horizon(data, horizon, options):
 def _component_rows(rows, model, horizon, date, identity):
     output = []
     for raw in rows:
-        score = raw.get("predicted_return", raw.get("continuous_score", raw.get("score")))
+        score = raw.get(
+            "predicted_return",
+            raw.get("continuous_score", raw.get("score", raw.get("raw_score"))),
+        )
         row = {
             "row_id": str(raw["row_id"]), "asset_id": str(raw["asset_id"]),
             "symbol": str(raw.get("symbol", raw["asset_id"])), "prediction_date": date,
@@ -329,6 +549,18 @@ def _component_rows(rows, model, horizon, date, identity):
 
 
 def _temporal_fields(data, result, horizon):
+    if data.get("contract_version") == "grouped_ranking_dataset_v1":
+        training = [
+            row for row in data["rows"]
+            if row["split_role"] == "TRAINING"
+        ]
+        return (
+            min(str(row["decision_date"]) for row in training),
+            str(result["input_contract"]["training_cutoff"]),
+            max(
+                str(row["target_maturity_timestamp"]) for row in training
+            ),
+        )
     training = [row for row in data["rows"] if row["split"] == "TRAINING"]
     training_start = min(str(row["decision_timestamp"]) for row in training)
     training_cutoff = str(result.get("configuration", {}).get("training_cutoff") or max(row["decision_timestamp"] for row in training))

@@ -16,6 +16,7 @@ LIGHTGBM_EXPORT_CONTRACT = "grouped_ranking_lightgbm_export_v1"
 XGBOOST_EXPORT_CONTRACT = "grouped_ranking_xgboost_export_v1"
 GENERIC_EXPORT_CONTRACT = "grouped_ranking_mapping_v1"
 COMPATIBILITY_CONTRACT = "existing_relevance_compatibility_v1"
+INTEGER_RELEVANCE_CONTRACT = "mature_training_integer_relevance.v1"
 STATUSES = {
     "READY", "LEGACY_COMPATIBLE", "INVALID_INPUT", "INSUFFICIENT_GROUP_SIZE",
     "IMMATURE_TARGET", "MISSING_TARGET", "LABEL_CONTRACT_MISMATCH",
@@ -30,6 +31,67 @@ class RankingLabelError(ValueError):
         super().__init__(reason)
         self.status = status
         self.reason = reason
+
+
+def mature_training_integer_relevance(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    target_contract_identity: str,
+    maturity_cutoff: str,
+    bins: int = 5,
+    minimum_group_size: int | None = None,
+) -> dict[str, Any]:
+    """Build registered integer relevance after fail-closed maturity filtering."""
+    if bins not in {5, 10}:
+        raise RankingLabelError(
+            "LABEL_CONTRACT_MISMATCH", "INTEGER_RELEVANCE_BINS_UNSUPPORTED"
+        )
+    if any(str(row.get("split_role") or "") != "TRAINING" for row in rows):
+        raise RankingLabelError(
+            "SPLIT_OVERLAP", "RELEVANCE_THRESHOLDS_REQUIRE_TRAINING_ROWS_ONLY"
+        )
+    ordered_source = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("decision_date") or ""),
+            str(row.get("asset_id") or ""),
+            str(row.get("row_id") or ""),
+        ),
+    )
+    mature = _label_source_rows(ordered_source, maturity_cutoff)
+    from core.research.ml.ranking import relevance_labels
+    result = relevance_labels(
+        [
+            {
+                "row_id": row["row_id"],
+                "decision_timestamp": row["decision_date"],
+                "actual_forward_return_10d": row["realised_target"],
+            }
+            for row in mature
+        ],
+        bins=bins,
+        minimum_group_size=minimum_group_size,
+    )
+    logical = {
+        "contract_version": INTEGER_RELEVANCE_CONTRACT,
+        "status": "READY",
+        "valid": True,
+        "target_contract_identity": target_contract_identity,
+        "maturity_cutoff": maturity_cutoff,
+        "source_role": "TRAINING",
+        "threshold_population_policy": (
+            "within-decision-date training rows mature by cutoff only"
+        ),
+        "missing_or_nonfinite_target_policy": "fail_closed",
+        "label_contract_identity": result["contract_id"],
+        "label_range": [0, bins - 1],
+        "tie_policy": result["tie_policy"],
+        "labels_by_row_id": result["labels_by_row_id"],
+        "class_distributions": result["class_distributions"],
+        "source_population_checksum": canonical_hash(mature),
+    }
+    logical["logical_result_checksum"] = canonical_hash(logical)
+    return logical
 
 
 def canonical_json(value: Any) -> str:

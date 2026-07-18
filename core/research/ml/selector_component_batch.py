@@ -29,11 +29,14 @@ def run_stage10_component_batch(
     max_component_workers: int = 3,
     weighted_capacity: int = 4,
     runner: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
+    campaign_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if readiness.get("readiness_contract_version") != READINESS_CONTRACT:
         raise ValueError("Stage-10 readiness contract mismatch")
     jobs = list(readiness.get("production_plan") or [])
-    packages = _packages(input_inventory)
+    packages = _packages(
+        input_inventory, expected_job_ids={str(job.get("job_id")) for job in jobs}
+    )
     if set(packages) != {str(job.get("job_id")) for job in jobs}:
         raise ValueError("Stage-10 input-package coverage mismatch")
     output_root.mkdir(parents=True, exist_ok=True)
@@ -48,6 +51,7 @@ def run_stage10_component_batch(
         runner=lambda job: invoke(job, packages[str(job["job_id"])]),
         max_component_workers=max_component_workers,
         capacity=weighted_capacity,
+        campaign_manifest=campaign_manifest,
     )
     report = {
         "batch_contract_version": BATCH_CONTRACT,
@@ -56,6 +60,10 @@ def run_stage10_component_batch(
         "max_component_workers": max_component_workers,
         "weighted_capacity": weighted_capacity,
         "inner_model_threads": 1,
+        "campaign_identity": (
+            campaign_manifest.get("campaign_identity")
+            if campaign_manifest else None
+        ),
         "status": "FAILED" if any(row["status"] == "FAILED" for row in evidence)
         else "COMPLETED",
         "jobs": evidence,
@@ -64,10 +72,20 @@ def run_stage10_component_batch(
     return report
 
 
-def _packages(inventory: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+def _packages(
+    inventory: Mapping[str, Any],
+    *,
+    expected_job_ids: set[str],
+) -> dict[str, Mapping[str, Any]]:
     rows = list(inventory.get("packages") or [])
-    if len(rows) != 15:
-        raise ValueError("Stage-10 input inventory must contain exactly 15 packages")
+    if len(rows) != len(expected_job_ids):
+        if len(expected_job_ids) == 15:
+            raise ValueError(
+                "Stage-10 input inventory must contain exactly 15 packages"
+            )
+        raise ValueError(
+            "Stage-10 input inventory count differs from component plan"
+        )
     result: dict[str, Mapping[str, Any]] = {}
     for row in rows:
         job_id = str(row.get("job_id") or "")

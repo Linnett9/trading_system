@@ -4,15 +4,34 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Mapping, Sequence
 
 
-WEIGHTS = {"ridge": 1, "elastic_net": 1, "ordered_logit_ranker": 2}
-EXPECTED_MODELS = tuple(WEIGHTS)
+WEIGHTS = {
+    "ridge": 1, "elastic_net": 1, "ordered_logit_ranker": 2,
+    "huber": 1, "contextual_elastic_net": 1,
+    "multi_horizon_ridge": 1, "multi_horizon_elastic_net": 1,
+    "lightgbm_rank_xendcg": 2, "lightgbm_lambdarank": 2,
+}
+EXPECTED_MODELS = ("ridge", "elastic_net", "ordered_logit_ranker")
 EXPECTED_JOB_COUNT = 15
 
 
-def validate_component_plan(jobs: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    ordered = list(jobs)
-    if len(ordered) != EXPECTED_JOB_COUNT:
-        raise ValueError("Stage-10 production plan must contain exactly 15 jobs")
+def validate_component_plan(
+    jobs: Sequence[Mapping[str, Any]],
+    *,
+    campaign_manifest: Mapping[str, Any] | None = None,
+) -> list[Mapping[str, Any]]:
+    supplied = list(jobs)
+    expected_matrix = None
+    if campaign_manifest is None:
+        if len(supplied) != EXPECTED_JOB_COUNT:
+            raise ValueError("Stage-10 production plan must contain exactly 15 jobs")
+    else:
+        from core.research.ml.selector_research_campaign import (
+            validate_selector_campaign,
+        )
+        validate_selector_campaign(campaign_manifest)
+        expected_matrix = list(campaign_manifest["fitted_component_matrix"])
+        if len(supplied) != len(expected_matrix):
+            raise ValueError("Runtime component count differs from campaign manifest")
     required = {
         "job_id", "model_id", "prediction_date", "selector_dataset_root",
         "authoritative_output_root", "feature_schema", "target_contract",
@@ -22,7 +41,8 @@ def validate_component_plan(jobs: Sequence[Mapping[str, Any]]) -> list[Mapping[s
     job_ids: set[str] = set()
     owners: set[tuple[str, str, str]] = set()
     model_dates: dict[str, set[str]] = {model: set() for model in EXPECTED_MODELS}
-    for job in ordered:
+    by_job_id: dict[str, Mapping[str, Any]] = {}
+    for job in supplied:
         missing = sorted(required - set(job))
         if missing:
             raise ValueError(f"Stage-10 job fields missing: {','.join(missing)}")
@@ -30,6 +50,7 @@ def validate_component_plan(jobs: Sequence[Mapping[str, Any]]) -> list[Mapping[s
         if job_id in job_ids:
             raise ValueError(f"Duplicate Stage-10 job ID: {job_id}")
         job_ids.add(job_id)
+        by_job_id[job_id] = job
         model = str(job["model_id"])
         date = str(job["prediction_date"])
         horizon = str(job.get("horizon_id") or "")
@@ -37,14 +58,45 @@ def validate_component_plan(jobs: Sequence[Mapping[str, Any]]) -> list[Mapping[s
         if owner in owners:
             raise ValueError(f"Duplicate Stage-10 component owner: {model}:{date}:{horizon}")
         owners.add(owner)
-        if model not in model_dates:
+        if campaign_manifest is None and model not in model_dates:
             raise ValueError(f"Unsupported Stage-10 model: {model}")
-        if job_id != f"selector:{date}:{model}":
+        expected_job_id = (
+            f"selector:{date}:{model}:{horizon}" if horizon
+            else f"selector:{date}:{model}"
+        )
+        if job_id != expected_job_id:
             raise ValueError(f"Stage-10 job identity mismatch: {job_id}")
-        model_dates[model].add(date)
-    if any(len(dates) != 5 for dates in model_dates.values()):
+        if model in model_dates:
+            model_dates[model].add(date)
+    if campaign_manifest is None and any(
+        len(dates) != 5 for dates in model_dates.values()
+    ):
         raise ValueError("Stage-10 plan must contain five dates for each base model")
-    return ordered
+    if expected_matrix is not None:
+        expected_ids = [str(row["job_id"]) for row in expected_matrix]
+        if set(by_job_id) != set(expected_ids):
+            missing = sorted(set(expected_ids) - set(by_job_id))
+            unexpected = sorted(set(by_job_id) - set(expected_ids))
+            raise ValueError(
+                "Runtime components differ from campaign manifest: "
+                f"missing={','.join(missing)};unexpected={','.join(unexpected)}"
+            )
+        for expected in expected_matrix:
+            actual = by_job_id[str(expected["job_id"])]
+            if (
+                str(actual["model_id"]) != str(expected["model_id"])
+                or str(actual["prediction_date"])
+                != str(expected["prediction_date"])
+                or (actual.get("horizon_id") or None)
+                != (expected.get("horizon_id") or None)
+            ):
+                raise ValueError("Runtime component identity differs from campaign")
+            if actual.get("campaign_identity") != campaign_manifest.get(
+                "campaign_identity"
+            ):
+                raise ValueError("Runtime component campaign identity mismatch")
+        return [by_job_id[job_id] for job_id in expected_ids]
+    return supplied
 
 
 def run_component_jobs(
@@ -54,8 +106,11 @@ def run_component_jobs(
     max_component_workers: int = 3,
     capacity: int = 4,
     weights: Mapping[str, int] = WEIGHTS,
+    campaign_manifest: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    ordered = validate_component_plan(jobs)
+    ordered = validate_component_plan(
+        jobs, campaign_manifest=campaign_manifest
+    )
     if max_component_workers < 1 or capacity < 1:
         raise ValueError("Invalid scheduler bounds")
     indexed = list(enumerate(ordered))
