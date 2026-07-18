@@ -497,7 +497,9 @@ def score_finbert_articles(
     config_hash = MLCoreArtifactWriter.hash_payload(config)
     for chunk_index, start in enumerate(range(0, len(valid_items), batch_size), start=1):
         chunk_items = valid_items[start : start + batch_size]
-        chunk_identity = _chunk_identity(chunk_items, adapter.identity, max_token_length, config_hash)
+        chunk_identity = finbert_chunk_identity(
+            chunk_items, adapter.identity, max_token_length, config_hash
+        )
         chunk_path = chunk_dir / f"{chunk_identity['chunk_id']}.json"
         reused = False
         chunk_payload = _read_completed_chunk(chunk_path, chunk_identity)
@@ -1048,7 +1050,13 @@ def _article_audit_markdown(payload: Mapping[str, Any]) -> str:
     ) + "\n"
 
 
-def _chunk_identity(items: Sequence[Mapping[str, Any]], identity: FinBertModelIdentity, max_token_length: int, config_hash: str) -> dict[str, Any]:
+def finbert_chunk_identity(
+    items: Sequence[Mapping[str, Any]],
+    identity: FinBertModelIdentity,
+    max_token_length: int,
+    config_hash: str,
+) -> dict[str, Any]:
+    """Return the scorer's authoritative pure chunk identity."""
     payload = {
         "article_identities": [
             {
