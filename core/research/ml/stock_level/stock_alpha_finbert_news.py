@@ -431,11 +431,35 @@ def score_finbert_articles(
     max_characters: int = 10_000,
     batch_size: int = 8,
     scored_at: str | None = None,
+    scope: str = "bounded",
+    scoring_plan: Mapping[str, Any] | None = None,
 ) -> FinBertScoringPaths:
+    if scope not in {"bounded", "smoke", "production"}:
+        raise ValueError("FinBERT scoring scope must be bounded, smoke, or production")
+    production = scope == "production"
+    if production and scoring_plan is None:
+        raise ValueError("Production FinBERT scoring requires an authoritative plan")
+    if not production and scoring_plan is not None:
+        raise ValueError("A production scoring plan requires scope=production")
+    plan_binding = (
+        _validate_runtime_scoring_plan(
+            scoring_plan or {},
+            identity=adapter.identity,
+            config=config,
+            max_token_length=max_token_length,
+            max_characters=max_characters,
+            batch_size=batch_size,
+        )
+        if production else None
+    )
     writer = ResearchArtifactWriter()
     output_dir.mkdir(parents=True, exist_ok=True)
     chunk_dir = output_dir / "chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
+    chunk_manifest = output_dir / "finbert_chunk_manifest.csv"
+    prior_chunk_evidence = (
+        _read_chunk_manifest_evidence(chunk_manifest) if production else {}
+    )
     scored_at = scored_at or _format_timestamp(datetime.now(timezone.utc))
     valid_items: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
@@ -492,17 +516,62 @@ def score_finbert_articles(
                 availability_counts["timezone_normalisation_failures"] += 1
             rejected.append(_rejected_row(row, index, type(exc).__name__, str(exc)))
 
+    if production:
+        if rejected:
+            raise ValueError("Production runtime rows do not match planned inventory")
+        valid_items = _order_runtime_items_to_plan(
+            valid_items, scoring_plan or {}
+        )
+
     scored: list[dict[str, Any]] = []
     chunk_rows: list[dict[str, Any]] = []
     config_hash = MLCoreArtifactWriter.hash_payload(config)
-    for chunk_index, start in enumerate(range(0, len(valid_items), batch_size), start=1):
+    runtime_chunks = []
+    for chunk_index, start in enumerate(
+        range(0, len(valid_items), batch_size), start=1
+    ):
         chunk_items = valid_items[start : start + batch_size]
         chunk_identity = finbert_chunk_identity(
             chunk_items, adapter.identity, max_token_length, config_hash
         )
+        if production:
+            if chunk_index > scoring_plan["expected_chunk_count"]:
+                raise ValueError("Runtime FinBERT chunk count does not match plan")
+            expected = scoring_plan["expected_chunks"][chunk_index - 1]
+            if (
+                expected.get("ordinal") != chunk_index
+                or expected.get("identity") != chunk_identity
+            ):
+                raise ValueError(
+                    f"Runtime FinBERT chunk identity mismatch at ordinal {chunk_index}"
+                )
+        runtime_chunks.append((chunk_index, chunk_items, chunk_identity))
+    if production and len(runtime_chunks) != scoring_plan["expected_chunk_count"]:
+        raise ValueError("Runtime FinBERT chunk count does not match plan")
+    if production:
+        expected_names = {
+            f"{row['chunk_id']}.json" for row in scoring_plan["expected_chunks"]
+        }
+        unexpected = sorted(
+            path.name for path in chunk_dir.glob("*.json")
+            if path.name not in expected_names
+        )
+        if unexpected:
+            raise ValueError(
+                "Unexpected production FinBERT chunk artifacts: "
+                + ",".join(unexpected)
+            )
+
+    for chunk_index, chunk_items, chunk_identity in runtime_chunks:
         chunk_path = chunk_dir / f"{chunk_identity['chunk_id']}.json"
         reused = False
-        chunk_payload = _read_completed_chunk(chunk_path, chunk_identity)
+        chunk_payload = _read_completed_chunk(
+            chunk_path, chunk_identity, plan_binding=plan_binding,
+            planned_ordinal=chunk_index,
+            external_evidence=prior_chunk_evidence.get(
+                chunk_identity["chunk_id"]
+            ),
+        )
         if chunk_payload is None:
             predictions = adapter.score_batch([item["text"].text for item in chunk_items])
             scored_rows = [
@@ -516,10 +585,31 @@ def score_finbert_articles(
                 )
                 for item, prediction in zip(chunk_items, predictions)
             ]
-            chunk_payload = {"status": "completed", "identity": chunk_identity, "rows": scored_rows}
+            rows_checksum = _scored_rows_logical_checksum(
+                scored_rows,
+                chunk_id=chunk_identity["chunk_id"],
+                planned_ordinal=chunk_index if production else None,
+            )
+            chunk_payload = {
+                "status": "completed",
+                "identity": chunk_identity,
+                "rows": scored_rows,
+                "scoring_plan": (
+                    {**plan_binding, "planned_ordinal": chunk_index}
+                    if plan_binding else None
+                ),
+                "production_scope": production,
+                "scored_rows_logical_checksum": rows_checksum,
+            }
+            if production:
+                _validate_chunk_row_ownership(chunk_payload, chunk_identity)
+            chunk_payload["chunk_metadata_logical_checksum"] = (
+                _chunk_metadata_logical_checksum(chunk_payload)
+            )
             _write_json_atomic(chunk_path, chunk_payload)
         else:
             reused = True
+        artifact_sha256 = _sha256_file(chunk_path)
         scored.extend(chunk_payload["rows"])
         chunk_rows.append(
             {
@@ -528,16 +618,36 @@ def score_finbert_articles(
                 "article_count": len(chunk_items),
                 "reused": str(reused).lower(),
                 "chunk_path": str(chunk_path),
+                "scoring_plan_identity": (
+                    plan_binding["logical_checksum"] if plan_binding else ""
+                ),
+                "planned_ordinal": chunk_index if production else "",
+                "production_scope": str(production).lower(),
+                "chunk_artifact_sha256": artifact_sha256,
+                "scored_rows_logical_checksum": chunk_payload[
+                    "scored_rows_logical_checksum"
+                ],
+                "chunk_metadata_logical_checksum": chunk_payload[
+                    "chunk_metadata_logical_checksum"
+                ],
             }
         )
 
     scored_path = output_dir / "finbert_scored_articles.csv"
     writer.write_csv(scored_path, scored, fieldnames=ARTICLE_LEVEL_FIELDS, extrasaction="ignore")
-    chunk_manifest = output_dir / "finbert_chunk_manifest.csv"
+    manifest_checksum = _chunk_manifest_logical_checksum(chunk_rows)
+    for row in chunk_rows:
+        row["manifest_logical_checksum"] = manifest_checksum
     writer.write_csv(
         chunk_manifest,
         chunk_rows,
-        fieldnames=("chunk_id", "status", "article_count", "reused", "chunk_path"),
+        fieldnames=(
+            "chunk_id", "status", "article_count", "reused", "chunk_path",
+            "scoring_plan_identity", "planned_ordinal",
+            "production_scope", "chunk_artifact_sha256",
+            "scored_rows_logical_checksum", "chunk_metadata_logical_checksum",
+            "manifest_logical_checksum",
+        ),
     )
     rejection_path = output_dir / "finbert_rejected_articles.csv" if rejected else None
     if rejection_path:
@@ -547,6 +657,16 @@ def score_finbert_articles(
             fieldnames=("source_row_number", "article_id", "symbol", "error_type", "error_message"),
         )
     audit = _article_audit(rows, scored, rejected, chunk_rows, adapter.identity, availability_counts)
+    audit.update(
+        {
+            "scoring_scope": scope,
+            "production_planned": production,
+            "scoring_plan_identity": (
+                plan_binding["logical_checksum"] if plan_binding else None
+            ),
+            "production_scoring_complete": False,
+        }
+    )
     audit_path = output_dir / "finbert_scoring_audit.json"
     writer.write_json(audit_path, audit)
     markdown_path = output_dir / "finbert_scoring_audit.md"
@@ -758,6 +878,7 @@ def write_finbert_news_probe(config: Mapping[str, Any]) -> FinBertSmokePaths:
         config=config,
         max_token_length=max_token_length,
         batch_size=batch_size,
+        scope="smoke",
     )
     scored = CsvRowRepository().read(scoring.scored_articles_csv_path)
     decisions_path = settings.get("decision_csv_path")
@@ -1079,7 +1200,14 @@ def finbert_chunk_identity(
     return payload
 
 
-def _read_completed_chunk(path: Path, identity: Mapping[str, Any]) -> dict[str, Any] | None:
+def _read_completed_chunk(
+    path: Path,
+    identity: Mapping[str, Any],
+    *,
+    plan_binding: Mapping[str, Any] | None = None,
+    planned_ordinal: int | None = None,
+    external_evidence: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -1088,7 +1216,312 @@ def _read_completed_chunk(path: Path, identity: Mapping[str, Any]) -> dict[str, 
         return None
     if payload.get("status") != "completed":
         return None
-    return payload if payload.get("identity") == identity else None
+    if payload.get("identity") != identity:
+        if plan_binding:
+            raise ValueError("Incompatible completed planned FinBERT chunk identity")
+        return None
+    if plan_binding:
+        expected_binding = {**plan_binding, "planned_ordinal": planned_ordinal}
+        if payload.get("scoring_plan") != expected_binding:
+            raise ValueError("Incompatible completed FinBERT scoring-plan binding")
+        if payload.get("production_scope") is not True:
+            raise ValueError("Planned FinBERT chunk lacks production scope")
+        _validate_chunk_row_ownership(payload, identity)
+        rows_checksum = _scored_rows_logical_checksum(
+            payload.get("rows") or [],
+            chunk_id=str(identity["chunk_id"]),
+            planned_ordinal=planned_ordinal,
+        )
+        if payload.get("scored_rows_logical_checksum") != rows_checksum:
+            raise ValueError("Incompatible completed FinBERT scored-row checksum")
+        metadata_checksum = _chunk_metadata_logical_checksum(payload)
+        if payload.get("chunk_metadata_logical_checksum") != metadata_checksum:
+            raise ValueError("Incompatible completed FinBERT metadata checksum")
+        if external_evidence is None:
+            raise ValueError(
+                "Completed planned FinBERT chunk lacks external checksum evidence"
+            )
+        expected_evidence = {
+            "planned_ordinal": str(planned_ordinal),
+            "production_scope": "true",
+            "scoring_plan_identity": plan_binding["logical_checksum"],
+            "scored_rows_logical_checksum": rows_checksum,
+            "chunk_metadata_logical_checksum": metadata_checksum,
+        }
+        if any(
+            str(external_evidence.get(key)) != value
+            for key, value in expected_evidence.items()
+        ):
+            raise ValueError("Incompatible external FinBERT chunk evidence")
+        if external_evidence.get("chunk_artifact_sha256") != _sha256_file(path):
+            raise ValueError("Incompatible completed FinBERT artifact checksum")
+    return payload
+
+
+def _validate_chunk_row_ownership(
+    payload: Mapping[str, Any], identity: Mapping[str, Any]
+) -> None:
+    rows = list(payload.get("rows") or [])
+    expected_articles = list(identity.get("article_identities") or [])
+    actual_articles = [
+        {
+            "article_id": row.get("article_id"),
+            "symbol": row.get("symbol"),
+            "selected_text_hash": row.get("selected_text_hash"),
+        }
+        for row in rows
+    ]
+    if actual_articles != expected_articles:
+        raise ValueError("Completed FinBERT chunk row ownership mismatch")
+    identity_fields = {
+        "finbert_model_id": "model_id",
+        "finbert_model_revision": "model_revision",
+        "tokenizer_id": "tokenizer_id",
+        "tokenizer_revision": "tokenizer_revision",
+        "inference_contract_version": "inference_contract_version",
+        "text_selection_contract_version": "text_selection_contract_version",
+        "max_token_length": "max_token_length",
+        "inference_batch_identity": "chunk_id",
+    }
+    for row in rows:
+        if any(
+            row.get(row_field) != identity.get(identity_field)
+            for row_field, identity_field in identity_fields.items()
+        ):
+            raise ValueError("Completed FinBERT chunk score identity mismatch")
+
+
+def _scored_rows_logical_checksum(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    chunk_id: str,
+    planned_ordinal: int | None,
+) -> str:
+    logical_rows = [
+        {
+            key: value for key, value in dict(row).items()
+            if key not in {
+                "scored_at",
+                "scored_rows_logical_checksum",
+                "chunk_metadata_logical_checksum",
+                "chunk_artifact_sha256",
+            }
+        }
+        for row in rows
+    ]
+    return _plan_hash(
+        {
+            "chunk_id": chunk_id,
+            "planned_ordinal": planned_ordinal,
+            "ordered_rows": logical_rows,
+        }
+    )
+
+
+def _chunk_metadata_logical_checksum(payload: Mapping[str, Any]) -> str:
+    identity = dict(payload.get("identity") or {})
+    return _plan_hash(
+        {
+            "status": payload.get("status"),
+            "production_scope": payload.get("production_scope"),
+            "scoring_plan": payload.get("scoring_plan"),
+            "identity": identity,
+            "row_count": len(payload.get("rows") or []),
+            "scored_rows_logical_checksum": payload.get(
+                "scored_rows_logical_checksum"
+            ),
+            "model_identity": {
+                key: identity.get(key)
+                for key in (
+                    "model_id", "model_revision",
+                    "tokenizer_id", "tokenizer_revision",
+                )
+            },
+            "inference_contract_version": identity.get(
+                "inference_contract_version"
+            ),
+            "text_selection_contract_version": identity.get(
+                "text_selection_contract_version"
+            ),
+            "max_token_length": identity.get("max_token_length"),
+            "configuration_hash": identity.get("configuration_hash"),
+        }
+    )
+
+
+def _chunk_manifest_logical_checksum(
+    rows: Sequence[Mapping[str, Any]],
+) -> str:
+    return _plan_hash(
+        [
+            {
+                key: str(value) for key, value in dict(row).items()
+                if key not in {"chunk_path", "manifest_logical_checksum"}
+            }
+            for row in rows
+        ]
+    )
+
+
+def _read_chunk_manifest_evidence(
+    path: Path,
+) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        return {}
+    recorded = {row.get("manifest_logical_checksum") for row in rows}
+    if len(recorded) != 1 or recorded.pop() != _chunk_manifest_logical_checksum(
+        rows
+    ):
+        raise ValueError("FinBERT bounded chunk manifest checksum mismatch")
+    evidence: dict[str, dict[str, str]] = {}
+    for row in rows:
+        chunk_id = str(row.get("chunk_id") or "")
+        if not chunk_id or chunk_id in evidence:
+            raise ValueError("Duplicate FinBERT bounded chunk manifest owner")
+        evidence[chunk_id] = row
+    return evidence
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+def _validate_runtime_scoring_plan(
+    plan: Mapping[str, Any],
+    *,
+    identity: FinBertModelIdentity,
+    config: Mapping[str, Any],
+    max_token_length: int,
+    max_characters: int,
+    batch_size: int,
+) -> dict[str, str]:
+    if (
+        plan.get("scoring_plan_contract")
+        != "stock_alpha_finbert_production_scoring_plan.v1"
+        or plan.get("scoring_plan_version") != "v1"
+        or plan.get("scope") != "production"
+    ):
+        raise ValueError("Invalid authoritative FinBERT production scoring plan")
+    artifact_checksum = plan.get("plan_artifact_checksum")
+    artifact_payload = {
+        key: value for key, value in plan.items()
+        if key not in {"plan_artifact_checksum", "publication_result"}
+    }
+    if artifact_checksum != _plan_hash(artifact_payload):
+        raise ValueError("FinBERT scoring-plan artifact checksum mismatch")
+    logical_checksum = plan.get("logical_checksum")
+    logical_payload = {
+        key: value for key, value in artifact_payload.items()
+        if key != "logical_checksum"
+    }
+    if logical_checksum != _plan_hash(logical_payload):
+        raise ValueError("FinBERT scoring-plan logical checksum mismatch")
+    required_parent_fields = (
+        "canonical_corpus_identity",
+        "canonical_corpus_manifest_checksum",
+        "canonical_corpus_checksum",
+        "source_canonical_rows_logical_checksum",
+        "eligible_article_inventory_logical_checksum",
+    )
+    if any(not plan.get(field) for field in required_parent_fields):
+        raise ValueError("FinBERT plan lacks inventory-certified corpus parent")
+    expected_model = {
+        "model_id": identity.model_id,
+        "model_revision": identity.model_revision,
+        "tokenizer_id": identity.tokenizer_id,
+        "tokenizer_revision": identity.tokenizer_revision,
+    }
+    if plan.get("finbert_model_identity") != expected_model:
+        raise ValueError("Runtime FinBERT model or tokenizer identity mismatch")
+    if plan.get("configuration_checksum") != MLCoreArtifactWriter.hash_payload(config):
+        raise ValueError("Runtime FinBERT scoring configuration mismatch")
+    if (
+        plan.get("text_selection_contract")
+        != FINBERT_TEXT_SELECTION_CONTRACT_VERSION
+        or plan.get("inference_contract") != FINBERT_INFERENCE_CONTRACT_VERSION
+    ):
+        raise ValueError("Runtime FinBERT scoring contract mismatch")
+    if (
+        plan.get("maximum_token_length") != max_token_length
+        or plan.get("maximum_selected_text_characters") != max_characters
+        or plan.get("chunk_size") != batch_size
+    ):
+        raise ValueError("Runtime FinBERT scoring limits mismatch")
+    chunks = list(plan.get("expected_chunks") or [])
+    if (
+        plan.get("expected_chunk_count") != len(chunks)
+        or [row.get("ordinal") for row in chunks]
+        != list(range(1, len(chunks) + 1))
+    ):
+        raise ValueError("Invalid ordered expected FinBERT chunk inventory")
+    for chunk in chunks:
+        identity_payload = chunk.get("identity")
+        if (
+            not isinstance(identity_payload, Mapping)
+            or not isinstance(identity_payload.get("article_identities"), list)
+            or chunk.get("chunk_id") != identity_payload.get("chunk_id")
+            or chunk.get("article_count")
+            != len(identity_payload["article_identities"])
+        ):
+            raise ValueError("Invalid planned FinBERT chunk identity")
+    if plan.get("expected_article_count") != sum(
+        chunk["article_count"] for chunk in chunks
+    ):
+        raise ValueError("Invalid planned FinBERT article count")
+    return {
+        "logical_checksum": str(logical_checksum),
+        "plan_artifact_checksum": str(artifact_checksum),
+    }
+
+
+def _order_runtime_items_to_plan(
+    items: Sequence[Mapping[str, Any]], plan: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    expected = [
+        identity
+        for chunk in plan["expected_chunks"]
+        for identity in chunk["identity"]["article_identities"]
+    ]
+    runtime: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    for item in items:
+        key = (
+            str(item["article_id"]),
+            str(item["symbol"]),
+            item["text"].text_hash,
+        )
+        if key in runtime:
+            raise ValueError("Duplicate runtime FinBERT article identity")
+        runtime[key] = item
+    expected_keys = [
+        (
+            str(row["article_id"]),
+            str(row["symbol"]),
+            str(row["selected_text_hash"]),
+        )
+        for row in expected
+    ]
+    if len(expected_keys) != len(set(expected_keys)):
+        raise ValueError("Duplicate planned FinBERT article identity")
+    if set(runtime) != set(expected_keys):
+        missing = len(set(expected_keys) - set(runtime))
+        unexpected = len(set(runtime) - set(expected_keys))
+        raise ValueError(
+            f"Runtime FinBERT inventory mismatch: missing={missing},"
+            f"unexpected={unexpected}"
+        )
+    return [runtime[key] for key in expected_keys]
+
+
+def _plan_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest().upper()
 
 
 def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
