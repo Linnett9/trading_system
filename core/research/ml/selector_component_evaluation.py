@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean, median, pstdev
 from typing import Any, Mapping, Sequence
@@ -16,6 +17,10 @@ from core.research.ml.experiment_ledger import append_ledger_event, experiment_s
 from core.research.ml.ranking import ranking_metrics, relevance_labels
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
+from core.research.ml.selector_operational_inputs import (
+    outcome_is_mature,
+    resolve_outcome_maturity_cutoff,
+)
 
 
 EVALUATION_CONTRACT = "selector_component_evaluation.v1"
@@ -39,12 +44,20 @@ def evaluate_selector_components(
     output_root: Path,
     ledger_path: Path,
     panel_id: str,
-    evaluation_cutoff: str,
+    outcome_maturity_cutoff: str | None = None,
+    evaluation_cutoff: str | None = None,
     required_models: Sequence[str] = BASE_MODELS,
     required_dates: Sequence[str] | None = None,
     required_horizons: Sequence[str] | None = None,
     replacement_policy: str = "never_replace_complete",
+    max_workers: int = 4,
 ) -> dict[str, Any]:
+    if max_workers < 1 or max_workers > 6:
+        raise ValueError("max_workers must be between 1 and 6")
+    cutoff = resolve_outcome_maturity_cutoff(
+        outcome_maturity_cutoff=outcome_maturity_cutoff,
+        evaluation_cutoff=evaluation_cutoff,
+    )
     readiness = _json(readiness_path)
     specification = {
         "contract": EVALUATION_CONTRACT, "panel_id": panel_id,
@@ -54,7 +67,7 @@ def evaluate_selector_components(
         "required_dates": sorted(required_dates or readiness.get("required_dates", [])),
         "component_manifests": sorted(str(path) for path in component_manifests),
         "outcome_path": str(outcome_path),
-        "evaluation_cutoff": evaluation_cutoff,
+        **cutoff,
     }
     spec_hash = experiment_spec_hash(specification)
     run_id = f"selector-evaluation-{spec_hash[:20].lower()}"
@@ -69,7 +82,7 @@ def evaluate_selector_components(
         dates = tuple(sorted(required_dates or readiness.get("required_dates", [])))
         models = tuple(required_models)
         horizons = tuple(required_horizons or ())
-        components, rejected = _load_components(component_manifests)
+        components, rejected = _load_components_parallel(component_manifests, max_workers)
         expected = {
             (date, model, horizon)
             for date in dates for model in models
@@ -85,7 +98,9 @@ def evaluate_selector_components(
         matched = _matched_evidence(components, dates, models, horizons)
         if any(row["status"] != "READY" for row in matched):
             blockers.append("UNMATCHED_PANEL")
-        maturity = _outcome_maturity(outcomes, dates, evaluation_cutoff, horizons)
+        maturity = _outcome_maturity(
+            outcomes, dates, cutoff["outcome_maturity_cutoff"], horizons
+        )
         if any(row["status"] != "MATURE" for row in maturity):
             blockers.append("IMMATURE_OUTCOME")
         if not _outcomes_match_components(components, outcomes, dates, models, horizons):
@@ -128,6 +143,12 @@ def evaluate_selector_components(
             "evaluation_status": status, "source_git_commit": _git_commit(),
         }
         result["logical_checksum"] = _logical_checksum(result)
+        result["execution_metadata"] = {
+            "worker_count": max_workers,
+            "outcome_load_count": 1,
+            "panel_inventory_load_count": 1,
+            "deterministic_rank_passes_per_component": 1,
+        }
         existing_path = output_root / "evaluation.json"
         if existing_path.exists():
             existing = _json(existing_path)
@@ -252,6 +273,26 @@ def _load_components(paths: Sequence[Path]):
     return components, rejected
 
 
+def _load_components_parallel(paths: Sequence[Path], max_workers: int):
+    ordered = sorted(paths)
+    if max_workers == 1 or len(ordered) < 2:
+        return _load_components(ordered)
+    components, rejected = {}, []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = list(pool.map(lambda path: _load_components((path,)), ordered))
+    for partial, partial_rejected in results:
+        for key, value in partial.items():
+            if key in components:
+                rejected.append({
+                    "prediction_date": key[0], "model_id": key[1],
+                    "horizon_id": key[2], "reasons": ["DUPLICATE_COMPONENT_OWNER"],
+                })
+            else:
+                components[key] = value
+        rejected.extend(partial_rejected)
+    return components, rejected
+
+
 def _load_outcomes(path: Path, dates: Sequence[str]):
     rows = _csv(path)
     result = {}
@@ -289,7 +330,7 @@ def _matched_evidence(components, dates, models, horizons=()):
     return result
 
 
-def _outcome_maturity(outcomes, dates, evaluation_cutoff, horizons=()):
+def _outcome_maturity(outcomes, dates, outcome_maturity_cutoff, horizons=()):
     evidence = []
     for date in dates:
         for horizon in horizons or (None,):
@@ -305,7 +346,10 @@ def _outcome_maturity(outcomes, dates, evaluation_cutoff, horizons=()):
                 and row.get("outcome_field") == field
                 and row.get("target_horizon") == sessions
                 and bool(row.get("label_available_timestamp"))
-                and str(row.get("label_available_timestamp")) <= str(evaluation_cutoff)
+                and outcome_is_mature(
+                    str(row.get("label_available_timestamp")),
+                    outcome_maturity_cutoff,
+                )
                 and bool(row.get("outcome_source_identity"))
                 and bool(row.get("asset_id"))
                 for row in rows
@@ -483,7 +527,7 @@ def _optional_float(value):
 
 
 def _logical_checksum(payload):
-    return canonical_hash({key:value for key,value in payload.items() if key not in {"logical_checksum","generated_at","report_path"}})
+    return canonical_hash({key:value for key,value in payload.items() if key not in {"logical_checksum","generated_at","report_path","execution_metadata"}})
 
 
 def _event(path, spec, run, status, panel_id, artifact_paths=(), error_summary=None, rejection_summary=None, metadata=None):

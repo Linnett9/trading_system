@@ -9,7 +9,8 @@ import pytest
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
 from core.research.ml.selector_operational_inputs import (
-    DATES, INVENTORY_CONTRACT, MODELS, build_operational_inputs, validate_inventory,
+    DATES, INVENTORY_CONTRACT, MODELS, OUTCOME_MATURITY_CUTOFF_CONTRACT,
+    build_operational_inputs, resolve_outcome_maturity_cutoff, validate_inventory,
 )
 
 
@@ -74,7 +75,8 @@ def _rows():
 def _build(tmp_path, **updates):
     dataset, gate = _parents()
     values = dict(plan=_plan(), dataset_manifest=dataset, parent_gate=gate, rows=_rows(),
-                  output_root=tmp_path / "published", evaluation_cutoff="2027-01-01",
+                  output_root=tmp_path / "published",
+                  outcome_maturity_cutoff="2027-01-01",
                   source_git_commit="abc123")
     values.update(updates)
     return build_operational_inputs(**values)
@@ -164,6 +166,16 @@ def test_stable_checksums_and_compatible_skip(tmp_path):
     assert first["logical_checksum"] == second["logical_checksum"]
 
 
+def test_worker_counts_produce_identical_packages(tmp_path):
+    first = _build(tmp_path, max_workers=1)
+    second = _build(tmp_path, max_workers=4)
+    assert first["logical_checksum"] == second["logical_checksum"]
+    assert [row["package_logical_checksum"] for row in first["packages"]] == [
+        row["package_logical_checksum"] for row in second["packages"]
+    ]
+    assert first["selector_dataset_scan_count"] == second["selector_dataset_scan_count"] == 1
+
+
 def test_incompatible_immutable_package_fails_closed(tmp_path):
     _build(tmp_path)
     manifest = next((tmp_path / "published/component_inputs").glob("*/manifest.json"))
@@ -178,12 +190,63 @@ def test_outcomes_cover_exact_five_dates_and_are_mature(tmp_path):
     manifest = json.loads(Path(result["mature_outcome_manifest_path"]).read_text())
     assert manifest["required_dates"] == list(DATES)
     assert manifest["validation_status"] == "VERIFIED_MATURE"
-    assert manifest["evaluation_cutoff"] == "2027-01-01"
+    assert manifest["outcome_maturity_cutoff"] == "2027-01-01"
+    assert "evaluation_cutoff" not in manifest
+    assert manifest["outcome_maturity_cutoff_contract"] == OUTCOME_MATURITY_CUTOFF_CONTRACT
 
 
 def test_immature_outcome_rejected(tmp_path):
     with pytest.raises(ValueError, match="Immature outcome"):
-        _build(tmp_path, evaluation_cutoff="2024-01-01")
+        _build(tmp_path, outcome_maturity_cutoff="2024-01-01")
+
+
+def test_outcome_maturity_cutoff_name_compatibility():
+    new = resolve_outcome_maturity_cutoff(outcome_maturity_cutoff="2027-01-01")
+    legacy = resolve_outcome_maturity_cutoff(evaluation_cutoff="2027-01-01")
+    dual = resolve_outcome_maturity_cutoff(
+        outcome_maturity_cutoff="2027-01-01",
+        evaluation_cutoff="2027-01-01",
+    )
+    assert new == legacy == dual
+    with pytest.raises(ValueError, match="Conflicting"):
+        resolve_outcome_maturity_cutoff(
+            outcome_maturity_cutoff="2027-01-01",
+            evaluation_cutoff="2027-01-02",
+        )
+    with pytest.raises(ValueError, match="Malformed"):
+        resolve_outcome_maturity_cutoff(outcome_maturity_cutoff="not-a-date")
+
+
+def test_outcome_maturity_cutoff_timezone_normalisation_is_deterministic():
+    utc = resolve_outcome_maturity_cutoff(
+        outcome_maturity_cutoff="2027-01-01T00:00:00Z"
+    )
+    offset = resolve_outcome_maturity_cutoff(
+        evaluation_cutoff="2026-12-31T19:00:00-05:00"
+    )
+    dual = resolve_outcome_maturity_cutoff(
+        outcome_maturity_cutoff="2027-01-01T00:00:00Z",
+        evaluation_cutoff="2026-12-31T19:00:00-05:00",
+    )
+    assert utc == offset == dual
+    assert dual["outcome_maturity_cutoff"] == "2027-01-01T00:00:00Z"
+
+
+def test_legacy_manifests_remain_readable(tmp_path):
+    result = _build(tmp_path)
+    for path in (
+        Path(result["inventory_path"]),
+        Path(result["mature_outcome_manifest_path"]),
+    ):
+        payload = json.loads(path.read_text())
+        payload["evaluation_cutoff"] = payload.pop("outcome_maturity_cutoff")
+        payload.pop("outcome_maturity_cutoff_contract")
+        payload.pop("outcome_maturity_cutoff_interpretation")
+        payload["logical_checksum"] = canonical_hash(
+            {key: value for key, value in payload.items() if key != "logical_checksum"}
+        )
+        path.write_text(json.dumps(payload))
+    assert validate_inventory(Path(result["inventory_path"]))["status"] == "READY"
 
 
 def test_inventory_resolves_every_job(tmp_path):

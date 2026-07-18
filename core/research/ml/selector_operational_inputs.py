@@ -5,10 +5,12 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -27,6 +29,62 @@ TARGET_PROVENANCE_CONTRACT_VERSION = "stock_level_target_provenance_v2"
 PURGE_SESSIONS = 10
 EMBARGO_SESSIONS = 10
 SELECTOR_RUN_ID = "20260716T091011Z"
+OUTCOME_MATURITY_CUTOFF_CONTRACT = "selector_outcome_maturity_cutoff.v1"
+OUTCOME_MATURITY_CUTOFF_INTERPRETATION = (
+    "ISO-8601 date means the inclusive UTC calendar day; timestamp means the "
+    "instant after normalising an explicit timezone to UTC"
+)
+
+
+def resolve_outcome_maturity_cutoff(
+    *,
+    outcome_maturity_cutoff: str | None = None,
+    evaluation_cutoff: str | None = None,
+) -> dict[str, str]:
+    supplied = [
+        value for value in (outcome_maturity_cutoff, evaluation_cutoff)
+        if value is not None
+    ]
+    if not supplied:
+        raise ValueError("outcome_maturity_cutoff is required")
+    resolved = [_normalise_outcome_maturity_cutoff(value) for value in supplied]
+    if len(set(resolved)) != 1:
+        raise ValueError("Conflicting outcome maturity cutoff values")
+    return {
+        "outcome_maturity_cutoff": resolved[0],
+        "outcome_maturity_cutoff_contract": OUTCOME_MATURITY_CUTOFF_CONTRACT,
+        "outcome_maturity_cutoff_interpretation": OUTCOME_MATURITY_CUTOFF_INTERPRETATION,
+    }
+
+
+def outcome_is_mature(label_available_timestamp: str, cutoff: str) -> bool:
+    return _cutoff_instant(label_available_timestamp, field="label_available_timestamp") <= _cutoff_instant(
+        cutoff, field="outcome_maturity_cutoff"
+    )
+
+
+def _normalise_outcome_maturity_cutoff(value: str) -> str:
+    text = str(value).strip()
+    instant = _cutoff_instant(text, field="outcome_maturity_cutoff")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    return instant.isoformat().replace("+00:00", "Z")
+
+
+def _cutoff_instant(value: str, *, field: str) -> datetime:
+    text = str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        try:
+            return datetime.combine(date.fromisoformat(text), time.max, tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise ValueError(f"Malformed {field}") from exc
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Malformed {field}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"Malformed {field}: timestamp timezone is required")
+    return parsed.astimezone(timezone.utc)
 
 
 def build_selector_component_plan(
@@ -163,7 +221,8 @@ def validate_selector_component_plan(path: Path) -> dict[str, Any]:
 def build_operational_inputs(
     *, plan: Mapping[str, Any], dataset_manifest: Mapping[str, Any],
     parent_gate: Mapping[str, Any], rows: Sequence[Mapping[str, Any]],
-    output_root: Path, evaluation_cutoff: str, source_git_commit: str | None = None,
+    output_root: Path, outcome_maturity_cutoff: str | None = None,
+    evaluation_cutoff: str | None = None, source_git_commit: str | None = None,
     selector_run_id: str = SELECTOR_RUN_ID,
     max_workers: int = 4,
 ) -> dict[str, Any]:
@@ -172,6 +231,10 @@ def build_operational_inputs(
     jobs = list(plan.get("production_plan") or [])
     _validate_plan(jobs)
     _validate_parents(dataset_manifest, parent_gate)
+    cutoff = resolve_outcome_maturity_cutoff(
+        outcome_maturity_cutoff=outcome_maturity_cutoff,
+        evaluation_cutoff=evaluation_cutoff,
+    )
     source_commit = source_git_commit or _git_commit()
     canonical_rows = sorted((dict(row) for row in rows), key=_row_key)
     _validate_source_rows(canonical_rows)
@@ -193,7 +256,7 @@ def build_operational_inputs(
             raise ValueError("Model-specific prediction populations differ")
     outcomes = _build_outcomes(
         rows=canonical_rows, dataset=dataset_manifest, target_hash=target.entry.entry_hash,
-        output_root=output_root, evaluation_cutoff=evaluation_cutoff,
+        output_root=output_root, outcome_maturity_cutoff=cutoff["outcome_maturity_cutoff"],
         expected_populations=date_populations, source_commit=source_commit,
     )
     inventory = {
@@ -218,7 +281,7 @@ def build_operational_inputs(
         "mature_outcome_path": outcomes["outcome_path"],
         "mature_outcome_checksum": outcomes["artifact_checksum"],
         "mature_outcome_manifest_path": outcomes["manifest_path"],
-        "evaluation_cutoff": evaluation_cutoff,
+        **cutoff,
         "selector_dataset_scan_count": 1,
     }
     inventory["logical_checksum"] = _logical(inventory)
@@ -231,10 +294,27 @@ def validate_inventory(
     path: Path, *, readiness: Mapping[str, Any] | None = None,
     expected_run_id: str | None = None, expected_dataset_id: str | None = None,
     expected_dataset_checksum: str | None = None, expected_parent_gate_checksum: str | None = None,
+    expected_outcome_maturity_cutoff: str | None = None,
     expected_evaluation_cutoff: str | None = None,
 ) -> dict[str, Any]:
     value = _json(path)
     reasons = []
+    try:
+        cutoff = resolve_outcome_maturity_cutoff(
+            outcome_maturity_cutoff=value.get("outcome_maturity_cutoff"),
+            evaluation_cutoff=value.get("evaluation_cutoff"),
+        )
+        expected_cutoff = resolve_outcome_maturity_cutoff(
+            outcome_maturity_cutoff=expected_outcome_maturity_cutoff,
+            evaluation_cutoff=expected_evaluation_cutoff,
+        )["outcome_maturity_cutoff"] if (
+            expected_outcome_maturity_cutoff is not None
+            or expected_evaluation_cutoff is not None
+        ) else None
+    except ValueError:
+        cutoff = {"outcome_maturity_cutoff": ""}
+        expected_cutoff = None
+        reasons.append("OUTCOME_MATURITY_CUTOFF_INVALID")
     if value.get("inventory_contract_version") != INVENTORY_CONTRACT:
         reasons.append("INVENTORY_CONTRACT_MISMATCH")
     if value.get("logical_checksum") != _logical(value):
@@ -244,11 +324,12 @@ def validate_inventory(
         "selector_dataset_id": expected_dataset_id,
         "selector_dataset_checksum": expected_dataset_checksum,
         "parent_gate_checksum": expected_parent_gate_checksum,
-        "evaluation_cutoff": expected_evaluation_cutoff,
     }
     for key, expected in expectations.items():
         if expected is not None and value.get(key) != expected:
             reasons.append(f"{key.upper()}_MISMATCH")
+    if expected_cutoff is not None and cutoff["outcome_maturity_cutoff"] != expected_cutoff:
+        reasons.append("OUTCOME_MATURITY_CUTOFF_MISMATCH")
     packages = list(value.get("packages") or [])
     ids = [str(row.get("job_id")) for row in packages]
     expected = {f"selector:{date}:{model}" for date in DATES for model in MODELS}
@@ -286,8 +367,12 @@ def validate_inventory(
         outcome_manifest = _json(Path(str(value["mature_outcome_manifest_path"])))
         if _sha(outcome) != value.get("mature_outcome_checksum") or outcome_manifest.get("outcome_contract_version") != OUTCOME_CONTRACT:
             reasons.append("OUTCOME_CHECKSUM_MISMATCH")
-        if outcome_manifest.get("evaluation_cutoff") != value.get("evaluation_cutoff"):
-            reasons.append("EVALUATION_CUTOFF_MISMATCH")
+        outcome_cutoff = resolve_outcome_maturity_cutoff(
+            outcome_maturity_cutoff=outcome_manifest.get("outcome_maturity_cutoff"),
+            evaluation_cutoff=outcome_manifest.get("evaluation_cutoff"),
+        )
+        if outcome_cutoff["outcome_maturity_cutoff"] != cutoff["outcome_maturity_cutoff"]:
+            reasons.append("OUTCOME_MATURITY_CUTOFF_MISMATCH")
         if outcome_manifest.get("logical_checksum") != _logical(outcome_manifest):
             reasons.append("OUTCOME_MANIFEST_CHECKSUM_MISMATCH")
         with outcome.open("r", encoding="utf-8", newline="") as handle:
@@ -296,7 +381,15 @@ def validate_inventory(
         if dates != set(DATES): reasons.append("OUTCOME_DATE_COVERAGE_MISMATCH")
         if len(outcome_rows) != int(outcome_manifest.get("row_count", -1)): reasons.append("OUTCOME_ROW_COUNT_MISMATCH")
         if any(row.get("target_contract") != TARGET or row.get("target_horizon") != "10_sessions" for row in outcome_rows): reasons.append("OUTCOME_TARGET_MISMATCH")
-        if any(row.get("maturity_status") != "MATURE" or row.get("label_available_timestamp", "") > str(value.get("evaluation_cutoff", "")) for row in outcome_rows): reasons.append("OUTCOME_IMMATURE")
+        if any(
+            row.get("maturity_status") != "MATURE"
+            or not outcome_is_mature(
+                row.get("label_available_timestamp", ""),
+                cutoff["outcome_maturity_cutoff"],
+            )
+            for row in outcome_rows
+        ):
+            reasons.append("OUTCOME_IMMATURE")
     except (OSError, KeyError, ValueError):
         reasons.append("OUTCOME_OWNER_MISSING")
     return {"status": "READY" if not reasons else "BLOCKED", "reasons": sorted(set(reasons)), "inventory": value}
@@ -358,7 +451,7 @@ def _build_package(*, job, rows, dataset, gate, target_hash, output_root, source
     return _publish_package(owner, training, prediction, manifest)
 
 
-def _build_outcomes(*, rows, dataset, target_hash, output_root, evaluation_cutoff, expected_populations, source_commit):
+def _build_outcomes(*, rows, dataset, target_hash, output_root, outcome_maturity_cutoff, expected_populations, source_commit):
     selected = [dict(row) for row in rows if str(row["decision_session_date"]) in DATES]
     by_date = {}
     for row in selected:
@@ -376,7 +469,7 @@ def _build_outcomes(*, rows, dataset, target_hash, output_root, evaluation_cutof
         populations[date] = population
         for row in ordered:
             available = str(row["label_available_timestamp"])
-            if available > evaluation_cutoff:
+            if not outcome_is_mature(available, outcome_maturity_cutoff):
                 raise ValueError(f"Immature outcome: {row['row_id']}")
             output.append({
                 "row_id": row["row_id"], "asset_id": row["asset_id"],
@@ -401,7 +494,10 @@ def _build_outcomes(*, rows, dataset, target_hash, output_root, evaluation_cutof
     manifest = {
         "outcome_contract_version": OUTCOME_CONTRACT,
         "target_contract_id": TARGET, "target_contract_hash": target_hash,
-        "target_horizon": "10_sessions", "evaluation_cutoff": evaluation_cutoff,
+        "target_horizon": "10_sessions",
+        **resolve_outcome_maturity_cutoff(
+            outcome_maturity_cutoff=outcome_maturity_cutoff
+        ),
         "selector_dataset_id": dataset["dataset_id"], "selector_dataset_checksum": dataset["dataset_checksum"],
         "required_dates": list(DATES), "row_count": len(output),
         "date_population_checksums": populations, "artifact_checksum": checksum,

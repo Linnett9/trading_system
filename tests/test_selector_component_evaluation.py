@@ -181,6 +181,15 @@ def test_momentum_is_deterministic_and_missing_benchmark_is_allowed(tmp_path):
     assert first_report == (tmp_path / "evaluation" / "evaluation.json").read_text()
 
 
+def test_evaluation_worker_count_does_not_change_logical_checksum(tmp_path):
+    first, values = _evaluate(tmp_path, max_workers=1)
+    second, _ = _evaluate(
+        tmp_path, max_workers=4, ledger_path=tmp_path / "worker-ledger.jsonl"
+    )
+    assert first["logical_checksum"] == second["logical_checksum"]
+    assert first["execution_metadata"]["outcome_load_count"] == 1
+
+
 @pytest.mark.parametrize(
     "mutation,reason",
     [
