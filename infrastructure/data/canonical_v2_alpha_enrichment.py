@@ -332,7 +332,16 @@ def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"alpha base artifact is missing required columns: {missing}")
 
-    sidecar_path = path.with_name("stock_level_prediction_artifacts.json")
+    configured_manifest = str(
+        dict(config.get("ml", {}) or {}).get(
+            "canonical_v2_alpha_base_manifest_path", ""
+        )
+    ).strip()
+    sidecar_path = (
+        Path(configured_manifest)
+        if configured_manifest
+        else path.with_name("stock_level_prediction_artifacts.json")
+    )
     sidecar = _read_json(sidecar_path)
     identity = dict(sidecar.get("canonical_artifact", {}) or {})
     if not sidecar or not identity:
@@ -342,7 +351,11 @@ def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
     if int(identity.get("row_count", -1)) != metadata.num_rows:
         raise ValueError("alpha base publication row count does not match Parquet metadata")
     recorded_path = Path(str(identity.get("resolved_artifact_path", "")))
-    if recorded_path and recorded_path.resolve() != path.resolve():
+    if (
+        not configured_manifest
+        and recorded_path
+        and recorded_path.resolve() != path.resolve()
+    ):
         raise ValueError("alpha base publication identity points to a different artifact")
     recorded_sha256 = str(identity.get("sha256", "")).lower()
     if len(recorded_sha256) != 64:
