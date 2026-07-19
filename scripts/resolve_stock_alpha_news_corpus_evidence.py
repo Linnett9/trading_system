@@ -46,7 +46,10 @@ def main(argv=None) -> int:
             if args.selection else None
         )
         if selection and "selection" in selection:
-            selection = selection["selection"]
+            selection = {
+                **selection["selection"],
+                "__assembly_checksum": selection.get("assembly_checksum"),
+            }
         result = resolve_corpus_evidence(
             request, output_root=args.output_root, selection=selection,
             approve_selection=args.approve_selection,

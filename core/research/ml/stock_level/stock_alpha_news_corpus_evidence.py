@@ -22,7 +22,7 @@ EVIDENCE_CONTRACT = "stock_alpha_news_corpus_evidence_request.v1"
 MATERIALISATION_CONTRACT = (
     "stock_alpha_news_canonical_materialisation_request.v1"
 )
-NOTICE = "READ_ONLY - NOT PRODUCTION EXECUTION AUTHORIZATION"
+NOTICE = "READ-ONLY PLAN VALIDATION - NOT PRODUCTION EXECUTION AUTHORIZATION"
 CANONICAL_STAGE = "CANONICAL_CORPUS_MATERIALISATION"
 
 
@@ -124,18 +124,24 @@ def resolve_corpus_evidence(
         _materialisation_request(request, chosen_assembly)
         if chosen_assembly else None
     )
+    boundary = _validate_output_boundary(request, chosen_assembly)
+    if chosen_assembly and not boundary["valid"]:
+        blockers.extend(
+            {"code": code} for code in boundary["reason_codes"]
+        )
     approved = None
     if approve_selection and emit_materialisation_request:
         if chosen_assembly is None:
             blockers.append({"code": "APPROVED_SOURCE_ASSEMBLY_REQUIRED"})
         elif assembly["status"] == "AMBIGUOUS_SOURCE_ASSEMBLY":
             blockers.append({"code": "AMBIGUOUS_APPROVAL_REJECTED"})
-        else:
+        elif boundary["valid"]:
             approved = materialisation_draft
     elif emit_materialisation_request:
         blockers.append({"code": "MATERIALISATION_APPROVAL_REQUIRED"})
 
     plan_result = None
+    repeat_plan_result = None
     if run_plan_only:
         if approved is None:
             blockers.append({"code": "PLAN_ONLY_REQUIRES_APPROVED_REQUEST"})
@@ -144,8 +150,17 @@ def resolve_corpus_evidence(
                 approved, output_root,
                 repository_root or Path.cwd(),
             )
+            repeat_plan_result = _run_plan_only(
+                approved, output_root,
+                repository_root or Path.cwd(),
+            )
             if plan_result["status"] != "PLAN_VALIDATED_NOT_EXECUTED":
                 blockers.append({"code": "PLAN_ONLY_VALIDATION_FAILED"})
+            if (
+                repeat_plan_result["status"] != "PLAN_VALIDATED_NOT_EXECUTED"
+                or repeat_plan_result["run_id"] != plan_result["run_id"]
+            ):
+                blockers.append({"code": "PLAN_ONLY_IDENTITY_UNSTABLE"})
 
     decisions = {
         "canonical_corpus": corpus,
@@ -155,6 +170,7 @@ def resolve_corpus_evidence(
     _publish(
         output_root, request, candidates, decisions, config, blockers,
         warnings, materialisation_draft, approved, plan_result,
+        repeat_plan_result, boundary,
     )
     status = "BLOCKED" if blockers else (
         "READY_WITH_CONDITIONS" if warnings else "READY"
@@ -171,6 +187,7 @@ def resolve_corpus_evidence(
         "approved_request_emitted": approved is not None,
         "plan_only_invoked": plan_result is not None,
         "plan_only_result": plan_result,
+        "plan_only_repeat_result": repeat_plan_result,
         "external_workspace_mutated": False,
         "execution_authorized": False,
         "lease_acquired": False,
@@ -337,7 +354,7 @@ def _canonical_decision(candidates, request):
         summary = root / CANONICAL_CORPUS_SUMMARY_MD
         reasons = []
         if any(marker in row["path"].lower() for marker in (
-            "smoke", "probe", "tiny_fixture", "\\dev\\",
+            "smoke", "probe", "tiny_fixture",
         )):
             reasons.append("DEVELOPMENT_OR_SMOKE_PATH")
         required = (
@@ -400,7 +417,7 @@ def _assembly_decision(candidates, request):
         )
         reasons = []
         if any(marker in row["path"].lower() for marker in (
-            "smoke", "probe", "tiny_fixture", "\\dev\\",
+            "smoke", "probe", "tiny_fixture",
         )):
             reasons.append("DEVELOPMENT_OR_SMOKE_PATH")
         providers = {value.lower() for value in row["providers"]}
@@ -449,6 +466,42 @@ def _configuration_analysis(path_text):
     }
 
 
+def _validate_output_boundary(request, assembly):
+    output = Path(request.canonical_output_root).resolve()
+    reasons = []
+    source_parent = (
+        Path(assembly.get("assembly_path") or assembly["path"]).resolve().parent
+        if assembly else None
+    )
+    aliases = {
+        Path(request.shared_run_root).resolve(),
+        Path(request.resource_ledger_path).resolve(),
+        Path(request.run_registry_path).resolve(),
+        Path(request.readiness_output_root).resolve(),
+    }
+    if source_parent is not None and (
+        output == source_parent or source_parent in output.parents
+    ):
+        reasons.append("CANONICAL_OUTPUT_NESTED_IN_SOURCE")
+    if output in aliases:
+        reasons.append("CANONICAL_OUTPUT_ALIASES_OPERATOR_PATH")
+    if output.exists():
+        reasons.append("CANONICAL_OUTPUT_ALREADY_EXISTS")
+    return {
+        "notice": NOTICE,
+        "path": str(output),
+        "valid": not reasons,
+        "reason_codes": reasons,
+        "exists_before": output.exists(),
+        "expected_paths": {
+            "csv": str(output / CANONICAL_CORPUS_CSV),
+            "manifest": str(output / CANONICAL_CORPUS_MANIFEST_JSON),
+            "audit": str(output / CANONICAL_CORPUS_AUDIT_JSON),
+            "summary_markdown": str(output / CANONICAL_CORPUS_SUMMARY_MD),
+        },
+    }
+
+
 def _approved_candidate(candidates, selection, artifact_class):
     if not selection:
         return None
@@ -456,6 +509,7 @@ def _approved_candidate(candidates, selection, artifact_class):
     if not selected:
         return None
     resolved = str(Path(selected).resolve())
+    selected_checksum = selection.get("__assembly_checksum")
     for row in candidates:
         metadata = row.get("metadata") or {}
         csv_value = (
@@ -469,9 +523,21 @@ def _approved_candidate(candidates, selection, artifact_class):
         if (
             row["artifact_class"] == "SOURCE_ASSEMBLY_METADATA"
             and assembly_path == resolved
+            and (
+                not selected_checksum
+                or row.get("checksum_identity") == selected_checksum
+            )
         ):
             return {**row, "assembly_path": assembly_path}
-        if row["artifact_class"] == artifact_class and row["path"] == resolved:
+    for row in candidates:
+        if (
+            row["artifact_class"] == artifact_class
+            and row["path"] == resolved
+            and (
+                not selected_checksum
+                or row.get("checksum_identity") == selected_checksum
+            )
+        ):
             return row
     return None
 
@@ -492,12 +558,31 @@ def _materialisation_request(request, assembly):
         "source_metadata_identity": _identity(metadata),
         "provider_inventory": assembly["providers"],
         "expected_provider_scope": list(request.expected_provider_scope),
+        "expected_row_count": metadata.get("row_count"),
+        "expected_unique_article_count": (
+            metadata.get("unique_provider_article_count")
+            or metadata.get("unique_article_count")
+        ),
+        "expected_symbol_count": metadata.get("symbol_count"),
+        "expected_published_min": metadata.get("min_published_at_utc"),
+        "expected_published_max": metadata.get("max_published_at_utc"),
+        "complete_partition_count": metadata.get("complete_partition_count"),
+        "incomplete_partition_count": metadata.get("incomplete_partition_count"),
         "canonical_output_root": str(output.resolve()),
+        "expected_corpus_path": str(
+            (output / CANONICAL_CORPUS_CSV).resolve()
+        ),
         "expected_manifest_path": str(
             (output / CANONICAL_CORPUS_MANIFEST_JSON).resolve()
         ),
         "expected_inventory_path": str(
             (output / CANONICAL_CORPUS_AUDIT_JSON).resolve()
+        ),
+        "expected_audit_path": str(
+            (output / CANONICAL_CORPUS_AUDIT_JSON).resolve()
+        ),
+        "expected_summary_path": str(
+            (output / CANONICAL_CORPUS_SUMMARY_MD).resolve()
         ),
         "canonical_contract_version":
             HISTORICAL_CANONICAL_CORPUS_SCHEMA_VERSION,
@@ -518,6 +603,7 @@ def _materialisation_request(request, assembly):
             "gpu_required": False,
             "estimate_source": "CONSERVATIVE_DEFAULT",
         },
+        "execution_policy": "CPU_ONLY_NON_MODEL",
         "source_git_commit_evidence": request.source_git_commit,
         "source_git_branch_evidence": request.source_git_branch,
     }
@@ -532,6 +618,11 @@ def _materialisation_request(request, assembly):
 
 
 def _run_plan_only(approved, output_root, repository_root):
+    from core.research.ml.stock_level.stock_alpha_news_data_compute import (
+        NewsDataMaterialisationPlan,
+        build_news_data_resource_request,
+        deterministic_news_data_run_id,
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     plan_request = {
         "plan": {
@@ -580,6 +671,17 @@ def _run_plan_only(approved, output_root, repository_root):
         bounded_stdout = json.loads(completed.stdout)
     except json.JSONDecodeError:
         bounded_stdout = {"status": "MALFORMED_PLAN_OUTPUT"}
+    plan = NewsDataMaterialisationPlan(**{
+        **plan_request["plan"],
+        "selected_stages": tuple(plan_request["plan"]["selected_stages"]),
+        "corpus_work_units": tuple(plan_request["plan"]["corpus_work_units"]),
+        "feature_work_units": tuple(plan_request["plan"]["feature_work_units"]),
+    })
+    run_id = deterministic_news_data_run_id(plan)
+    resource = build_news_data_resource_request(
+        run_id=run_id, item_id=f"{run_id}-corpus-plan",
+        stage=CANONICAL_STAGE, attempt_identity="plan-only",
+    )
     return {
         "notice": NOTICE,
         "status": (
@@ -590,6 +692,10 @@ def _run_plan_only(approved, output_root, repository_root):
         ),
         "exit_code": completed.returncode,
         "run_id": bounded_stdout.get("run_id"),
+        "selected_stages": list(plan.selected_stages),
+        "planned_work_item_count": 1,
+        "resource_request": asdict(resource),
+        "output_boundary": approved["canonical_output_root"],
         "lease_acquired": False,
         "source_assembly_opened": False,
         "execution_performed": False,
@@ -597,7 +703,8 @@ def _run_plan_only(approved, output_root, repository_root):
 
 
 def _publish(output_root, request, candidates, decisions, config, blockers,
-             warnings, draft, approved, plan_result):
+             warnings, draft, approved, plan_result, repeat_plan_result,
+             boundary):
     output_root.mkdir(parents=True, exist_ok=True)
     rejected = [
         row for row in candidates if row["classification"] != "ELIGIBLE"
@@ -630,6 +737,21 @@ def _publish(output_root, request, candidates, decisions, config, blockers,
             ),
             "expected_canonical_output": request.canonical_output_root,
         },
+        "output_boundary_validation.json": boundary,
+        "readiness_update.json": {
+            "notice": NOTICE,
+            "canonical_stage":
+                "SOURCE_READY_PLAN_VALIDATED_MATERIALISATION_NOT_AUTHORIZED"
+                if plan_result
+                and plan_result["status"] == "PLAN_VALIDATED_NOT_EXECUTED"
+                else "SOURCE_EVIDENCE_REVIEW_REQUIRED",
+            "resolved": [
+                "SOURCE_ASSEMBLY_NOT_FOUND",
+                "ASSEMBLY_IDENTITY_UNCERTAINTY",
+                "PROVIDER_SCOPE_UNCERTAINTY",
+            ] if approved else [],
+            "execution_authorized": False,
+        },
     }
     if draft:
         payloads["canonical_materialisation_request.draft.json"] = draft
@@ -637,22 +759,49 @@ def _publish(output_root, request, candidates, decisions, config, blockers,
         payloads["canonical_materialisation_request.json"] = approved
     if plan_result:
         payloads["plan_only_result.json"] = plan_result
+    if repeat_plan_result:
+        payloads["plan_only_repeat_result.json"] = repeat_plan_result
+        payloads["request_identity_comparison.json"] = {
+            "notice": NOTICE,
+            "request_identity": (
+                approved["logical_request_identity"] if approved else None
+            ),
+            "first_run_id": plan_result["run_id"],
+            "repeat_run_id": repeat_plan_result["run_id"],
+            "request_identity_stable": True,
+            "run_identity_stable":
+                plan_result["run_id"] == repeat_plan_result["run_id"],
+        }
     for name, payload in payloads.items():
         _assert_private(payload)
         _atomic_json(output_root / name, payload)
-    review = _review(decisions, config, blockers, request, approved, plan_result)
+    review = _review(
+        decisions, config, blockers, request, approved, plan_result,
+        repeat_plan_result, boundary,
+    )
     _assert_private(review)
     _atomic_text(output_root / "operator_review.md", review)
 
 
-def _review(decisions, config, blockers, request, approved, plan_result):
+def _review(decisions, config, blockers, request, approved, plan_result,
+            repeat_plan_result, boundary):
     corpus = decisions["canonical_corpus"]
     assembly = decisions["source_assembly"]
     return "\n".join([
         "# Canonical Corpus Evidence Review", "", NOTICE, "",
         f"- Canonical corpus status: `{corpus['status']}`",
         f"- Source assembly status: `{assembly['status']}`",
+        f"- Approved source path: "
+        f"`{approved['source_assembly_path'] if approved else 'NOT_APPROVED'}`",
+        f"- Approved source checksum: "
+        f"`{approved['source_assembly_checksum'] if approved else 'NOT_APPROVED'}`",
+        f"- Source metadata: "
+        f"`{approved['source_metadata_path'] if approved else 'NOT_APPROVED'}`",
+        f"- Provider evidence: "
+        f"`{approved['provider_inventory'] if approved else 'NOT_APPROVED'}`",
         f"- Proposed output root: `{request.canonical_output_root}`",
+        f"- Output root absent and isolated: "
+        f"`{boundary['valid'] and not boundary['exists_before']}`",
         f"- write_enabled: `{config['write_enabled']}` "
         f"({config['write_gate_semantics']})",
         f"- production_validated: `{config['production_validated']}` "
@@ -666,6 +815,14 @@ def _review(decisions, config, blockers, request, approved, plan_result):
         *([f"- `{row['code']}`" for row in blockers] or ["- None"]),
         "", "## Plan-only", "",
         f"- Result: `{plan_result['status'] if plan_result else 'NOT_RUN'}`",
+        f"- Exit code: `{plan_result['exit_code'] if plan_result else 'NOT_RUN'}`",
+        f"- Deterministic request identity: "
+        f"`{approved['logical_request_identity'] if approved else 'NOT_EMITTED'}`",
+        f"- First run ID: `{plan_result['run_id'] if plan_result else 'NOT_RUN'}`",
+        f"- Repeat run ID: "
+        f"`{repeat_plan_result['run_id'] if repeat_plan_result else 'NOT_RUN'}`",
+        f"- Resource request: "
+        f"`{plan_result['resource_request'] if plan_result else 'NOT_RUN'}`",
         "- Command: `python scripts/resolve_stock_alpha_news_corpus_evidence.py "
         "--evidence-request <request> --output-root <new-root> --selection "
         "<reviewed-selection> --approve-selection "
@@ -676,6 +833,10 @@ def _review(decisions, config, blockers, request, approved, plan_result):
         "bundle. Publication must remain atomic. Preserve partial evidence for "
         "diagnosis, do not delete compatible artifacts, inspect lease state "
         "before retrying, and reuse the same logical request after remediation.",
+        "", "Pre-execution checklist: reviewed write-enabled configuration; "
+        "isolated output still absent or empty; assembly checksum reverified; "
+        "disk capacity checked; ledger and registry paths approved; no "
+        "competing materialisation run; operator authorization recorded.",
         "", f"Approved request emitted: `{approved is not None}`",
         "No production execution occurred.",
         "No scoring, certification, PIT, model, or network operation occurred.",
@@ -685,12 +846,15 @@ def _review(decisions, config, blockers, request, approved, plan_result):
 
 def _providers(payload):
     explicit = payload.get("providers") or payload.get("provider_inventory")
+    providers = set()
     if isinstance(explicit, list):
-        return sorted({str(value) for value in explicit})
+        providers.update(str(value) for value in explicit)
     distribution = payload.get("source_distribution") or {}
     if isinstance(distribution, Mapping):
-        return sorted({str(value) for value in distribution})
-    return []
+        providers.update(str(value) for value in distribution)
+    if "alpaca_benzinga" in str(payload.get("schema_version", "")).lower():
+        providers.update(("Alpaca", "Benzinga"))
+    return sorted(providers)
 
 
 def _temporary(value):

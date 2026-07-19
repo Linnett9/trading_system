@@ -149,6 +149,18 @@ def test_exact_assembly_approval_and_plan_only_are_nonexecuting(tmp_path):
     )
     assert approved["execution_authorized"] is False
     assert result["plan_only_result"]["status"] == "PLAN_VALIDATED_NOT_EXECUTED"
+    assert result["plan_only_repeat_result"]["run_id"] == (
+        result["plan_only_result"]["run_id"]
+    )
+    assert approved["expected_row_count"] == 100
+    assert approved["execution_policy"] == "CPU_ONLY_NON_MODEL"
+    assert approved["resource_profile"] == {
+        "cpu_weight": 1,
+        "estimated_peak_ram_bytes": 4 * 1024**3,
+        "estimate_source": "CONSERVATIVE_DEFAULT",
+        "gpu_required": False,
+        "inner_threads": 1,
+    }
     assert result["lease_acquired"] is False
     assert not (tmp_path / "ledger.json").exists()
     assert not (tmp_path / "registry.json").exists()
@@ -190,7 +202,10 @@ def test_multiple_assemblies_and_missing_provider_fail_closed(tmp_path):
     assert result["assembly_status"] == "AMBIGUOUS_SOURCE_ASSEMBLY"
 
     other = tmp_path / "missing-provider"
-    _assembly(other, providers=("Benzinga",))
+    _, metadata_path = _assembly(other, providers=("Benzinga",))
+    metadata = json.loads(metadata_path.read_text())
+    metadata["schema_version"] = "historical_backfill_v1"
+    metadata_path.write_text(json.dumps(metadata))
     result = resolve_corpus_evidence(
         _request(tmp_path, other), output_root=tmp_path / "missing"
     )
@@ -212,3 +227,58 @@ def test_smoke_and_partial_evidence_are_rejected(tmp_path):
     classes = {row["artifact_class"] for row in candidates}
     assert "DEVELOPMENT_OR_SMOKE_PATH" in reasons
     assert "PARTIAL_OR_TEMPORARY_ARTIFACT" in classes
+
+
+@pytest.mark.parametrize("boundary_kind", ["existing", "run_alias", "source"])
+def test_output_boundary_must_be_new_and_isolated(tmp_path, boundary_kind):
+    root = tmp_path / "external"
+    csv_path, _ = _assembly(root)
+    request = _request(tmp_path, root)
+    values = request.__dict__.copy()
+    if boundary_kind == "existing":
+        output = tmp_path / "already-exists"
+        output.mkdir()
+    elif boundary_kind == "run_alias":
+        output = Path(request.shared_run_root)
+    else:
+        output = root
+    values["canonical_output_root"] = str(output)
+    request = CorpusEvidenceRequest(**values)
+    result = resolve_corpus_evidence(
+        request, output_root=tmp_path / f"out-{boundary_kind}",
+        selection={"HISTORICAL_SOURCE_ASSEMBLY": str(csv_path)},
+        approve_selection=True, emit_materialisation_request=True,
+        run_plan_only=True,
+        repository_root=Path(__file__).resolve().parents[1],
+    )
+    assert not result["approved_request_emitted"]
+    assert not result["plan_only_invoked"]
+    assert any(
+        row["code"].startswith("CANONICAL_OUTPUT")
+        for row in result["blockers"]
+    )
+
+
+def test_recovery_checksum_in_selection_is_enforced(tmp_path):
+    root = tmp_path / "external"
+    csv_path, metadata_path = _assembly(root)
+    checksum = json.loads(metadata_path.read_text())["assembly_checksum"]
+    request = _request(tmp_path, root)
+    accepted = resolve_corpus_evidence(
+        request, output_root=tmp_path / "accepted",
+        selection={
+            "HISTORICAL_SOURCE_ASSEMBLY": str(csv_path),
+            "__assembly_checksum": checksum,
+        },
+        approve_selection=True, emit_materialisation_request=True,
+    )
+    rejected = resolve_corpus_evidence(
+        request, output_root=tmp_path / "rejected",
+        selection={
+            "HISTORICAL_SOURCE_ASSEMBLY": str(csv_path),
+            "__assembly_checksum": "0" * 64,
+        },
+        approve_selection=True, emit_materialisation_request=True,
+    )
+    assert accepted["approved_request_emitted"]
+    assert not rejected["approved_request_emitted"]
