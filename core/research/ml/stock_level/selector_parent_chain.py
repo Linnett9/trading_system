@@ -469,6 +469,11 @@ def build_production_enriched_child(
             },
             "alpha_namespaces": plan["alpha_namespaces"],
             "path_budget": plan["path_budget"],
+            "resolved_inputs": plan["resolved_inputs"],
+            "alpha_input_resolution": plan["alpha_input_resolution"],
+            "adapted_configuration_sha256": plan[
+                "adapted_configuration_sha256"
+            ],
             "outputs": {
                 key: str(value)
                 for key, value in vars(paths).items()
