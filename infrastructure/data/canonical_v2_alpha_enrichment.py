@@ -42,6 +42,7 @@ from core.research.ml.stock_level.stock_level_alpha_features_io import (
 from core.research.ml.stock_level.stock_level_alpha_features_types import (
     ENGINEERED_FEATURE_COLUMNS,
     ENRICHMENT_METADATA_COLUMNS,
+    FEATURE_DEFINITIONS,
     StockLevelAlphaFeaturePaths,
 )
 from core.research.ml.stock_level.stock_level_artifact_io import (
@@ -68,15 +69,24 @@ REQUIRED_BASE_COLUMNS = {
     "decision_timestamp",
     "target_provenance_contract_version",
 }
-BOOL_COLUMNS = {"selector_eligible", "provider_transition_flag"}
+BOOL_COLUMNS = {
+    "selector_eligible",
+    "provider_transition_flag",
+    "true_stock_level_row",
+    "overlapping_targets",
+}
+STRICT_BOOL_COLUMNS = {"true_stock_level_row", "overlapping_targets"}
+NON_NULLABLE_COLUMNS = {"true_stock_level_row"}
 INT_COLUMNS = {
     "target_horizon_trading_days",
     "required_purge_horizon_trading_days",
     "target_observation_count",
+    "context_age_calendar_days",
     "breadth_eligible_symbol_count",
     "breadth_observed_symbol_count",
     "industry_peer_count",
     "fundamentals_data_age_days",
+    "fundamental_coverage_count",
 }
 INTERMEDIATE_NUMERIC_COLUMNS = {
     "_stock_above_200d_average",
@@ -85,7 +95,9 @@ INTERMEDIATE_NUMERIC_COLUMNS = {
 }
 NUMERIC_COLUMNS = {
     *ENGINEERED_FEATURE_COLUMNS,
+    *FEATURE_DEFINITIONS,
     *INTERMEDIATE_NUMERIC_COLUMNS,
+    "industry_mapping_available",
     "model_close",
     "actual_forward_return_10d",
     "actual_forward_return_5d",
@@ -2460,6 +2472,8 @@ def _normalize_partition_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[d
 
 def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
     if value is None:
+        if column in NON_NULLABLE_COLUMNS:
+            raise ValueError(f"non-nullable column {column} received null")
         return None, False
     if value == "":
         return (None, True) if kind in {"float", "int", "bool"} else ("", False)
@@ -2470,6 +2484,10 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
     if kind == "bool":
         if isinstance(value, bool):
             return value, False
+        if column in STRICT_BOOL_COLUMNS:
+            raise ValueError(
+                f"bool column {column} received {type(value).__name__}"
+            )
         if isinstance(value, int) and value in {0, 1}:
             return bool(value), False
         if isinstance(value, float) and value in {0.0, 1.0}:
@@ -2627,7 +2645,16 @@ def _arrow_type_for_column(column: str) -> pa.DataType:
 
 
 def _schema_for_fieldnames(fieldnames: Sequence[str]) -> pa.Schema:
-    return pa.schema([pa.field(name, _arrow_type_for_column(name)) for name in fieldnames])
+    return pa.schema(
+        [
+            pa.field(
+                name,
+                _arrow_type_for_column(name),
+                nullable=name not in NON_NULLABLE_COLUMNS,
+            )
+            for name in fieldnames
+        ]
+    )
 
 
 def _schema_for_rows(rows: Sequence[Mapping[str, Any]], fieldnames: Sequence[str]) -> pa.Schema:

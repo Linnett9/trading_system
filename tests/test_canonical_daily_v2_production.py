@@ -315,6 +315,147 @@ def test_alpha_explicit_boolean_accepts_only_binary_values() -> None:
         _normalize_partition_rows([{"symbol": "AAA", "rebalance_date": "2026-01-04", "selector_eligible": 0.5}])
 
 
+@pytest.mark.parametrize("value", [True, False])
+def test_alpha_true_stock_level_row_preserves_boolean(value: bool) -> None:
+    normalized, report = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2026-01-01",
+                "true_stock_level_row": value,
+            }
+        ]
+    )
+    schema = _schema_for_fieldnames(list(normalized[0]))
+
+    assert normalized[0]["true_stock_level_row"] is value
+    assert schema.field("true_stock_level_row").type == pa.bool_()
+    assert schema.field("true_stock_level_row").nullable is False
+    assert {
+        column["name"]: column["kind"] for column in report["columns"]
+    }["true_stock_level_row"] == "bool"
+
+
+@pytest.mark.parametrize("value", [None, "True", "False", 1, 0])
+def test_alpha_true_stock_level_row_rejects_non_boolean_values(value) -> None:
+    with pytest.raises(ValueError, match="true_stock_level_row"):
+        _normalize_partition_rows(
+            [
+                {
+                    "symbol": "AAP",
+                    "rebalance_date": "2026-01-01",
+                    "true_stock_level_row": value,
+                }
+            ]
+        )
+
+
+def test_alpha_overlapping_targets_preserves_boolean_type() -> None:
+    normalized, _ = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2026-01-01",
+                "overlapping_targets": True,
+            },
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2026-01-02",
+                "overlapping_targets": False,
+            },
+        ]
+    )
+    schema = _schema_for_fieldnames(list(normalized[0]))
+
+    assert [row["overlapping_targets"] for row in normalized] == [True, False]
+    assert schema.field("overlapping_targets").type == pa.bool_()
+
+
+def test_alpha_integer_and_nullable_prediction_contracts_are_explicit() -> None:
+    normalized, _ = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2026-01-01",
+                "target_horizon_trading_days": 10,
+                "context_age_calendar_days": "",
+                "fundamental_coverage_count": "",
+                "predicted_forward_return_10d": "",
+                "momentum_250d": "",
+                "revenue_growth_yoy": "",
+                "industry_mapping_available": "",
+            },
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2026-01-02",
+                "target_horizon_trading_days": 10.0,
+                "context_age_calendar_days": 2,
+                "fundamental_coverage_count": 14,
+                "predicted_forward_return_10d": 0.25,
+                "momentum_250d": 0.5,
+                "revenue_growth_yoy": 0.12,
+                "industry_mapping_available": 1.0,
+            },
+        ]
+    )
+    schema = _schema_for_fieldnames(list(normalized[0]))
+
+    assert [row["target_horizon_trading_days"] for row in normalized] == [10, 10]
+    assert [row["context_age_calendar_days"] for row in normalized] == [None, 2]
+    assert [row["fundamental_coverage_count"] for row in normalized] == [None, 14]
+    assert [row["predicted_forward_return_10d"] for row in normalized] == [
+        None,
+        0.25,
+    ]
+    assert [row["momentum_250d"] for row in normalized] == [None, 0.5]
+    assert [row["revenue_growth_yoy"] for row in normalized] == [None, 0.12]
+    assert [row["industry_mapping_available"] for row in normalized] == [
+        None,
+        1.0,
+    ]
+    assert schema.field("target_horizon_trading_days").type == pa.int64()
+    assert schema.field("context_age_calendar_days").type == pa.int64()
+    assert schema.field("fundamental_coverage_count").type == pa.int64()
+    assert schema.field("predicted_forward_return_10d").type == pa.float64()
+    assert schema.field("predicted_forward_return_10d").nullable is True
+    assert schema.field("momentum_250d").type == pa.float64()
+    assert schema.field("revenue_growth_yoy").type == pa.float64()
+    assert schema.field("industry_mapping_available").type == pa.float64()
+
+
+def test_alpha_aap_boolean_partition_parquet_round_trip(tmp_path: Path) -> None:
+    rows = [
+        {
+            "symbol": "AAP",
+            "rebalance_date": f"2026-01-{(index % 28) + 1:02d}-{index:04d}",
+            "true_stock_level_row": True,
+            "overlapping_targets": index % 2 == 0,
+            "target_horizon_trading_days": 10,
+            "predicted_forward_return_10d": (
+                None if index % 3 == 0 else index / 10_000
+            ),
+            "momentum_250d": "" if index == 0 else index / 1_000,
+        }
+        for index in range(2_206)
+    ]
+    normalized, report = _normalize_partition_rows(rows)
+    path = tmp_path / "symbol=AAP" / "rows.parquet"
+    path.parent.mkdir(parents=True)
+    table = pa.Table.from_pylist(
+        normalized, schema=_schema_for_fieldnames(list(normalized[0]))
+    )
+    pq.write_table(table, path)
+    observed = pq.ParquetFile(path).read()
+
+    assert report["valid"] is True
+    assert observed.num_rows == 2_206
+    assert observed.schema.field("true_stock_level_row").type == pa.bool_()
+    assert observed.schema.field("true_stock_level_row").nullable is False
+    assert observed.column("true_stock_level_row").to_pylist() == [True] * 2_206
+    assert observed.schema.field("overlapping_targets").type == pa.bool_()
+    assert observed.schema.field("predicted_forward_return_10d").type == pa.float64()
+
+
 def test_alpha_name_fragments_do_not_make_boolean_schema() -> None:
     rows = [{"symbol": "AAA", "rebalance_date": "2026-01-01", "has_float_flag_name": 0.5}]
 

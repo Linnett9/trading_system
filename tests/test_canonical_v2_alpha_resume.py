@@ -29,6 +29,7 @@ def _base_fixture(
     tmp_path: Path,
     *,
     provenance: str = alpha.TARGET_PROVENANCE_V2,
+    symbols: tuple[str, ...] = ("AAA", "BBB"),
 ) -> tuple[dict[str, object], Path]:
     output = tmp_path / "benchmark"
     output.mkdir(parents=True)
@@ -36,20 +37,15 @@ def _base_fixture(
     rows = [
         {
             "rebalance_date": "2026-01-02",
-            "symbol": "AAA",
-            "asset_id": "asset-aaa",
+            "symbol": symbol,
+            "asset_id": f"asset-{symbol.lower()}",
             "decision_timestamp": "2026-01-02T20:05:00Z",
             "target_provenance_contract_version": provenance,
-            "actual_forward_return_10d": 0.1,
-        },
-        {
-            "rebalance_date": "2026-01-02",
-            "symbol": "BBB",
-            "asset_id": "asset-bbb",
-            "decision_timestamp": "2026-01-02T20:05:00Z",
-            "target_provenance_contract_version": provenance,
-            "actual_forward_return_10d": 0.2,
-        },
+            "actual_forward_return_10d": (index + 1) / 10,
+            "true_stock_level_row": True,
+            "overlapping_targets": True,
+        }
+        for index, symbol in enumerate(symbols)
     ]
     pq.write_table(pa.Table.from_pylist(rows), path)
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -829,6 +825,56 @@ def test_spawn_pool_initializes_worker_local_resources_and_publishes_partitions(
     assert lifecycle["multiprocessing_start_method"] == "spawn"
     assert lifecycle["completed"] == 2
     assert lifecycle["worker_startup_diagnostics"]
+
+
+def test_six_worker_pool_publishes_multiple_boolean_schema_partitions(
+    tmp_path: Path,
+) -> None:
+    symbols = ("AAP", "AAPL", "ABBV", "ABT", "ACGL", "ACN", "ADBE", "ADI")
+    config, _ = _base_fixture(tmp_path, symbols=symbols)
+    validation = alpha.validate_alpha_base_artifact(config)
+    base_partitions = alpha.prepare_alpha_base_partitions(
+        config, base_validation=validation
+    )
+    config["ml"].update(
+        {
+            "canonical_v2_alpha_base_partition_root": base_partitions["path"],
+            "canonical_v2_alpha_validated_base_sha256": validation["sha256"],
+            "canonical_v2_alpha_validated_base_key_sha256": validation[
+                "economic_key_sha256"
+            ],
+            "stock_alpha_feature_n_jobs": 6,
+        }
+    )
+    partition_root = tmp_path / "enriched_partitions"
+    manifest_root = tmp_path / "enriched_manifests"
+
+    result = alpha._execute_alpha_process_pool(
+        symbols,
+        config=config,
+        input_resolution={"validated_alpha_base": validation},
+        partition_root=partition_root,
+        manifest_root=manifest_root,
+        report_root=tmp_path / "report",
+        workers=6,
+        fail_fast=alpha._fail_fast_settings({}),
+        planned_partitions=len(symbols),
+        started=0.0,
+    )
+
+    assert result["failures"] == []
+    assert result["rows_processed"] == len(symbols)
+    for symbol in symbols:
+        path = partition_root / f"symbol={symbol}" / "rows.parquet"
+        schema = pq.ParquetFile(path).schema_arrow
+        assert schema.field("true_stock_level_row").type == pa.bool_()
+        assert schema.field("overlapping_targets").type == pa.bool_()
+    lifecycle = json.loads(
+        (tmp_path / "report" / "executor_lifecycle.json").read_text()
+    )
+    assert lifecycle["worker_count"] == 6
+    assert lifecycle["completed"] == len(symbols)
+    assert lifecycle["failed"] == 0
 
 
 def test_alpha_only_cli_dispatches_only_the_alpha_owner(
