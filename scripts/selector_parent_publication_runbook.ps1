@@ -9,6 +9,10 @@ param(
     [string]$TrainingRowsJson = "",
     [string]$PredictionRowsJson = "",
     [string]$OperationalReadinessReport = "",
+    [string]$AuthoritativeBaseArtifact = "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet",
+    [string]$AuthoritativeBaseManifest = "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.json",
+    [string]$EnrichedArtifact = "",
+    [string]$EnrichedManifest = "",
     [switch]$AllowSelectorFits,
     [switch]$InitializeOnly,
     [ValidateSet('none','complete','fail')][string]$SyntheticStageOne = 'none'
@@ -17,6 +21,12 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($FromStage -gt $ThroughStage) { throw 'Invalid stage range: FromStage must not exceed ThroughStage' }
 if ($ThroughStage -ge 11 -and -not $AllowSelectorFits) { throw 'Stages 11-16 require -AllowSelectorFits' }
+if (
+    $ThroughStage -ge 4 -and -not $InitializeOnly -and $SyntheticStageOne -eq 'none' -and
+    (-not $EnrichedArtifact -or -not $EnrichedManifest)
+) {
+    throw 'Stages 4-10 require explicit -EnrichedArtifact and -EnrichedManifest from the reviewed v2 child build'
+}
 if ($InitializeOnly -and $SyntheticStageOne -ne 'none') { throw 'InitializeOnly and SyntheticStageOne are mutually exclusive' }
 if ($SyntheticStageOne -ne 'none' -and ($FromStage -ne 1 -or $ThroughStage -gt 10 -or $Resume)) { throw 'SyntheticStageOne requires a new non-resume run beginning at stage 1 and ending no later than stage 10' }
 if (-not $RunId) { $RunId = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ') }
@@ -256,8 +266,10 @@ $registryReport = "reports/data_lineage/canonical_asset_registry_v2/run=$RunId"
 $registryManifest = "$registryReport/manifest.json"
 $spineCertificationRoot = 'reports/data_lineage/daily_stock_spine_certifications_v1'
 $archiveManifest = 'reports/data_lineage/canonical_daily_v2/build_manifest.json'
-$baseArtifact = 'reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet'
-$enrichedArtifact = 'reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts_enriched.parquet'
+$baseArtifact = $AuthoritativeBaseArtifact
+$baseManifest = $AuthoritativeBaseManifest
+$enrichedArtifact = $EnrichedArtifact
+$enrichedManifest = $EnrichedManifest
 $spineRoot = "data/processed/ml/reference/canonical_daily_stock_spine_v2/run=$RunId"
 $featureRoot = "data/processed/ml/features/daily_price_features_v2/run=$RunId"
 $datasetRoot = "reports/ml/readiness/canonical_v2_selector_dataset_v2/run=$RunId/frozen"
@@ -328,7 +340,8 @@ try {
                 $spineManifest = [string]$state.artifacts.spine_manifest; $featureManifest = [string]$state.artifacts.feature_manifest
                 $sourceHash = (Get-FileHash $enrichedArtifact -Algorithm SHA256).Hash
                 $configHash = (Get-FileHash config/config.ticket_7b3_daily_large_history_regeneration_canonical_v2.yaml -Algorithm SHA256).Hash
-                $cmd = 'python scripts/build_canonical_v2_selector_dataset.py --source "{0}" --market-root data/processed/market_data/canonical_daily_v2/full --output-root "{1}" --source-sha256 {2} --config-hash {3} --daily-spine-manifest "{4}" --daily-feature-manifest "{5}" --symbol-registry-manifest "{6}"' -f $enrichedArtifact, $datasetRoot, $sourceHash, $configHash, $spineManifest, $featureManifest, $registryManifest
+                Require-Path 8 $baseManifest; Require-Path 8 $enrichedManifest
+                $cmd = 'python -m scripts.build_canonical_v2_selector_dataset --source "{0}" --market-root data/processed/market_data/canonical_daily_v2/full --output-root "{1}" --source-sha256 {2} --config-hash {3} --daily-spine-manifest "{4}" --daily-feature-manifest "{5}" --symbol-registry-manifest "{6}" --base-artifact "{7}" --base-manifest "{8}" --enriched-manifest "{9}"' -f $enrichedArtifact, $datasetRoot, $sourceHash, $configHash, $spineManifest, $featureManifest, $registryManifest, $baseArtifact, $baseManifest, $enrichedManifest
                 Invoke-Checked 8 $cmd @("$datasetRoot/manifest.json")
                 Set-Artifact 'dataset_manifest' "$datasetRoot/manifest.json"
             }
