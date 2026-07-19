@@ -158,10 +158,20 @@ def run_component_jobs(
                         str(result.get("status", "COMPLETED"))
                         if isinstance(result, Mapping) else "COMPLETED"
                     )
-                    status = (
-                        "SKIPPED_COMPATIBLE"
-                        if runner_status == "SKIPPED_COMPATIBLE" else "COMPLETED"
-                    )
+                    status = {
+                        "COMPLETE": "COMPLETED",
+                        "COMPLETED": "COMPLETED",
+                        "SKIPPED_COMPATIBLE": "SKIPPED_COMPATIBLE",
+                        "WAITING_FOR_RESOURCES": "WAITING_FOR_RESOURCES",
+                        "INCOMPLETE": "INCOMPLETE",
+                        "BLOCKED": "BLOCKED",
+                        "CORRUPT": "CORRUPT",
+                        "CANCELLED": "CANCELLED",
+                    }.get(runner_status)
+                    if status is None:
+                        raise ValueError(
+                            f"Unsupported component runner status: {runner_status}"
+                        )
                     evidence[plan_index] = _evidence(job, status, weight, result=result)
                 except Exception as exc:
                     halted = True

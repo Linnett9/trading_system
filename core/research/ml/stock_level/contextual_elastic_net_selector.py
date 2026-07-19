@@ -6,7 +6,7 @@ import platform
 import warnings
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from core.research.ml.selector_component_rows import validate_model_row_roles
 
@@ -238,6 +238,7 @@ def fit_contextual_elastic_net(
     minimum_training_rows: int = 8,
     minimum_rank_diversity: int = 2,
     source_commit: str | None = None,
+    fitted_model_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     config = {
         "alpha": alpha, "l1_ratio": l1_ratio, "fit_intercept": fit_intercept,
@@ -333,6 +334,47 @@ def fit_contextual_elastic_net(
             })
         prediction_checksum = canonical_hash(prediction_rows)
         diagnostics = _coefficient_diagnostics(estimator, lineage, interactions, predictions, diversity)
+        if fitted_model_callback is not None:
+            fitted_model_callback(
+                estimator=estimator,
+                preprocessing=preprocessing,
+                feature_order=[row["column_id"] for row in lineage],
+                model_configuration=config,
+                random_seed=random_seed,
+                training_population_checksum=canonical_hash(
+                    [row["row_id"] for row in training]
+                ),
+                target_horizon_identity=base["target_contract_checksum"],
+                fold_identity=base["validation_fold_identity"],
+                training_boundary={
+                    "training_cutoff": cutoff,
+                    "maximum_label_available_timestamp": maturity,
+                    "validation_fold_identity": base[
+                        "validation_fold_identity"
+                    ],
+                },
+                contextual_evidence={
+                    "ordered_stock_feature_ids": list(
+                        base["ordered_stock_feature_ids"]
+                    ),
+                    "ordered_market_context_ids": list(
+                        base["ordered_market_context_ids"]
+                    ),
+                    "interaction_specification": list(
+                        interactions["interactions"]
+                    ),
+                    "interaction_output_order": [
+                        row["column_id"] for row in lineage
+                    ],
+                    "pit_context_ancestry": base.get(
+                        "market_context_ancestry"
+                    ),
+                    "context_source_guarantee_identity": base.get(
+                        "market_context_schema_identity"
+                    )
+                    or base.get("context_schema_checksum"),
+                },
+            )
         logical = {
             "contract_version": FIT_RESULT_CONTRACT, "status": "READY", "valid": True,
             "blocking_reasons": [], "warnings": [],

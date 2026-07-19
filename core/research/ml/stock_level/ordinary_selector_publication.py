@@ -17,6 +17,9 @@ from core.research.ml.experiment_ledger import require_selector_experiment
 from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
 from core.research.ml.stock_level_benchmark_models import _build_tabular_model
+from core.research.ml.stock_level.selector_sklearn_model_artifacts import (
+    publish_selector_sklearn_model_package,
+)
 
 
 PUBLICATION_CONTRACT_VERSION = "ordinary_selector_publication.v1"
@@ -186,6 +189,61 @@ def publish_planned_ordinary_component(
             "model_parameters": model.get_params(),
             "model_diagnostics": diagnostics,
         })
+        shared_model_artifact = publish_selector_sklearn_model_package(
+            component_root=temp,
+            published_component_root=owner,
+            estimator=model,
+            preprocessing=None,
+            feature_order=feature_names,
+            model_id=model_id,
+            model_family=(
+                "ordered_logit"
+                if model_id == "ordered_logit_ranker" else model_id
+            ),
+            model_configuration=model.get_params(),
+            random_seed=random_seed,
+            training_boundary={
+                "training_start": training_start,
+                "training_cutoff": training_cutoff,
+                "maximum_label_available_timestamp": label_max,
+                "fold_identity": fold_identity,
+            },
+            training_population_checksum=canonical_hash(
+                [str(row["row_id"]) for row in train]
+            ),
+            target_horizon_identity=target.canonical_id,
+            prediction_path=prediction_path,
+            prediction_schema=list(output_rows[0]),
+            prediction_count=len(output_rows),
+            input_population_checksum=str(
+                job.get("expected_dataset_checksum")
+                or gate["selector_dataset_artifact_checksum"]
+            ),
+            output_population_checksum=population_checksum,
+            campaign_identity=runner_evidence["campaign_identity"],
+            plan_job_identity=runner_evidence["plan_job_identity"],
+            component_identity=canonical_hash(identity),
+            component_runner=runner_evidence["declared_component_runner"],
+            runtime_owner=runner_evidence["resolved_runtime_owner"],
+            implementation_owner=(
+                f"{type(model).__module__}.{type(model).__qualname__}"
+            ),
+            decision_date=prediction_date,
+            fold_identity=fold_identity,
+            training_row_artifact_identity=(
+                f"{runner_evidence['operational_input_identity']}:training"
+            ),
+            prediction_row_artifact_identity=(
+                f"{runner_evidence['operational_input_identity']}:prediction"
+            ),
+            source_schema_guarantee_identity=gate[
+                "selector_feature_schema_checksum"
+            ],
+            input_package_identity=runner_evidence[
+                "operational_input_identity"
+            ],
+            source_git_commit=_git_commit(),
+        )
         manifest = {
             "component_schema_version": COMPONENT_SCHEMA_VERSION,
             "selector_model_identity": model_id,
@@ -220,6 +278,7 @@ def publish_planned_ordinary_component(
             "production_plan_job_checksum": job["logical_checksum"],
             **runner_evidence,
             "metrics_path": str(owner / "metrics.json"),
+            "shared_model_artifact": shared_model_artifact,
         }
         manifest["manifest_checksum"] = canonical_hash(manifest)
         _write_json(temp / "manifest.json", manifest)

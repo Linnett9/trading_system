@@ -6,7 +6,7 @@ import platform
 import warnings
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from core.research.ml.selector_component_rows import validate_model_row_roles
 
@@ -154,6 +154,7 @@ def fit_huber_selector(
     minimum_training_rows: int = 5,
     minimum_rank_diversity: int = 2,
     source_commit: str | None = None,
+    fitted_model_callback: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     config = {
         "epsilon": epsilon, "alpha": alpha, "fit_intercept": fit_intercept,
@@ -251,6 +252,28 @@ def fit_huber_selector(
             "training_count": len(training), "validation_count": len(validation),
             "diagnostic_is_promotion_evidence": False,
         }
+        if fitted_model_callback is not None:
+            fitted_model_callback(
+                estimator=estimator,
+                preprocessing=preprocessing,
+                feature_order=list(base["ordered_feature_ids"]),
+                model_configuration=config,
+                random_seed="NOT_APPLICABLE_DETERMINISTIC",
+                training_population_checksum=canonical_hash(
+                    [row["row_id"] for row in training]
+                ),
+                target_horizon_identity=base["target_contract_checksum"],
+                fold_identity=base["validation_fold_identity"],
+                training_boundary={
+                    "training_cutoff": training_cutoff,
+                    "maximum_label_available_timestamp": maximum_maturity,
+                    "training_fold_identity": base["training_fold_identity"],
+                    "validation_fold_identity": base[
+                        "validation_fold_identity"
+                    ],
+                },
+                contextual_evidence={},
+            )
         logical = {
             "contract_version": FIT_RESULT_CONTRACT, "status": "READY", "valid": True,
             "blocking_reasons": [], "warnings": [],
