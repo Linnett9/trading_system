@@ -1155,8 +1155,8 @@ def test_alpha_non_nullable_numeric_empty_string_fails_closed(
         )
 
 
-@pytest.mark.parametrize("value", ["not-a-number", "1.25"])
-def test_alpha_nonempty_numeric_text_fails_closed(value: str) -> None:
+@pytest.mark.parametrize("value", ["not-a-number", " 1.25", "nan", "Infinity"])
+def test_alpha_malformed_or_nonfinite_numeric_text_fails_closed(value: str) -> None:
     with pytest.raises(ValueError, match="momentum_250d"):
         _normalize_partition_rows(
             [
@@ -1169,7 +1169,58 @@ def test_alpha_nonempty_numeric_text_fails_closed(value: str) -> None:
         )
 
 
-@pytest.mark.parametrize("value", ["true", "false", ""])
+def test_alpha_decimal_and_scientific_numeric_text_is_schema_normalized() -> None:
+    normalized, report = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAA",
+                "rebalance_date": "2026-01-01",
+                "breadth_above_sma_200": "1.0",
+                "spy_realized_volatility_21d": "7.8642e-2",
+                "spy_realized_volatility_63d": "0.081",
+                "spy_max_drawdown_63d": "-0.12",
+                "spy_max_drawdown_126d": "-2.5e-1",
+                "relative_momentum_vs_sector": "",
+                "industry_momentum_percentile": "",
+            }
+        ]
+    )
+
+    assert normalized[0]["breadth_above_sma_200"] == 1.0
+    assert normalized[0]["spy_realized_volatility_21d"] == pytest.approx(0.078642)
+    assert normalized[0]["spy_max_drawdown_126d"] == -0.25
+    assert normalized[0]["relative_momentum_vs_sector"] is None
+    assert normalized[0]["industry_momentum_percentile"] is None
+    assert any(
+        item["column"] == "breadth_above_sma_200"
+        and item["action"] == "numeric_text_to_float"
+        for item in report["canonicalization_counts"]
+    )
+
+
+def test_alpha_partition_arrow_schema_exactly_matches_182_column_contract() -> None:
+    row = {}
+    for column, (kind, nullable) in alpha_enrichment.ALPHA_OUTPUT_SCHEMA.items():
+        if nullable:
+            row[column] = None
+        elif kind == "bool":
+            row[column] = True
+        elif kind == "int":
+            row[column] = 1
+        elif kind == "float":
+            row[column] = 1.0
+        elif kind == "temporal":
+            row[column] = "2026-01-01"
+        else:
+            row[column] = "contract-value"
+    schema = _schema_for_fieldnames(list(alpha_enrichment.ALPHA_OUTPUT_SCHEMA))
+    table = alpha_enrichment._rows_to_table([row], schema)
+
+    assert len(alpha_enrichment.ALPHA_OUTPUT_SCHEMA) == 182
+    assert table.schema.equals(schema)
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
 def test_alpha_boolean_strings_remain_invalid(value: str) -> None:
     with pytest.raises(ValueError, match="overlapping_targets"):
         _normalize_partition_rows(
@@ -1181,6 +1232,71 @@ def test_alpha_boolean_strings_remain_invalid(value: str) -> None:
                 }
             ]
         )
+
+
+def test_alpha_nullable_boolean_empty_is_null() -> None:
+    normalized, _report = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAA",
+                "rebalance_date": "2026-01-01",
+                "industry_mapping_available": "",
+            }
+        ]
+    )
+    assert normalized[0]["industry_mapping_available"] is None
+
+
+def test_alpha_integer_text_contract_is_unambiguous() -> None:
+    normalized, _report = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAA",
+                "rebalance_date": "2026-01-01",
+                "target_horizon_trading_days": "10",
+            }
+        ]
+    )
+    assert normalized[0]["target_horizon_trading_days"] == 10
+    for value in ("01", "+1", "-0", "1.0", "1e1"):
+        with pytest.raises(ValueError, match="target_horizon_trading_days"):
+            _normalize_partition_rows(
+                [
+                    {
+                        "symbol": "AAA",
+                        "rebalance_date": "2026-01-01",
+                        "target_horizon_trading_days": value,
+                    }
+                ]
+            )
+
+
+def test_alpha_rejection_diagnostics_aggregate_all_columns_and_are_bounded() -> None:
+    rows = [
+        {
+            "symbol": f"S{index}",
+            "rebalance_date": "2026-01-01",
+            "momentum_250d": "bad",
+            "target_horizon_trading_days": "1.0",
+        }
+        for index in range(10)
+    ]
+    with pytest.raises(alpha_enrichment.CanonicalizationReportError) as caught:
+        _normalize_partition_rows(rows)
+
+    report = caught.value.report
+    assert report["rejected_value_counts_by_column"] == {
+        "momentum_250d": 10,
+        "target_horizon_trading_days": 10,
+    }
+    assert set(report["invalid_values_rejected_by_column"]) == {
+        "momentum_250d",
+        "target_horizon_trading_days",
+    }
+    assert all(
+        len(examples) == 3
+        for examples in report["invalid_values_rejected_by_column"].values()
+    )
 
 
 def test_alpha_consolidation_diagnostic_has_full_row_provenance(
