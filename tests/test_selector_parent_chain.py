@@ -159,6 +159,39 @@ def test_parent_safe_path_budget_proceeds(tmp_path, monkeypatch):
     )
 
 
+def test_parent_chain_module_entry_point_preflights(
+    tmp_path, monkeypatch, capsys
+):
+    inputs = _fixture(tmp_path, monkeypatch)
+
+    status = chain.main(
+        [
+            "preflight",
+            "--run-id",
+            inputs.run_id,
+            "--output-root",
+            str(inputs.output_root),
+            "--base-artifact",
+            str(inputs.base_artifact),
+            "--base-manifest",
+            str(inputs.base_manifest),
+            "--canonical-daily-manifest",
+            str(inputs.canonical_daily_manifest),
+            "--asset-registry-manifest",
+            str(inputs.asset_registry_manifest),
+            "--feature-schema",
+            str(inputs.feature_schema),
+            "--path-length-limit",
+            "1000",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert payload["status"] == "READY"
+    assert payload["mutation_performed"] is False
+
+
 @pytest.mark.parametrize(
     ("attribute", "value", "blocker"),
     [
@@ -329,6 +362,15 @@ def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch
     assert observed["economic_target_id"] == "forward_return_10d"
     assert observed["canonical_v2_alpha_base_manifest_path"] == str(
         inputs.base_manifest.resolve()
+    )
+    assert result["alpha_namespaces"]["layout"] == "bounded_v1"
+    assert (
+        result["parent_lineage"]["canonical_daily_logical_checksum"]
+        == chain.APPROVED_CANONICAL_DAILY_HASH
+    )
+    assert (
+        result["parent_lineage"]["target_provenance_contract_version"]
+        == "stock_level_target_provenance_v2"
     )
 
 

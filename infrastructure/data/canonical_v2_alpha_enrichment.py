@@ -1238,19 +1238,40 @@ def _planned_bounded_alpha_namespaces(
     }
 
 
+def _planned_bounded_alpha_partition_namespace(
+    report_root: Path,
+    config: Mapping[str, Any],
+    *,
+    base_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Plan only the bounded partition namespace from its authoritative identity."""
+    partitions = _alpha_partition_namespace_identity(
+        config, base_validation=base_validation
+    )
+    return {
+        **partitions,
+        "layout": "bounded_v1",
+        "path": str(
+            report_root
+            / "alpha_partitions_v2"
+            / f"id-{partitions['namespace_key']}"
+        ),
+    }
+
+
 def _resolve_alpha_partition_namespace(
     report_root: Path,
     config: Mapping[str, Any],
     *,
     base_validation: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
-    planned = _planned_bounded_alpha_namespaces(
+    planned = _planned_bounded_alpha_partition_namespace(
         report_root, config, base_validation=base_validation
     )
     identity = {
         key: value
-        for key, value in planned["partitions"].items()
-        if key != "path"
+        for key, value in planned.items()
+        if key not in {"path", "layout"}
     }
     namespace_parent = report_root / "alpha_partitions_v2"
     legacy_root = (
@@ -1269,7 +1290,7 @@ def _resolve_alpha_partition_namespace(
             f"legacy alpha partition namespace is not a directory: {legacy_root}"
         )
 
-    namespace_root = Path(str(planned["partitions"]["path"]))
+    namespace_root = Path(str(planned["path"]))
     manifest_path = namespace_root / "namespace_manifest.json"
     if namespace_root.exists():
         observed = _read_json(manifest_path)
@@ -1983,6 +2004,9 @@ def _build_partition(
         prepared_history = _prepare_history(history)
         enriched = _build_symbol_rows((rows, prepared_history, prepared_spy))
         enriched = merge_enrichment_preserving_base(rows, enriched)
+        for enriched_row in enriched:
+            enriched_row.pop("row_id", None)
+            enriched_row.pop("feature_coverage_status", None)
         timings["feature_compute_seconds"] = time.perf_counter() - phase_started
     except Exception as exc:
         failure = _partition_failure_payload(

@@ -263,7 +263,13 @@ def publish_bounded_smoke(
                 _schema_for_fieldnames,
             )
 
-            normalized, _ = _normalize_partition_rows(enriched)
+            canonical_enriched = []
+            for row in enriched:
+                canonical_row = dict(row)
+                canonical_row.pop("row_id", None)
+                canonical_row.pop("feature_coverage_status", None)
+                canonical_enriched.append(canonical_row)
+            normalized, _ = _normalize_partition_rows(canonical_enriched)
             enriched_table = pa.Table.from_pylist(
                 normalized,
                 schema=_schema_for_fieldnames(
@@ -414,6 +420,21 @@ def build_production_enriched_child(
             "plan_checksum": _plan_identity_hash(plan),
             "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
             "target_provenance_contract_version": CURRENT_TARGET_PROVENANCE_VERSION,
+            "parent_lineage": {
+                "canonical_base_identity": plan["base"],
+                "canonical_daily_logical_checksum": plan[
+                    "canonical_daily_logical_checksum"
+                ],
+                "asset_registry_version": plan["asset_registry_version"],
+                "asset_registry_checksum": plan["asset_registry_checksum"],
+                "feature_schema_identity": plan["feature_schema_checksum"],
+                "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
+                "target_provenance_contract_version": (
+                    CURRENT_TARGET_PROVENANCE_VERSION
+                ),
+            },
+            "alpha_namespaces": plan["alpha_namespaces"],
+            "path_budget": plan["path_budget"],
             "outputs": {
                 key: str(value)
                 for key, value in vars(paths).items()
@@ -604,7 +625,6 @@ def _path_budget_preflight(
     inputs: ParentChainInputs, namespaces: Mapping[str, Any]
 ) -> dict[str, Any]:
     output = inputs.output_root.resolve()
-    report = output / "alpha_enrichment"
     base_root = Path(str(namespaces["base"]["path"]))
     partition_root = Path(str(namespaces["partitions"]["path"]))
     symbol = _longest_symbol(inputs.base_artifact)
@@ -625,8 +645,8 @@ def _path_budget_preflight(
         "partition_failure": partition_root / "partition_failures" / f"{symbol}.json",
         "schema_diagnostic": partition_root / "schema_diagnostics" / f"{symbol}.json",
         "schema_validation": partition_root / "schema_validation" / f"{symbol}.json",
-        "partition_attempt": report / "alpha_partitions_v2" / f".attempt-{namespace_key}-2147483647-deadbeef" / "namespace_manifest.json",
-        "base_attempt": report / "alpha_base_partitions_v2" / f".attempt-{base_sha[:8]}-2147483647-deadbeef" / f"symbol={symbol}" / "rows.parquet.identity.json",
+        "partition_attempt": partition_root.parent / f".attempt-{namespace_key}-2147483647-deadbeef" / "namespace_manifest.json",
+        "base_attempt": base_root.parent / f".attempt-{base_sha[:8]}-2147483647-deadbeef" / f"symbol={symbol}" / "rows.parquet.identity.json",
         "final_publication": final,
         "final_publication_temporary": final.with_suffix(final.suffix + ".tmp"),
     }
