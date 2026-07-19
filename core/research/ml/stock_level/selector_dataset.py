@@ -208,7 +208,13 @@ def build_frozen_selector_dataset(
         "missingness_policy": "fail closed for model input; warmup nulls permitted only before eligibility",
     }
     target_columns = [name for name in source_dataset.schema.names if name.startswith("actual_")]
-    target_schema = {"target_columns": target_columns, "primary_target": "actual_forward_return_10d"}
+    target_schema = {
+        "target_columns": target_columns,
+        "primary_target": "actual_forward_return_10d",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
+        "target_registry_schema_version": "selector_target_identity.v1",
+    }
     candidate_schema = {
         "fitted_models": ["ridge", "elastic_net", "random_forest", "gradient_boosting", "dlinear", "patchtst", "transformer", "itransformer", "momentum_transformer", "multitask_transformer", "market_context_encoder", "news_analysis_transformer", "temporal_fusion_transformer"],
         "non_ml_baselines": BASELINE_CANDIDATES,
@@ -252,6 +258,11 @@ def build_frozen_selector_dataset(
         "baseline_contract": BASELINE_CONTRACT_VERSION,
         "target_contract": target.canonical_id,
         "target_contract_checksum": target.entry.entry_hash,
+        "economic_target_id": target.canonical_id,
+        "target_provenance_contract_version": (
+            "stock_level_target_provenance_v2"
+        ),
+        "target_registry_schema_version": "selector_target_identity.v1",
         "ranking_contract": "daily_cross_sectional_ranking_problem_v1",
         "daily_stock_spine_identity": parents["daily_spine_identity"],
         "daily_stock_spine_version": parents["daily_spine_version"],

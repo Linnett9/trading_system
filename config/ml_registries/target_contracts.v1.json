@@ -4,7 +4,7 @@
   "entries":[
     {"canonical_id":"forward_return_1d","display_name":"Forward Return 1 Session","field_name":"actual_forward_return_1d","horizon":"1 session","implementation_status":"IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"},
     {"canonical_id":"forward_return_5d","display_name":"Forward Return 5 Sessions","field_name":"actual_forward_return_5d","horizon":"5 sessions","implementation_status":"IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"},
-    {"canonical_id":"forward_return_10d","aliases":["stock_level_target_provenance_v4"],"display_name":"Forward Return 10 Sessions","field_name":"actual_forward_return_10d","implementation_status":"IMPLEMENTED_AND_BOUNDED_RUNNABLE"},
+    {"canonical_id":"forward_return_10d","aliases":[],"display_name":"Forward Return 10 Sessions","field_name":"actual_forward_return_10d","implementation_status":"IMPLEMENTED_AND_BOUNDED_RUNNABLE","target_provenance_contract_versions":["stock_level_target_provenance_v2"],"target_registry_schema_version":"selector_target_identity.v1"},
     {"canonical_id":"forward_return_20d","display_name":"Forward Return 20 Sessions","field_name":"actual_forward_return_20d","horizon":"20 sessions","implementation_status":"IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"},
     {"canonical_id":"market_residual_return_10d","display_name":"Market Residual Return 10 Sessions","field_name":"actual_market_residual_return_10d"},
     {"canonical_id":"benchmark_return_10d","display_name":"Benchmark Return 10 Sessions","field_name":"actual_benchmark_return_10d"},
