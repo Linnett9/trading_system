@@ -433,7 +433,18 @@ def write_partitioned_canonical_v2_alpha_features(
     try:
         result = _write_partitioned_canonical_v2_alpha_features(config)
     except BaseException as exc:
+        lifecycle = _read_json(report_root / "partition_dataset_status.json")
         state["status"] = "FAILED"
+        state["partition_generation_status"] = (
+            "COMPLETE"
+            if lifecycle.get("partition_processing_status") == "complete"
+            else "FAILED"
+        )
+        state["consolidation_status"] = lifecycle.get(
+            "consolidation_status", "FAILED"
+        ).upper()
+        state["publication_status"] = "NOT_PUBLISHED"
+        state["overall_status"] = "FAILED"
         state["stages"]["alpha_features"] = {
             "status": "failed",
             "exception_type": type(exc).__name__,
@@ -443,6 +454,25 @@ def write_partitioned_canonical_v2_alpha_features(
         _write_json(manifest_path, state)
         raise
     state["status"] = "COMPLETE"
+    lifecycle = _read_json(report_root / "partition_dataset_status.json")
+    state["partition_generation_status"] = (
+        "COMPLETE_REUSED"
+        if int(lifecycle.get("partitions_recomputed", 0) or 0) == 0
+        else "COMPLETE"
+    )
+    state["consolidation_status"] = "COMPLETE"
+    state["publication_status"] = "COMPLETE"
+    state["overall_status"] = "COMPLETE"
+    state["reused_namespace_identity"] = lifecycle.get(
+        "partition_namespace_identity"
+    )
+    state["reused_partition_count"] = int(
+        lifecycle.get("partitions_reused", 0) or 0
+    )
+    state["workers_submitted"] = int(
+        lifecycle.get("workers_submitted", 0) or 0
+    )
+    state["final_artifact"] = lifecycle.get("final_artifact")
     state["stages"]["alpha_features"] = {
         "status": "completed",
         "output_paths": _path_payload_for_alpha(result),
@@ -544,7 +574,10 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "completed_before": len(completed_before),
         "pending_partitions": len(pending),
         "requested_workers": workers,
-        "effective_workers": min(max(1, workers), max(1, len(pending))),
+        "effective_workers": (
+            min(max(1, workers), len(pending)) if pending else 0
+        ),
+        "workers_submitted": len(pending),
         "partition_root": str(partition_root),
         "manifest_root": str(manifest_root),
         "base_artifact_path": str(base_path),
@@ -642,14 +675,20 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
 
     partition_paths = _completed_partition_paths(manifest_root, expected_symbols=symbols, config=config)
     partition_validation = _validate_partition_dataset(partition_paths, report_root=report_root)
+    reused_partition_count = len(completed_before)
+    workers_submitted = len(pending)
     _write_json(
         report_root / "partition_dataset_status.json",
         {
             "partition_processing_status": "complete",
             "partition_validation_status": "complete",
             "consolidation_status": "pending",
-            "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
+            "publication_status": "not_published",
+            "overall_status": "running",
+            "partitions_reused": reused_partition_count,
             "partitions_recomputed": len(pending),
+            "workers_submitted": workers_submitted,
+            "partition_namespace_identity": namespace_identity,
             "consolidation_retried": True,
             **partition_validation,
         },
@@ -669,6 +708,7 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
             sample_path=paths.enriched_sample_csv_path,
             expected_row_count=int(partition_validation["row_count"]),
             report_root=report_root,
+            preflight_validation=partition_validation,
         )
     except Exception as exc:
         _write_json(
@@ -677,9 +717,13 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
                 "partition_processing_status": "complete",
                 "partition_validation_status": "complete",
                 "consolidation_status": "failed",
+                "publication_status": "not_published",
+                "overall_status": "failed",
                 "consolidation_error": f"{type(exc).__name__}: {exc}",
-                "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
+                "partitions_reused": reused_partition_count,
                 "partitions_recomputed": len(pending),
+                "workers_submitted": workers_submitted,
+                "partition_namespace_identity": namespace_identity,
                 "consolidation_retried": True,
                 **partition_validation,
             },
@@ -741,8 +785,12 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
             "partition_processing_status": "complete",
             "partition_validation_status": "complete",
             "consolidation_status": "complete",
-            "partitions_reused": len(completed_before) if not pending else len(_completed_compatible_symbols(manifest_root, config)) - len(pending),
+            "publication_status": "complete",
+            "overall_status": "complete",
+            "partitions_reused": reused_partition_count,
             "partitions_recomputed": len(pending),
+            "workers_submitted": workers_submitted,
+            "partition_namespace_identity": namespace_identity,
             "consolidation_retried": True,
             "final_artifact": identity,
             **partition_validation,
@@ -2022,7 +2070,7 @@ def _base_row(
         "exchange_calendar_identity": "canonical_daily_v2_sessions",
         "decision_frequency": "daily",
         "target_horizon_trading_days": int(row.get("target_horizon_trading_days") or 10),
-        "overlapping_targets": "",
+        "overlapping_targets": None,
         "required_purge_horizon_trading_days": 10,
         "target_horizon": "10_trading_observations",
         "target_observation_count": 10,
@@ -2283,25 +2331,56 @@ def _write_large_parquet_artifact(
 def _validate_partition_dataset(partition_paths: Sequence[Path], *, report_root: Path | None = None) -> dict[str, Any]:
     if not partition_paths:
         raise ValueError("no completed alpha partitions available for consolidation")
-    first = pq.ParquetFile(partition_paths[0]).read()
-    canonical_schema = _schema_for_fieldnames(first.schema.names)
+    ordered_paths = sorted(partition_paths, key=lambda path: str(path).lower())
+    canonical_schema = _schema_for_fieldnames(
+        pq.ParquetFile(ordered_paths[0]).schema_arrow.names
+    )
     partition_reports: list[dict[str, Any]] = []
     row_count = 0
     duplicate_keys = 0
     seen_keys: set[tuple[str, str]] = set()
-    for path in partition_paths:
-        table = pq.ParquetFile(path).read()
-        report, casted = _validate_and_cast_partition_table(path, table, canonical_schema)
-        partition_reports.append(report)
-        row_count += table.num_rows
-        symbols = casted["symbol"] if "symbol" in casted.column_names else None
-        dates = casted["rebalance_date"] if "rebalance_date" in casted.column_names else None
-        if symbols is not None and dates is not None:
-            for symbol, date in zip(_iter_chunked_values(symbols), _iter_chunked_values(dates)):
-                key = (str(symbol).upper(), str(date)[:10])
-                if key in seen_keys:
-                    duplicate_keys += 1
-                seen_keys.add(key)
+    for path in ordered_paths:
+        parquet = pq.ParquetFile(path)
+        partition_row_count = 0
+        partition_mismatches: dict[str, dict[str, str]] = {}
+        for batch in parquet.iter_batches(batch_size=65_536):
+            table = pa.Table.from_batches([batch])
+            report, casted = _validate_and_cast_partition_table(
+                path,
+                table,
+                canonical_schema,
+                row_offset=partition_row_count,
+            )
+            for mismatch in report["type_mismatches"]:
+                partition_mismatches[mismatch["column"]] = mismatch
+            symbols = casted["symbol"] if "symbol" in casted.column_names else None
+            dates = casted["rebalance_date"] if "rebalance_date" in casted.column_names else None
+            if symbols is not None and dates is not None:
+                for symbol, date in zip(_iter_chunked_values(symbols), _iter_chunked_values(dates)):
+                    key = (str(symbol).upper(), str(date)[:10])
+                    if key in seen_keys:
+                        duplicate_keys += 1
+                    seen_keys.add(key)
+            partition_row_count += table.num_rows
+        partition_reports.append(
+            {
+                "partition_path": str(path),
+                "row_count": partition_row_count,
+                "schema_fingerprint": _schema_fingerprint(parquet.schema_arrow),
+                "missing_columns": [],
+                "unexpected_columns": [],
+                "type_mismatches": list(partition_mismatches.values()),
+                "cast_operations": [
+                    {
+                        "column": mismatch["column"],
+                        "from": mismatch["actual_type"],
+                        "to": mismatch["expected_type"],
+                    }
+                    for mismatch in partition_mismatches.values()
+                ],
+            }
+        )
+        row_count += partition_row_count
     if duplicate_keys:
         raise ValueError(f"duplicate symbol/date keys in partition dataset: {duplicate_keys}")
     payload = {
@@ -2324,11 +2403,21 @@ def _consolidate_partition_parquets(
     sample_path: Path | None,
     expected_row_count: int,
     report_root: Path | None = None,
+    preflight_validation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not partition_paths:
         raise ValueError("no completed alpha partitions available for consolidation")
     ml = dict(config.get("ml", {}) or {})
     compression = str(ml.get("stock_level_parquet_compression", "zstd")).lower()
+    preflight = dict(
+        preflight_validation
+        or _validate_partition_dataset(partition_paths, report_root=report_root)
+    )
+    if int(preflight["row_count"]) != expected_row_count:
+        raise ValueError(
+            "pre-consolidation partition row count "
+            f"{preflight['row_count']} does not match expected {expected_row_count}"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_suffix(output_path.suffix + ".tmp")
     if tmp.exists():
@@ -2347,6 +2436,7 @@ def _consolidate_partition_parquets(
     feature_non_null = {feature: 0 for feature in ENGINEERED_FEATURE_COLUMNS}
     writer: pq.ParquetWriter | None = None
     promoted: pq.ParquetFile | None = None
+    validated_temporary_sha256: str | None = None
     try:
         writer = pq.ParquetWriter(tmp, canonical_schema, compression=compression)
         date_rows: list[dict[str, Any]] = []
@@ -2431,6 +2521,7 @@ def _consolidate_partition_parquets(
                 "enriched artifact target provenance mismatch: "
                 f"{sorted(target_versions)}"
             )
+        validated_temporary_sha256 = _file_sha256(tmp)
         tmp.replace(output_path)
     except Exception:
         if promoted is not None:
@@ -2445,6 +2536,10 @@ def _consolidate_partition_parquets(
     parquet = pq.ParquetFile(output_path)
     column_order = list(parquet.schema_arrow.names)
     file_hash = _file_sha256(output_path)
+    if file_hash != validated_temporary_sha256:
+        raise ValueError(
+            "published artifact checksum differs from validated temporary artifact"
+        )
     feature_coverage = [
         {
             "feature": feature,
@@ -2485,6 +2580,13 @@ def _consolidate_partition_parquets(
         "economic_key_alignment_valid": True,
         "feature_coverage": feature_coverage,
         "completion_status": "complete",
+        "atomic_publication": {
+            "status": "COMPLETE",
+            "temporary_artifact_validated": True,
+            "validated_temporary_sha256": validated_temporary_sha256,
+            "published_sha256": file_hash,
+            "replacement_method": "same_filesystem_replace",
+        },
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_mode": "validated_symbol_partitions",
         "source_partition_count": len(partition_paths),
@@ -2551,8 +2653,11 @@ def _iter_partition_rows_date_major(
 def _iter_parquet_rows(path: Path, *, batch_rows: int):
     previous: tuple[str, str] | None = None
     parquet = pq.ParquetFile(path)
+    row_offset = 0
     for batch in parquet.iter_batches(batch_size=batch_rows):
-        for row in _batch_rows(batch):
+        for batch_index, row in enumerate(_batch_rows(batch)):
+            row["__source_partition_path"] = str(path)
+            row["__source_row_index"] = row_offset + batch_index
             key = (
                 str(row.get("rebalance_date", ""))[:10],
                 str(row.get("symbol", "")).upper(),
@@ -2563,35 +2668,89 @@ def _iter_parquet_rows(path: Path, *, batch_rows: int):
                 )
             previous = key
             yield row
+        row_offset += batch.num_rows
 
 
 def _batch_rows(batch: pa.RecordBatch) -> list[dict[str, Any]]:
     return pa.Table.from_batches([batch]).to_pylist()
 
 
-def _rows_to_table(rows: list[dict[str, Any]], schema: pa.Schema) -> pa.Table:
-    return pa.Table.from_pylist(rows, schema=schema)
+def _rows_to_table(
+    rows: list[dict[str, Any]],
+    schema: pa.Schema,
+    *,
+    source_partition_path: Path | str | None = None,
+    row_offset: int = 0,
+    allow_whitespace_numeric_missing: bool = False,
+) -> pa.Table:
+    normalized: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        unknown = sorted(
+            set(row)
+            - set(ALPHA_OUTPUT_SCHEMA)
+            - {"__source_partition_path", "__source_row_index"}
+        )
+        if unknown:
+            raise ValueError(
+                "canonical alpha row contains unknown columns: "
+                f"{unknown}; symbol={row.get('symbol')!r} "
+                f"rebalance_date={row.get('rebalance_date')!r} "
+                f"source_partition_path={row.get('__source_partition_path') or source_partition_path!s} "
+                f"row_index={row.get('__source_row_index', row_offset + index)}"
+            )
+        output: dict[str, Any] = {}
+        for field in schema:
+            value = row.get(field.name)
+            try:
+                output[field.name], _coerced = _normalize_value(
+                    field.name,
+                    value,
+                    _column_kind(field.name),
+                    allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "canonical alpha value is incompatible: "
+                    f"column={field.name} expected_kind={_column_kind(field.name)} "
+                    f"expected_type={field.type} value={value!r} "
+                    f"symbol={row.get('symbol')!r} "
+                    f"rebalance_date={row.get('rebalance_date')!r} "
+                    f"source_partition_path={row.get('__source_partition_path') or source_partition_path!s} "
+                    f"row_index={row.get('__source_row_index', row_offset + index)}; "
+                    f"{exc}"
+                ) from exc
+        normalized.append(output)
+    return pa.Table.from_pylist(normalized, schema=schema)
 
 
-def _validate_and_cast_partition_table(path: Path, table: pa.Table, canonical_schema: pa.Schema) -> tuple[dict[str, Any], pa.Table]:
+def _validate_and_cast_partition_table(
+    path: Path,
+    table: pa.Table,
+    canonical_schema: pa.Schema,
+    *,
+    row_offset: int = 0,
+) -> tuple[dict[str, Any], pa.Table]:
     missing = [name for name in canonical_schema.names if name not in table.column_names]
     unexpected = [name for name in table.column_names if name not in canonical_schema.names]
     type_mismatches: list[dict[str, Any]] = []
     casts: list[dict[str, str]] = []
     if missing or unexpected:
         raise ValueError(f"partition schema columns mismatch for {path}: missing={missing[:10]} unexpected={unexpected[:10]}")
-    columns = []
     for field in canonical_schema:
-        column = table[field.name]
-        actual_type = column.type
-        if actual_type.equals(field.type):
-            columns.append(column)
-            continue
-        casted = _safe_cast_partition_column(path, field.name, column, field.type)
-        type_mismatches.append({"column": field.name, "actual_type": str(actual_type), "expected_type": str(field.type)})
-        casts.append({"column": field.name, "from": str(actual_type), "to": str(field.type)})
-        columns.append(casted)
-    casted_table = pa.Table.from_arrays(columns, schema=canonical_schema)
+        actual_type = table[field.name].type
+        if not actual_type.equals(field.type):
+            type_mismatches.append({"column": field.name, "actual_type": str(actual_type), "expected_type": str(field.type)})
+            casts.append({"column": field.name, "from": str(actual_type), "to": str(field.type)})
+    rows = table.to_pylist()
+    for row_index, row in enumerate(rows):
+        row["__source_partition_path"] = str(path)
+        row["__source_row_index"] = row_offset + row_index
+    casted_table = _rows_to_table(
+        rows,
+        canonical_schema,
+        source_partition_path=path,
+        allow_whitespace_numeric_missing=False,
+    )
     report = {
         "partition_path": str(path),
         "row_count": table.num_rows,
@@ -2691,7 +2850,11 @@ def _column_type_inventory(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return inventory
 
 
-def _normalize_partition_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _normalize_partition_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    allow_whitespace_numeric_missing: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     fieldnames = list(dict.fromkeys(name for row in rows for name in row))
     normalized: list[dict[str, Any]] = []
     coerced_nulls: dict[str, int] = {name: 0 for name in fieldnames}
@@ -2702,7 +2865,12 @@ def _normalize_partition_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[d
             value = row.get(column)
             kind = _column_kind(column)
             try:
-                normalized_value, coerced = _normalize_value(column, value, kind)
+                normalized_value, coerced = _normalize_value(
+                    column,
+                    value,
+                    kind,
+                    allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
+                )
             except ValueError as exc:
                 invalid_values.setdefault(column, []).append(
                     {
@@ -2739,17 +2907,43 @@ def _normalize_partition_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[d
     return normalized, report
 
 
-def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
+def _normalize_value(
+    column: str,
+    value: Any,
+    kind: str,
+    *,
+    allow_whitespace_numeric_missing: bool = False,
+) -> tuple[Any, bool]:
     if value is None:
         if column in NON_NULLABLE_COLUMNS:
             raise ValueError(f"non-nullable column {column} received null")
         return None, False
     if value == "":
-        return (
-            (None, True)
-            if kind in {"float", "int", "bool", "temporal"}
-            else ("", False)
-        )
+        if kind in {"float", "int"}:
+            if not ALPHA_OUTPUT_SCHEMA[column][1]:
+                raise ValueError(
+                    f"non-nullable {kind} column {column} received empty string"
+                )
+            return None, True
+        if kind == "temporal":
+            return None, True
+        if kind == "string":
+            return "", False
+        raise ValueError(f"{kind} column {column} received empty string")
+    if (
+        isinstance(value, str)
+        and not value.strip()
+        and kind in {"float", "int"}
+    ):
+        if not allow_whitespace_numeric_missing:
+            raise ValueError(
+                f"{kind} column {column} received whitespace-only text"
+            )
+        if not ALPHA_OUTPUT_SCHEMA[column][1]:
+            raise ValueError(
+                f"non-nullable {kind} column {column} received whitespace-only text"
+            )
+        return None, True
     if kind == "string":
         if isinstance(value, str):
             return value, False
@@ -2765,8 +2959,6 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
             return bool(value), False
         if isinstance(value, float) and value in {0.0, 1.0}:
             return bool(value), False
-        if isinstance(value, str) and value.lower() in {"true", "false"}:
-            return value.lower() == "true", False
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             raise ValueError(f"bool column {column} received non-binary numeric value {value!r}")
         raise ValueError(f"bool column {column} received {type(value).__name__}")
@@ -2778,12 +2970,7 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
         if isinstance(value, float) and math.isfinite(value) and value.is_integer():
             return int(value), False
         if isinstance(value, str):
-            try:
-                parsed = float(value)
-            except ValueError as exc:
-                raise ValueError(f"int column {column} received nonnumeric text") from exc
-            if math.isfinite(parsed) and parsed.is_integer():
-                return int(parsed), False
+            raise ValueError(f"int column {column} received text")
         raise ValueError(f"int column {column} received non-integer value {value!r}")
     if kind == "float":
         if isinstance(value, bool):
@@ -2791,10 +2978,7 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
         if isinstance(value, (int, float)):
             parsed = float(value)
         elif isinstance(value, str):
-            try:
-                parsed = float(value)
-            except ValueError as exc:
-                raise ValueError(f"float column {column} received nonnumeric text") from exc
+            raise ValueError(f"float column {column} received text")
         else:
             raise ValueError(f"float column {column} received {type(value).__name__}")
         return (None, True) if math.isnan(parsed) else (parsed, False)

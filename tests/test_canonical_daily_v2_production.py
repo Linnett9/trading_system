@@ -1099,7 +1099,7 @@ def test_alpha_clean_typed_partitions_stream_consolidate_without_table_pylist(tm
     assert pq.ParquetFile(output).read()["actual_forward_return_10d"].to_pylist() == [0.1, None]
 
 
-def test_alpha_consolidation_rejects_numeric_empty_string_with_partition_details(tmp_path: Path) -> None:
+def test_alpha_consolidation_normalizes_nullable_numeric_empty_string(tmp_path: Path) -> None:
     path = tmp_path / "partitions" / "symbol=AAA" / "rows.parquet"
     path.parent.mkdir(parents=True)
     schema = pa.schema(
@@ -1111,8 +1111,169 @@ def test_alpha_consolidation_rejects_numeric_empty_string_with_partition_details
     )
     pq.write_table(pa.Table.from_pylist([{"symbol": "AAA", "rebalance_date": "2026-01-01", "actual_forward_return_10d": ""}], schema=schema), path)
 
-    with pytest.raises(ValueError, match="actual_forward_return_10d.*row_index=0"):
+    report = _validate_partition_dataset([path])
+
+    assert report["row_count"] == 1
+
+
+def test_alpha_whitespace_numeric_missing_requires_explicit_contract() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "rebalance_date": "2026-01-01",
+            "momentum_250d": " \t",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="whitespace-only"):
+        _normalize_partition_rows(rows)
+
+    normalized, _report = _normalize_partition_rows(
+        rows, allow_whitespace_numeric_missing=True
+    )
+    assert normalized[0]["momentum_250d"] is None
+
+
+def test_alpha_non_nullable_numeric_empty_string_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        alpha_enrichment.ALPHA_OUTPUT_SCHEMA,
+        "momentum_250d",
+        ("float", False),
+    )
+
+    with pytest.raises(ValueError, match="non-nullable.*momentum_250d"):
+        _normalize_partition_rows(
+            [
+                {
+                    "symbol": "AAA",
+                    "rebalance_date": "2026-01-01",
+                    "momentum_250d": "",
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "1.25"])
+def test_alpha_nonempty_numeric_text_fails_closed(value: str) -> None:
+    with pytest.raises(ValueError, match="momentum_250d"):
+        _normalize_partition_rows(
+            [
+                {
+                    "symbol": "AAA",
+                    "rebalance_date": "2026-01-01",
+                    "momentum_250d": value,
+                }
+            ]
+        )
+
+
+@pytest.mark.parametrize("value", ["true", "false", ""])
+def test_alpha_boolean_strings_remain_invalid(value: str) -> None:
+    with pytest.raises(ValueError, match="overlapping_targets"):
+        _normalize_partition_rows(
+            [
+                {
+                    "symbol": "AAA",
+                    "rebalance_date": "2026-01-01",
+                    "overlapping_targets": value,
+                }
+            ]
+        )
+
+
+def test_alpha_consolidation_diagnostic_has_full_row_provenance(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partitions" / "symbol=AAA" / "rows.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "symbol": ["AAA"],
+                "rebalance_date": ["2026-01-01"],
+                "actual_forward_return_10d": ["malformed"],
+            }
+        ),
+        path,
+    )
+
+    with pytest.raises(ValueError) as caught:
         _validate_partition_dataset([path])
+
+    message = str(caught.value)
+    assert "column=actual_forward_return_10d" in message
+    assert "value='malformed'" in message
+    assert "symbol='AAA'" in message
+    assert "rebalance_date='2026-01-01'" in message
+    assert f"source_partition_path={path}" in message
+    assert "row_index=0" in message
+
+
+def test_alpha_legacy_cross_section_placeholders_consolidate_as_null(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partitions" / "symbol=AAA" / "rows.parquet"
+    output = tmp_path / "published" / "rows.parquet"
+    _write_partition(
+        path,
+        [
+            {
+                "symbol": "AAA",
+                "rebalance_date": "2026-01-01",
+                "predicted_momentum_120d": None,
+                "momentum_percentile": None,
+                "relative_momentum_vs_sector": None,
+                "sector_relative_strength": None,
+                "relative_momentum_vs_industry": None,
+                "industry_relative_strength": None,
+                "industry_momentum_percentile": None,
+            }
+        ],
+    )
+
+    identity = _consolidate_partition_parquets(
+        [path],
+        output,
+        config={"ml": {}},
+        sample_path=None,
+        expected_row_count=1,
+    )
+
+    observed = pq.read_table(output).to_pylist()[0]
+    assert identity["row_count"] == 1
+    assert observed["industry_momentum_percentile"] is None
+    assert observed["relative_momentum_vs_sector"] is None
+
+
+def test_alpha_preflight_failure_occurs_before_output_directory_creation(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "partitions" / "symbol=AAA" / "rows.parquet"
+    output = tmp_path / "not-created" / "rows.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "symbol": ["AAA"],
+                "rebalance_date": ["2026-01-01"],
+                "actual_forward_return_10d": ["bad"],
+            }
+        ),
+        path,
+    )
+
+    with pytest.raises(ValueError, match="actual_forward_return_10d"):
+        _consolidate_partition_parquets(
+            [path],
+            output,
+            config={"ml": {}},
+            sample_path=None,
+            expected_row_count=1,
+        )
+
+    assert not output.parent.exists()
 
 
 def test_alpha_consolidation_casts_dictionary_strings_to_canonical_strings(tmp_path: Path) -> None:

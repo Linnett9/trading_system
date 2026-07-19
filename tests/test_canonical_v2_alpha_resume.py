@@ -938,6 +938,49 @@ def test_alpha_only_run_manifest_records_immutable_parent_and_separate_stages(
     assert state["stages"]["stock_artifact"]["path"] == str(path)
     assert state["stages"]["alpha_features"]["status"] == "completed"
     assert state["stock_artifact_generation_invoked"] is False
+    assert state["partition_generation_status"] == "COMPLETE_REUSED"
+    assert state["consolidation_status"] == "COMPLETE"
+    assert state["publication_status"] == "COMPLETE"
+    assert state["overall_status"] == "COMPLETE"
+
+
+def test_alpha_only_failed_consolidation_reports_separate_lifecycle_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _path = _base_fixture(tmp_path)
+    parent = alpha.validate_alpha_base_artifact(config)
+    report_root = tmp_path / "alpha"
+    monkeypatch.setattr(alpha, "validate_alpha_base_artifact", lambda _config: parent)
+
+    def fail_after_partitions(_config):
+        alpha._write_json(
+            report_root / "partition_dataset_status.json",
+            {
+                "partition_processing_status": "complete",
+                "consolidation_status": "failed",
+                "publication_status": "not_published",
+                "overall_status": "failed",
+                "partitions_reused": 379,
+                "partitions_recomputed": 0,
+                "workers_submitted": 0,
+            },
+        )
+        raise ValueError("synthetic consolidation failure")
+
+    monkeypatch.setattr(
+        alpha, "_write_partitioned_canonical_v2_alpha_features", fail_after_partitions
+    )
+
+    with pytest.raises(ValueError, match="synthetic consolidation failure"):
+        alpha.write_partitioned_canonical_v2_alpha_features(config)
+
+    state = json.loads(
+        (report_root / "alpha_only_run_manifest.json").read_text()
+    )
+    assert state["partition_generation_status"] == "COMPLETE"
+    assert state["consolidation_status"] == "FAILED"
+    assert state["publication_status"] == "NOT_PUBLISHED"
+    assert state["overall_status"] == "FAILED"
 
 
 def test_alpha_resume_owner_does_not_import_unrelated_processing_owners() -> None:
