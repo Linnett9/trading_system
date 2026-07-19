@@ -18,6 +18,9 @@ def main() -> None:
     parser.add_argument("--daily-spine-manifest", required=True, type=Path)
     parser.add_argument("--daily-feature-manifest", required=True, type=Path)
     parser.add_argument("--symbol-registry-manifest", required=True, type=Path)
+    parser.add_argument("--base-artifact", required=True, type=Path)
+    parser.add_argument("--base-manifest", required=True, type=Path)
+    parser.add_argument("--enriched-manifest", required=True, type=Path)
     args = parser.parse_args()
     paths = build_frozen_selector_dataset(
         args.source, args.market_root, args.output_root,
@@ -28,6 +31,9 @@ def main() -> None:
         daily_spine_manifest_path=args.daily_spine_manifest,
         daily_feature_manifest_path=args.daily_feature_manifest,
         symbol_registry_manifest_path=args.symbol_registry_manifest,
+        base_artifact_path=args.base_artifact,
+        base_manifest_path=args.base_manifest,
+        enriched_manifest_path=args.enriched_manifest,
     )
     print(paths.manifest)
 

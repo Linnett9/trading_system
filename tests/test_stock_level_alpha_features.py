@@ -166,9 +166,9 @@ def test_parallel_feature_generation_output_order_is_deterministic():
         executor_cls=ThreadPoolExecutor,
     )
 
-    assert [(row["rebalance_date"], row["symbol"]) for row in enriched] == sorted(
-        (row["rebalance_date"], row["symbol"]) for row in enriched
-    )
+    assert [(row["rebalance_date"], row["symbol"]) for row in enriched] == [
+        (row["rebalance_date"], row["symbol"]) for row in rows
+    ]
     assert audit["source_columns_preserved"] is True
     assert audit["parallelism"]["output_order"] == "rebalance_date_symbol"
 

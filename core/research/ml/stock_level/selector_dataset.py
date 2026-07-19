@@ -109,6 +109,9 @@ def build_frozen_selector_dataset(
     config_hash: str | None = None, daily_spine_manifest_path: Path | None = None,
     daily_feature_manifest_path: Path | None = None,
     symbol_registry_manifest_path: Path | None = None,
+    base_artifact_path: Path | None = None,
+    base_manifest_path: Path | None = None,
+    enriched_manifest_path: Path | None = None,
 ) -> SelectorDatasetPaths:
     import pyarrow as pa
     import pyarrow.dataset as ds
@@ -116,6 +119,15 @@ def build_frozen_selector_dataset(
 
     if daily_spine_manifest_path is None or daily_feature_manifest_path is None or symbol_registry_manifest_path is None:
         raise ValueError("Authoritative daily-spine, daily-feature, and symbol-registry parent manifests are required")
+    if (
+        base_artifact_path is None
+        or base_manifest_path is None
+        or enriched_manifest_path is None
+    ):
+        raise ValueError(
+            "Frozen selector publication requires explicit base artifact, "
+            "base manifest, and enriched manifest"
+        )
     parents = _validate_parent_manifests(source_path, daily_spine_manifest_path, daily_feature_manifest_path, symbol_registry_manifest_path)
     final_root = output_root
     if final_root.exists():
@@ -238,6 +250,28 @@ def build_frozen_selector_dataset(
     target = RegistryResolver(load_registry_bundle()).resolve(
         "target_contracts", "forward_return_10d", role="selector"
     )
+    from core.research.ml.stock_level.selector_lineage import (
+        preflight_frozen_selector_dataset,
+    )
+
+    base_rows = pq.read_table(base_artifact_path).to_pylist()
+    enriched_rows = pq.read_table(rows_path).to_pylist()
+    frozen_preflight = preflight_frozen_selector_dataset(
+        daily_spine_manifest=json.loads(
+            daily_spine_manifest_path.read_text(encoding="utf-8")
+        ),
+        base_manifest=json.loads(base_manifest_path.read_text(encoding="utf-8")),
+        enriched_manifest=json.loads(
+            enriched_manifest_path.read_text(encoding="utf-8")
+        ),
+        base_rows=base_rows,
+        enriched_rows=enriched_rows,
+        feature_columns=DETERMINISTIC_SIGNAL_COLUMNS,
+    )
+    if frozen_preflight["status"] != "READY":
+        raise ValueError(
+            f"Frozen selector preflight blocked: {frozen_preflight['blockers']}"
+        )
     manifest = {
         "manifest_schema_version": SELECTOR_DATASET_MANIFEST_VERSION,
         "frozen_dataset_version": "v2",
@@ -252,6 +286,12 @@ def build_frozen_selector_dataset(
         "baseline_contract": BASELINE_CONTRACT_VERSION,
         "target_contract": target.canonical_id,
         "target_contract_checksum": target.entry.entry_hash,
+        "economic_target_id": target.canonical_id,
+        "target_provenance_contract_version": (
+            "stock_level_target_provenance_v2"
+        ),
+        "target_registry_schema_version": "selector_target_identity.v1",
+        "target_registry_entry_checksum": target.entry.entry_hash,
         "ranking_contract": "daily_cross_sectional_ranking_problem_v1",
         "daily_stock_spine_identity": parents["daily_spine_identity"],
         "daily_stock_spine_version": parents["daily_spine_version"],
@@ -270,6 +310,7 @@ def build_frozen_selector_dataset(
         "git_commit": _git_commit(), "config_hash": config_hash, "checksums": checksums,
         "feature_schema_checksum": checksums["feature_schema.json"],
         "target_schema_checksum": checksums["target_schema.json"],
+        "frozen_preflight": frozen_preflight,
         "bounded_symbols": selected_symbols, "bounded_decision_dates": selected_dates,
         "creation_timestamp": datetime.now(timezone.utc).isoformat(), "publication_status": "complete", "validation_status": "VERIFIED",
     }
