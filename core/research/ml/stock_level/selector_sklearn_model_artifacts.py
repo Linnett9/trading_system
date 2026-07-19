@@ -28,6 +28,10 @@ from core.research.compute.model_artifacts import (
     read_trusted_model_bytes,
     validate_model_artifact_manifest,
 )
+from core.research.ml.stock_level.selector_target_identity import (
+    validate_selector_prediction_target_binding,
+    validate_selector_target_identity,
+)
 
 
 SELECTOR_SKLEARN_PACKAGE_CONTRACT = "selector_sklearn_model_package.v1"
@@ -56,6 +60,8 @@ def publish_selector_sklearn_model_package(
     training_boundary: Mapping[str, Any],
     training_population_checksum: str,
     target_horizon_identity: str,
+    economic_target_id: str,
+    target_provenance_contract_version: str,
     prediction_path: Path,
     prediction_schema: Sequence[str],
     prediction_count: int,
@@ -79,6 +85,10 @@ def publish_selector_sklearn_model_package(
     publish_prediction_binding: bool = True,
     member_model_identity: str | None = None,
 ) -> dict[str, Any]:
+    target_identity = validate_selector_target_identity(
+        economic_target_id=economic_target_id,
+        target_provenance_contract_version=target_provenance_contract_version,
+    )
     if model_id not in SUPPORTED_MODELS:
         raise ValueError(f"Unsupported selector sklearn artifact family: {model_id}")
     ordered_features = [str(value) for value in feature_order]
@@ -124,6 +134,7 @@ def publish_selector_sklearn_model_package(
         "component": component_identity,
         "model": model_id,
         "target_horizon_identity": target_horizon_identity,
+        **target_identity.as_dict(),
     })
     model_root = model_artifact_root or (
         component_root / "shared_model_artifact" / "model"
@@ -140,6 +151,7 @@ def publish_selector_sklearn_model_package(
         "training_boundary": dict(training_boundary),
         "training_population_checksum": training_population_checksum,
         "target_horizon_identity": target_horizon_identity,
+        **target_identity.as_dict(),
         "feature_order": ordered_features,
         "feature_order_checksum": canonical_checksum(ordered_features),
         "preprocessing_identity": preprocessing_identity,
@@ -283,6 +295,7 @@ def publish_selector_sklearn_model_package(
         "plan_job_identity": plan_job_identity,
         "decision_date": decision_date,
         "horizon": target_horizon_identity,
+        **target_identity.as_dict(),
         "source_git_commit": source_git_commit,
     }
     prediction_template = build_artifact_manifest(
@@ -329,6 +342,7 @@ def publish_selector_sklearn_model_package(
         {"metadata/prediction_binding.json": _json_bytes(binding)},
     )
     validate_prediction_binding(prediction_manifest, model_manifest)
+    validate_selector_prediction_target_binding(binding, model_metadata)
     return {
         "completion_status": "COMPLETE",
         "compatible_skip_status": (

@@ -35,6 +35,7 @@ def validate_component_plan(
     required = {
         "job_id", "model_id", "prediction_date", "selector_dataset_root",
         "authoritative_output_root", "feature_schema", "target_contract",
+        "economic_target_id", "target_provenance_contract_version",
         "expected_parent_gate_checksum", "expected_dataset_checksum",
         "dependency_state", "overwrite_policy", "resume_policy", "logical_checksum",
     }

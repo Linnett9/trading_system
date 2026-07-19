@@ -114,6 +114,8 @@ def _publish(tmp_path: Path, family: str = "ridge", **changes):
         "source_schema_guarantee_identity": "schema",
         "input_population_checksum": "input-checksum",
         "source_git_commit": "commit",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
     }
     values.update(changes)
     return publish_selector_multihorizon_package(**values)
@@ -134,6 +136,10 @@ def test_publishes_ordered_members_ensemble_and_wide_predictions(
     metadata = validated["ensemble"]["model_metadata"]
     assert metadata["ordered_horizons"] == list(HORIZON_IDS)
     assert metadata["member_count"] == metadata["expected_member_count"] == 4
+    assert metadata["economic_target_id"] == "forward_return_10d"
+    assert metadata["target_provenance_contract_version"] == (
+        "stock_level_target_provenance_v2"
+    )
     assert metadata["combination_rule"] == (
         "ordered_horizon_vector_no_scalar_aggregation"
     )

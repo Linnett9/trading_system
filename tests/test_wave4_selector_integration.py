@@ -106,7 +106,10 @@ def test_huber_authoritative_publication_is_deterministic_and_resumable(tmp_path
     manifest = json.loads(Path(first["manifest_path"]).read_text())
     assert manifest["component_schema_version"] == "authoritative_selector_component_v1"
     assert manifest["validation_status"] == "VERIFIED_STRICT_OOS"
-    assert manifest["target_contract_version"] == "forward_return_10d"
+    assert manifest["economic_target_id"] == "forward_return_10d"
+    assert manifest["target_provenance_contract_version"] == (
+        "stock_level_target_provenance_v2"
+    )
     metrics = json.loads(Path(manifest["metrics_path"]).read_text())
     assert metrics["diagnostics"]["convergence_status"] == "CONVERGED"
     assert metrics["gate_w4_evidence"]["gate_passed"] is False
