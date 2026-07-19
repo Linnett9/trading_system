@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 REQUEST_V2 = "stock_alpha_news_canonical_materialisation_request.v2"
 AUTHORIZATION_V2 = "stock_alpha_news_canonical_materialisation_authorization.v2"
+AUTHORIZATION_V3 = "stock_alpha_news_canonical_materialisation_authorization.v3"
 SELECTION_CONTRACT = "stock_alpha_news_ingested_at_utc_selection.v1"
 STAGE = "CANONICAL_CORPUS_MATERIALISATION"
 NOTICE = "NOT PRODUCTION EXECUTION AUTHORIZATION"
@@ -92,8 +93,7 @@ def configuration_checksum(material):
 def authorization_template(v2, runtime_checksum, expected_run_id):
     validate_v2_request(v2)
     return {
-        "notice": NOTICE,
-        "authorization_contract": AUTHORIZATION_V2,
+        "authorization_contract": AUTHORIZATION_V3,
         "execution_authorized": False,
         "materialisation_request_identity": v2["logical_request_identity"],
         "source_assembly_sha256": v2["source_assembly_checksum"],
@@ -144,7 +144,22 @@ def validate_authorization(
     execution_required: bool,
 ):
     validate_v2_request(request)
-    if authorization.get("authorization_contract") != AUTHORIZATION_V2:
+    contract = authorization.get("authorization_contract")
+    if contract == AUTHORIZATION_V2:
+        if execution_required:
+            if (
+                authorization.get("execution_authorized") is True
+                and authorization.get("notice")
+                == "NOT PRODUCTION EXECUTION AUTHORIZATION"
+            ):
+                raise ValueError(
+                    "AUTHORIZATION_NOTICE_CONTRACT_CONTRADICTION"
+                )
+            raise ValueError("SUPERSEDED_AUTHORIZATION_CONTRACT")
+        return _validate_historical_v2_plan_authorization(
+            authorization, request, runtime_checksum, expected_run_id
+        )
+    if contract != AUTHORIZATION_V3:
         raise ValueError(
             "INCOMPLETE_OR_SUPERSEDED_AUTHORIZATION_CONTRACT"
         )
@@ -158,6 +173,8 @@ def validate_authorization(
         for value in authorization.values()
     ):
         raise ValueError("AUTHORIZATION_BLANK_FIELD")
+    if type(authorization.get("execution_authorized")) is not bool:
+        raise ValueError("AUTHORIZATION_FLAG_MUST_BE_BOOLEAN")
     for key, value in expected.items():
         if key == "execution_authorized":
             continue
@@ -175,6 +192,37 @@ def validate_authorization(
     return {
         "authorization_identity": _identity(authorization),
         "execution_authorized": authorization["execution_authorized"],
+    }
+
+
+def _validate_historical_v2_plan_authorization(
+    authorization, request, runtime_checksum, expected_run_id,
+):
+    expected = {
+        "notice": NOTICE,
+        "authorization_contract": AUTHORIZATION_V2,
+        "execution_authorized": False,
+        "materialisation_request_identity": request[
+            "logical_request_identity"
+        ],
+        "source_assembly_sha256": request["source_assembly_checksum"],
+        "ingested_at_utc": request["ingested_at_utc"],
+        "ingested_at_utc_provenance_identity": request[
+            "ingested_at_utc_provenance_identity"
+        ],
+        "expected_shared_run_id": expected_run_id,
+        "approved_output_root": request["canonical_output_root"],
+        "authorized_stage": STAGE,
+        "reviewed_runtime_configuration_checksum": runtime_checksum,
+    }
+    if set(authorization) != set(expected):
+        raise ValueError("AUTHORIZATION_SCOPE_KEYS_MISMATCH")
+    if authorization != expected:
+        raise ValueError("HISTORICAL_V2_PLAN_AUTHORIZATION_MISMATCH")
+    return {
+        "authorization_identity": _identity(authorization),
+        "execution_authorized": False,
+        "historical_contract": True,
     }
 
 

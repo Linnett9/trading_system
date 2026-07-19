@@ -108,6 +108,13 @@ def main(argv=None):
             or material.get("network_access_allowed") is not False
         ):
             raise ValueError("RUNTIME_CONFIGURATION_POLICY_MISMATCH")
+        plan = _plan(request, runtime_checksum)
+        run_id = deterministic_news_data_run_id(plan)
+        authorization = load_authorization(args.authorization)
+        validation = validate_authorization(
+            authorization, request, runtime_checksum, run_id,
+            execution_required=args.execute,
+        )
         for supplied, expected in (
             (args.run_root, Path(request["shared_compute_run_root"])),
             (args.resource_ledger, Path(request["resource_ledger_path"])),
@@ -126,13 +133,6 @@ def main(argv=None):
             args.registry.resolve(), args.request.parent.resolve(),
         }:
             raise ValueError("CANONICAL_OUTPUT_ALIASES_OPERATOR_PATH")
-        plan = _plan(request, runtime_checksum)
-        run_id = deterministic_news_data_run_id(plan)
-        authorization = load_authorization(args.authorization)
-        validation = validate_authorization(
-            authorization, request, runtime_checksum, run_id,
-            execution_required=args.execute,
-        )
         if args.plan_only:
             result = {
                 "status": (
