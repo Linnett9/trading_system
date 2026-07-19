@@ -17,6 +17,11 @@ if str(REPO_ROOT) not in sys.path:
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from infrastructure.data.alpaca_parquet_conversion_compute import (
+    ConversionComputeOptions,
+    execute_conversion_run,
+)
+
 
 RAW_ROOT = Path("data/raw/alpaca/stock_bars")
 PARQUET_ROOT = Path("data/processed/alpaca/stock_bars_parquet")
@@ -78,6 +83,30 @@ def main() -> int:
         help="Number of chunk conversions to run in parallel.",
     )
     parser.add_argument(
+        "--compute-runs-root",
+        type=Path,
+        default=Path("reports/runs"),
+        help="Root for the shared compute run ledger and summaries.",
+    )
+    parser.add_argument(
+        "--resource-ledger",
+        type=Path,
+        default=Path("reports/compute/resource_leases/resource_lease_ledger.json"),
+        help="Persisted machine-wide resource lease ledger.",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=Path("reports/compute/artifacts/data_conversion"),
+        help="Root for published data-stage artifact packages.",
+    )
+    parser.add_argument(
+        "--run-registry",
+        type=Path,
+        default=Path("reports/runs/run_registry.json"),
+        help="Global shared compute run registry.",
+    )
+    parser.add_argument(
         "--progress",
         action="store_true",
         help="Write one progress line to stderr after each processed chunk.",
@@ -108,6 +137,11 @@ def main() -> int:
         raise SystemExit("--workers must be at least 1")
     if args.execute and args.dry_run:
         raise SystemExit("--execute and --dry-run cannot be combined")
+    if args.delete_source_json_after_validation:
+        raise SystemExit(
+            "--delete-source-json-after-validation is not supported by shared compute execution; "
+            "source JSON is always preserved"
+        )
 
     manifest_filter = None if args.include_non_manifest_chunks else args.collection_manifest
     scan = scan_candidates(args.raw_root, args.parquet_root, collection_manifest_path=manifest_filter)
@@ -118,13 +152,29 @@ def main() -> int:
         if args.dry_run or not args.execute:
             results.append({"status": "dry_run", **candidate})
     if args.execute and not args.dry_run:
-        results = run_conversions(
-            selected,
-            args.row_group_size,
-            args.workers,
-            args.progress,
-            delete_json_after_validate=bool(args.delete_source_json_after_validation),
+        execution = execute_conversion_run(
+            candidates=selected,
+            compatible_skips=scan["compatible_skips"],
+            convert_one=convert_one,
+            options=ConversionComputeOptions(
+                row_group_size=args.row_group_size,
+                requested_workers=args.workers,
+                progress=args.progress,
+                runs_root=args.compute_runs_root,
+                resource_ledger_path=args.resource_ledger,
+                artifact_root=args.artifact_root,
+                registry_path=args.run_registry,
+                invocation={
+                    "raw_root": str(args.raw_root),
+                    "parquet_root": str(args.parquet_root),
+                    "collection_manifest": str(manifest_filter) if manifest_filter else None,
+                    "include_non_manifest_chunks": bool(args.include_non_manifest_chunks),
+                    "max_chunks": args.max_chunks,
+                    "row_group_size": args.row_group_size,
+                },
+            ),
         )
+        results = execution["results"]
     converted_count = sum(1 for row in results if row.get("status") == "converted")
     source_json_preserved_count = sum(1 for row in results if row.get("json_payloads_preserved") is True)
     parquet_bytes_written = sum(int(row.get("parquet_bytes", 0) or 0) for row in results)
@@ -210,6 +260,7 @@ def scan_candidates(
     collection_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     candidates = []
+    compatible_skips = []
     skipped_existing_count = 0
     allowed_chunk_ids = load_manifest_chunk_ids(collection_manifest_path)
     for dirpath, _dirnames, filenames in os.walk(raw_root, onerror=lambda _error: None):
@@ -231,6 +282,7 @@ def scan_candidates(
         final_path = parquet_path(parquet_root, raw_root, chunk_dir)
         if already_converted(chunk_dir, final_path):
             skipped_existing_count += 1
+            compatible_skips.append(compatible_candidate(chunk_dir, final_path, manifest))
             continue
         source_bytes = payload_size(chunk_dir)
         candidates.append(
@@ -246,7 +298,26 @@ def scan_candidates(
         )
     return {
         "candidates": sorted(candidates, key=lambda row: (int(row["source_bytes"]), row["source_path"])),
+        "compatible_skips": sorted(compatible_skips, key=lambda row: row["source_path"]),
         "skipped_existing_count": skipped_existing_count,
+    }
+
+
+def compatible_candidate(
+    chunk_dir: Path, final_path: Path, manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    evidence_path = chunk_dir / "parquet_conversion.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    return {
+        "status": "skipped_compatible",
+        "source_path": str(chunk_dir),
+        "parquet_path": str(final_path),
+        "evidence_path": str(evidence_path),
+        "chunk_id": chunk_id_from_manifest(manifest),
+        "source_bytes": int(evidence.get("source_bytes", payload_size(chunk_dir)) or 0),
+        "parquet_bytes": int(evidence.get("parquet_bytes", final_path.stat().st_size) or 0),
+        "parquet_row_count": int(evidence.get("parquet_row_count", 0) or 0),
+        "manifest": dict(manifest),
     }
 
 
