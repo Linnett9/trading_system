@@ -423,6 +423,131 @@ def test_alpha_integer_and_nullable_prediction_contracts_are_explicit() -> None:
     assert schema.field("industry_mapping_available").type == pa.float64()
 
 
+def test_alpha_average_dollar_volume_is_nullable_numeric() -> None:
+    normalized, _ = _normalize_partition_rows(
+        [
+            {
+                "symbol": "ACGL",
+                "rebalance_date": "2026-01-01",
+                "average_dollar_volume_21d": "",
+                "average_dollar_volume_63d": None,
+            },
+            {
+                "symbol": "ACGL",
+                "rebalance_date": "2026-01-02",
+                "average_dollar_volume_21d": 71_335_728.87585714,
+                "average_dollar_volume_63d": 68_000_000,
+            },
+        ]
+    )
+    schema = _schema_for_fieldnames(list(normalized[0]))
+
+    assert [row["average_dollar_volume_21d"] for row in normalized] == [
+        None,
+        71_335_728.87585714,
+    ]
+    assert schema.field("average_dollar_volume_21d").type == pa.float64()
+    assert schema.field("average_dollar_volume_21d").nullable is True
+    assert schema.field("average_dollar_volume_63d").type == pa.float64()
+
+
+def test_alpha_output_schema_map_is_exhaustive_and_conflict_checked() -> None:
+    assert set(alpha_enrichment.ALPHA_OUTPUT_SCHEMA) == set(
+        alpha_enrichment.ALPHA_EXPECTED_OUTPUT_COLUMNS
+    )
+    assert all(
+        column in alpha_enrichment.ALPHA_OUTPUT_SCHEMA
+        for column in alpha_enrichment.FEATURE_DEFINITIONS
+    )
+    assert alpha_enrichment._validate_alpha_output_schema_coverage(
+        alpha_enrichment.BASE_ARTIFACT_FIXED_COLUMNS
+    )["status"] == "COMPLETE"
+
+    with pytest.raises(ValueError, match="conflicting.*x"):
+        alpha_enrichment._build_alpha_output_schema_map(
+            expected_columns=["x"],
+            bool_columns=["x"],
+            int_columns=["x"],
+            numeric_columns=[],
+        )
+
+
+def test_alpha_feature_producer_outputs_have_explicit_schema_kinds() -> None:
+    from core.research.ml.stock_level.stock_level_alpha_features_builder import (
+        _time_series_features,
+    )
+
+    produced = set(_time_series_features([], []))
+
+    assert produced <= set(alpha_enrichment.ALPHA_OUTPUT_SCHEMA)
+    assert set(alpha_enrichment.ENGINEERED_FEATURE_COLUMNS) <= set(
+        alpha_enrichment.ALPHA_OUTPUT_SCHEMA
+    )
+    assert set(alpha_enrichment.ENRICHMENT_METADATA_COLUMNS) <= set(
+        alpha_enrichment.ALPHA_OUTPUT_SCHEMA
+    )
+
+
+def test_alpha_unknown_base_column_fails_schema_preflight_before_pool() -> None:
+    with pytest.raises(ValueError, match="unknown_base_columns=.*mystery_output"):
+        alpha_enrichment._validate_alpha_output_schema_coverage(
+            ["rebalance_date", "symbol", "mystery_output"]
+        )
+
+    source = inspect.getsource(
+        alpha_enrichment._write_partitioned_canonical_v2_alpha_features
+    )
+    assert source.index("_validate_alpha_output_schema_coverage(") < source.index(
+        "_execute_alpha_process_pool("
+    )
+
+
+def test_alpha_production_style_acgl_partition_round_trip(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {
+            "symbol": "ACGL",
+            "rebalance_date": f"2026-{(index // 28) + 1:02d}-{(index % 28) + 1:02d}",
+            "true_stock_level_row": True,
+            "overlapping_targets": True,
+            "average_dollar_volume_21d": 71_335_728.87585714,
+            "average_dollar_volume_63d": (
+                None if index < 63 else 70_000_000.0
+            ),
+            "predicted_liquidity_score": (
+                None if index < 21 else 18.08
+            ),
+            "market_volatility_20d": (
+                None if index < 20 else 0.22
+            ),
+            "relative_momentum_vs_sector": (
+                "" if index == 0 else 0.03
+            ),
+        }
+        for index in range(2_206)
+    ]
+    normalized, report = _normalize_partition_rows(rows)
+    schema = _schema_for_fieldnames(list(normalized[0]))
+    path = tmp_path / "partitions" / "symbol=ACGL" / "rows.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(pa.Table.from_pylist(normalized, schema=schema), path)
+    observed = pq.ParquetFile(path).read()
+
+    assert report["valid"] is True
+    assert observed.num_rows == 2_206
+    for column in (
+        "average_dollar_volume_21d",
+        "average_dollar_volume_63d",
+        "predicted_liquidity_score",
+        "market_volatility_20d",
+        "relative_momentum_vs_sector",
+    ):
+        assert observed.schema.field(column).type == pa.float64()
+    assert observed.schema.field("true_stock_level_row").type == pa.bool_()
+    assert observed.schema.field("overlapping_targets").type == pa.bool_()
+
+
 def test_alpha_aap_boolean_partition_parquet_round_trip(tmp_path: Path) -> None:
     rows = [
         {

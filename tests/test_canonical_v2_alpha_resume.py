@@ -42,6 +42,8 @@ def _base_fixture(
             "decision_timestamp": "2026-01-02T20:05:00Z",
             "target_provenance_contract_version": provenance,
             "actual_forward_return_10d": (index + 1) / 10,
+            "average_dollar_volume_21d": 71_335_728.87585714,
+            "average_dollar_volume_63d": None,
             "true_stock_level_row": True,
             "overlapping_targets": True,
         }

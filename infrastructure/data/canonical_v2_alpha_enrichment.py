@@ -33,6 +33,7 @@ from core.research.ml.stock_level.stock_level_alpha_features_builder import (
     _add_cross_sectional_features,
     _build_symbol_rows,
     _prepare_history,
+    _time_series_features,
 )
 from core.research.ml.stock_level.stock_level_alpha_features_io import (
     _load_price_histories,
@@ -48,6 +49,13 @@ from core.research.ml.stock_level.stock_level_alpha_features_types import (
 from core.research.ml.stock_level.stock_level_artifact_io import (
     canonical_artifact_path,
     read_stock_level_artifact,
+)
+from core.research.ml.stock_level.prediction_artifacts.types import (
+    ACTUAL_COLUMNS,
+    CONTEXT_COLUMNS,
+    DECISION_CONTEXT_COLUMNS,
+    PREDICTION_COLUMNS,
+    TARGET_PROVENANCE_COLUMNS,
 )
 
 
@@ -96,9 +104,14 @@ INTERMEDIATE_NUMERIC_COLUMNS = {
 NUMERIC_COLUMNS = {
     *ENGINEERED_FEATURE_COLUMNS,
     *FEATURE_DEFINITIONS,
+    *PREDICTION_COLUMNS,
+    *ACTUAL_COLUMNS,
     *INTERMEDIATE_NUMERIC_COLUMNS,
     "industry_mapping_available",
     "model_close",
+    "average_dollar_volume_21d",
+    "average_dollar_volume_63d",
+    *CONTEXT_COLUMNS,
     "actual_forward_return_10d",
     "actual_forward_return_5d",
     "actual_future_volatility",
@@ -110,6 +123,97 @@ NUMERIC_COLUMNS = {
     "actual_rank_normalized_forward_return_10d",
     "actual_top_decile_label_10d",
 }
+BASE_ARTIFACT_FIXED_COLUMNS = {
+    "rebalance_date",
+    "symbol",
+    "benchmark_symbol",
+    "sector",
+    "average_dollar_volume_21d",
+    "average_dollar_volume_63d",
+    "source",
+    "source_feature_id",
+    "source_model_type",
+    "source_split",
+    "source_dataset_hash",
+    "true_stock_level_row",
+}
+LEGACY_SPINE_BASE_COLUMNS = {
+    "asset_id",
+    "canonical_symbol",
+    "source_provider",
+    "compatibility_tier",
+    "eligibility_reason",
+    "selector_eligible",
+    "provider_transition_flag",
+    "provider_transition_id",
+}
+ALPHA_EXPECTED_OUTPUT_COLUMNS = frozenset(
+    {
+        *BASE_ARTIFACT_FIXED_COLUMNS,
+        *LEGACY_SPINE_BASE_COLUMNS,
+        *PREDICTION_COLUMNS,
+        *ACTUAL_COLUMNS,
+        *TARGET_PROVENANCE_COLUMNS,
+        *CONTEXT_COLUMNS,
+        *DECISION_CONTEXT_COLUMNS,
+        *ENGINEERED_FEATURE_COLUMNS,
+        *ENRICHMENT_METADATA_COLUMNS,
+        *FEATURE_DEFINITIONS,
+        *INTERMEDIATE_NUMERIC_COLUMNS,
+        "model_close",
+    }
+)
+
+
+def _build_alpha_output_schema_map(
+    *,
+    expected_columns: Sequence[str] = tuple(sorted(ALPHA_EXPECTED_OUTPUT_COLUMNS)),
+    bool_columns: Sequence[str] = tuple(sorted(BOOL_COLUMNS)),
+    int_columns: Sequence[str] = tuple(sorted(INT_COLUMNS)),
+    numeric_columns: Sequence[str] = tuple(
+        sorted(NUMERIC_COLUMNS - INT_COLUMNS - BOOL_COLUMNS)
+    ),
+) -> dict[str, tuple[str, bool]]:
+    kinds = {
+        "bool": set(bool_columns),
+        "int": set(int_columns),
+        "float": set(numeric_columns),
+    }
+    conflicts: dict[str, list[str]] = {}
+    for column in set().union(*kinds.values()):
+        assigned = [kind for kind, columns in kinds.items() if column in columns]
+        if len(assigned) > 1:
+            conflicts[column] = assigned
+    if conflicts:
+        raise ValueError(
+            "conflicting alpha output schema classifications: "
+            + json.dumps(conflicts, sort_keys=True)
+        )
+    expected = set(expected_columns)
+    classified = set().union(*kinds.values())
+    unexpected = sorted(classified - expected)
+    if unexpected:
+        raise ValueError(
+            f"alpha output schema classifies unexpected columns: {unexpected}"
+        )
+    schema = {
+        column: (
+            next(
+                (
+                    kind
+                    for kind, columns in kinds.items()
+                    if column in columns
+                ),
+                "string",
+            ),
+            column not in NON_NULLABLE_COLUMNS,
+        )
+        for column in sorted(expected)
+    }
+    return schema
+
+
+ALPHA_OUTPUT_SCHEMA = _build_alpha_output_schema_map()
 
 
 class PartitionBuildError(RuntimeError):
@@ -192,6 +296,7 @@ def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
         "resolved_path": str(path.resolve()),
         "row_count": metadata.num_rows,
         "column_count": len(schema.names),
+        "column_names": list(schema.names),
         "required_columns": sorted(REQUIRED_BASE_COLUMNS),
         "schema_fingerprint": _schema_fingerprint(schema),
         "sha256": observed_sha256,
@@ -282,6 +387,9 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
     report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
     report_root.mkdir(parents=True, exist_ok=True)
     base_validation = validate_alpha_base_artifact(config)
+    schema_coverage = _validate_alpha_output_schema_coverage(
+        base_validation["column_names"]
+    )
     config["ml"]["canonical_v2_alpha_validated_base_sha256"] = base_validation["sha256"]
     config["ml"]["canonical_v2_alpha_validated_base_key_sha256"] = base_validation["economic_key_sha256"]
     input_resolution = resolve_inputs(config)
@@ -340,6 +448,7 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "base_economic_key_sha256": base_validation["economic_key_sha256"],
         "base_partition_root": str(base_partition_root),
         "partition_namespace": namespace_identity,
+        "output_schema_coverage": schema_coverage,
         "source_mode": "certified_published_base_partition",
         "canonical_price_root": str(settings.parquet_dir),
         "monolithic_base_read": False,
@@ -2624,13 +2733,42 @@ def _duplicate_symbol_date_count(rows: Sequence[Mapping[str, Any]]) -> int:
 
 
 def _column_kind(column: str) -> str:
-    if column in BOOL_COLUMNS:
-        return "bool"
-    if column in INT_COLUMNS:
-        return "int"
-    if column in NUMERIC_COLUMNS or column.startswith("actual_") or column.startswith("predicted_"):
-        return "float"
-    return "string"
+    field = ALPHA_OUTPUT_SCHEMA.get(column)
+    if field is None:
+        raise ValueError(f"unknown canonical-v2 alpha output column: {column}")
+    return field[0]
+
+
+def _validate_alpha_output_schema_coverage(
+    base_columns: Sequence[str],
+) -> dict[str, Any]:
+    unknown_base_columns = sorted(set(base_columns) - set(ALPHA_OUTPUT_SCHEMA))
+    producer_columns = set(_time_series_features([], []))
+    unknown_producer_columns = sorted(
+        producer_columns - set(ALPHA_OUTPUT_SCHEMA)
+    )
+    missing_expected_columns = sorted(
+        ALPHA_EXPECTED_OUTPUT_COLUMNS - set(ALPHA_OUTPUT_SCHEMA)
+    )
+    if (
+        unknown_base_columns
+        or unknown_producer_columns
+        or missing_expected_columns
+    ):
+        raise ValueError(
+            "canonical-v2 alpha output schema coverage is incomplete: "
+            f"unknown_base_columns={unknown_base_columns} "
+            f"unknown_producer_columns={unknown_producer_columns} "
+            f"missing_expected_columns={missing_expected_columns}"
+        )
+    return {
+        "status": "COMPLETE",
+        "base_column_count": len(set(base_columns)),
+        "producer_column_count": len(producer_columns),
+        "expected_output_column_count": len(ALPHA_EXPECTED_OUTPUT_COLUMNS),
+        "schema_map_column_count": len(ALPHA_OUTPUT_SCHEMA),
+        "schema_identity": _feature_schema_identity(),
+    }
 
 
 def _arrow_type_for_column(column: str) -> pa.DataType:
@@ -2650,7 +2788,7 @@ def _schema_for_fieldnames(fieldnames: Sequence[str]) -> pa.Schema:
             pa.field(
                 name,
                 _arrow_type_for_column(name),
-                nullable=name not in NON_NULLABLE_COLUMNS,
+                nullable=ALPHA_OUTPUT_SCHEMA[name][1],
             )
             for name in fieldnames
         ]
@@ -2753,6 +2891,10 @@ def _feature_schema_identity() -> str:
     payload = {
         "engineered": list(ENGINEERED_FEATURE_COLUMNS),
         "enrichment_metadata": list(ENRICHMENT_METADATA_COLUMNS),
+        "output_schema": {
+            column: {"kind": kind, "nullable": nullable}
+            for column, (kind, nullable) in sorted(ALPHA_OUTPUT_SCHEMA.items())
+        },
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
