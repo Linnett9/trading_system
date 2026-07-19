@@ -30,6 +30,7 @@ def run_stage10_component_batch(
     weighted_capacity: int = 4,
     runner: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
     campaign_manifest: Mapping[str, Any] | None = None,
+    compute_execution: Any | None = None,
 ) -> dict[str, Any]:
     if readiness.get("readiness_contract_version") != READINESS_CONTRACT:
         raise ValueError("Stage-10 readiness contract mismatch")
@@ -62,15 +63,30 @@ def run_stage10_component_batch(
         campaign_manifest_path=campaign_path,
         campaign_identity=str(campaign_manifest.get("campaign_identity") or ""),
         component_runners=campaign_runners,
+        compute_execution=compute_execution,
     )
 
-    evidence = run_component_jobs(
-        jobs,
-        runner=lambda job: invoke(job, packages[str(job["job_id"])]),
-        max_component_workers=max_component_workers,
-        capacity=weighted_capacity,
-        campaign_manifest=campaign_manifest,
-    )
+    try:
+        evidence = run_component_jobs(
+            jobs,
+            runner=lambda job: invoke(job, packages[str(job["job_id"])]),
+            max_component_workers=max_component_workers,
+            capacity=weighted_capacity,
+            campaign_manifest=campaign_manifest,
+        )
+    except BaseException:
+        if compute_execution is not None:
+            compute_execution.close(reason="BATCH_FAILURE")
+        raise
+    else:
+        if compute_execution is not None:
+            compute_execution.close(
+                reason=(
+                    "BATCH_FAILURE"
+                    if any(row["status"] == "FAILED" for row in evidence)
+                    else "SUCCESS"
+                )
+            )
     report = {
         "batch_contract_version": BATCH_CONTRACT,
         "readiness_logical_checksum": readiness.get("logical_checksum"),
@@ -82,8 +98,18 @@ def run_stage10_component_batch(
             campaign_manifest.get("campaign_identity")
             if campaign_manifest else None
         ),
-        "status": "FAILED" if any(row["status"] == "FAILED" for row in evidence)
-        else "COMPLETED",
+        "status": (
+            "FAILED"
+            if any(row["status"] == "FAILED" for row in evidence)
+            else "INCOMPLETE"
+            if any(
+                row["status"] in {
+                    "WAITING_FOR_RESOURCES", "INCOMPLETE", "NOT_STARTED",
+                }
+                for row in evidence
+            )
+            else "COMPLETED"
+        ),
         "jobs": evidence,
     }
     _atomic_json(output_root / "batch_report.json", report)
@@ -124,6 +150,7 @@ def _subprocess_runner(
     campaign_manifest_path: Path,
     campaign_identity: str,
     component_runners: Mapping[str, str],
+    compute_execution: Any | None = None,
 ) -> Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]]:
     def invoke(
         job: Mapping[str, Any], package: Mapping[str, Any]
@@ -151,13 +178,17 @@ def _subprocess_runner(
         ]
         environment = os.environ.copy()
         environment.update({name: "1" for name in THREAD_VARIABLES})
+        if compute_execution is not None:
+            return compute_execution.execute_component(
+                job=job,
+                command=command,
+                environment=environment,
+                report_path=report_path,
+                transcript_path=transcript_path,
+            )
         result = subprocess.run(
-            command,
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=environment,
+            command, cwd=REPO_ROOT, capture_output=True, text=True,
+            check=False, env=environment,
         )
         transcript_path.parent.mkdir(parents=True, exist_ok=True)
         transcript_path.write_text(

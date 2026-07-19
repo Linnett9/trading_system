@@ -25,6 +25,7 @@ def test_production_owner_uses_only_supplied_training_and_prediction_rows(
 ):
     dataset = _dataset()
     captured = {}
+    fitted = []
 
     class Model:
         def predict(self, matrix):
@@ -43,6 +44,7 @@ def test_production_owner_uses_only_supplied_training_and_prediction_rows(
         authoritative_context=_context(model_id, dataset),
         dependency_preflight=_dependency(objective),
         estimator_fitters={model_id: fit},
+        fitted_model_callback=fitted.append,
     )
 
     assert result["valid"]
@@ -56,6 +58,13 @@ def test_production_owner_uses_only_supplied_training_and_prediction_rows(
     assert len(captured["training_matrix"]) == 5
     assert len(captured["prediction_matrix"]) == 5
     assert captured["groups"] == [5]
+    assert len(fitted) == 1
+    assert fitted[0].estimator.__class__.__name__ == "Model"
+    assert fitted[0].feature_order == ("signal",)
+    assert fitted[0].group_evidence["training_group_sizes"] == [5]
+    assert fitted[0].ranking_label_evidence[
+        "published_prediction_rows_unlabeled"
+    ]
     assert {
         row["decision_date"]
         for row in result["prediction_contract"]["rows"]
@@ -79,6 +88,47 @@ def test_dependency_failure_precedes_estimator_fit():
 
     assert not result["valid"]
     assert called is False
+
+
+def test_fitted_callback_receives_exact_model_after_prediction_and_propagates():
+    dataset = _dataset()
+    events = []
+
+    class Model:
+        def predict(self, matrix):
+            events.append("predict")
+            return np.arange(len(matrix), dtype=float)
+
+    model = Model()
+    captured = []
+    result = fit_production_lightgbm_selector(
+        dataset,
+        model_id="lightgbm_rank_xendcg",
+        authoritative_context=_context("lightgbm_rank_xendcg", dataset),
+        dependency_preflight=_dependency("rank_xendcg"),
+        estimator_fitters={"lightgbm_rank_xendcg": lambda *args: model},
+        fitted_model_callback=lambda payload: (
+            events.append("callback"), captured.append(payload)
+        ),
+    )
+    assert result["valid"]
+    assert events == ["predict", "callback"]
+    assert captured[0].estimator is model
+    assert captured[0].group_evidence[
+        "ordered_training_membership_checksum"
+    ]
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        fit_production_lightgbm_selector(
+            dataset,
+            model_id="lightgbm_rank_xendcg",
+            authoritative_context=_context("lightgbm_rank_xendcg", dataset),
+            dependency_preflight=_dependency("rank_xendcg"),
+            estimator_fitters={"lightgbm_rank_xendcg": lambda *args: model},
+            fitted_model_callback=lambda payload: (_ for _ in ()).throw(
+                RuntimeError("callback failed")
+            ),
+        )
 
 
 def test_existing_synthetic_entry_point_remains_synthetic_only(monkeypatch):

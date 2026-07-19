@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 import platform
 import warnings
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from core.research.ml.selector_component_rows import validate_model_row_roles
 
@@ -41,6 +43,30 @@ class MultiHorizonError(ValueError):
         super().__init__(reason)
         self.status = status
         self.reason = reason
+
+
+@dataclass(frozen=True)
+class FittedMultiHorizonMember:
+    estimator: Any
+    model_family: str
+    horizon_id: str
+    horizon_order: int
+    family_order: int
+    member_order: int
+    ordered_feature_ids: tuple[str, ...]
+    preprocessing: Mapping[str, Any]
+    estimator_configuration: Mapping[str, Any]
+    random_state_identity: int | str
+    target_identity: str
+    training_population: Mapping[str, Any]
+    fold_identity: str
+    training_cutoff: str
+    input_identity: str
+    configuration_identity: str
+
+
+class _FittedMemberCallbackFailure(Exception):
+    pass
 
 
 def canonical_json(value: Any) -> str:
@@ -249,6 +275,7 @@ def fit_multi_horizon_linear_selector(
     elastic_maximum_iterations: int = 5000,
     minimum_training_rows: int = 5,
     minimum_rank_diversity: int = 2,
+    fitted_member_callback: Callable[[FittedMultiHorizonMember], None] | None = None,
 ) -> dict[str, Any]:
     config = {
         "training_cutoff": training_cutoff, "model_families": list(model_families),
@@ -284,7 +311,8 @@ def fit_multi_horizon_linear_selector(
             raise MultiHorizonError("NUMERICAL_FAILURE", "SKLEARN_UNAVAILABLE")
         populations, preprocessing, models, predictions, diagnostics = {}, {}, [], [], {}
         available_horizons = []
-        for target in base["target_contract"]["horizons"]:
+        member_order = 0
+        for horizon_order, target in enumerate(base["target_contract"]["horizons"]):
             horizon_id = target["horizon_id"]
             candidates = [row for row in base["rows"] if row["split"] == "TRAINING"]
             eligible = [
@@ -335,12 +363,19 @@ def fit_multi_horizon_linear_selector(
             weights = np.asarray([row["sample_weight"] for row in eligible])
             horizon_predictions = {}
             horizon_models = []
-            for family in families:
+            for family_order, family in enumerate(families):
                 if family == "ridge":
                     estimator = Ridge(alpha=ridge_alpha, fit_intercept=True, solver="auto", tol=1e-4)
                     estimator.fit(train_scaled, y_train, sample_weight=weights)
                     convergence = "CLOSED_FORM_OR_DETERMINISTIC_SOLVER_COMPLETE"
                     sparsity = None
+                    estimator_configuration = {
+                        "alpha": ridge_alpha, "fit_intercept": True,
+                        "solver": "auto", "tolerance": 1e-4,
+                    }
+                    random_state_identity: int | str = (
+                        "NOT_APPLICABLE_DETERMINISTIC"
+                    )
                 else:
                     estimator = ElasticNet(
                         alpha=elastic_alpha, l1_ratio=elastic_l1_ratio, fit_intercept=True,
@@ -354,6 +389,41 @@ def fit_multi_horizon_linear_selector(
                         raise MultiHorizonError("NON_CONVERGENCE", f"ELASTIC_NET_NON_CONVERGENCE:{horizon_id}")
                     convergence = "CONVERGED"
                     sparsity = float(np.mean(estimator.coef_ == 0))
+                    estimator_configuration = {
+                        "alpha": elastic_alpha, "l1_ratio": elastic_l1_ratio,
+                        "fit_intercept": True,
+                        "maximum_iterations": elastic_maximum_iterations,
+                        "tolerance": elastic_tolerance, "selection": "cyclic",
+                    }
+                    random_state_identity = 0
+                if fitted_member_callback is not None:
+                    payload = FittedMultiHorizonMember(
+                        estimator=estimator,
+                        model_family=family,
+                        horizon_id=horizon_id,
+                        horizon_order=horizon_order,
+                        family_order=family_order,
+                        member_order=member_order,
+                        ordered_feature_ids=tuple(base["ordered_feature_ids"]),
+                        preprocessing=copy.deepcopy(prep),
+                        estimator_configuration=copy.deepcopy(
+                            estimator_configuration
+                        ),
+                        random_state_identity=random_state_identity,
+                        target_identity=target["target_checksum"],
+                        training_population=copy.deepcopy(
+                            populations[horizon_id]
+                        ),
+                        fold_identity=base["fold_identity"],
+                        training_cutoff=training_cutoff,
+                        input_identity=base["logical_input_checksum"],
+                        configuration_identity=canonical_hash(config),
+                    )
+                    try:
+                        fitted_member_callback(payload)
+                    except Exception as exc:
+                        raise _FittedMemberCallbackFailure from exc
+                member_order += 1
                 values = np.asarray(estimator.predict(validation_scaled))
                 if not np.isfinite(values).all():
                     raise MultiHorizonError("NONFINITE_PREDICTION", f"NONFINITE_PREDICTION:{horizon_id}:{family}")
@@ -362,13 +432,7 @@ def fit_multi_horizon_linear_selector(
                     "model_family": family, "horizon_id": horizon_id,
                     "estimator_identity": f"sklearn.linear_model.{type(estimator).__name__}",
                     "dependency_version": sklearn.__version__,
-                    "configuration": (
-                        {"alpha": ridge_alpha, "fit_intercept": True, "solver": "auto", "tolerance": 1e-4}
-                        if family == "ridge" else
-                        {"alpha": elastic_alpha, "l1_ratio": elastic_l1_ratio, "fit_intercept": True,
-                         "maximum_iterations": elastic_maximum_iterations, "tolerance": elastic_tolerance,
-                         "selection": "cyclic"}
-                    ),
+                    "configuration": estimator_configuration,
                     "feature_schema_checksum": base["feature_schema_checksum"],
                     "target_checksum": target["target_checksum"],
                     "preprocessing_checksum": prep["preprocessing_checksum"],
@@ -446,6 +510,9 @@ def fit_multi_horizon_linear_selector(
         }
         logical["logical_result_checksum"] = canonical_hash(logical)
         return {**logical, "creation_metadata": _creation_metadata()}
+    except _FittedMemberCallbackFailure as exc:
+        assert exc.__cause__ is not None
+        raise exc.__cause__
     except MultiHorizonError as exc:
         return _blocked(data, config, exc)
     except Exception as exc:  # pragma: no cover

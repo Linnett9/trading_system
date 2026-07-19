@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping
 
 import numpy as np
 
@@ -33,6 +34,18 @@ REQUIRED_CONTEXT = (
 )
 
 
+@dataclass(frozen=True)
+class FittedLightGBMRanker:
+    estimator: Any
+    feature_order: tuple[str, ...]
+    feature_schema_identity: str
+    feature_schema_checksum: str
+    configuration: Mapping[str, Any]
+    input_contract: Mapping[str, Any]
+    group_evidence: Mapping[str, Any]
+    ranking_label_evidence: Mapping[str, Any]
+
+
 def fit_production_lightgbm_selector(
     dataset: Mapping[str, Any],
     *,
@@ -40,6 +53,7 @@ def fit_production_lightgbm_selector(
     authoritative_context: Mapping[str, Any],
     dependency_preflight: Mapping[str, Any],
     estimator_fitters: Mapping[str, Any] | None = None,
+    fitted_model_callback: Callable[[FittedLightGBMRanker], None] | None = None,
 ) -> dict[str, Any]:
     """Fit one authoritative grouped ranker; publication remains Wave-4 owned."""
     missing = [
@@ -153,6 +167,69 @@ def fit_production_lightgbm_selector(
         np.asarray([row["label"] for row in training], dtype=int),
         input_contract["training_group_sizes"],
     )
+    if fitted_model_callback is not None:
+        training_group_dates = list(dict.fromkeys(
+            str(row["decision_date"]) for row in training
+        ))
+        training_labels = [int(row["label"]) for row in training]
+        fitted_payload = FittedLightGBMRanker(
+            estimator=model,
+            feature_order=tuple(dataset["feature_names"]),
+            feature_schema_identity=dataset["feature_schema_identity"],
+            feature_schema_checksum=dataset["feature_schema_checksum"],
+            configuration=configuration,
+            input_contract=input_contract,
+            group_evidence={
+                "source_group_contract_identity": dataset["contract_version"],
+                "grouped_query_contract": authoritative_context[
+                    "grouped_query_contract"
+                ],
+                "deterministic_group_ordering": (
+                    "decision_date_ascending_then_asset_id_then_row_id"
+                ),
+                "training_group_dates": training_group_dates,
+                "training_group_sizes": list(
+                    input_contract["training_group_sizes"]
+                ),
+                "training_group_row_count": len(training),
+                "ordered_training_membership_checksum": canonical_hash([
+                    {
+                        "row_id": row["row_id"],
+                        "asset_id": row["asset_id"],
+                        "query": row["decision_date"],
+                    }
+                    for row in training
+                ]),
+            },
+            ranking_label_evidence={
+                "raw_ranking_outcome_identity": dataset[
+                    "target_contract_identity"
+                ],
+                "relevance_label_contract": dataset[
+                    "ranking_label_contract_identity"
+                ],
+                "ranking_label_contract_checksum": dataset[
+                    "ranking_label_contract_checksum"
+                ],
+                "ordered_training_label_checksum": canonical_hash(
+                    training_labels
+                ),
+                "ordered_relevance_levels": sorted(set(training_labels)),
+                "label_distribution": {
+                    str(value): training_labels.count(value)
+                    for value in sorted(set(training_labels))
+                },
+                "label_count": len(training_labels),
+                "maturity_policy": (
+                    "training_labels_mature_at_or_before_training_cutoff"
+                ),
+                "maximum_training_label_maturity_timestamp": input_contract[
+                    "maximum_training_label_maturity_timestamp"
+                ],
+                "training_only_label_claim": True,
+                "published_prediction_rows_unlabeled": True,
+            },
+        )
     scores = np.asarray(
         model.predict(
             np.asarray([row["feature_values"] for row in prediction], dtype=float)
@@ -164,6 +241,8 @@ def fit_production_lightgbm_selector(
     rows = _prediction_rows(
         prediction, scores, authoritative_context, input_contract
     )
+    if fitted_model_callback is not None:
+        fitted_model_callback(fitted_payload)
     capability = {
         "production_owner": True,
         "synthetic_only": False,

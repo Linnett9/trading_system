@@ -26,9 +26,22 @@ from core.research.ml.registries import RegistryResolver, load_registry_bundle
 from core.research.ml.registries.io import canonical_hash
 from core.research.ml.stock_level.contextual_elastic_net_selector import fit_contextual_elastic_net
 from core.research.ml.stock_level.huber_selector import fit_huber_selector
+from core.research.ml.stock_level.lightgbm_production_selector import (
+    FittedLightGBMRanker,
+)
 from core.research.ml.stock_level.multi_horizon_linear_selector import (
+    FittedMultiHorizonMember,
     HORIZON_IDS,
     fit_multi_horizon_linear_selector,
+)
+from core.research.ml.stock_level.selector_multihorizon_model_artifacts import (
+    publish_selector_multihorizon_package,
+)
+from core.research.ml.stock_level.selector_lightgbm_model_artifacts import (
+    publish_selector_lightgbm_model_package,
+)
+from core.research.ml.stock_level.selector_sklearn_model_artifacts import (
+    publish_selector_sklearn_model_package,
 )
 
 
@@ -253,6 +266,27 @@ def publish_wave4_component(
             key: value for key, value in (fit_options or {}).items()
             if key not in publication_option_names
         }
+        captured_fitted_models: list[dict[str, Any]] = []
+        captured_multihorizon_members: list[FittedMultiHorizonMember] = []
+        captured_lightgbm_models: list[FittedLightGBMRanker] = []
+        if model_id in {"huber", "contextual_elastic_net"}:
+            model_fit_options["fitted_model_callback"] = (
+                lambda **payload: captured_fitted_models.append(dict(payload))
+            )
+        elif model_id in {
+            "multi_horizon_ridge",
+            "multi_horizon_elastic_net",
+        }:
+            model_fit_options["fitted_member_callback"] = (
+                captured_multihorizon_members.append
+            )
+        elif model_id in {
+            "lightgbm_rank_xendcg",
+            "lightgbm_lambdarank",
+        }:
+            model_fit_options["fitted_model_callback"] = (
+                captured_lightgbm_models.append
+            )
         result, predictions, diagnostics = _fit_and_select(
             model_id, horizon_id, fit_input, interaction_contract,
             model_fit_options, authoritative_context=(
@@ -372,6 +406,157 @@ def publish_wave4_component(
             },
         }
         _write_json(temp / "metrics.json", metrics)
+        shared_model_artifact = None
+        if model_id in {"huber", "contextual_elastic_net"}:
+            if len(captured_fitted_models) != 1:
+                raise ValueError("PREPROCESSING_EVIDENCE_MISSING")
+            fitted = captured_fitted_models[0]
+            shared_model_artifact = publish_selector_sklearn_model_package(
+                component_root=temp,
+                published_component_root=owner,
+                estimator=fitted["estimator"],
+                preprocessing=fitted["preprocessing"],
+                feature_order=fitted["feature_order"],
+                model_id=model_id,
+                model_family=model_id,
+                model_configuration=fitted["model_configuration"],
+                random_seed=fitted["random_seed"],
+                training_boundary=fitted["training_boundary"],
+                training_population_checksum=fitted[
+                    "training_population_checksum"
+                ],
+                target_horizon_identity=target.canonical_id,
+                prediction_path=temp / "predictions.csv",
+                prediction_schema=sorted(
+                    {key for row in output_rows for key in row}
+                ),
+                prediction_count=len(output_rows),
+                input_population_checksum=str(
+                    fit_input.get("logical_input_checksum")
+                    or fit_input.get("input_checksum")
+                ),
+                output_population_checksum=population_checksum,
+                campaign_identity=runner_evidence["campaign_identity"],
+                plan_job_identity=runner_evidence["plan_job_identity"],
+                component_identity=canonical_hash(identity),
+                component_runner=runner_evidence[
+                    "declared_component_runner"
+                ],
+                runtime_owner=runner_evidence["resolved_runtime_owner"],
+                implementation_owner=(
+                    f"{type(fitted['estimator']).__module__}."
+                    f"{type(fitted['estimator']).__qualname__}"
+                ),
+                decision_date=prediction_date,
+                fold_identity=str(fitted["fold_identity"]),
+                training_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:training"
+                ),
+                prediction_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:prediction"
+                ),
+                source_schema_guarantee_identity=str(
+                    parent_gate["selector_feature_schema_checksum"]
+                ),
+                input_package_identity=runner_evidence[
+                    "operational_input_identity"
+                ],
+                source_git_commit=_git_commit(),
+                contextual_evidence=fitted["contextual_evidence"],
+            )
+        elif model_id in {
+            "multi_horizon_ridge",
+            "multi_horizon_elastic_net",
+        }:
+            shared_model_artifact = publish_selector_multihorizon_package(
+                component_root=temp,
+                published_component_root=owner,
+                fitted_members=captured_multihorizon_members,
+                fit_result=result,
+                selected_component_rows=output_rows,
+                model_id=model_id,
+                campaign_identity=runner_evidence["campaign_identity"],
+                plan_job_identity=runner_evidence["plan_job_identity"],
+                component_identity=canonical_hash(identity),
+                component_runner=runner_evidence[
+                    "declared_component_runner"
+                ],
+                runtime_owner=runner_evidence["resolved_runtime_owner"],
+                decision_date=prediction_date,
+                training_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:training"
+                ),
+                prediction_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:prediction"
+                ),
+                input_package_identity=runner_evidence[
+                    "operational_input_identity"
+                ],
+                source_schema_guarantee_identity=str(
+                    parent_gate["selector_feature_schema_checksum"]
+                ),
+                input_population_checksum=str(
+                    fit_input.get("logical_input_checksum")
+                    or fit_input.get("input_checksum")
+                ),
+                source_git_commit=_git_commit(),
+            )
+        elif model_id in {
+            "lightgbm_rank_xendcg",
+            "lightgbm_lambdarank",
+        }:
+            if len(captured_lightgbm_models) != 1:
+                raise ValueError("LIGHTGBM_NATIVE_MODEL_MISSING")
+            fitted = captured_lightgbm_models[0]
+            shared_model_artifact = publish_selector_lightgbm_model_package(
+                component_root=temp,
+                published_component_root=owner,
+                estimator=fitted.estimator,
+                feature_order=fitted.feature_order,
+                feature_schema_identity=fitted.feature_schema_identity,
+                feature_schema_checksum=fitted.feature_schema_checksum,
+                source_schema_guarantee_identity=str(
+                    parent_gate["selector_feature_schema_checksum"]
+                ),
+                configuration=fitted.configuration,
+                input_contract=fitted.input_contract,
+                group_evidence=fitted.group_evidence,
+                ranking_label_evidence=fitted.ranking_label_evidence,
+                model_id=model_id,
+                prediction_path=temp / "predictions.csv",
+                prediction_schema=sorted(
+                    {key for row in output_rows for key in row}
+                ),
+                prediction_count=len(output_rows),
+                output_population_checksum=population_checksum,
+                campaign_identity=runner_evidence["campaign_identity"],
+                plan_job_identity=runner_evidence["plan_job_identity"],
+                component_identity=canonical_hash(identity),
+                component_runner=runner_evidence[
+                    "declared_component_runner"
+                ],
+                runtime_owner=runner_evidence["resolved_runtime_owner"],
+                decision_date=prediction_date,
+                horizon_identity=horizon_id or "return_10s",
+                training_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:training"
+                ),
+                prediction_row_artifact_identity=(
+                    f"{runner_evidence['operational_input_identity']}:prediction"
+                ),
+                input_package_identity=runner_evidence[
+                    "operational_input_identity"
+                ],
+                input_population_checksum=str(
+                    fit_input.get("dataset_checksum")
+                    or fit_input.get("logical_input_checksum")
+                    or fit_input.get("input_checksum")
+                ),
+                source_git_commit=_git_commit(),
+                lightgbm_version=str(
+                    dependency_preflight["lightgbm_version"]
+                ),
+            )
         manifest = {
             "component_schema_version": COMPONENT_CONTRACT,
             "publication_contract_version": PUBLICATION_CONTRACT,
@@ -421,6 +606,7 @@ def publish_wave4_component(
             "experiment_spec_hash": spec_hash, "experiment_run_id": run_id,
             **runner_evidence,
             "metrics_path": str(owner / "metrics.json"),
+            "shared_model_artifact": shared_model_artifact,
         }
         manifest["wave4_identity"] = identity
         manifest["manifest_checksum"] = canonical_hash(manifest)
@@ -508,6 +694,7 @@ def _fit_and_select(
             model_id=model_id,
             authoritative_context=authoritative_context or {},
             dependency_preflight=dependency_preflight or {},
+            fitted_model_callback=options.get("fitted_model_callback"),
         )
         return (
             result,
