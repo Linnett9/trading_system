@@ -49,6 +49,7 @@ def _fixture(tmp_path, monkeypatch):
     base_manifest = tmp_path / "base.json"
     base_manifest.write_text(json.dumps({
         "economic_target_id": "forward_return_10d",
+        "economic_key_sha256": "e" * 64,
         "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "canonical_artifact": {
             "logical_content_sha256": chain.APPROVED_BASE_LOGICAL_HASH,
@@ -333,10 +334,27 @@ def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch
     inputs = _fixture(tmp_path, monkeypatch)
     canonical_root = tmp_path / "canonical"
     canonical_root.mkdir()
+    labeled_root = tmp_path / "labeled"
+    labeled_root.mkdir()
+    labeled_manifest = tmp_path / "labeled.json"
+    labeled_manifest.write_text(json.dumps({"status": "BUILT"}))
+    inference_manifest = tmp_path / "inference.json"
+    inference_manifest.write_text(json.dumps({"status": "BUILT"}))
+    inputs.canonical_daily_manifest.write_text(json.dumps({
+        "status": "COMPLETE",
+        "completed_partitions": 514,
+        "dataset_logical_partition_hash": chain.APPROVED_CANONICAL_DAILY_HASH,
+    }))
+    inputs.canonical_daily_manifest.with_name("validation.json").write_text(
+        json.dumps({"valid": True})
+    )
     inputs = chain.ParentChainInputs(**{
         **inputs.__dict__,
         "production": True,
         "canonical_daily_root": canonical_root,
+        "labeled_spine_root": labeled_root,
+        "labeled_spine_manifest": labeled_manifest,
+        "inference_spine_manifest": inference_manifest,
     })
     config = tmp_path / "config.yaml"
     config.write_text("ml: {}\n")
@@ -360,6 +378,7 @@ def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch
     )
     assert observed["stock_alpha_feature_n_jobs"] == 6
     assert observed["economic_target_id"] == "forward_return_10d"
+    assert observed["canonical_v2_labeled_spine_root"] == str(labeled_root.resolve())
     assert observed["canonical_v2_alpha_base_manifest_path"] == str(
         inputs.base_manifest.resolve()
     )
@@ -384,3 +403,128 @@ def test_parent_publication_runbook_requires_explicit_v2_child():
     assert "--base-manifest" in text
     assert "--enriched-manifest" in text
     assert "python -m scripts.build_canonical_v2_selector_dataset" in text
+
+
+def test_explicit_spine_authorities_override_relative_yaml(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    root = tmp_path / "authority" / "labeled"
+    root.mkdir(parents=True)
+    labeled = tmp_path / "authority" / "labeled.json"
+    inference = tmp_path / "authority" / "inference.json"
+    labeled.write_text('{"status":"BUILT"}')
+    inference.write_text('{"status":"BUILT"}')
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "ml:\n"
+        "  canonical_v2_labeled_spine_root: relative/labeled\n"
+        "  canonical_v2_labeled_spine_manifest_path: relative/labeled.json\n"
+        "  canonical_v2_inference_spine_manifest_path: relative/inference.json\n"
+    )
+    production = chain.ParentChainInputs(**{
+        **inputs.__dict__,
+        "production": True,
+        "canonical_daily_root": tmp_path,
+        "labeled_spine_root": root,
+        "labeled_spine_manifest": labeled,
+        "inference_spine_manifest": inference,
+    })
+    adapted = chain._parent_alpha_config(
+        production, base_identity={"sha256": "a" * 64}, config_path=config
+    )
+    assert adapted["ml"]["canonical_v2_labeled_spine_root"] == str(root.resolve())
+    assert adapted["ml"]["canonical_v2_labeled_spine_manifest_path"] == str(labeled.resolve())
+    assert adapted["ml"]["canonical_v2_inference_spine_manifest_path"] == str(inference.resolve())
+    assert adapted["ml"]["stooq_parquet_dir"] == str(tmp_path.resolve())
+    assert config.read_text().startswith("ml:\n")
+
+
+def test_relative_spine_yaml_without_data_root_fails_closed(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "ml:\n  canonical_v2_labeled_spine_root: relative\n"
+        "  canonical_v2_labeled_spine_manifest_path: labeled.json\n"
+        "  canonical_v2_inference_spine_manifest_path: inference.json\n"
+    )
+    production = chain.ParentChainInputs(**{
+        **inputs.__dict__, "production": True, "canonical_daily_root": tmp_path
+    })
+    with pytest.raises(ValueError, match="--data-root"):
+        chain._parent_alpha_config(
+            production, base_identity={"sha256": "a" * 64}, config_path=config
+        )
+
+
+def test_economic_key_and_authoritative_inputs_are_bound_to_plan(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    plan = prepare_parent_chain_plan(inputs)
+    assert len(plan["base"]["economic_key_sha256"]) == 64
+    assert len(plan["adapted_configuration_sha256"]) == 64
+    changed = chain.ParentChainInputs(**{
+        **inputs.__dict__, "canonical_daily_root": tmp_path / "different"
+    })
+    assert (
+        prepare_parent_chain_plan(changed)["adapted_configuration_sha256"]
+        != plan["adapted_configuration_sha256"]
+    )
+
+
+def _alpha_resolution_config(tmp_path, base, recovered=None):
+    canonical_root = tmp_path / "canonical"
+    canonical_root.mkdir()
+    canonical_manifest = tmp_path / "canonical.json"
+    canonical_manifest.write_text(json.dumps({
+        "status": "COMPLETE",
+        "completed_partitions": 514,
+        "dataset_logical_partition_hash": chain.APPROVED_CANONICAL_DAILY_HASH,
+    }))
+    canonical_manifest.with_name("validation.json").write_text('{"valid":true}')
+    labeled_root = tmp_path / "labeled"
+    labeled_root.mkdir()
+    labeled = tmp_path / "labeled.json"
+    inference = tmp_path / "inference.json"
+    labeled.write_text('{"status":"BUILT"}')
+    inference.write_text('{"status":"BUILT"}')
+    ml = {
+        "canonical_daily_v2_root": str(canonical_root),
+        "canonical_daily_v2_manifest_path": str(canonical_manifest),
+        "canonical_v2_labeled_spine_root": str(labeled_root),
+        "canonical_v2_labeled_spine_manifest_path": str(labeled),
+        "canonical_v2_inference_spine_manifest_path": str(inference),
+        "stock_level_base_prediction_artifacts_path": str(base),
+        "stock_selector_market_data_source": "canonical_daily_v2",
+        "stooq_parquet_dir": str(canonical_root),
+        "output_dir": str(tmp_path / "output"),
+    }
+    if recovered is not None:
+        ml["canonical_v2_recovered_reference_path"] = str(recovered)
+    return {"ml": ml}
+
+
+def test_missing_optional_recovered_reference_is_not_a_hash_mismatch(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    import infrastructure.data.canonical_v2_alpha_enrichment as enrichment
+
+    result = enrichment.resolve_inputs(
+        _alpha_resolution_config(tmp_path, inputs.base_artifact)
+    )
+    assert "recovered_artifact_hash_mismatch" not in result["blocking_issues"]
+    assert result["recovered_artifact_policy"]["result"] == "PASS"
+
+
+def test_genuine_two_sided_recovered_hash_mismatch_has_complete_payload(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    recovered = tmp_path / "recovered.parquet"
+    recovered.write_bytes(b"different")
+    import infrastructure.data.canonical_v2_alpha_enrichment as enrichment
+
+    result = enrichment.resolve_inputs(
+        _alpha_resolution_config(tmp_path, inputs.base_artifact, recovered)
+    )
+    policy = result["recovered_artifact_policy"]
+    assert "recovered_artifact_hash_mismatch" in result["blocking_issues"]
+    assert policy["blocker"] == "RECOVERED_ARTIFACT_HASH_MISMATCH"
+    assert all(policy[key] for key in (
+        "expected_path", "expected_sha256", "observed_path",
+        "observed_sha256", "authority_source",
+    ))

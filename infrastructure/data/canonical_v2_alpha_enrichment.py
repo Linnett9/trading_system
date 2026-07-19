@@ -824,7 +824,9 @@ def resolve_inputs(config: Mapping[str, Any]) -> dict[str, Any]:
     canonical_root = Path(str(ml.get("canonical_daily_v2_root", "data/processed/market_data/canonical_daily_v2/full")))
     labeled_manifest_path = Path(str(ml.get("canonical_v2_labeled_spine_manifest_path", "reports/ml/readiness/selector_spine_extension/labeled_spine_manifest.json")))
     inference_manifest_path = Path(str(ml.get("canonical_v2_inference_spine_manifest_path", "reports/ml/readiness/selector_spine_extension/inference_spine_manifest.json")))
-    recovered = Path("reports/ml/development/ticket_7b3_daily_large_history/regeneration/benchmark/stock_level_prediction_artifacts.parquet")
+    labeled_root = Path(str(ml.get("canonical_v2_labeled_spine_root", "")))
+    recovered_value = ml.get("canonical_v2_recovered_reference_path")
+    recovered = Path(str(recovered_value)) if recovered_value else None
     settings = StockLevelResearchConfig.from_mapping(config)
     blocking: list[str] = []
     canonical_manifest = _read_json(canonical_manifest_path)
@@ -843,11 +845,40 @@ def resolve_inputs(config: Mapping[str, Any]) -> dict[str, Any]:
         blocking.append("canonical_validation_not_valid")
     if labeled_manifest.get("status") != "BUILT":
         blocking.append("labeled_spine_not_built")
+    if not labeled_root.is_dir():
+        blocking.append("labeled_spine_root_missing")
     if inference_manifest.get("status") != "BUILT":
         blocking.append("inference_spine_not_built")
-    recovered_hash = _file_sha256(recovered) if recovered.exists() else None
-    if recovered_hash != EXPECTED_BASE_HASH:
-        blocking.append("recovered_artifact_hash_mismatch")
+    data_root_value = ml.get("canonical_v2_production_data_root")
+    data_root = Path(str(data_root_value)) if data_root_value else None
+    for label, manifest in (
+        ("labeled_spine", labeled_manifest),
+        ("inference_spine", inference_manifest),
+    ):
+        referenced_value = manifest.get("path") or manifest.get("root")
+        if not referenced_value:
+            continue
+        referenced = Path(str(referenced_value))
+        if not referenced.is_absolute():
+            if data_root is None:
+                blocking.append(f"{label}_referenced_path_unresolved")
+                continue
+            referenced = data_root / referenced
+        if not referenced.exists():
+            blocking.append(f"{label}_referenced_path_missing")
+    explicit_base = Path(str(ml.get("stock_level_base_prediction_artifacts_path", "")))
+    explicit_base_hash = _file_sha256(explicit_base) if explicit_base.is_file() else None
+    recovered_hash = _file_sha256(recovered) if recovered is not None and recovered.is_file() else None
+    recovered_policy = "OPTIONAL_LEGACY_FALLBACK_BYPASSED"
+    recovered_blocker = None
+    if recovered_value:
+        recovered_policy = "REQUIRED_REFERENCE"
+        if recovered_hash is None:
+            recovered_blocker = "recovered_artifact_reference_missing"
+        elif explicit_base_hash is not None and recovered_hash != explicit_base_hash:
+            recovered_blocker = "recovered_artifact_hash_mismatch"
+        if recovered_blocker:
+            blocking.append(recovered_blocker)
     if str(ml.get("stock_selector_market_data_source", "")).lower() != "canonical_daily_v2":
         blocking.append("selector_source_not_canonical_v2")
     if Path(str(ml.get("stooq_parquet_dir", ""))) != canonical_root:
@@ -869,13 +900,31 @@ def resolve_inputs(config: Mapping[str, Any]) -> dict[str, Any]:
             "validation_path": str(validation_path),
             "validation_valid": validation.get("valid"),
         },
-        "labeled_spine": _manifest_summary(labeled_manifest, labeled_manifest_path),
-        "inference_spine": _manifest_summary(inference_manifest, inference_manifest_path),
+        "labeled_spine": {
+            **_manifest_summary(labeled_manifest, labeled_manifest_path),
+            "root": str(labeled_root),
+            "manifest_sha256": _file_sha256(labeled_manifest_path) if labeled_manifest_path.is_file() else None,
+        },
+        "inference_spine": {
+            **_manifest_summary(inference_manifest, inference_manifest_path),
+            "manifest_sha256": _file_sha256(inference_manifest_path) if inference_manifest_path.is_file() else None,
+        },
         "base_artifact": {
             "path": str(settings.base_artifact_path),
             "exists": settings.base_artifact_path.exists(),
-            "recovered_reference_path": str(recovered),
+            "recovered_reference_path": str(recovered) if recovered is not None else None,
             "recovered_reference_hash": recovered_hash,
+            "explicit_base_sha256": explicit_base_hash,
+        },
+        "recovered_artifact_policy": {
+            "policy": recovered_policy,
+            "result": "PASS" if recovered_blocker is None else "BLOCKED",
+            "blocker": recovered_blocker.upper() if recovered_blocker else None,
+            "expected_path": str(explicit_base),
+            "expected_sha256": explicit_base_hash,
+            "observed_path": str(recovered) if recovered is not None else None,
+            "observed_sha256": recovered_hash,
+            "authority_source": "explicit_canonical_v2_base",
         },
         "worker_configuration": {
             "stock_alpha_feature_n_jobs": settings.alpha_feature_n_jobs,

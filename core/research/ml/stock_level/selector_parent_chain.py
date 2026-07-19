@@ -64,6 +64,10 @@ class ParentChainInputs:
     asset_registry_manifest: Path
     feature_schema: Path
     canonical_daily_root: Path | None = None
+    labeled_spine_root: Path | None = None
+    labeled_spine_manifest: Path | None = None
+    inference_spine_manifest: Path | None = None
+    data_root: Path | None = None
     workers: int = 6
     max_in_flight_tasks: int = 12
     memory_budget_gib: float = 24.0
@@ -119,11 +123,38 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         for column in feature_columns
     ):
         blockers.append("TARGET_COLUMN_IN_FEATURE_ALLOWLIST")
-    alpha_config = _parent_alpha_config(
-        inputs,
-        base_identity=base_identity,
-        config_path=inputs.config_path,
-    )
+    try:
+        alpha_config = _parent_alpha_config(
+            inputs,
+            base_identity=base_identity,
+            config_path=inputs.config_path,
+        )
+    except ValueError as exc:
+        blockers.append("PRODUCTION_INPUT_PATH_UNRESOLVED")
+        alpha_config = _parent_alpha_config(
+            ParentChainInputs(**{**inputs.__dict__, "production": False}),
+            base_identity=base_identity,
+            config_path=inputs.config_path,
+        )
+        alpha_config.setdefault("ml", {})["path_resolution_error"] = str(exc)
+    resolved_inputs = _resolved_input_report(inputs, alpha_config)
+    if owner_path.exists() and inputs.resume:
+        expected_owner = {
+            "contract_version": CONTRACT_VERSION,
+            "run_id": inputs.run_id,
+            "base_sha256": base_identity.get("sha256"),
+            "feature_schema_checksum": _hash_json(schema),
+            "adapted_configuration_sha256": _adapted_configuration_hash(alpha_config),
+            "resolved_inputs_sha256": _hash_json(resolved_inputs),
+        }
+        if owner != expected_owner:
+            blockers.append("RESOLVED_INPUT_IDENTITY_CHANGED")
+    alpha_input_resolution: dict[str, Any] = {"gates_passed": True, "blocking_issues": []}
+    if inputs.production:
+        from infrastructure.data.canonical_v2_alpha_enrichment import resolve_inputs
+
+        alpha_input_resolution = resolve_inputs(alpha_config)
+        blockers.extend(str(issue).upper() for issue in alpha_input_resolution["blocking_issues"])
     namespace_plan = _alpha_namespace_path_plan(
         inputs,
         base_identity=base_identity,
@@ -147,6 +178,9 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         "asset_registry_version": APPROVED_ASSET_REGISTRY_VERSION,
         "asset_registry_checksum": APPROVED_ASSET_REGISTRY_CHECKSUM,
         "feature_schema_checksum": _hash_json(schema),
+        "resolved_inputs": resolved_inputs,
+        "alpha_input_resolution": alpha_input_resolution,
+        "adapted_configuration_sha256": _adapted_configuration_hash(alpha_config),
         "alpha_namespaces": namespace_plan,
         "path_budget": path_budget,
         "compute": {
@@ -489,6 +523,16 @@ def _base_identity(path: Path, manifest_path: Path, blockers: list[str]) -> dict
     missing = sorted(required - set(pq.ParquetFile(path).schema_arrow.names))
     if missing:
         blockers.append("PARENT_IDENTITY_MISSING")
+    key_hasher = hashlib.sha256()
+    for batch in pq.ParquetFile(path).iter_batches(
+        batch_size=65_536, columns=["rebalance_date", "symbol"]
+    ):
+        for date, symbol in zip(
+            batch.column(0).to_pylist(), batch.column(1).to_pylist()
+        ):
+            key_hasher.update(
+                f"{str(date)[:10]}\x1f{str(symbol).upper()}\n".encode("utf-8")
+            )
     return {
         "path": str(path.resolve()),
         "sha256": observed,
@@ -496,11 +540,7 @@ def _base_identity(path: Path, manifest_path: Path, blockers: list[str]) -> dict
         "schema_fingerprint": _schema_fingerprint(
             pq.ParquetFile(path).schema_arrow
         ),
-        "economic_key_sha256": str(
-            canonical.get("economic_key_sha256")
-            or canonical.get("source_base_economic_key_sha256")
-            or ""
-        ),
+        "economic_key_sha256": key_hasher.hexdigest(),
         "column_count": len(pq.ParquetFile(path).schema_arrow.names),
         "target_provenance_contract_versions": [provenance] if provenance else [],
         "row_count": rows,
@@ -524,6 +564,7 @@ def _parent_alpha_config(
         else {}
     )
     ml = dict(config.get("ml", {}) or {})
+    configured = dict(ml)
     output = inputs.output_root.resolve()
     enriched_root = output / "enriched"
     ml.update(
@@ -553,6 +594,7 @@ def _parent_alpha_config(
             "canonical_asset_registry_manifest_path": str(
                 inputs.asset_registry_manifest.resolve()
             ),
+            "stock_selector_market_data_source": "canonical_daily_v2",
             "selector_feature_schema_path": str(inputs.feature_schema.resolve()),
             "canonical_v2_alpha_report_root": str(output / "alpha_enrichment"),
             "stock_alpha_feature_partitioned_resume": True,
@@ -573,8 +615,86 @@ def _parent_alpha_config(
             "pit_lineage_run_id": inputs.run_id,
         }
     )
+    if inputs.data_root is not None:
+        if not inputs.data_root.is_absolute():
+            raise ValueError("data_root explicit authority must be absolute")
+        ml["canonical_v2_production_data_root"] = str(inputs.data_root.resolve())
+    for key, explicit in {
+        "canonical_v2_labeled_spine_root": inputs.labeled_spine_root,
+        "canonical_v2_labeled_spine_manifest_path": inputs.labeled_spine_manifest,
+        "canonical_v2_inference_spine_manifest_path": inputs.inference_spine_manifest,
+    }.items():
+        if inputs.production or explicit is not None:
+            ml[key] = str(_resolve_production_path(explicit, configured.get(key), inputs.data_root, key))
     config["ml"] = ml
     return config
+
+
+def _resolve_production_path(
+    explicit: Path | None, configured: Any, data_root: Path | None, name: str
+) -> Path:
+    if explicit is not None:
+        if not explicit.is_absolute():
+            raise ValueError(f"{name} explicit authority must be absolute")
+        return explicit.resolve()
+    if configured:
+        candidate = Path(str(configured))
+        if candidate.is_absolute():
+            return candidate.resolve()
+        if data_root is not None:
+            return (data_root.resolve() / candidate).resolve()
+    raise ValueError(f"{name} unresolved: supply an absolute CLI path or --data-root")
+
+
+def _resolved_input_report(
+    inputs: ParentChainInputs, config: Mapping[str, Any]
+) -> dict[str, Any]:
+    import yaml
+
+    ml = dict(config.get("ml", {}) or {})
+    source_config = (
+        yaml.safe_load(inputs.config_path.read_text(encoding="utf-8")) or {}
+        if inputs.config_path is not None and inputs.config_path.is_file()
+        else {}
+    )
+    source_ml = dict(source_config.get("ml", {}) or {})
+    specs = {
+        "labeled_spine_root": ("canonical_v2_labeled_spine_root", inputs.labeled_spine_root),
+        "labeled_spine_manifest": ("canonical_v2_labeled_spine_manifest_path", inputs.labeled_spine_manifest),
+        "inference_spine_manifest": ("canonical_v2_inference_spine_manifest_path", inputs.inference_spine_manifest),
+        "canonical_daily_root": ("canonical_daily_v2_root", inputs.canonical_daily_root),
+        "canonical_daily_manifest": ("canonical_daily_v2_manifest_path", inputs.canonical_daily_manifest),
+        "asset_registry_manifest": ("canonical_asset_registry_manifest_path", inputs.asset_registry_manifest),
+        "base_artifact": ("stock_level_base_prediction_artifacts_path", inputs.base_artifact),
+        "base_publication_manifest": ("canonical_v2_alpha_base_manifest_path", inputs.base_manifest),
+    }
+    return {
+        label: {
+            "source": (
+                "CLI"
+                if explicit is not None
+                else (
+                    "config"
+                    if Path(str(source_ml.get(key, ""))).is_absolute()
+                    else "data-root"
+                )
+            ),
+            "original_configured_value": source_ml.get(key),
+            "resolved_absolute_value": str(Path(str(ml[key])).resolve()),
+            "overridden": (
+                explicit is not None
+                and str(source_ml.get(key, "")) != str(Path(str(ml[key])))
+            ),
+        }
+        for label, (key, explicit) in specs.items()
+        if key in ml
+    }
+
+
+def _adapted_configuration_hash(config: Mapping[str, Any]) -> str:
+    payload = json.loads(json.dumps(config, default=str))
+    payload.setdefault("ml", {})["stock_alpha_resume_existing_outputs"] = False
+    return _hash_json(payload)
 
 
 def _alpha_namespace_path_plan(
@@ -718,6 +838,8 @@ def _owner(plan: Mapping[str, Any]) -> dict[str, Any]:
         "run_id": plan["run_id"],
         "base_sha256": plan["base"].get("sha256"),
         "feature_schema_checksum": plan["feature_schema_checksum"],
+        "adapted_configuration_sha256": plan.get("adapted_configuration_sha256"),
+        "resolved_inputs_sha256": _hash_json(plan.get("resolved_inputs", {})),
     }
 
 
@@ -926,6 +1048,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--asset-registry-manifest", required=True, type=Path)
     parser.add_argument("--feature-schema", required=True, type=Path)
     parser.add_argument("--canonical-daily-root", type=Path)
+    parser.add_argument("--labeled-spine-root", type=Path)
+    parser.add_argument("--labeled-spine-manifest", type=Path)
+    parser.add_argument("--inference-spine-manifest", type=Path)
+    parser.add_argument("--data-root", type=Path)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--max-in-flight-tasks", type=int, default=12)
     parser.add_argument("--memory-budget-gib", type=float, default=24)
@@ -944,6 +1070,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         asset_registry_manifest=args.asset_registry_manifest,
         feature_schema=args.feature_schema,
         canonical_daily_root=args.canonical_daily_root,
+        labeled_spine_root=args.labeled_spine_root,
+        labeled_spine_manifest=args.labeled_spine_manifest,
+        inference_spine_manifest=args.inference_spine_manifest,
+        data_root=args.data_root,
         workers=args.workers,
         max_in_flight_tasks=args.max_in_flight_tasks,
         memory_budget_gib=args.memory_budget_gib,
