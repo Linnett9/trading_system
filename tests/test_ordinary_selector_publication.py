@@ -16,6 +16,20 @@ from core.research.ml.stock_level.ordinary_selector_publication import (
 )
 
 
+class _TiedFittedEstimator:
+    imputer_ = object()
+    scaler_ = object()
+
+    def fit(self, x, y):
+        return self
+
+    def predict(self, x):
+        return [1.0] * len(x)
+
+    def get_params(self, deep=True):
+        return {}
+
+
 DATE = "2024-03-15"
 
 
@@ -120,11 +134,11 @@ def test_ordered_logit_semantic_outputs(tmp_path):
 
 def test_deterministic_asset_tie_breaking(tmp_path, monkeypatch):
     import core.research.ml.stock_level.ordinary_selector_publication as publication
-    class Tied:
-        def fit(self, x, y): return self
-        def predict(self, x): return [1.0] * len(x)
-        def get_params(self): return {}
-    monkeypatch.setattr(publication, "_build_tabular_model", lambda *args: Tied())
+    monkeypatch.setattr(
+        publication,
+        "_build_tabular_model",
+        lambda *args: _TiedFittedEstimator(),
+    )
     result, _ = _publish(tmp_path, "ridge")
     rows = list(csv.DictReader((Path(result["manifest_path"]).parent / "predictions.csv").open()))
     assert [(row["asset_id"], int(row["deterministic_rank"])) for row in rows] == [
