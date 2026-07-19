@@ -555,16 +555,30 @@ def _result(
     manifest: Mapping[str, Any], item: Mapping[str, Any], stage: str,
     unit: Mapping[str, Any],
 ) -> dict[str, Any]:
-    count = int(
-        item.get("artifact_validation", {})
-        .get("authoritative_reference", {}).get("row_count") or 0
+    reference = item.get("artifact_validation", {}).get(
+        "authoritative_reference", {}
+    )
+    output_count = _authoritative_count(
+        reference.get(
+            "canonical_row_count" if stage == CORPUS else "row_count"
+        )
+    )
+    input_count = _authoritative_count(
+        reference.get("source_row_count") if stage == CORPUS else None
     )
     metric = metric_value(
-        "row_count", count, unit="rows",
+        "row_count", output_count, unit="rows",
         population_identity=str(unit["work_unit_id"]),
-        direction="INFORMATIONAL", availability="AVAILABLE",
+        direction="INFORMATIONAL",
+        availability="AVAILABLE"
+        if output_count is not None else "NOT_COMPUTED",
         source_artifact_identity=item.get("stage_artifact_identity"),
     )
+    counts = {}
+    if output_count is not None:
+        counts.update(rows=output_count, output_rows=output_count)
+    if input_count is not None:
+        counts["input_rows"] = input_count
     return build_result_record(
         result_identity=checksum({"item": item["item_id"],
                                   "status": item["status"]}),
@@ -573,10 +587,18 @@ def _result(
         status=item["status"],
         artifact_identities=[item["stage_artifact_identity"]]
         if item.get("stage_artifact_identity") else [],
-        metrics={"row_count": metric}, counts={"rows": count},
+        metrics={"row_count": metric}, counts=counts,
         dimensions={"work_unit_identity": unit["work_unit_id"],
                     "non_model_stage": True},
     )
+
+
+def _authoritative_count(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("Authoritative row count is invalid")
+    return value
 
 
 def _corpus_reference(

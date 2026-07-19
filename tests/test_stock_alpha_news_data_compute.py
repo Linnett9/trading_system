@@ -292,3 +292,78 @@ def test_compatible_rerun_is_deterministic(tmp_path):
     )
     assert first["run_id"] == second["run_id"]
     assert first["run_identity"] == second["run_identity"]
+
+
+def _result_records(result):
+    return json.loads(
+        (Path(result["run_root"]) / "results.json").read_text()
+    )["records"]
+
+
+def test_production_shaped_canonical_rows_reach_shared_result(tmp_path):
+    class ProductionShapedAdapter(Adapter):
+        def _corpus(self):
+            return {
+                **super()._corpus(),
+                "canonical_row_count": 486757,
+                "source_row_count": 486757,
+                "duplicate_group_count": 369509,
+            }
+
+    result, _ = run(tmp_path, (CORPUS,), ProductionShapedAdapter())
+    record = _result_records(result)[0]
+    assert record["status"] == "COMPLETE"
+    assert record["counts"] == {
+        "input_rows": 486757,
+        "output_rows": 486757,
+        "rows": 486757,
+    }
+    assert record["metrics"]["row_count"][
+        "value"
+    ] == 486757
+    assert record["metrics"]["row_count"]["availability"] == "AVAILABLE"
+    assert result["summary"]["failed_items"] == 0
+    assert result["resource_summary"]["active_lease_count"] == 0
+    assert result["registry"]["health"] == "HEALTHY"
+
+
+def test_unknown_or_failed_rows_are_not_reported_as_zero(tmp_path):
+    class UnknownRowsAdapter(Adapter):
+        def _corpus(self):
+            value = super()._corpus()
+            value.pop("canonical_row_count")
+            return value
+
+    unknown, _ = run(tmp_path / "unknown", (CORPUS,), UnknownRowsAdapter())
+    unknown_record = _result_records(unknown)[0]
+    assert unknown_record["counts"] == {}
+    assert unknown_record["metrics"]["row_count"]["availability"] == (
+        "NOT_COMPUTED"
+    )
+    assert unknown_record["metrics"]["row_count"]["value"] is None
+
+    failed, _ = run(
+        tmp_path / "failed", (CORPUS,),
+        Adapter(fail="canonicalisation"),
+    )
+    failed_record = _result_records(failed)[0]
+    assert failed_record["status"] == "FAILED"
+    assert failed_record["counts"] == {}
+    assert failed_record["metrics"]["row_count"]["value"] is None
+    assert failed_record["metrics"]["row_count"][
+        "availability"
+    ] == "NOT_COMPUTED"
+
+
+def test_feature_row_mapping_and_result_checksum_remain_deterministic(
+    tmp_path,
+):
+    first, _ = run(tmp_path / "first", (FEATURES,), Adapter())
+    second, _ = run(tmp_path / "second", (FEATURES,), Adapter())
+    first_record = _result_records(first)[0]
+    second_record = _result_records(second)[0]
+    assert first_record["counts"] == {"output_rows": 3, "rows": 3}
+    assert first_record["metrics"]["row_count"]["value"] == 3
+    assert first_record["logical_checksum"] == second_record[
+        "logical_checksum"
+    ]
