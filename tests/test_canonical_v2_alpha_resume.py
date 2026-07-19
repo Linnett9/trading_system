@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import pickle
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -155,12 +156,17 @@ def test_base_partition_attempt_path_is_windows_safe_under_long_report_root(
     )
     config, _ = _base_fixture(tmp_path / "fixture")
     validation = alpha.validate_alpha_base_artifact(config)
-    target_root = report_root / "alpha_base_partitions_v2" / validation["sha256"]
+    cache_identity = alpha._alpha_base_namespace_identity(validation)
+    target_root = (
+        report_root
+        / "alpha_base_partitions_v2"
+        / f"id-{cache_identity['namespace_key']}"
+    )
     attempt_root = alpha._alpha_base_attempt_root(target_root, validation["sha256"])
     configured_target = (
         Path(config["ml"]["canonical_v2_alpha_report_root"])
         / "alpha_base_partitions_v2"
-        / validation["sha256"]
+        / f"id-{cache_identity['namespace_key']}"
     )
     replacements: list[tuple[Path, Path]] = []
     real_replace = alpha.os.replace
@@ -173,8 +179,22 @@ def test_base_partition_attempt_path_is_windows_safe_under_long_report_root(
     result = alpha.prepare_alpha_base_partitions(config, base_validation=validation)
 
     assert len(str(attempt_root.resolve())) < 260
+    with tempfile.TemporaryDirectory(prefix="base-ns-") as temporary:
+        production_style_root = (
+            Path(temporary)
+            / "reports/ml/development/ticket_7b3_daily_large_history"
+            / "regeneration_canonical_v2/alpha_enrichment"
+            / "alpha_base_partitions_v2"
+            / f"id-{cache_identity['namespace_key']}"
+        )
+        deepest = (
+            production_style_root
+            / "symbol=BRK.B"
+            / "rows.parquet.identity.json"
+        )
+        assert len(str(deepest.resolve())) < 240
     assert validation["sha256"] not in attempt_root.name
-    assert Path(result["path"]).name == validation["sha256"]
+    assert Path(result["path"]).name == f"id-{cache_identity['namespace_key']}"
     assert replacements[-1][0].name.startswith(
         f".attempt-{validation['sha256'][:8]}-"
     )
@@ -186,10 +206,12 @@ def test_base_partition_interruption_cleans_attempt_and_can_resume(
 ) -> None:
     config, _ = _base_fixture(tmp_path)
     validation = alpha.validate_alpha_base_artifact(config)
+    cache_identity = alpha._alpha_base_namespace_identity(validation)
+    namespace_name = f"id-{cache_identity['namespace_key']}"
     real_replace = alpha.os.replace
 
     def interrupt_publication(source, destination):
-        if Path(destination).name == validation["sha256"]:
+        if Path(destination).name == namespace_name:
             raise KeyboardInterrupt("synthetic interruption")
         return real_replace(source, destination)
 
@@ -202,11 +224,175 @@ def test_base_partition_interruption_cleans_attempt_and_can_resume(
         / "alpha_base_partitions_v2"
     )
     assert not list(partition_parent.glob(".attempt-*"))
-    assert not (partition_parent / validation["sha256"]).exists()
+    assert not (partition_parent / namespace_name).exists()
 
     monkeypatch.setattr(alpha.os, "replace", real_replace)
     resumed = alpha.prepare_alpha_base_partitions(config, base_validation=validation)
     assert Path(resumed["path"]).is_dir()
+
+
+def test_alpha_base_cache_identity_uses_every_authoritative_field() -> None:
+    validation = {
+        "sha256": "c2487d7f378121069ea5e92a1d0cf0444f42dfc1da237566d24c650ae8558d38",
+        "logical_content_sha256": "c564a0187ef1a32ae7f979c37ab2cc553959871c747922553ef5e7486b42b446",
+        "schema_fingerprint": "9839113ad2d26a60de8fa8c0cc10fd77e8a05a6c0043114a634047b892477db2",
+        "economic_key_sha256": "bed387b26a6d9e2d6beedde59130fee19043a3a8dc873d2ffc1c00cb7f735ce4",
+        "row_count": 836_074,
+        "column_count": 70,
+        "target_provenance_contract_versions": [alpha.TARGET_PROVENANCE_V2],
+    }
+    first = alpha._alpha_base_namespace_identity(validation)
+    second = alpha._alpha_base_namespace_identity(validation)
+    stale = {
+        **first,
+        "source_base_schema_fingerprint": "0" * 64,
+        "source_base_logical_content_sha256": "",
+    }
+    mismatches = alpha._alpha_base_identity_mismatches(stale, first)
+
+    assert first == second
+    assert len(first["namespace_key"]) == 20
+    assert {row["field"] for row in mismatches} == {
+        "source_base_schema_fingerprint",
+        "source_base_logical_content_sha256",
+    }
+    for field in (
+        "source_base_sha256",
+        "source_base_logical_content_sha256",
+        "source_base_schema_fingerprint",
+        "source_base_economic_key_sha256",
+    ):
+        assert len(first[field]) == 64
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("source_base_schema_fingerprint", "1" * 64),
+        ("source_base_logical_content_sha256", "2" * 64),
+        ("contract_version", "obsolete_cache_contract"),
+    ],
+)
+def test_alpha_base_cache_manifest_identity_mismatch_fails_closed(
+    tmp_path: Path, field: str, replacement: str
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    built = alpha.prepare_alpha_base_partitions(
+        config, base_validation=validation
+    )
+    manifest_path = Path(built["path"]) / "base_partition_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["base_namespace_identity"][field] = replacement
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="namespace identity mismatch"):
+        alpha.prepare_alpha_base_partitions(
+            config, base_validation=validation
+        )
+
+
+def test_alpha_base_cache_missing_manifest_fails_closed(tmp_path: Path) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    identity = alpha._alpha_base_namespace_identity(validation)
+    root = (
+        Path(config["ml"]["canonical_v2_alpha_report_root"])
+        / "alpha_base_partitions_v2"
+        / f"id-{identity['namespace_key']}"
+    )
+    root.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="namespace identity mismatch"):
+        alpha.prepare_alpha_base_partitions(
+            config, base_validation=validation
+        )
+
+
+def test_incompatible_legacy_alpha_base_cache_builds_bounded_without_mutation(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    legacy = (
+        Path(config["ml"]["canonical_v2_alpha_report_root"])
+        / "alpha_base_partitions_v2"
+        / validation["sha256"]
+    )
+    legacy.mkdir(parents=True)
+    sentinel = legacy / "incompatible-evidence.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    (legacy / "base_partition_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "COMPLETE",
+                "source_base_sha256": validation["sha256"],
+                "source_base_schema_fingerprint": "0" * 64,
+                "source_base_economic_key_sha256": validation[
+                    "economic_key_sha256"
+                ],
+                "row_count": validation["row_count"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    built = alpha.prepare_alpha_base_partitions(
+        config, base_validation=validation
+    )
+
+    assert Path(built["path"]).name.startswith("id-")
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert (legacy / "base_partition_manifest.json").is_file()
+
+
+def test_complete_compatible_legacy_alpha_base_cache_is_reused(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    built = alpha.prepare_alpha_base_partitions(
+        config, base_validation=validation
+    )
+    bounded = Path(built["path"])
+    legacy = bounded.parent / validation["sha256"]
+    shutil.copytree(bounded, legacy)
+    manifest_path = legacy / "base_partition_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("base_namespace_identity")
+    manifest.pop("source_base_logical_content_sha256")
+    manifest.pop("source_base_column_count")
+    manifest["path"] = str(legacy)
+    for row in manifest["partitions"]:
+        old_path = Path(row["path"])
+        new_path = legacy / old_path.relative_to(bounded)
+        row["path"] = str(new_path)
+        identity_path = alpha._base_partition_identity_path(new_path)
+        identity = json.loads(identity_path.read_text())
+        identity["path"] = str(new_path)
+        identity.pop("base_namespace_identity")
+        identity.pop("source_base_logical_content_sha256")
+        identity_path.write_text(json.dumps(identity), encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    shutil.rmtree(bounded)
+
+    reused = alpha.prepare_alpha_base_partitions(
+        config, base_validation=validation
+    )
+
+    assert Path(reused["path"]) == legacy
+    assert legacy.is_dir()
+
+
+def test_alpha_base_cache_is_fully_validated_before_pool_submission() -> None:
+    source = inspect.getsource(alpha._write_partitioned_canonical_v2_alpha_features)
+
+    assert source.index("prepare_alpha_base_partitions(") < source.index(
+        "_execute_alpha_process_pool("
+    )
+    assert "_validate_alpha_base_partition_cache(" in inspect.getsource(
+        alpha.prepare_alpha_base_partitions
+    )
 
 
 def test_bounded_alpha_partition_namespace_is_deterministic_and_full_identity(
@@ -461,6 +647,111 @@ class _BrokenInlineExecutor:
     def shutdown(self, *, wait: bool, cancel_futures: bool):
         assert wait is True
         assert cancel_futures is True
+
+
+class _ImmediateInlineExecutor:
+    def __init__(self, **_kwargs):
+        self._processes = {}
+
+    def submit(self, function, task):
+        future = Future()
+        try:
+            future.set_result(function(task))
+        except BaseException as exc:
+            future.set_exception(exc)
+        return future
+
+    def shutdown(self, *, wait: bool, cancel_futures: bool):
+        assert wait is True
+        assert cancel_futures is True
+
+
+def test_worker_value_error_is_returned_as_structured_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    monkeypatch.setattr(alpha, "_ALPHA_WORKER_CONFIG", config)
+    monkeypatch.setattr(alpha, "_ALPHA_WORKER_SPY", [])
+    monkeypatch.setattr(alpha, "_ALPHA_WORKER_INPUT_RESOLUTION", {})
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("certified alpha base partition identity mismatch for A")
+
+    monkeypatch.setattr(alpha, "_build_partition", fail)
+    result = alpha._alpha_worker_task(
+        {
+            "symbol": "A",
+            "event_root": str(tmp_path / "events"),
+            "partition_root": str(tmp_path / "partitions"),
+            "manifest_root": str(tmp_path / "manifests"),
+        }
+    )
+
+    assert result["task_status"] == "FAILED"
+    assert result["failure"]["exception_type"] == "ValueError"
+    assert result["failure"]["symbol"] == "A"
+    event = json.loads((tmp_path / "events" / "A.json").read_text())
+    assert event["status"] == "FAILED"
+    assert event["failure"]["exception_type"] == "ValueError"
+
+
+def test_normal_worker_value_error_is_structured_and_pool_remains_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+
+    def worker(task):
+        symbol = str(task["symbol"])
+        if symbol == "AAA":
+            return {
+                "task_status": "FAILED",
+                "failure": alpha._failure_record(
+                    symbol, ValueError("synthetic normal worker failure")
+                ),
+            }
+        return {"task_status": "COMPLETE", "row_count": 1}
+
+    monkeypatch.setattr(alpha, "_alpha_worker_task", worker)
+    result = alpha._execute_alpha_process_pool(
+        ["AAA", "BBB"],
+        config=config,
+        input_resolution={},
+        partition_root=tmp_path / "partitions",
+        manifest_root=tmp_path / "manifests",
+        report_root=tmp_path / "report",
+        workers=1,
+        fail_fast=alpha._fail_fast_settings({}),
+        planned_partitions=2,
+        started=0.0,
+        executor_cls=_ImmediateInlineExecutor,
+    )
+
+    assert len(result["failures"]) == 1
+    assert result["failures"][0]["exception_type"] == "ValueError"
+    assert result["rows_processed"] == 1
+    failed = json.loads(
+        (tmp_path / "report" / "failed_partitions.json").read_text()
+    )
+    progress = json.loads(
+        (tmp_path / "report" / "progress_manifest.json").read_text()
+    )
+    assert failed["failed_partition_count"] == 1
+    assert progress["completed_partitions"] == 1
+    assert progress["failed_partitions"] == 1
+
+
+def test_source_commit_resolves_worktree_gitfile() -> None:
+    commit = alpha._source_commit({})
+
+    assert commit != "unknown"
+    assert len(commit) == 40
+    assert commit == subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def test_broken_pool_report_is_bounded_and_preserves_primary_context(

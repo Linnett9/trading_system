@@ -9,6 +9,7 @@ import multiprocessing
 import os
 import pickle
 import shutil
+import subprocess
 import traceback
 import time
 import uuid
@@ -54,6 +55,8 @@ EXPECTED_CANONICAL_HASH = "c2ab57992c9363c118d854f01da18ea34122b9c0775af3d0676af
 EXPECTED_BASE_HASH = "739a2b984cdd0a160d65ea546d9523b75637be3921c14734dd5483a093357e89"
 ALPHA_ENRICHMENT_CONTRACT_VERSION = "canonical_v2_alpha_enrichment_v2"
 ALPHA_BASE_CONTRACT_VERSION = "canonical_v2_alpha_base_v1"
+ALPHA_BASE_NAMESPACE_CONTRACT_VERSION = "canonical_v2_alpha_base_namespace_v1"
+ALPHA_BASE_NAMESPACE_KEY_HEX_LENGTH = 20
 ALPHA_PARTITION_NAMESPACE_CONTRACT_VERSION = (
     "canonical_v2_alpha_partition_namespace_v1"
 )
@@ -331,9 +334,15 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "resume_enabled": True,
         "retry_only_failed_command": "python .\\main.py --mode ml-stock-level-alpha-features --config .\\config\\config.ticket_6d_alpha_only_resume.yaml",
     }
-    _write_json(report_root / "partition_plan.json", plan)
-    _write_json(report_root / "failed_partitions.json", {"failed_partition_count": 0, "failed_partitions": []})
     started = time.perf_counter()
+    _write_json(report_root / "partition_plan.json", plan)
+    _write_json(
+        report_root / "failed_partitions.json",
+        {"failed_partition_count": 0, "failed_partitions": []},
+    )
+    _progress(
+        report_root, len(symbols), len(completed_before), 0, 0, started
+    )
     failed: list[dict[str, Any]] = []
     rows_processed = 0
     aborted_early = False
@@ -585,22 +594,35 @@ def prepare_alpha_base_partitions(
     settings = StockLevelResearchConfig.from_mapping(config)
     ml = dict(config.get("ml", {}) or {})
     report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
-    checksum = str(base_validation["sha256"])
+    namespace_identity = _alpha_base_namespace_identity(base_validation)
+    checksum = namespace_identity["source_base_sha256"]
     configured_root = ml.get("canonical_v2_alpha_base_partition_root")
-    target_root = (
-        Path(str(configured_root))
-        if configured_root
-        else report_root / "alpha_base_partitions_v2" / checksum
-    )
+    cache_parent = report_root / "alpha_base_partitions_v2"
+    if configured_root:
+        target_root = Path(str(configured_root))
+        return _validate_alpha_base_partition_cache(
+            target_root, base_validation=base_validation
+        )
+    legacy_root = cache_parent / checksum
+    if legacy_root.is_dir():
+        try:
+            return _validate_alpha_base_partition_cache(
+                legacy_root,
+                base_validation=base_validation,
+                allow_legacy_namespace=True,
+            )
+        except ValueError:
+            pass
+    elif legacy_root.exists():
+        raise ValueError(
+            f"legacy alpha base cache path is not a directory: {legacy_root}"
+        )
+    target_root = cache_parent / f"id-{namespace_identity['namespace_key']}"
     manifest_path = target_root / "base_partition_manifest.json"
-    existing = _read_json(manifest_path)
-    if (
-        existing.get("status") == "COMPLETE"
-        and existing.get("source_base_sha256") == checksum
-        and int(existing.get("row_count", -1)) == int(base_validation["row_count"])
-        and all(Path(str(row.get("path", ""))).is_file() for row in existing.get("partitions", []))
-    ):
-        return existing
+    if target_root.exists():
+        return _validate_alpha_base_partition_cache(
+            target_root, base_validation=base_validation
+        )
 
     attempt_root = _alpha_base_attempt_root(target_root, checksum)
     attempt_root.mkdir(parents=True, exist_ok=False)
@@ -651,8 +673,12 @@ def prepare_alpha_base_partitions(
                 "row_count": row_counts[symbol],
                 "sha256": _file_sha256(path),
                 "source_base_sha256": checksum,
+                "source_base_logical_content_sha256": namespace_identity[
+                    "source_base_logical_content_sha256"
+                ],
                 "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
                 "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+                "base_namespace_identity": namespace_identity,
             }
             _write_json(_base_partition_identity_path(path), identity)
             partitions.append(identity)
@@ -662,8 +688,13 @@ def prepare_alpha_base_partitions(
             "path": str(target_root),
             "source_base_path": str(settings.base_artifact_path),
             "source_base_sha256": checksum,
+            "source_base_logical_content_sha256": namespace_identity[
+                "source_base_logical_content_sha256"
+            ],
             "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
             "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+            "source_base_column_count": int(base_validation["column_count"]),
+            "base_namespace_identity": namespace_identity,
             "row_count": observed_rows,
             "symbol_count": len(partitions),
             "partition_count": len(partitions),
@@ -679,7 +710,9 @@ def prepare_alpha_base_partitions(
                 f"incompatible alpha base partition root already exists: {target_root}"
             )
         os.replace(attempt_root, target_root)
-        return payload
+        return _validate_alpha_base_partition_cache(
+            target_root, base_validation=base_validation
+        )
     except BaseException:
         if attempt_root.exists():
             shutil.rmtree(attempt_root)
@@ -691,6 +724,147 @@ def _alpha_base_attempt_root(target_root: Path, checksum: str) -> Path:
     return target_root.with_name(
         f".attempt-{checksum[:8]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     )
+
+
+def _alpha_base_namespace_identity(
+    base_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    authoritative = {
+        "source_base_sha256": str(base_validation["sha256"]),
+        "source_base_logical_content_sha256": str(
+            base_validation.get("logical_content_sha256") or ""
+        ),
+        "source_base_schema_fingerprint": str(
+            base_validation["schema_fingerprint"]
+        ),
+        "source_base_economic_key_sha256": str(
+            base_validation["economic_key_sha256"]
+        ),
+        "source_base_row_count": int(base_validation["row_count"]),
+        "source_base_column_count": int(base_validation["column_count"]),
+        "target_provenance_contract_versions": list(
+            base_validation.get("target_provenance_contract_versions", [])
+        ),
+        "partition_contract_version": ALPHA_BASE_CONTRACT_VERSION,
+    }
+    key = hashlib.sha256(
+        json.dumps(
+            authoritative, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()[:ALPHA_BASE_NAMESPACE_KEY_HEX_LENGTH]
+    return {
+        "contract_version": ALPHA_BASE_NAMESPACE_CONTRACT_VERSION,
+        "status": "COMPLETE",
+        "namespace_key": key,
+        **authoritative,
+    }
+
+
+def _alpha_base_identity_mismatches(
+    observed: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "field": field,
+            "expected": expected.get(field),
+            "observed": observed.get(field),
+        }
+        for field in expected
+        if observed.get(field) != expected.get(field)
+    ]
+
+
+def _validate_alpha_base_partition_cache(
+    root: Path,
+    *,
+    base_validation: Mapping[str, Any],
+    allow_legacy_namespace: bool = False,
+) -> dict[str, Any]:
+    manifest_path = root / "base_partition_manifest.json"
+    manifest = _read_json(manifest_path)
+    expected_namespace = _alpha_base_namespace_identity(base_validation)
+    observed_namespace = dict(manifest.get("base_namespace_identity") or {})
+    if allow_legacy_namespace and not observed_namespace:
+        legacy_expected = {
+            "status": "COMPLETE",
+            "source_base_sha256": expected_namespace["source_base_sha256"],
+            "source_base_schema_fingerprint": expected_namespace[
+                "source_base_schema_fingerprint"
+            ],
+            "source_base_economic_key_sha256": expected_namespace[
+                "source_base_economic_key_sha256"
+            ],
+            "row_count": expected_namespace["source_base_row_count"],
+        }
+        mismatches = _alpha_base_identity_mismatches(manifest, legacy_expected)
+    else:
+        mismatches = _alpha_base_identity_mismatches(
+            observed_namespace, expected_namespace
+        )
+    if mismatches:
+        raise ValueError(
+            "alpha base cache namespace identity mismatch: "
+            + json.dumps(mismatches, sort_keys=True)
+        )
+    partitions = list(manifest.get("partitions") or [])
+    if (
+        manifest.get("status") != "COMPLETE"
+        or int(manifest.get("partition_count", -1)) != len(partitions)
+        or not partitions
+    ):
+        raise ValueError(
+            f"alpha base cache manifest is missing or incomplete: {manifest_path}"
+        )
+    for row in partitions:
+        symbol = str(row.get("symbol") or "")
+        path = Path(str(row.get("path") or ""))
+        identity = _read_json(_base_partition_identity_path(path))
+        expected_partition = {
+            "contract_version": ALPHA_BASE_CONTRACT_VERSION,
+            "status": "COMPLETE",
+            "symbol": symbol,
+            "path": str(path),
+            "row_count": int(row.get("row_count", -1)),
+            "sha256": str(row.get("sha256") or ""),
+            "source_base_sha256": expected_namespace["source_base_sha256"],
+            "source_base_schema_fingerprint": expected_namespace[
+                "source_base_schema_fingerprint"
+            ],
+            "source_base_economic_key_sha256": expected_namespace[
+                "source_base_economic_key_sha256"
+            ],
+        }
+        if not allow_legacy_namespace:
+            expected_partition.update(
+                {
+                    "source_base_logical_content_sha256": expected_namespace[
+                        "source_base_logical_content_sha256"
+                    ],
+                    "base_namespace_identity": expected_namespace,
+                }
+            )
+        partition_mismatches = _alpha_base_identity_mismatches(
+            identity, expected_partition
+        )
+        if not path.is_file():
+            partition_mismatches.append(
+                {"field": "path_exists", "expected": True, "observed": False}
+            )
+        elif _file_sha256(path) != expected_partition["sha256"]:
+            partition_mismatches.append(
+                {
+                    "field": "sha256_observed",
+                    "expected": expected_partition["sha256"],
+                    "observed": _file_sha256(path),
+                }
+            )
+        if partition_mismatches:
+            raise ValueError(
+                f"alpha base cache partition identity mismatch for {symbol}: "
+                + json.dumps(partition_mismatches, sort_keys=True)
+            )
+    return manifest
 
 
 def _alpha_partition_namespace_identity(
@@ -862,15 +1036,31 @@ def _alpha_worker_task(task: Mapping[str, Any]) -> dict[str, Any]:
             "started_at": datetime.now(timezone.utc).isoformat(),
         },
     )
-    result = _build_partition(
-        symbol,
-        _ALPHA_WORKER_CONFIG,
-        _ALPHA_WORKER_SPY,
-        Path(str(task["partition_root"])),
-        Path(str(task["manifest_root"])),
-        input_resolution=_ALPHA_WORKER_INPUT_RESOLUTION,
-    )
+    try:
+        result = _build_partition(
+            symbol,
+            _ALPHA_WORKER_CONFIG,
+            _ALPHA_WORKER_SPY,
+            Path(str(task["partition_root"])),
+            Path(str(task["manifest_root"])),
+            input_resolution=_ALPHA_WORKER_INPUT_RESOLUTION,
+        )
+    except Exception as exc:
+        failure = _failure_record(symbol, exc)
+        failure["worker_pid"] = os.getpid()
+        _write_json(
+            event_root / f"{_safe_symbol(symbol)}.json",
+            {
+                "status": "FAILED",
+                "symbol": symbol,
+                "worker_pid": os.getpid(),
+                "failure": failure,
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return {"task_status": "FAILED", "failure": failure}
     result["worker_pid"] = os.getpid()
+    result["task_status"] = "COMPLETE"
     _write_json(
         event_root / f"{_safe_symbol(symbol)}.json",
         {
@@ -956,8 +1146,29 @@ def _execute_alpha_process_pool(
                     continue
                 try:
                     result = future.result()
-                    completed += 1
-                    rows_processed += int(result["row_count"])
+                    if result.get("task_status") == "FAILED":
+                        failure = dict(result["failure"])
+                        failure.update(
+                            {
+                                "task_identity": f"alpha-symbol:{symbol}",
+                                "partition_identity": symbol,
+                                "worker_pid": result["failure"].get("worker_pid"),
+                                "executor_phase": executor_phase,
+                                "worker_count": workers,
+                                "multiprocessing_start_method": context.get_start_method(),
+                                "source_commit": source_commit,
+                            }
+                        )
+                        failures.append(failure)
+                        should_abort, abort_reason, dominant = _should_abort_fail_fast(
+                            failures,
+                            completed=completed,
+                            settings=fail_fast,
+                        )
+                        aborted = should_abort
+                    else:
+                        completed += 1
+                        rows_processed += int(result["row_count"])
                 except Exception as exc:
                     failure = _failure_record(symbol, exc)
                     failure.update(
@@ -989,6 +1200,25 @@ def _execute_alpha_process_pool(
                         )
                         dominant = failure["failure_signature"]
                     aborted = should_abort
+                _write_json(
+                    report_root / "failed_partitions.json",
+                    {
+                        "failed_partition_count": len(failures),
+                        "failed_partitions": failures,
+                    },
+                )
+                _progress(
+                    report_root,
+                    planned_partitions,
+                    completed,
+                    len(failures),
+                    rows_processed,
+                    started,
+                    aborted_early=aborted,
+                    abort_reason=abort_reason,
+                    dominant_failure_signature=dominant,
+                    tasks_cancelled=cancelled,
+                )
                 if aborted:
                     break
                 if not aborted:
@@ -1082,13 +1312,15 @@ def _source_commit(config: Mapping[str, Any]) -> str:
     configured = dict(config.get("ml", {}) or {}).get("source_commit")
     if configured:
         return str(configured)
-    head = Path(".git/HEAD")
     try:
-        value = head.read_text(encoding="utf-8").strip()
-        if value.startswith("ref: "):
-            return Path(".git").joinpath(value[5:]).read_text(encoding="utf-8").strip()
-        return value
-    except OSError:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 
