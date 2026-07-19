@@ -3,7 +3,11 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import pickle
+import subprocess
+import sys
+import tempfile
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
@@ -203,6 +207,215 @@ def test_base_partition_interruption_cleans_attempt_and_can_resume(
     monkeypatch.setattr(alpha.os, "replace", real_replace)
     resumed = alpha.prepare_alpha_base_partitions(config, base_validation=validation)
     assert Path(resumed["path"]).is_dir()
+
+
+def test_bounded_alpha_partition_namespace_is_deterministic_and_full_identity(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+
+    first = alpha._alpha_partition_namespace_identity(
+        config, base_validation=validation
+    )
+    second = alpha._alpha_partition_namespace_identity(
+        config, base_validation=validation
+    )
+
+    assert first == second
+    assert len(first["namespace_key"]) == 20
+    assert first["base_artifact_sha256"] == validation["sha256"]
+    assert len(first["base_artifact_sha256"]) == 64
+    assert first["feature_schema_sha256"] == alpha._feature_schema_identity()
+    assert len(first["feature_schema_sha256"]) == 64
+    assert len(first["configuration_sha256"]) == 64
+
+
+def test_bounded_alpha_partition_namespace_stays_within_windows_path_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = alpha.os.replace
+
+    with tempfile.TemporaryDirectory(prefix="alpha-ns-") as temporary:
+        report_root = (
+            Path(temporary)
+            / "reports"
+            / "ml"
+            / "development"
+            / "ticket_7b3_daily_large_history"
+            / "regeneration_canonical_v2"
+            / "alpha_enrichment"
+        )
+
+        def record_replace(source, destination):
+            replacements.append((Path(source), Path(destination)))
+            return real_replace(source, destination)
+
+        monkeypatch.setattr(alpha.os, "replace", record_replace)
+        namespace, identity = alpha._resolve_alpha_partition_namespace(
+            report_root, config, base_validation=validation
+        )
+        deepest_new_paths = [
+            namespace / "partitions" / "symbol=BRK.B" / "rows.parquet.tmp",
+            namespace / "partition_manifests" / "BRK.B.json",
+            namespace / "partition_failures" / "BRK.B.json",
+            namespace / "schema_diagnostics" / "BRK.B.json",
+        ]
+
+        assert identity["layout"] == "bounded_v1"
+        assert all(len(str(path.resolve())) < 240 for path in deepest_new_paths)
+        assert all(len(str(source.resolve())) < 240 for source, _ in replacements)
+        manifest = json.loads(
+            (namespace / "namespace_manifest.json").read_text()
+        )
+        assert manifest["base_artifact_sha256"] == validation["sha256"]
+        assert manifest["feature_schema_sha256"] == alpha._feature_schema_identity()
+
+
+def test_bounded_alpha_partition_namespace_mismatch_fails_closed(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    namespace, identity = alpha._resolve_alpha_partition_namespace(
+        tmp_path / "report", config, base_validation=validation
+    )
+    manifest_path = namespace / "namespace_manifest.json"
+    mismatched = {**identity, "base_artifact_sha256": "f" * 64}
+    manifest_path.write_text(json.dumps(mismatched), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="namespace identity mismatch"):
+        alpha._resolve_alpha_partition_namespace(
+            tmp_path / "report", config, base_validation=validation
+        )
+
+
+def test_bounded_alpha_partition_namespace_resume_and_incompatible_identity(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    first, first_identity = alpha._resolve_alpha_partition_namespace(
+        tmp_path / "report", config, base_validation=validation
+    )
+    resumed, resumed_identity = alpha._resolve_alpha_partition_namespace(
+        tmp_path / "report", config, base_validation=validation
+    )
+    incompatible = {**config, "ml": dict(config["ml"])}
+    incompatible["ml"]["stock_level_parquet_compression"] = "snappy"
+    other, other_identity = alpha._resolve_alpha_partition_namespace(
+        tmp_path / "report", incompatible, base_validation=validation
+    )
+
+    assert resumed == first
+    assert resumed_identity == first_identity
+    assert other != first
+    assert other_identity["configuration_sha256"] != first_identity[
+        "configuration_sha256"
+    ]
+
+
+def test_bounded_alpha_partition_namespace_interruption_cleans_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    report_root = tmp_path / "report"
+    real_replace = alpha.os.replace
+
+    def interrupt(_source, _destination):
+        raise KeyboardInterrupt("synthetic namespace interruption")
+
+    monkeypatch.setattr(alpha.os, "replace", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="synthetic namespace interruption"):
+        alpha._resolve_alpha_partition_namespace(
+            report_root, config, base_validation=validation
+        )
+
+    namespace_parent = report_root / "alpha_partitions_v2"
+    assert not list(namespace_parent.glob(".attempt-*"))
+    assert not list(namespace_parent.glob("id-*"))
+
+    monkeypatch.setattr(alpha.os, "replace", real_replace)
+    resumed, _ = alpha._resolve_alpha_partition_namespace(
+        report_root, config, base_validation=validation
+    )
+    assert resumed.is_dir()
+
+
+def test_alpha_partition_namespace_reuses_existing_legacy_layout(
+    tmp_path: Path,
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    with tempfile.TemporaryDirectory(prefix="al-") as temporary:
+        report_root = Path(temporary) / "r"
+        legacy = (
+            report_root
+            / "alpha_partitions_v2"
+            / validation["sha256"]
+            / alpha._feature_schema_identity()
+        )
+        legacy.mkdir(parents=True)
+
+        namespace, identity = alpha._resolve_alpha_partition_namespace(
+            report_root, config, base_validation=validation
+        )
+
+        assert namespace == legacy
+        assert identity["layout"] == "legacy_full_hash_v2"
+        assert not list((report_root / "alpha_partitions_v2").glob("id-*"))
+
+
+def test_subprocess_regression_avoids_production_style_full_hash_final_path() -> None:
+    script = """
+import json
+import tempfile
+from pathlib import Path
+from infrastructure.data import canonical_v2_alpha_enrichment as alpha
+
+config = {"ml": {
+    "stock_alpha_feature_n_jobs": 1,
+    "stock_level_artifact_format": "parquet",
+    "stock_level_parquet_compression": "zstd",
+}}
+validation = {"sha256": "c2487d7f378121069ea5e92a1d0cf0444f42dfc1da237566d24c650ae8558d38"}
+with tempfile.TemporaryDirectory(prefix="alpha-final-path-") as temporary:
+    report = Path(temporary) / (
+        "reports/ml/development/ticket_7b3_daily_large_history/"
+        "regeneration_canonical_v2/alpha_enrichment"
+    )
+    legacy = (
+        report / "alpha_partitions_v2" / validation["sha256"]
+        / alpha._feature_schema_identity() / "partitions"
+    )
+    namespace, identity = alpha._resolve_alpha_partition_namespace(
+        report, config, base_validation=validation
+    )
+    durable = namespace / "partitions" / "symbol=AAA" / "rows.parquet.tmp"
+    print(json.dumps({
+        "legacy": len(str(legacy.resolve())),
+        "durable": len(str(durable.resolve())),
+        "layout": identity["layout"],
+    }))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    observed = json.loads(result.stdout)
+    assert observed["legacy"] >= 260
+    assert observed["durable"] < 248
+    assert observed["layout"] == "bounded_v1"
 
 
 def test_worker_payload_is_small_and_excludes_unrelated_configuration(

@@ -54,6 +54,10 @@ EXPECTED_CANONICAL_HASH = "c2ab57992c9363c118d854f01da18ea34122b9c0775af3d0676af
 EXPECTED_BASE_HASH = "739a2b984cdd0a160d65ea546d9523b75637be3921c14734dd5483a093357e89"
 ALPHA_ENRICHMENT_CONTRACT_VERSION = "canonical_v2_alpha_enrichment_v2"
 ALPHA_BASE_CONTRACT_VERSION = "canonical_v2_alpha_base_v1"
+ALPHA_PARTITION_NAMESPACE_CONTRACT_VERSION = (
+    "canonical_v2_alpha_partition_namespace_v1"
+)
+ALPHA_PARTITION_NAMESPACE_KEY_HEX_LENGTH = 20
 TARGET_PROVENANCE_V2 = "stock_level_target_provenance_v2"
 REQUIRED_BASE_COLUMNS = {
     "rebalance_date",
@@ -278,11 +282,10 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
 
     output_dir = settings.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    partition_namespace = (
-        report_root
-        / "alpha_partitions_v2"
-        / str(base_validation["sha256"])
-        / _feature_schema_identity()
+    partition_namespace, namespace_identity = _resolve_alpha_partition_namespace(
+        report_root,
+        config,
+        base_validation=base_validation,
     )
     partition_root = partition_namespace / "partitions"
     manifest_root = partition_namespace / "partition_manifests"
@@ -321,6 +324,7 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "base_artifact_sha256": base_validation["sha256"],
         "base_economic_key_sha256": base_validation["economic_key_sha256"],
         "base_partition_root": str(base_partition_root),
+        "partition_namespace": namespace_identity,
         "source_mode": "certified_published_base_partition",
         "canonical_price_root": str(settings.parquet_dir),
         "monolithic_base_read": False,
@@ -687,6 +691,89 @@ def _alpha_base_attempt_root(target_root: Path, checksum: str) -> Path:
     return target_root.with_name(
         f".attempt-{checksum[:8]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
     )
+
+
+def _alpha_partition_namespace_identity(
+    config: Mapping[str, Any],
+    *,
+    base_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    base_sha256 = str(base_validation["sha256"])
+    feature_schema_sha256 = _feature_schema_identity()
+    configuration_sha256 = _alpha_configuration_identity(config)
+    authoritative = {
+        "base_artifact_sha256": base_sha256,
+        "feature_schema_sha256": feature_schema_sha256,
+        "configuration_sha256": configuration_sha256,
+    }
+    namespace_key = hashlib.sha256(
+        json.dumps(
+            authoritative, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()[:ALPHA_PARTITION_NAMESPACE_KEY_HEX_LENGTH]
+    return {
+        "contract_version": ALPHA_PARTITION_NAMESPACE_CONTRACT_VERSION,
+        "status": "COMPLETE",
+        "namespace_key": namespace_key,
+        **authoritative,
+    }
+
+
+def _resolve_alpha_partition_namespace(
+    report_root: Path,
+    config: Mapping[str, Any],
+    *,
+    base_validation: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    identity = _alpha_partition_namespace_identity(
+        config, base_validation=base_validation
+    )
+    namespace_parent = report_root / "alpha_partitions_v2"
+    legacy_root = (
+        namespace_parent
+        / identity["base_artifact_sha256"]
+        / identity["feature_schema_sha256"]
+    )
+    if legacy_root.is_dir():
+        return legacy_root, {
+            **identity,
+            "layout": "legacy_full_hash_v2",
+            "path": str(legacy_root),
+        }
+    if legacy_root.exists():
+        raise ValueError(
+            f"legacy alpha partition namespace is not a directory: {legacy_root}"
+        )
+
+    namespace_root = namespace_parent / f"id-{identity['namespace_key']}"
+    manifest_path = namespace_root / "namespace_manifest.json"
+    if namespace_root.exists():
+        observed = _read_json(manifest_path)
+        expected = {**identity, "layout": "bounded_v1", "path": str(namespace_root)}
+        if observed != expected:
+            raise ValueError(
+                "alpha partition namespace identity mismatch for bounded key "
+                f"{identity['namespace_key']}: {manifest_path}"
+            )
+        return namespace_root, observed
+
+    attempt_root = namespace_parent / (
+        f".attempt-{identity['namespace_key']}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+    expected = {**identity, "layout": "bounded_v1", "path": str(namespace_root)}
+    try:
+        attempt_root.mkdir(parents=True, exist_ok=False)
+        _write_json(attempt_root / manifest_path.name, expected)
+        os.replace(attempt_root, namespace_root)
+    except BaseException:
+        if attempt_root.exists():
+            shutil.rmtree(attempt_root)
+        if namespace_root.is_dir():
+            observed = _read_json(manifest_path)
+            if observed == expected:
+                return namespace_root, observed
+        raise
+    return namespace_root, expected
 
 
 def _small_alpha_worker_config(config: Mapping[str, Any]) -> dict[str, Any]:
