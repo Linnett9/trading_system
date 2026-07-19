@@ -408,6 +408,51 @@ def test_promotion_refreshes_exact_stale_sidecar_and_is_idempotent(
     assert json.loads(sidecar_path.read_text()) == published
 
 
+def test_promotions_in_separate_roots_do_not_cross_contaminate_sidecars(
+    tmp_path: Path,
+) -> None:
+    roots = [tmp_path / "primary" / "benchmark", tmp_path / "run" / "benchmark"]
+    sources = [root / "stock_level_prediction_artifacts.parquet" for root in roots]
+    for source in sources:
+        _write(source, [_row("AAA", status="unrealized_boundary", provenance=None)])
+        identity = repair.bounded_parquet_artifact_identity(
+            source, batch_rows=1, resolved_artifact_path=source
+        )
+        source.with_name("stock_level_prediction_artifacts.json").write_text(
+            json.dumps(repair._refreshed_publication({}, identity)), encoding="utf-8"
+        )
+
+    repair.repair_stock_artifact_target_provenance_v2(
+        input_path=sources[0],
+        output_path=roots[0] / "repaired.parquet",
+        report_root=tmp_path / "primary-report",
+        dry_run=False,
+        promote=True,
+        batch_rows=1,
+    )
+    first_sidecar = sources[0].with_name("stock_level_prediction_artifacts.json")
+    first_published_bytes = first_sidecar.read_bytes()
+
+    repair.repair_stock_artifact_target_provenance_v2(
+        input_path=sources[1],
+        output_path=roots[1] / "repaired.parquet",
+        report_root=tmp_path / "run-report",
+        dry_run=False,
+        promote=True,
+        batch_rows=1,
+    )
+
+    assert first_sidecar.read_bytes() == first_published_bytes
+    for source in sources:
+        sidecar = json.loads(
+            source.with_name("stock_level_prediction_artifacts.json").read_text()
+        )
+        assert Path(
+            sidecar["canonical_artifact"]["resolved_artifact_path"]
+        ).resolve() == source.resolve()
+        assert Path(sidecar["artifact_path"]).resolve() == source.resolve()
+
+
 def test_publication_generation_failure_preserves_parquet_and_sidecar(
     tmp_path: Path,
 ) -> None:
