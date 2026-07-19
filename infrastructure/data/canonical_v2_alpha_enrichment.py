@@ -59,13 +59,31 @@ EXPECTED_BASE_HASH = "739a2b984cdd0a160d65ea546d9523b75637be3921c14734dd5483a093
 ALPHA_ENRICHMENT_CONTRACT_VERSION = "canonical_v2_alpha_enrichment_v2"
 ALPHA_BASE_CONTRACT_VERSION = "canonical_v2_alpha_base_v1"
 TARGET_PROVENANCE_V2 = "stock_level_target_provenance_v2"
+TEMPORAL_TEXT_COLUMNS = {
+    "feature_timestamp",
+    "feature_data_cutoff_timestamp",
+    "decision_timestamp",
+    "target_start_timestamp",
+    "label_start_timestamp",
+    "label_end_timestamp",
+    "label_available_timestamp",
+    "benchmark_target_start_timestamp",
+    "benchmark_label_start_timestamp",
+    "benchmark_label_end_timestamp",
+    "benchmark_label_available_timestamp",
+}
 REQUIRED_BASE_COLUMNS = {
     "rebalance_date",
     "symbol",
     "decision_timestamp",
     "target_provenance_contract_version",
 }
-BOOL_COLUMNS = {"selector_eligible", "provider_transition_flag"}
+BOOL_COLUMNS = {
+    "selector_eligible",
+    "provider_transition_flag",
+    "true_stock_level_row",
+    "overlapping_targets",
+}
 INT_COLUMNS = {
     "target_horizon_trading_days",
     "required_purge_horizon_trading_days",
@@ -74,6 +92,8 @@ INT_COLUMNS = {
     "breadth_observed_symbol_count",
     "industry_peer_count",
     "fundamentals_data_age_days",
+    "context_age_calendar_days",
+    "actual_top_decile_label_10d",
 }
 INTERMEDIATE_NUMERIC_COLUMNS = {
     "_stock_above_200d_average",
@@ -84,6 +104,9 @@ NUMERIC_COLUMNS = {
     *ENGINEERED_FEATURE_COLUMNS,
     *INTERMEDIATE_NUMERIC_COLUMNS,
     "model_close",
+    "average_dollar_volume_21d",
+    "average_dollar_volume_63d",
+    "industry_mapping_available",
     "actual_forward_return_10d",
     "actual_forward_return_5d",
     "actual_future_volatility",
@@ -128,7 +151,16 @@ def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"alpha base artifact is missing required columns: {missing}")
 
-    sidecar_path = path.with_name("stock_level_prediction_artifacts.json")
+    configured_manifest = str(
+        dict(config.get("ml", {}) or {}).get(
+            "canonical_v2_alpha_base_manifest_path", ""
+        )
+    ).strip()
+    sidecar_path = (
+        Path(configured_manifest)
+        if configured_manifest
+        else path.with_name("stock_level_prediction_artifacts.json")
+    )
     sidecar = _read_json(sidecar_path)
     identity = dict(sidecar.get("canonical_artifact", {}) or {})
     if not sidecar or not identity:
@@ -138,7 +170,11 @@ def validate_alpha_base_artifact(config: Mapping[str, Any]) -> dict[str, Any]:
     if int(identity.get("row_count", -1)) != metadata.num_rows:
         raise ValueError("alpha base publication row count does not match Parquet metadata")
     recorded_path = Path(str(identity.get("resolved_artifact_path", "")))
-    if recorded_path and recorded_path.resolve() != path.resolve():
+    if (
+        not configured_manifest
+        and recorded_path
+        and recorded_path.resolve() != path.resolve()
+    ):
         raise ValueError("alpha base publication identity points to a different artifact")
     recorded_sha256 = str(identity.get("sha256", "")).lower()
     if len(recorded_sha256) != 64:
@@ -2160,6 +2196,8 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
     if kind == "string":
         if isinstance(value, str):
             return value, False
+        if column in TEMPORAL_TEXT_COLUMNS and isinstance(value, datetime):
+            return value.isoformat(), False
         raise ValueError(f"text column {column} received {type(value).__name__}")
     if kind == "bool":
         if isinstance(value, bool):

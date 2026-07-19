@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
+
+import core.research.ml.stock_level.selector_parent_chain as chain
+from core.research.ml.stock_level.selector_parent_chain import (
+    ParentChainInputs,
+    build_production_enriched_child,
+    prepare_parent_chain_plan,
+    publish_bounded_smoke,
+)
+
+
+def _row(symbol="A", date="2026-01-02"):
+    return {
+        "symbol": symbol,
+        "rebalance_date": date,
+        "decision_session_date": date,
+        "decision_timestamp": f"{date}T21:05:00Z",
+        "feature_data_cutoff_timestamp": f"{date}T21:00:00Z",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
+        "actual_forward_return_10d": 0.1,
+        "actual_benchmark_return_10d": 0.02,
+        "actual_market_residual_return_10d": 0.08,
+        "target_status": "realized",
+        "target_start_timestamp": f"{date}T21:00:00Z",
+        "label_start_timestamp": "2026-01-05T21:00:00Z",
+        "label_end_timestamp": "2026-01-16T21:00:00Z",
+        "label_available_timestamp": "2026-01-20T21:00:00Z",
+        "benchmark_target_start_timestamp": f"{date}T21:00:00Z",
+        "benchmark_label_start_timestamp": "2026-01-05T21:00:00Z",
+        "benchmark_label_end_timestamp": "2026-01-16T21:00:00Z",
+        "benchmark_label_available_timestamp": "2026-01-20T21:00:00Z",
+    }
+
+
+def _fixture(tmp_path, monkeypatch):
+    base = tmp_path / "base.parquet"
+    rows = [_row("A"), _row("B"), _row("A", "2026-01-05"), _row("B", "2026-01-05")]
+    pq.write_table(pa.Table.from_pylist(rows), base)
+    base_hash = chain._sha256(base)
+    monkeypatch.setattr(chain, "APPROVED_BASE_SHA256", base_hash)
+    monkeypatch.setattr(chain, "PRODUCTION_ROW_COUNT", len(rows))
+    base_manifest = tmp_path / "base.json"
+    base_manifest.write_text(json.dumps({
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
+        "canonical_artifact": {
+            "logical_content_sha256": chain.APPROVED_BASE_LOGICAL_HASH,
+        },
+    }))
+    daily = tmp_path / "daily.json"
+    daily.write_text(json.dumps({
+        "dataset_logical_partition_hash": chain.APPROVED_CANONICAL_DAILY_HASH,
+    }))
+    registry = tmp_path / "registry.json"
+    registry.write_text(json.dumps({
+        "version": chain.APPROVED_ASSET_REGISTRY_VERSION,
+        "row_identity_checksum": chain.APPROVED_ASSET_REGISTRY_CHECKSUM,
+    }))
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps({"feature_columns": ["smoke_feature"]}))
+    inputs = ParentChainInputs(
+        run_id="smoke-1",
+        output_root=tmp_path / "run=smoke-1",
+        base_artifact=base,
+        base_manifest=base_manifest,
+        canonical_daily_manifest=daily,
+        asset_registry_manifest=registry,
+        feature_schema=schema,
+    )
+    return inputs
+
+
+def test_preflight_is_deterministic_and_read_only(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    first = prepare_parent_chain_plan(inputs)
+    second = prepare_parent_chain_plan(inputs)
+    assert first == second
+    assert first["status"] == "READY"
+    assert first["mutation_performed"] is False
+    assert not inputs.output_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "value", "blocker"),
+    [
+        ("APPROVED_BASE_SHA256", "0" * 64, "BASE_HASH_MISMATCH"),
+        ("APPROVED_BASE_LOGICAL_HASH", "1" * 64, "BASE_LOGICAL_HASH_MISMATCH"),
+        ("PRODUCTION_ROW_COUNT", 99, "BASE_POPULATION_MISMATCH"),
+        ("APPROVED_CANONICAL_DAILY_HASH", "2" * 64, "CANONICAL_DAILY_HASH_MISMATCH"),
+    ],
+)
+def test_parent_identity_failures(tmp_path, monkeypatch, attribute, value, blocker):
+    inputs = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(chain, attribute, value)
+    assert blocker in prepare_parent_chain_plan(inputs)["blockers"]
+
+
+@pytest.mark.parametrize("provenance", ["stock_level_target_provenance_v1", "stock_level_target_provenance_v4", ""])
+def test_unsupported_provenance_fails(tmp_path, monkeypatch, provenance):
+    inputs = _fixture(tmp_path, monkeypatch)
+    payload = json.loads(inputs.base_manifest.read_text())
+    payload["target_provenance_contract_version"] = provenance
+    inputs.base_manifest.write_text(json.dumps(payload))
+    assert "TARGET_IDENTITY_MISMATCH" in prepare_parent_chain_plan(inputs)["blockers"]
+
+
+def test_namespace_confusion_fails(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    payload = json.loads(inputs.base_manifest.read_text())
+    payload["economic_target_id"] = "stock_level_target_provenance_v2"
+    payload["target_provenance_contract_version"] = "forward_return_10d"
+    inputs.base_manifest.write_text(json.dumps(payload))
+    assert "TARGET_IDENTITY_MISMATCH" in prepare_parent_chain_plan(inputs)["blockers"]
+
+
+def test_feature_target_and_memory_fail_closed(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.feature_schema.write_text(json.dumps({"feature_columns": ["actual_forward_return_10d"]}))
+    bad = chain.ParentChainInputs(**{**inputs.__dict__, "memory_budget_gib": 31})
+    blockers = prepare_parent_chain_plan(bad)["blockers"]
+    assert "TARGET_COLUMN_IN_FEATURE_ALLOWLIST" in blockers
+    assert "MEMORY_BUDGET_INVALID" in blockers
+
+
+def test_object_list_feature_schema_is_resolved_and_checked(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.feature_schema.write_text(json.dumps({
+        "features": [{"name": "actual_forward_return_10d"}],
+    }))
+    blockers = prepare_parent_chain_plan(inputs)["blockers"]
+    assert "TARGET_COLUMN_IN_FEATURE_ALLOWLIST" in blockers
+    assert "FEATURE_SCHEMA_UNRESOLVED" not in blockers
+
+
+def test_empty_feature_schema_fails_closed(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.feature_schema.write_text(json.dumps({"features": []}))
+    assert "FEATURE_SCHEMA_UNRESOLVED" in prepare_parent_chain_plan(inputs)["blockers"]
+
+
+def test_output_conflict_and_concurrent_owner(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.output_root.mkdir()
+    (inputs.output_root / "owner.json").write_text(json.dumps({"run_id": "other"}))
+    assert "ACTIVE_OWNER_CONFLICT" in prepare_parent_chain_plan(inputs)["blockers"]
+
+
+def test_active_smoke_owner_lock_fails_closed(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    lock = inputs.output_root.with_name(f".{inputs.output_root.name}.owner.lock")
+    lock.write_text("other")
+    with pytest.raises(ValueError, match="ACTIVE_OWNER_CONFLICT"):
+        publish_bounded_smoke(inputs, decision_dates=["2026-01-02"])
+
+
+def test_protected_output_root_fails(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    protected = chain.ParentChainInputs(**{
+        **inputs.__dict__,
+        "output_root": tmp_path / "regeneration_canonical_v2" / "alpha_enrichment",
+    })
+    assert "PROTECTED_OUTPUT_ROOT" in prepare_parent_chain_plan(protected)["blockers"]
+
+
+def test_smoke_population_spine_frozen_and_resume(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    first = publish_bounded_smoke(inputs, decision_dates=["2026-01-02", "2026-01-05"])
+    assert first["status"] == "READY"
+    assert first["row_count"] == 4
+    assert first["symbol_count"] == 2
+    assert first["lineage"]["status"] == "READY"
+    assert first["daily_spine"]["status"] == "READY"
+    assert first["frozen_preflight"]["status"] == "READY"
+    assert len(first["enriched_logical_checksum"]) == 64
+    assert len(first["enriched_physical_sha256"]) == 64
+    assert first["benchmark"]["write_bytes"] > 0
+    resumed = chain.ParentChainInputs(**{**inputs.__dict__, "resume": True})
+    second = publish_bounded_smoke(resumed, decision_dates=["2026-01-02", "2026-01-05"])
+    assert second["resume_action"] == "REUSED_COMPATIBLE"
+    assert second["row_id_checksum"] == first["row_id_checksum"]
+    assert second["target_checksum"] == first["target_checksum"]
+
+
+def test_owned_incomplete_output_resumes_safely(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.output_root.mkdir()
+    plan = prepare_parent_chain_plan(inputs)
+    (inputs.output_root / "owner.json").write_text(json.dumps(chain._owner(plan)))
+    resumed = chain.ParentChainInputs(**{**inputs.__dict__, "resume": True})
+    result = publish_bounded_smoke(resumed, decision_dates=["2026-01-02"])
+    assert result["resume_action"] == "RESUMED_INCOMPLETE"
+    assert result["resume_history"] == [
+        {"action": "RESTARTED_OWNED_INCOMPLETE_OUTPUT"}
+    ]
+
+
+def test_incompatible_incomplete_output_fails(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    inputs.output_root.mkdir()
+    (inputs.output_root / "owner.json").write_text(json.dumps({"run_id": "other"}))
+    resumed = chain.ParentChainInputs(**{**inputs.__dict__, "resume": True})
+    with pytest.raises(ValueError, match="preflight blocked"):
+        publish_bounded_smoke(resumed, decision_dates=["2026-01-02"])
+
+
+def test_unknown_duplicate_and_changed_protected_values_fail_or_preserve(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    rows = pq.read_table(inputs.base_artifact).to_pylist()
+    unknown = deepcopy(rows[0])
+    unknown["symbol"] = "UNKNOWN"
+    with pytest.raises(ValueError, match="unknown enrichment"):
+        chain.merge_enrichment_preserving_base(rows, [unknown])
+    with pytest.raises(ValueError, match="ROW_ID_DUPLICATE"):
+        chain.merge_enrichment_preserving_base(rows, [rows[0], rows[0]])
+    poisoned = {**rows[0], "actual_forward_return_10d": 999, "smoke_feature": 1}
+    output = chain.merge_enrichment_preserving_base(rows, [poisoned])
+    assert output[0]["actual_forward_return_10d"] == rows[0]["actual_forward_return_10d"]
+
+
+def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+    canonical_root = tmp_path / "canonical"
+    canonical_root.mkdir()
+    inputs = chain.ParentChainInputs(**{
+        **inputs.__dict__,
+        "production": True,
+        "canonical_daily_root": canonical_root,
+    })
+    config = tmp_path / "config.yaml"
+    config.write_text("ml: {}\n")
+    observed = {}
+
+    class Paths:
+        enriched_parquet_path = tmp_path / "child.parquet"
+
+    def build(payload):
+        observed.update(payload["ml"])
+        return Paths()
+
+    import infrastructure.data.canonical_v2_alpha_enrichment as enrichment
+    monkeypatch.setattr(
+        enrichment, "write_partitioned_canonical_v2_alpha_features", build
+    )
+    result = build_production_enriched_child(inputs, config_path=config)
+    assert result["status"] == "COMPLETE"
+    assert observed["stock_level_base_prediction_artifacts_path"] == str(
+        inputs.base_artifact.resolve()
+    )
+    assert observed["stock_alpha_feature_n_jobs"] == 6
+    assert observed["economic_target_id"] == "forward_return_10d"
+    assert observed["canonical_v2_alpha_base_manifest_path"] == str(
+        inputs.base_manifest.resolve()
+    )

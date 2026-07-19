@@ -466,5 +466,6 @@ def _hash(payload: Any) -> str:
             separators=(",", ":"),
             ensure_ascii=False,
             allow_nan=False,
+            default=str,
         ).encode("utf-8")
     ).hexdigest()
