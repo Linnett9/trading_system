@@ -73,6 +73,7 @@ def _fixture(tmp_path, monkeypatch):
         canonical_daily_manifest=daily,
         asset_registry_manifest=registry,
         feature_schema=schema,
+        path_length_limit=1_000,
     )
     return inputs
 
@@ -85,6 +86,77 @@ def test_preflight_is_deterministic_and_read_only(tmp_path, monkeypatch):
     assert first["status"] == "READY"
     assert first["mutation_performed"] is False
     assert not inputs.output_root.exists()
+
+
+def test_parent_preflight_plans_authoritative_bounded_namespaces(
+    tmp_path, monkeypatch
+):
+    inputs = _fixture(tmp_path, monkeypatch)
+
+    plan = prepare_parent_chain_plan(inputs)
+    namespaces = plan["alpha_namespaces"]
+
+    assert namespaces["layout"] == "bounded_v1"
+    assert namespaces["owner"].endswith("_planned_bounded_alpha_namespaces")
+    for namespace in (namespaces["base"], namespaces["partitions"]):
+        path = chain.Path(namespace["path"])
+        assert path.name == f"id-{namespace['namespace_key']}"
+        assert len(namespace["namespace_key"]) == 20
+    assert len(namespaces["base"]["source_base_sha256"]) == 64
+    assert len(namespaces["partitions"]["base_artifact_sha256"]) == 64
+    parts = chain.Path(namespaces["partitions"]["path"]).parts
+    assert not any(len(part) == 64 for part in parts)
+
+
+def test_parent_path_budget_blocks_before_mutation_or_worker_submission(
+    tmp_path, monkeypatch
+):
+    inputs = _fixture(tmp_path, monkeypatch)
+    blocked = chain.ParentChainInputs(
+        **{
+            **inputs.__dict__,
+            "production": True,
+            "canonical_daily_root": tmp_path,
+            "path_length_limit": 80,
+        }
+    )
+    config = tmp_path / "config.yaml"
+    config.write_text("ml: {}\n")
+    called = False
+
+    import infrastructure.data.canonical_v2_alpha_enrichment as enrichment
+
+    def forbidden(_payload):
+        nonlocal called
+        called = True
+        raise AssertionError("worker owner must not be called")
+
+    monkeypatch.setattr(
+        enrichment, "write_partitioned_canonical_v2_alpha_features", forbidden
+    )
+
+    plan = prepare_parent_chain_plan(blocked)
+    assert plan["path_budget"]["blocker"] == "PATH_LENGTH_BUDGET_EXCEEDED"
+    assert plan["path_budget"]["calculated_maximum_path_length"] > 80
+    assert plan["path_budget"]["longest_representative_path"]
+    assert plan["path_budget"]["recommended_shorter_output_root"]
+    assert not blocked.output_root.exists()
+    with pytest.raises(ValueError, match="PATH_LENGTH_BUDGET_EXCEEDED"):
+        build_production_enriched_child(blocked, config_path=config)
+    assert called is False
+    assert not blocked.output_root.exists()
+
+
+def test_parent_safe_path_budget_proceeds(tmp_path, monkeypatch):
+    inputs = _fixture(tmp_path, monkeypatch)
+
+    plan = prepare_parent_chain_plan(inputs)
+
+    assert plan["path_budget"]["status"] == "READY"
+    assert (
+        plan["path_budget"]["calculated_maximum_path_length"]
+        <= plan["path_budget"]["configured_limit"]
+    )
 
 
 @pytest.mark.parametrize(

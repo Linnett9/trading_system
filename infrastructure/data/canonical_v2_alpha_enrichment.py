@@ -1202,15 +1202,56 @@ def _alpha_partition_namespace_identity(
     }
 
 
+def _planned_bounded_alpha_namespaces(
+    report_root: Path,
+    config: Mapping[str, Any],
+    *,
+    base_validation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Plan canonical bounded namespace paths without filesystem mutation."""
+    base = _alpha_base_namespace_identity(base_validation)
+    partitions = _alpha_partition_namespace_identity(
+        config, base_validation=base_validation
+    )
+    return {
+        "owner": (
+            "infrastructure.data.canonical_v2_alpha_enrichment:"
+            "_planned_bounded_alpha_namespaces"
+        ),
+        "layout": "bounded_v1",
+        "base": {
+            **base,
+            "path": str(
+                report_root
+                / "alpha_base_partitions_v2"
+                / f"id-{base['namespace_key']}"
+            ),
+        },
+        "partitions": {
+            **partitions,
+            "path": str(
+                report_root
+                / "alpha_partitions_v2"
+                / f"id-{partitions['namespace_key']}"
+            ),
+        },
+    }
+
+
 def _resolve_alpha_partition_namespace(
     report_root: Path,
     config: Mapping[str, Any],
     *,
     base_validation: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
-    identity = _alpha_partition_namespace_identity(
-        config, base_validation=base_validation
+    planned = _planned_bounded_alpha_namespaces(
+        report_root, config, base_validation=base_validation
     )
+    identity = {
+        key: value
+        for key, value in planned["partitions"].items()
+        if key != "path"
+    }
     namespace_parent = report_root / "alpha_partitions_v2"
     legacy_root = (
         namespace_parent
@@ -1228,7 +1269,7 @@ def _resolve_alpha_partition_namespace(
             f"legacy alpha partition namespace is not a directory: {legacy_root}"
         )
 
-    namespace_root = namespace_parent / f"id-{identity['namespace_key']}"
+    namespace_root = Path(str(planned["partitions"]["path"]))
     manifest_path = namespace_root / "namespace_manifest.json"
     if namespace_root.exists():
         observed = _read_json(manifest_path)

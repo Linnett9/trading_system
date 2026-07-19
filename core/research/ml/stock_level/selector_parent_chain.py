@@ -69,6 +69,8 @@ class ParentChainInputs:
     memory_budget_gib: float = 24.0
     resume: bool = False
     production: bool = False
+    config_path: Path | None = None
+    path_length_limit: int = 240
 
 
 def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
@@ -117,6 +119,19 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         for column in feature_columns
     ):
         blockers.append("TARGET_COLUMN_IN_FEATURE_ALLOWLIST")
+    alpha_config = _parent_alpha_config(
+        inputs,
+        base_identity=base_identity,
+        config_path=inputs.config_path,
+    )
+    namespace_plan = _alpha_namespace_path_plan(
+        inputs,
+        base_identity=base_identity,
+        config=alpha_config,
+    )
+    path_budget = _path_budget_preflight(inputs, namespace_plan)
+    if path_budget["status"] != "READY":
+        blockers.append("PATH_LENGTH_BUDGET_EXCEEDED")
     blockers = list(dict.fromkeys(blockers))
     return {
         "contract_version": CONTRACT_VERSION,
@@ -132,6 +147,8 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         "asset_registry_version": APPROVED_ASSET_REGISTRY_VERSION,
         "asset_registry_checksum": APPROVED_ASSET_REGISTRY_CHECKSUM,
         "feature_schema_checksum": _hash_json(schema),
+        "alpha_namespaces": namespace_plan,
+        "path_budget": path_budget,
         "compute": {
             "workers": inputs.workers,
             "max_in_flight_tasks": inputs.max_in_flight_tasks,
@@ -363,7 +380,10 @@ def build_production_enriched_child(
     """Delegate a preflighted full build to the authoritative partitioned owner."""
     if not inputs.production:
         raise ValueError("production enrichment requires --production")
-    plan = prepare_parent_chain_plan(inputs)
+    planning_inputs = ParentChainInputs(
+        **{**inputs.__dict__, "config_path": config_path}
+    )
+    plan = prepare_parent_chain_plan(planning_inputs)
     if plan["status"] != "READY":
         raise ValueError(f"parent-chain preflight blocked: {plan['blockers']}")
     output = inputs.output_root.resolve()
@@ -376,50 +396,11 @@ def build_production_enriched_child(
     try:
         os.write(lock_fd, inputs.run_id.encode("utf-8"))
         os.close(lock_fd)
-        import yaml
-
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        ml = dict(config.get("ml", {}) or {})
-        enriched_root = output / "enriched"
-        ml.update(
-            {
-                "stock_alpha_run_size": "benchmark",
-                "stock_alpha_output_dir_override": True,
-                "output_dir": str(enriched_root),
-                "stock_level_base_prediction_artifacts_path": str(inputs.base_artifact.resolve()),
-                "canonical_v2_alpha_base_manifest_path": str(
-                    inputs.base_manifest.resolve()
-                ),
-                "stock_level_prediction_artifacts_path": str(
-                    enriched_root / "stock_level_prediction_artifacts_enriched.parquet"
-                ),
-                "canonical_daily_v2_root": str(
-                    (inputs.canonical_daily_root or Path("")).resolve()
-                ),
-                "stooq_parquet_dir": str(
-                    (inputs.canonical_daily_root or Path("")).resolve()
-                ),
-                "canonical_daily_v2_manifest_path": str(
-                    inputs.canonical_daily_manifest.resolve()
-                ),
-                "canonical_asset_registry_manifest_path": str(
-                    inputs.asset_registry_manifest.resolve()
-                ),
-                "selector_feature_schema_path": str(inputs.feature_schema.resolve()),
-                "canonical_v2_alpha_report_root": str(output / "alpha_enrichment"),
-                "stock_alpha_feature_partitioned_resume": True,
-                "stock_alpha_resume_existing_outputs": inputs.resume,
-                "stock_alpha_feature_n_jobs": inputs.workers,
-                "stock_level_dataset_workers": inputs.workers,
-                "stock_level_dataset_inner_threads": 1,
-                "canonical_v2_alpha_max_in_flight_tasks": inputs.max_in_flight_tasks,
-                "canonical_v2_alpha_memory_budget_gib": inputs.memory_budget_gib,
-                "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
-                "target_provenance_contract_version": CURRENT_TARGET_PROVENANCE_VERSION,
-                "pit_lineage_run_id": inputs.run_id,
-            }
+        config = _parent_alpha_config(
+            inputs,
+            base_identity=plan["base"],
+            config_path=config_path,
         )
-        config["ml"] = ml
         _write_json(output / "owner.json", _owner(plan))
         from infrastructure.data.canonical_v2_alpha_enrichment import (
             write_partitioned_canonical_v2_alpha_features,
@@ -446,6 +427,10 @@ def build_production_enriched_child(
 
 
 def _base_identity(path: Path, manifest_path: Path, blockers: list[str]) -> dict[str, Any]:
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        _schema_fingerprint,
+    )
+
     manifest = _json(manifest_path, blockers, "PARENT_IDENTITY_MISSING")
     canonical = dict(manifest.get("canonical_artifact", {}) or manifest)
     if not path.is_file():
@@ -487,10 +472,186 @@ def _base_identity(path: Path, manifest_path: Path, blockers: list[str]) -> dict
         "path": str(path.resolve()),
         "sha256": observed,
         "logical_content_sha256": logical,
+        "schema_fingerprint": _schema_fingerprint(
+            pq.ParquetFile(path).schema_arrow
+        ),
+        "economic_key_sha256": str(
+            canonical.get("economic_key_sha256")
+            or canonical.get("source_base_economic_key_sha256")
+            or ""
+        ),
+        "column_count": len(pq.ParquetFile(path).schema_arrow.names),
+        "target_provenance_contract_versions": [provenance] if provenance else [],
         "row_count": rows,
         "economic_target_id": economic,
         "target_provenance_contract_version": provenance,
         "missing_required_columns": missing,
+    }
+
+
+def _parent_alpha_config(
+    inputs: ParentChainInputs,
+    *,
+    base_identity: Mapping[str, Any],
+    config_path: Path | None,
+) -> dict[str, Any]:
+    import yaml
+
+    config = (
+        yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if config_path is not None and config_path.is_file()
+        else {}
+    )
+    ml = dict(config.get("ml", {}) or {})
+    output = inputs.output_root.resolve()
+    enriched_root = output / "enriched"
+    ml.update(
+        {
+            "stock_alpha_run_size": "benchmark",
+            "stock_alpha_output_dir_override": True,
+            "output_dir": str(enriched_root),
+            "stock_level_base_prediction_artifacts_path": str(
+                inputs.base_artifact.resolve()
+            ),
+            "canonical_v2_alpha_base_manifest_path": str(
+                inputs.base_manifest.resolve()
+            ),
+            "stock_level_prediction_artifacts_path": str(
+                enriched_root
+                / "stock_level_prediction_artifacts_enriched.parquet"
+            ),
+            "canonical_daily_v2_root": str(
+                (inputs.canonical_daily_root or Path("")).resolve()
+            ),
+            "stooq_parquet_dir": str(
+                (inputs.canonical_daily_root or Path("")).resolve()
+            ),
+            "canonical_daily_v2_manifest_path": str(
+                inputs.canonical_daily_manifest.resolve()
+            ),
+            "canonical_asset_registry_manifest_path": str(
+                inputs.asset_registry_manifest.resolve()
+            ),
+            "selector_feature_schema_path": str(inputs.feature_schema.resolve()),
+            "canonical_v2_alpha_report_root": str(output / "alpha_enrichment"),
+            "stock_alpha_feature_partitioned_resume": True,
+            "stock_alpha_resume_existing_outputs": inputs.resume,
+            "stock_alpha_feature_n_jobs": inputs.workers,
+            "stock_level_dataset_workers": inputs.workers,
+            "stock_level_dataset_inner_threads": 1,
+            "canonical_v2_alpha_max_in_flight_tasks": inputs.max_in_flight_tasks,
+            "canonical_v2_alpha_memory_budget_gib": inputs.memory_budget_gib,
+            "canonical_v2_alpha_validated_base_sha256": base_identity.get(
+                "sha256", ""
+            ),
+            "canonical_v2_alpha_validated_base_key_sha256": base_identity.get(
+                "economic_key_sha256", ""
+            ),
+            "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
+            "target_provenance_contract_version": CURRENT_TARGET_PROVENANCE_VERSION,
+            "pit_lineage_run_id": inputs.run_id,
+        }
+    )
+    config["ml"] = ml
+    return config
+
+
+def _alpha_namespace_path_plan(
+    inputs: ParentChainInputs,
+    *,
+    base_identity: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        _planned_bounded_alpha_namespaces,
+    )
+
+    base_validation = {
+        "sha256": base_identity.get("sha256", ""),
+        "logical_content_sha256": base_identity.get(
+            "logical_content_sha256", ""
+        ),
+        "schema_fingerprint": base_identity.get("schema_fingerprint", ""),
+        "economic_key_sha256": base_identity.get("economic_key_sha256", ""),
+        "row_count": int(base_identity.get("row_count", 0) or 0),
+        "column_count": int(base_identity.get("column_count", 0) or 0),
+        "target_provenance_contract_versions": list(
+            base_identity.get("target_provenance_contract_versions", [])
+        ),
+    }
+    report_root = inputs.output_root.resolve() / "alpha_enrichment"
+    return _planned_bounded_alpha_namespaces(
+        report_root, config, base_validation=base_validation
+    )
+
+
+def _longest_symbol(path: Path) -> str:
+    longest = "REPRESENTATIVE.MAXIMUM.SYMBOL"
+    if not path.is_file():
+        return longest
+    parquet = pq.ParquetFile(path)
+    if "symbol" not in parquet.schema_arrow.names:
+        return longest
+    for batch in parquet.iter_batches(batch_size=65_536, columns=["symbol"]):
+        for value in batch.column(0).to_pylist():
+            text = str(value or "").upper().replace("/", "_").replace("\\", "_")
+            if len(text) > len(longest):
+                longest = text
+    return longest
+
+
+def _path_budget_preflight(
+    inputs: ParentChainInputs, namespaces: Mapping[str, Any]
+) -> dict[str, Any]:
+    output = inputs.output_root.resolve()
+    report = output / "alpha_enrichment"
+    base_root = Path(str(namespaces["base"]["path"]))
+    partition_root = Path(str(namespaces["partitions"]["path"]))
+    symbol = _longest_symbol(inputs.base_artifact)
+    namespace_key = str(namespaces["partitions"]["namespace_key"])
+    base_sha = str(namespaces["base"]["source_base_sha256"])
+    final = (
+        output
+        / "enriched"
+        / "stock_level_prediction_artifacts_enriched.parquet"
+    )
+    candidates = {
+        "absolute_output_root": output,
+        "bounded_base_namespace": base_root,
+        "bounded_partition_namespace": partition_root,
+        "partition": partition_root / "partitions" / f"symbol={symbol}" / "rows.parquet",
+        "partition_temporary": partition_root / "partitions" / f"symbol={symbol}" / "rows.parquet.tmp",
+        "partition_manifest": partition_root / "partition_manifests" / f"{symbol}.json",
+        "partition_failure": partition_root / "partition_failures" / f"{symbol}.json",
+        "schema_diagnostic": partition_root / "schema_diagnostics" / f"{symbol}.json",
+        "schema_validation": partition_root / "schema_validation" / f"{symbol}.json",
+        "partition_attempt": report / "alpha_partitions_v2" / f".attempt-{namespace_key}-2147483647-deadbeef" / "namespace_manifest.json",
+        "base_attempt": report / "alpha_base_partitions_v2" / f".attempt-{base_sha[:8]}-2147483647-deadbeef" / f"symbol={symbol}" / "rows.parquet.identity.json",
+        "final_publication": final,
+        "final_publication_temporary": final.with_suffix(final.suffix + ".tmp"),
+    }
+    lengths = {name: len(str(path)) for name, path in candidates.items()}
+    longest_name = max(lengths, key=lengths.get)
+    maximum = lengths[longest_name]
+    limit = int(inputs.path_length_limit)
+    return {
+        "status": "READY" if maximum <= limit else "BLOCKED",
+        "blocker": (
+            None if maximum <= limit else "PATH_LENGTH_BUDGET_EXCEEDED"
+        ),
+        "configured_limit": limit,
+        "calculated_maximum_path_length": maximum,
+        "longest_path_kind": longest_name,
+        "longest_representative_path": str(candidates[longest_name]),
+        "representative_paths": {
+            name: {"path": str(path), "length": lengths[name]}
+            for name, path in sorted(candidates.items())
+        },
+        "recommended_shorter_output_root": str(
+            output.drive + "\\pit\\" + inputs.run_id
+            if output.drive
+            else Path("/tmp/pit") / inputs.run_id
+        ),
     }
 
 
@@ -752,6 +913,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--production", action="store_true")
     parser.add_argument("--decision-date", action="append", default=[])
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--path-length-limit", type=int, default=240)
     args = parser.parse_args(argv)
     inputs = ParentChainInputs(
         run_id=args.run_id,
@@ -767,6 +929,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         memory_budget_gib=args.memory_budget_gib,
         resume=args.resume,
         production=args.production,
+        config_path=args.config,
+        path_length_limit=args.path_length_limit,
     )
     if args.action == "preflight":
         result = prepare_parent_chain_plan(inputs)
