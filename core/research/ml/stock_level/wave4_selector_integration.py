@@ -34,6 +34,9 @@ from core.research.ml.stock_level.multi_horizon_linear_selector import (
     HORIZON_IDS,
     fit_multi_horizon_linear_selector,
 )
+from core.research.ml.stock_level.selector_target_identity import (
+    validate_selector_target_identity,
+)
 from core.research.ml.stock_level.selector_multihorizon_model_artifacts import (
     publish_selector_multihorizon_package,
 )
@@ -160,6 +163,12 @@ def publish_wave4_component(
     resolver = RegistryResolver(load_registry_bundle())
     model = resolver.resolve("selector_models", model_id, role="selector")
     model_payload = model.entry.payload
+    target_identity = validate_selector_target_identity(
+        economic_target_id=model_payload.get("economic_target_id"),
+        target_provenance_contract_version=model_payload.get(
+            "target_provenance_contract_version"
+        ),
+    )
     dependency_preflight = None
     if model_id.startswith("lightgbm_"):
         if not campaign_identity or not production_plan_job_checksum:
@@ -174,7 +183,11 @@ def publish_wave4_component(
                 "LightGBM dependency preflight not ready: "
                 + dependency_preflight["status"]
             )
-    target_id = HORIZON_TARGETS[horizon_id] if horizon_id else str(model.entry.payload["target_contract"])
+    target_id = (
+        HORIZON_TARGETS[horizon_id]
+        if horizon_id
+        else target_identity.economic_target_id
+    )
     target = resolver.resolve("target_contracts", target_id, role="selector")
     runner_evidence = {
         "campaign_identity": campaign_identity or "legacy_direct_wave4.v1",
@@ -200,6 +213,7 @@ def publish_wave4_component(
     identity = {
         "model_id": model.canonical_id, "model_entry_hash": model.entry.entry_hash,
         "horizon_id": horizon_id, "target_contract": target.canonical_id,
+        **target_identity.as_dict(),
         "target_entry_hash": target.entry.entry_hash, "prediction_date": prediction_date,
         "dataset_id": parent_gate["selector_dataset_id"],
         "dataset_checksum": parent_gate["selector_dataset_artifact_checksum"],
@@ -426,6 +440,10 @@ def publish_wave4_component(
                     "training_population_checksum"
                 ],
                 target_horizon_identity=target.canonical_id,
+                economic_target_id=target_identity.economic_target_id,
+                target_provenance_contract_version=(
+                    target_identity.target_provenance_contract_version
+                ),
                 prediction_path=temp / "predictions.csv",
                 prediction_schema=sorted(
                     {key for row in output_rows for key in row}
@@ -500,6 +518,10 @@ def publish_wave4_component(
                     or fit_input.get("input_checksum")
                 ),
                 source_git_commit=_git_commit(),
+                economic_target_id=target_identity.economic_target_id,
+                target_provenance_contract_version=(
+                    target_identity.target_provenance_contract_version
+                ),
             )
         elif model_id in {
             "lightgbm_rank_xendcg",
@@ -556,6 +578,10 @@ def publish_wave4_component(
                 lightgbm_version=str(
                     dependency_preflight["lightgbm_version"]
                 ),
+                economic_target_id=target_identity.economic_target_id,
+                target_provenance_contract_version=(
+                    target_identity.target_provenance_contract_version
+                ),
             )
         manifest = {
             "component_schema_version": COMPONENT_CONTRACT,
@@ -579,7 +605,11 @@ def publish_wave4_component(
             "interaction_contract_version": (
                 interaction_contract.get("contract_version") if interaction_contract else None
             ),
-            "target_contract_version": target.canonical_id,
+            "economic_target_id": target_identity.economic_target_id,
+            "target_provenance_contract_version": (
+                target_identity.target_provenance_contract_version
+            ),
+            "legacy_target_contract": model_payload.get("target_contract"),
             "ranking_contract_version": model.entry.payload.get("ranking_problem_contract") or "ranking_metric_contract_v1",
             "relevance_contract_version": model.entry.payload.get("relevance_contract"),
             "ranking_objective_identity": model.entry.payload.get(
@@ -765,7 +795,10 @@ def _component_rows(rows, model, horizon, date, identity):
             "selector_score": float(score), "deterministic_rank": int(raw.get("within_date_rank", 0)),
             "dataset_identity": identity["dataset_id"],
             "feature_contract_identity": identity["feature_schema"],
-            "target_contract_identity": identity["target_contract"],
+            "economic_target_id": identity["economic_target_id"],
+            "target_provenance_contract_version": identity[
+                "target_provenance_contract_version"
+            ],
             "fold_identity": str(raw.get("fold_identity", "")),
         }
         for key, value in raw.items():

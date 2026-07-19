@@ -61,6 +61,8 @@ def _job(model="ridge", index=0):
         "authoritative_output_root": "output",
         "feature_schema": "features",
         "target_contract": "target",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "expected_parent_gate_checksum": "gate",
         "expected_dataset_checksum": "dataset",
         "dependency_state": "ready",

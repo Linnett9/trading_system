@@ -198,7 +198,10 @@ def _validate_component(
     ):
         reasons.append("FEATURE_CONTRACT_MISMATCH")
     if (
-        payload.get("target_contract_version") != target_id
+        payload.get("economic_target_id")
+        != expected_model.get("economic_target_id")
+        or payload.get("target_provenance_contract_version")
+        != expected_model.get("target_provenance_contract_version")
         or link.get("target_contract_hash") != target_hash
     ):
         reasons.append("TARGET_CONTRACT_MISMATCH")
@@ -242,7 +245,10 @@ def _validate_component(
         "dataset_id": frozen.get("dataset_id"),
         "dataset_checksum": frozen.get("dataset_checksum"),
         "feature_contract": payload.get("feature_contract_version"),
-        "target_contract": payload.get("target_contract_version"),
+        "economic_target_id": payload.get("economic_target_id"),
+        "target_provenance_contract_version": payload.get(
+            "target_provenance_contract_version"
+        ),
         "ranking_contract": payload.get("ranking_contract_version"),
         "fold_identity": payload.get("fold_identity"),
         "source_commit": payload.get("git_commit"),
@@ -313,6 +319,10 @@ def _planned_job(
         "authoritative_output_root": str(owner),
         "feature_schema": feature,
         "target_contract": model_payload.get("target_contract"),
+        "economic_target_id": model_payload.get("economic_target_id"),
+        "target_provenance_contract_version": model_payload.get(
+            "target_provenance_contract_version"
+        ),
         "ranking_contract": ranking,
         "relevance_contract": relevance,
         "expected_parent_gate_checksum": gate.get("logical_checksum"),

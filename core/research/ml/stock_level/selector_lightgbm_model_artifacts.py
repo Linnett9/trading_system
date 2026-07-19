@@ -25,6 +25,10 @@ from core.research.compute.artifact_storage import (
 from core.research.compute.model_artifacts import (
     validate_model_artifact_manifest,
 )
+from core.research.ml.stock_level.selector_target_identity import (
+    validate_selector_prediction_target_binding,
+    validate_selector_target_identity,
+)
 
 
 SUPPORTED_MODELS = {
@@ -65,7 +69,13 @@ def publish_selector_lightgbm_model_package(
     input_population_checksum: str,
     source_git_commit: str,
     lightgbm_version: str,
+    economic_target_id: str,
+    target_provenance_contract_version: str,
 ) -> dict[str, Any]:
+    target_identity = validate_selector_target_identity(
+        economic_target_id=economic_target_id,
+        target_provenance_contract_version=target_provenance_contract_version,
+    )
     objective = SUPPORTED_MODELS.get(model_id)
     if objective is None:
         raise ValueError("LIGHTGBM_CONFIGURATION_MISMATCH")
@@ -167,6 +177,7 @@ def publish_selector_lightgbm_model_package(
         "groups": group_identity,
         "labels": label_identity,
         "gain": gain_identity,
+        **target_identity.as_dict(),
     })
     model_metadata = {
         "model_id": model_id,
@@ -189,7 +200,7 @@ def publish_selector_lightgbm_model_package(
             "training_population_checksum"
         ],
         "target_horizon_identity": horizon_identity,
-        "target_identity": input_contract["target_contract_identity"],
+        **target_identity.as_dict(),
         "feature_order": ordered_features,
         "feature_order_checksum": feature_order_checksum,
         "feature_profile_identity": feature_schema_identity,
@@ -317,6 +328,7 @@ def publish_selector_lightgbm_model_package(
         "plan_job_identity": plan_job_identity,
         "decision_date": decision_date,
         "horizon": horizon_identity,
+        **target_identity.as_dict(),
         "source_git_commit": source_git_commit,
     }
     prediction_template = build_artifact_manifest(
@@ -361,6 +373,7 @@ def publish_selector_lightgbm_model_package(
         {"metadata/prediction_binding.json": _json_bytes(binding)},
     )
     validate_prediction_binding(prediction_manifest, model_manifest)
+    validate_selector_prediction_target_binding(binding, model_metadata)
     public_shared = published_component_root / "shared_model_artifact"
     return {
         "completion_status": "COMPLETE",

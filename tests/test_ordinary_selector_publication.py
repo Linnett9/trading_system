@@ -42,6 +42,10 @@ def _job(tmp_path, model, **updates):
         "authoritative_output_root": str(tmp_path / "components" / f"model={model}" / f"date={DATE}"),
         "feature_schema": payload["feature_schema"],
         "target_contract": payload["target_contract"],
+        "economic_target_id": payload["economic_target_id"],
+        "target_provenance_contract_version": payload[
+            "target_provenance_contract_version"
+        ],
         "ranking_contract": payload.get("ranking_problem_contract"),
         "relevance_contract": payload.get("relevance_contract"),
         "expected_parent_gate_checksum": "GATE",
@@ -139,7 +143,7 @@ def test_deterministic_asset_tie_breaking(tmp_path, monkeypatch):
         ("plan_checksum", "Production-plan checksum mismatch"),
         ("dataset", "Dataset mismatch"),
         ("feature", "Feature-schema mismatch"),
-        ("target", "Target contract mismatch"),
+        ("target", "UNSUPPORTED_TARGET_IDENTITY"),
         ("ranking", "Ranking-contract mismatch"),
         ("immature", "Immature"),
         ("overlap", "overlap"),
@@ -161,7 +165,7 @@ def test_fail_closed_inputs(tmp_path, case, match):
         job["feature_schema"] = "wrong"
         job["logical_checksum"] = canonical_hash({k: v for k, v in job.items() if k != "logical_checksum"})
     elif case == "target":
-        job["target_contract"] = "future_volatility"
+        job["economic_target_id"] = "future_volatility"
         job["logical_checksum"] = canonical_hash({k: v for k, v in job.items() if k != "logical_checksum"})
     elif case == "ranking":
         job["ranking_contract"] = "wrong"

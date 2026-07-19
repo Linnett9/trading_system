@@ -58,7 +58,11 @@ def _component(root: Path, model: str, date: str, **overrides) -> Path:
         "symbol_registry_identity": "registry",
         "daily_stock_spine_identity": "spine",
         "feature_contract_version": feature,
-        "target_contract_version": target.canonical_id,
+        "economic_target_id": resolution.entry.payload["economic_target_id"],
+        "target_provenance_contract_version": resolution.entry.payload[
+            "target_provenance_contract_version"
+        ],
+        "legacy_target_contract": resolution.entry.payload.get("target_contract"),
         "ranking_contract_version": resolution.entry.payload.get(
             "ranking_problem_contract"
         ) or "ranking_metric_contract_v1",
@@ -152,7 +156,7 @@ def test_arbitrary_component_root_is_rejected(tmp_path):
         ({"prediction_date": "wrong"}, "INCOMPLETE"),
         ({"frozen_selector_dataset_identity": {"dataset_id": "wrong", "dataset_checksum": "DATASET-CHECKSUM"}}, "DATASET_IDENTITY_MISMATCH"),
         ({"feature_contract_version": "wrong"}, "FEATURE_CONTRACT_MISMATCH"),
-        ({"target_contract_version": "wrong"}, "TARGET_CONTRACT_MISMATCH"),
+        ({"economic_target_id": "wrong"}, "TARGET_CONTRACT_MISMATCH"),
         ({"ranking_contract_version": "wrong"}, "RANKING_CONTRACT_MISMATCH"),
         ({"fold_identity": None}, "FOLD_IDENTITY_MISSING"),
         ({"training_cutoff": "2027-01-01"}, "TEMPORAL_LEAKAGE"),

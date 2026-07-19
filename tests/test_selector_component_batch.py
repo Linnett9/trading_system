@@ -32,6 +32,8 @@ def _jobs():
             "authoritative_output_root": f"components/{model}/{date}",
             "feature_schema": f"{model}.json",
             "target_contract": "forward_return_10d",
+            "economic_target_id": "forward_return_10d",
+            "target_provenance_contract_version": "stock_level_target_provenance_v2",
             "expected_parent_gate_checksum": "GATE",
             "expected_dataset_checksum": "DATASET",
             "dependency_state": "MISSING",

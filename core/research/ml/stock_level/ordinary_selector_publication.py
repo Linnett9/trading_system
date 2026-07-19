@@ -20,6 +20,9 @@ from core.research.ml.stock_level_benchmark_models import _build_tabular_model
 from core.research.ml.stock_level.selector_sklearn_model_artifacts import (
     publish_selector_sklearn_model_package,
 )
+from core.research.ml.stock_level.selector_target_identity import (
+    validate_selector_target_identity,
+)
 
 
 PUBLICATION_CONTRACT_VERSION = "ordinary_selector_publication.v1"
@@ -54,12 +57,16 @@ def publish_planned_ordinary_component(
     model_payload = model_resolution.entry.payload
     if not model_payload.get("ordinary_runner_support"):
         raise ValueError(f"Registry ordinary capability is disabled for {model_id}")
-    target = resolver.resolve("target_contracts", str(job["target_contract"]), role="selector")
-    model_target = resolver.resolve(
-        "target_contracts", str(model_payload.get("target_contract")), role="selector"
+    target_identity = validate_selector_target_identity(
+        economic_target_id=job.get("economic_target_id"),
+        target_provenance_contract_version=job.get(
+            "target_provenance_contract_version"
+        ),
+        expected=model_payload,
     )
-    if target.canonical_id != model_target.canonical_id:
-        raise ValueError("Target contract mismatch")
+    target = resolver.resolve(
+        "target_contracts", target_identity.economic_target_id, role="selector"
+    )
     expected_feature = str(model_payload["feature_schema"])
     if str(job["feature_schema"]) != expected_feature:
         raise ValueError("Feature-schema mismatch")
@@ -212,6 +219,10 @@ def publish_planned_ordinary_component(
                 [str(row["row_id"]) for row in train]
             ),
             target_horizon_identity=target.canonical_id,
+            economic_target_id=target_identity.economic_target_id,
+            target_provenance_contract_version=(
+                target_identity.target_provenance_contract_version
+            ),
             prediction_path=prediction_path,
             prediction_schema=list(output_rows[0]),
             prediction_count=len(output_rows),
@@ -264,7 +275,11 @@ def publish_planned_ordinary_component(
                 if model_id == "ordered_logit_ranker"
                 else "canonical_v2_daily_tabular_features_v1"
             ),
-            "target_contract_version": target.canonical_id,
+            "economic_target_id": target_identity.economic_target_id,
+            "target_provenance_contract_version": (
+                target_identity.target_provenance_contract_version
+            ),
+            "legacy_target_contract": job.get("target_contract"),
             "ranking_contract_version": model_payload.get("ranking_problem_contract") or "ranking_metric_contract_v1",
             "relevance_contract_version": model_payload.get("relevance_contract"),
             "prediction_row_count": len(output_rows),
@@ -353,7 +368,10 @@ def _prediction_output(rows, scores, probabilities, model_id, date, gate, identi
             "deterministic_rank": int(ranks[index]),
             "dataset_identity": gate["selector_dataset_id"],
             "feature_contract_identity": identity["feature_schema"],
-            "target_contract_identity": identity["target_contract"],
+            "economic_target_id": identity["economic_target_id"],
+            "target_provenance_contract_version": identity[
+                "target_provenance_contract_version"
+            ],
             "fold_identity": identity["job_id"],
         }
         if probabilities is not None:
@@ -374,7 +392,12 @@ def _identity(job, gate, model_hash, target_hash, runner_evidence):
         "dataset_id": gate["selector_dataset_id"],
         "dataset_checksum": gate["selector_dataset_artifact_checksum"],
         "feature_schema": job["feature_schema"],
-        "target_contract": job["target_contract"], "target_contract_hash": target_hash,
+        "economic_target_id": job["economic_target_id"],
+        "target_provenance_contract_version": job[
+            "target_provenance_contract_version"
+        ],
+        "legacy_target_contract": job.get("target_contract"),
+        "target_contract_hash": target_hash,
         "ranking_contract": job.get("ranking_contract"),
         "parent_gate_checksum": gate["logical_checksum"],
         **runner_evidence,

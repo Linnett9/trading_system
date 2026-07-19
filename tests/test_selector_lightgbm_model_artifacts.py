@@ -131,6 +131,8 @@ def _publish(tmp_path: Path, objective: str, **changes):
         "input_population_checksum": "input-population",
         "source_git_commit": "commit",
         "lightgbm_version": "4.6.0",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
     }
     values.update(changes)
     return publish_selector_lightgbm_model_package(**values), booster, matrix
@@ -143,6 +145,10 @@ def test_native_package_binding_and_compatible_skip(tmp_path, objective):
     assert model["serialization_handler"] == "LIGHTGBM_NATIVE"
     assert model["model_metadata"]["objective"] == objective
     assert model["model_metadata"]["feature_order"] == ["signal"]
+    assert model["model_metadata"]["economic_target_id"] == "forward_return_10d"
+    assert model["model_metadata"]["target_provenance_contract_version"] == (
+        "stock_level_target_provenance_v2"
+    )
     assert model["model_metadata"]["grouped_ranking_configuration"][
         "training_group_sizes"
     ] == [5]

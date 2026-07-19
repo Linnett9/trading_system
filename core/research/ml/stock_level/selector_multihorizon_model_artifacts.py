@@ -26,6 +26,10 @@ from core.research.compute.artifact_storage import (
 from core.research.compute.model_artifacts import (
     validate_model_artifact_manifest,
 )
+from core.research.ml.stock_level.selector_target_identity import (
+    validate_selector_prediction_target_binding,
+    validate_selector_target_identity,
+)
 from core.research.ml.stock_level.multi_horizon_linear_selector import (
     FittedMultiHorizonMember,
     HORIZON_IDS,
@@ -55,7 +59,13 @@ def publish_selector_multihorizon_package(
     source_schema_guarantee_identity: str,
     input_population_checksum: str,
     source_git_commit: str,
+    economic_target_id: str,
+    target_provenance_contract_version: str,
 ) -> dict[str, Any]:
+    target_identity = validate_selector_target_identity(
+        economic_target_id=economic_target_id,
+        target_provenance_contract_version=target_provenance_contract_version,
+    )
     family = {
         "multi_horizon_ridge": "ridge",
         "multi_horizon_elastic_net": "elastic_net",
@@ -143,6 +153,8 @@ def publish_selector_multihorizon_package(
                 "training_checksum"
             ],
             target_horizon_identity=row.target_identity,
+            economic_target_id=economic_target_id,
+            target_provenance_contract_version=target_provenance_contract_version,
             prediction_path=component_root / "predictions.csv",
             prediction_schema=prediction_schema,
             prediction_count=len(wide_rows),
@@ -222,6 +234,7 @@ def publish_selector_multihorizon_package(
         "target_horizon_identity": canonical_checksum([
             row["target_identity"] for row in member_packages
         ]),
+        **target_identity.as_dict(),
         "feature_order": feature_order,
         "feature_order_checksum": canonical_checksum(feature_order),
         "preprocessing_identity": canonical_checksum(
@@ -249,6 +262,7 @@ def publish_selector_multihorizon_package(
     }
     ensemble_id = "selector-ensemble:" + canonical_checksum({
         "component": component_identity,
+        **target_identity.as_dict(),
         "members": [
             (row["horizon_id"], row["artifact_checksum"])
             for row in member_packages
@@ -336,6 +350,7 @@ def publish_selector_multihorizon_package(
         "component_identity": component_identity,
         "plan_job_identity": plan_job_identity,
         "decision_date": decision_date,
+        **target_identity.as_dict(),
         "source_git_commit": source_git_commit,
     }
     prediction_template = build_artifact_manifest(
@@ -380,6 +395,9 @@ def publish_selector_multihorizon_package(
         },
     )
     validate_prediction_binding(prediction, ensemble)
+    validate_selector_prediction_target_binding(
+        prediction["prediction_model_binding"], ensemble["model_metadata"]
+    )
     validate_multihorizon_artifacts(
         component_root=component_root,
         expected_horizons=HORIZON_IDS,

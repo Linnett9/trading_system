@@ -82,6 +82,8 @@ def _publish(tmp_path, *, model_id="ridge", estimator=None, **changes):
         },
         "training_population_checksum": "training-population",
         "target_horizon_identity": "forward_return_10d",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "prediction_path": prediction,
         "prediction_schema": ["row_id", "score"],
         "prediction_count": 1,
@@ -115,7 +117,17 @@ def test_single_model_families_publish_complete_packages(tmp_path, model_id):
     assert manifest["serialization_handler"] == "SKLEARN_PIPELINE"
     assert manifest["promotion_status"] == "NOT_PROMOTED"
     assert manifest["model_metadata"]["feature_order"] == ["a", "b"]
+    assert manifest["model_metadata"]["economic_target_id"] == "forward_return_10d"
+    assert manifest["model_metadata"]["target_provenance_contract_version"] == (
+        "stock_level_target_provenance_v2"
+    )
     binding = validate_artifact_package(Path(result["prediction_package_path"]))
+    assert binding["prediction_model_binding"]["economic_target_id"] == (
+        "forward_return_10d"
+    )
+    assert binding["prediction_model_binding"][
+        "target_provenance_contract_version"
+    ] == "stock_level_target_provenance_v2"
     assert (
         binding["prediction_model_binding"]["fitted_model_package_checksum"]
         == manifest["package_checksum"]
@@ -385,6 +397,8 @@ def test_default_compute_hook_publishes_inventory_result_and_summary(tmp_path):
         "authoritative_output_root": str(component_root),
         "feature_schema": "schema",
         "target_contract": "target",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
         "expected_parent_gate_checksum": "gate",
         "expected_dataset_checksum": "dataset",
         "dependency_state": "ready",
