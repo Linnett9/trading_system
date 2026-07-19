@@ -299,10 +299,18 @@ def deterministic_chunk_identity(
 
 def validate_request(request: Mapping[str, Any]) -> dict[str, Any]:
     required = {
-        "scoring_request_contract", "canonical_identity",
-        "canonical_csv_sha256", "model_package_identity",
+        "scoring_request_contract", "canonical_root", "canonical_identity",
+        "canonical_csv_sha256", "canonical_manifest_sha256",
+        "canonical_row_count", "expected_eligible_row_count",
+        "expected_excluded_row_count", "model_package_identity",
         "model_package_root", "model_name", "model_revision",
-        "score_output_root", "scored_at_selection_identity",
+        "model_configuration_sha256", "tokenizer_configuration_sha256",
+        "vocabulary_sha256", "inference_contract", "text_selection_contract",
+        "scored_at_utc", "scored_at_selection_identity",
+        "maximum_sequence_length", "inference_batch_size", "chunk_size",
+        "worker_count", "inner_thread_count", "device_policy",
+        "memory_request_bytes", "retry_limit", "failure_policy",
+        "coverage_unit", "certification_contract", "score_output_root",
         "scoring_request_identity",
     }
     if set(request) != required:
@@ -325,6 +333,114 @@ def validate_request(request: Mapping[str, Any]) -> dict[str, Any]:
     if output == package or package in output.parents or output in package.parents:
         raise ValueError("SCORING_OUTPUT_ALIASES_MODEL_PACKAGE")
     return dict(request)
+
+
+def build_production_request(
+    *,
+    selection: Mapping[str, Any],
+    selection_identity: str,
+    model_package: Mapping[str, Any],
+    canonical_root: str,
+    canonical_identity: str,
+    canonical_csv_sha256: str,
+    canonical_manifest_sha256: str,
+) -> dict[str, Any]:
+    validate_selection(selection)
+    scored_at = str(selection["scored_at_utc"])
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", scored_at):
+        raise ValueError("SCORED_AT_MUST_BE_EXPLICIT_RFC3339_UTC")
+    payload = {
+        "scoring_request_contract": SCORING_REQUEST_CONTRACT,
+        "canonical_root": canonical_root,
+        "canonical_identity": canonical_identity,
+        "canonical_csv_sha256": canonical_csv_sha256,
+        "canonical_manifest_sha256": canonical_manifest_sha256,
+        "canonical_row_count": selection["canonical_row_count"],
+        "expected_eligible_row_count": selection["expected_eligible_row_count"],
+        "expected_excluded_row_count": selection["expected_excluded_row_count"],
+        "model_package_identity": model_package["package_logical_identity"],
+        "model_package_root": model_package["package_root"],
+        "model_name": model_package["model_name"],
+        "model_revision": model_package["model_revision"],
+        "model_configuration_sha256":
+            model_package["model_configuration_sha256"],
+        "tokenizer_configuration_sha256":
+            model_package["tokenizer_configuration_sha256"],
+        "vocabulary_sha256": model_package["vocabulary_sha256"],
+        "inference_contract": "stock_alpha_finbert_article_inference.v1",
+        "text_selection_contract": "stock_alpha_finbert_text_selection.v1",
+        "scored_at_utc": scored_at,
+        "scored_at_selection_identity": logical_identity({
+            "selection_identity": selection_identity, "scored_at_utc": scored_at
+        }),
+        "maximum_sequence_length": selection["maximum_sequence_length"],
+        "inference_batch_size": selection["inference_batch_size"],
+        "chunk_size": selection["chunk_size"],
+        "worker_count": selection["worker_count"],
+        "inner_thread_count": selection["inner_thread_count"],
+        "device_policy": selection["device_policy"],
+        "memory_request_bytes": selection["memory_request_bytes"],
+        "retry_limit": selection["retry_limit"],
+        "failure_policy": "FAIL_FAST",
+        "coverage_unit": selection["coverage_unit"],
+        "certification_contract": selection["certification_contract"],
+        "score_output_root": selection["score_output_root"],
+    }
+    payload["scoring_request_identity"] = logical_identity(payload)
+    validate_request(payload)
+    return payload
+
+
+def build_runtime_configuration(request: Mapping[str, Any]) -> dict[str, Any]:
+    validate_request(request)
+    return {
+        "runtime_contract": SCORING_RUNTIME_CONTRACT,
+        "device_policy": "CPU_ONLY",
+        "worker_count": request["worker_count"],
+        "inner_thread_count": request["inner_thread_count"],
+        "memory_request_bytes": request["memory_request_bytes"],
+        "inference_batch_size": request["inference_batch_size"],
+        "network_access_allowed": False,
+        "model_loading_policy": "EXPLICIT_IMMUTABLE_PACKAGE_LOCAL_ONLY",
+        "execution_authorized": False,
+        "production_validated": False,
+    }
+
+
+def build_chunk_plan(request: Mapping[str, Any]) -> dict[str, Any]:
+    validate_request(request)
+    total = int(request["expected_eligible_row_count"])
+    size = int(request["chunk_size"])
+    chunks = []
+    for ordinal, start in enumerate(range(0, total, size), 1):
+        stop = min(start + size, total)
+        identity = deterministic_chunk_identity(
+            canonical_identity=request["canonical_identity"],
+            canonical_csv_sha256=request["canonical_csv_sha256"],
+            model_package_identity=request["model_package_identity"],
+            algorithm_contract=request["inference_contract"],
+            text_selection_contract=request["text_selection_contract"],
+            maximum_sequence_length=request["maximum_sequence_length"],
+            inference_batch_size=request["inference_batch_size"],
+            chunk_size=size, start=start, stop=stop,
+            scored_at_selection_identity=request["scored_at_selection_identity"],
+            expected_eligible_rows=total,
+            output_schema_identity=request["certification_contract"],
+        )
+        chunks.append({
+            "ordinal": ordinal, "start_inclusive": start,
+            "stop_exclusive": stop, "row_count": stop - start,
+            "chunk_identity": identity, "status": "PLANNED",
+        })
+    payload = {
+        "chunk_plan_contract": "stock_alpha_news_finbert_chunk_plan.v1",
+        "scoring_request_identity": request["scoring_request_identity"],
+        "expected_eligible_row_count": total,
+        "chunk_size": size, "expected_chunk_count": len(chunks),
+        "chunks": chunks,
+    }
+    payload["chunk_plan_identity"] = logical_identity(payload)
+    return payload
 
 
 def execute_authorized_boundary(
