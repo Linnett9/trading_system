@@ -258,3 +258,15 @@ def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch
     assert observed["canonical_v2_alpha_base_manifest_path"] == str(
         inputs.base_manifest.resolve()
     )
+
+
+def test_parent_publication_runbook_requires_explicit_v2_child():
+    text = (
+        chain.Path("scripts/selector_parent_publication_runbook.ps1")
+        .read_text(encoding="utf-8")
+    )
+    assert "require explicit -EnrichedArtifact and -EnrichedManifest" in text
+    assert "--base-artifact" in text
+    assert "--base-manifest" in text
+    assert "--enriched-manifest" in text
+    assert "python -m scripts.build_canonical_v2_selector_dataset" in text
