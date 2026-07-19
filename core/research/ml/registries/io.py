@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -23,6 +24,7 @@ REGISTRY_FILES = {
     "target_contracts": "target_contracts.v1.json",
     "ranking_contracts": "ranking_contracts.v1.json",
 }
+_DEPRECATED_TARGET_CONTRACT_WARNING_EMITTED = False
 
 
 def canonical_json_bytes(payload: Any) -> bytes:
@@ -98,6 +100,14 @@ def _validate_common(entry: Mapping[str, Any], kind: str) -> None:
             raise RegistryValidationError(f"Target contract {canonical_id} has an empty horizon")
         if entry["label_available_timestamp_field"] != "label_available_timestamp":
             raise RegistryValidationError(f"Target contract {canonical_id} must use label_available_timestamp")
+        versions = entry.get("target_provenance_contract_versions")
+        if canonical_id == "forward_return_10d" and versions != [
+            "stock_level_target_provenance_v2"
+        ]:
+            raise RegistryValidationError(
+                "forward_return_10d must explicitly support only "
+                "stock_level_target_provenance_v2"
+            )
 
 
 def load_registry(path: Path, *, expected_kind: str | None = None) -> RegistryDocument:
@@ -197,11 +207,52 @@ class RegistryResolver:
         return self.resolve("target_contracts", matches[0].canonical_id, role=role)
 
     def validate_references(self) -> None:
+        global _DEPRECATED_TARGET_CONTRACT_WARNING_EMITTED
         equations = {entry.canonical_id for entry in self.bundle.documents["equations"].entries}
         for document in self.bundle.documents.values():
             for entry in document.entries:
                 self.verify_feature_schema(entry.payload.get("feature_schema"))
-                self.verify_target_contract(entry.payload.get("target_contract"))
+                economic = entry.payload.get("economic_target_id")
+                provenance = entry.payload.get(
+                    "target_provenance_contract_version"
+                )
+                if economic is not None or provenance is not None:
+                    if not economic or not provenance:
+                        raise RegistryValidationError(
+                            f"{entry.canonical_id} must declare both target identities"
+                        )
+                    from core.research.ml.registries.target_identity import (
+                        resolve_target_identity,
+                    )
+
+                    resolution = resolve_target_identity(
+                        economic_target_id=str(economic),
+                        target_provenance_contract_version=str(provenance),
+                    )
+                    if not resolution.supported:
+                        raise RegistryValidationError(
+                            f"{entry.canonical_id} has unsupported target identity "
+                            f"{resolution.status.value}"
+                        )
+                legacy_reference = entry.payload.get("target_contract")
+                if legacy_reference == "stock_level_target_provenance_v4":
+                    if not economic or not provenance:
+                        raise RegistryValidationError(
+                            f"{entry.canonical_id} uses deprecated ambiguous "
+                            "target_contract without explicit target identities"
+                        )
+                    if not _DEPRECATED_TARGET_CONTRACT_WARNING_EMITTED:
+                        warnings.warn(
+                            "registry entries retain deprecated read-only "
+                            "target_contract=stock_level_target_provenance_v4; "
+                            "explicit economic_target_id and "
+                            "target_provenance_contract_version govern",
+                            DeprecationWarning,
+                            stacklevel=2,
+                        )
+                        _DEPRECATED_TARGET_CONTRACT_WARNING_EMITTED = True
+                else:
+                    self.verify_target_contract(legacy_reference)
                 equation = entry.payload.get("calculation_equation")
                 if equation and equation not in equations:
                     raise RegistryValidationError(

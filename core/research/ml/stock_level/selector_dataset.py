@@ -220,7 +220,13 @@ def build_frozen_selector_dataset(
         "missingness_policy": "fail closed for model input; warmup nulls permitted only before eligibility",
     }
     target_columns = [name for name in source_dataset.schema.names if name.startswith("actual_")]
-    target_schema = {"target_columns": target_columns, "primary_target": "actual_forward_return_10d"}
+    target_schema = {
+        "target_columns": target_columns,
+        "primary_target": "actual_forward_return_10d",
+        "economic_target_id": "forward_return_10d",
+        "target_provenance_contract_version": "stock_level_target_provenance_v2",
+        "target_registry_schema_version": "selector_target_identity.v1",
+    }
     candidate_schema = {
         "fitted_models": ["ridge", "elastic_net", "random_forest", "gradient_boosting", "dlinear", "patchtst", "transformer", "itransformer", "momentum_transformer", "multitask_transformer", "market_context_encoder", "news_analysis_transformer", "temporal_fusion_transformer"],
         "non_ml_baselines": BASELINE_CANDIDATES,
