@@ -32,6 +32,9 @@ from core.research.ml.stock_level.stock_level_alpha_features_types import (
     INDUSTRY_MAPPING_CONTRACT_VERSION,
     MARKET_CONTEXT_CONTRACT_VERSION,
 )
+from core.research.ml.stock_level.selector_lineage import (
+    merge_enrichment_preserving_base,
+)
 
 
 def build_stock_level_alpha_features(
@@ -99,6 +102,7 @@ def build_stock_level_alpha_features(
     )
     phase_started, phase_start_ts = _phase_start()
     _add_cross_sectional_features(enriched_rows)
+    enriched_rows = merge_enrichment_preserving_base(rows, enriched_rows)
     _record_phase(
         phase_timings,
         "cross-sectional calculation",

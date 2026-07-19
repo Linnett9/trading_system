@@ -33,6 +33,10 @@ from core.research.ml.stock_level.stock_level_alpha_features_builder import (
     _build_symbol_rows,
     _prepare_history,
 )
+from core.research.ml.stock_level.selector_lineage import (
+    CURRENT_ECONOMIC_TARGET_ID,
+    merge_enrichment_preserving_base,
+)
 from core.research.ml.stock_level.stock_level_alpha_features_io import (
     _load_price_histories,
     _markdown,
@@ -1276,6 +1280,7 @@ def _build_partition(
         phase_started = time.perf_counter()
         prepared_history = _prepare_history(history)
         enriched = _build_symbol_rows((rows, prepared_history, prepared_spy))
+        enriched = merge_enrichment_preserving_base(rows, enriched)
         timings["feature_compute_seconds"] = time.perf_counter() - phase_started
     except Exception as exc:
         failure = _partition_failure_payload(
@@ -1330,6 +1335,10 @@ def _build_partition(
     manifest = {
         "symbol": symbol,
         "status": "COMPLETE",
+        "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
+        "target_provenance_contract_version": (
+            _target_provenance_contract_version()
+        ),
         "row_count": len(enriched),
         "path": str(path),
         "sha256": _file_sha256(path),
@@ -1872,6 +1881,10 @@ def _consolidate_partition_parquets(
         "decision_date_count": len(dates_seen),
         "minimum_decision_timestamp": min(dates_seen, default=None),
         "maximum_decision_timestamp": max(dates_seen, default=None),
+        "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
+        "target_provenance_contract_version": (
+            next(iter(target_versions)) if len(target_versions) == 1 else None
+        ),
         "target_contract_version": next(iter(target_versions)) if len(target_versions) == 1 else None,
         "target_contract_versions": sorted(target_versions),
         "benchmark_contract_version": "stock_level_benchmark_return_10d_v1",
@@ -2383,6 +2396,7 @@ def _partition_compatibility_identity(
 ) -> dict[str, Any]:
     return {
         "alpha_enrichment_contract_version": ALPHA_ENRICHMENT_CONTRACT_VERSION,
+        "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
         "target_provenance_contract_version": _target_provenance_contract_version(),
         "source_base_artifact_sha256": str(
             dict(config.get("ml", {}) or {}).get(
@@ -2437,6 +2451,7 @@ def _base_partition_identity_path(path: Path) -> Path:
 def _base_partition_identity(path: Path, config: Mapping[str, Any], *, input_resolution: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "alpha_enrichment_contract_version": ALPHA_ENRICHMENT_CONTRACT_VERSION,
+        "economic_target_id": CURRENT_ECONOMIC_TARGET_ID,
         "target_provenance_contract_version": _target_provenance_contract_version(),
         "configuration_identity": _alpha_configuration_identity(config),
         "implementation_identity": "canonical_v2_alpha_enrichment.base_partition.v2",
