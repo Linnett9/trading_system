@@ -11,6 +11,7 @@ import sys
 import tempfile
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -40,6 +41,9 @@ def _base_fixture(
             "symbol": symbol,
             "asset_id": f"asset-{symbol.lower()}",
             "decision_timestamp": "2026-01-02T20:05:00Z",
+            "feature_timestamp": datetime(
+                2026, 1, 2, tzinfo=timezone.utc
+            ),
             "target_provenance_contract_version": provenance,
             "actual_forward_return_10d": (index + 1) / 10,
             "average_dollar_volume_21d": 71_335_728.87585714,
@@ -779,6 +783,10 @@ def test_broken_pool_report_is_bounded_and_preserves_primary_context(
     assert lifecycle["multiprocessing_start_method"] == "spawn"
     assert lifecycle["submitted"] == 4
     assert lifecycle["failed"] == 3
+    assert lifecycle["abort_threshold_failure_count"] == 3
+    assert lifecycle["in_flight_at_abort"] == 1
+    assert lifecycle["worker_failure_record_count"] == 0
+    assert "already in flight" in lifecycle["failure_count_explanation"]
     assert lifecycle["executor_phase"] == "shutdown_complete"
 
 

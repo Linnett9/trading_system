@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import inspect
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pyarrow as pa
@@ -472,6 +473,100 @@ def test_alpha_output_schema_map_is_exhaustive_and_conflict_checked() -> None:
         )
 
 
+def test_alpha_temporal_contract_normalizes_aware_datetimes_to_utc() -> None:
+    utc_value = datetime(2017, 7, 10, tzinfo=timezone.utc)
+    offset_value = datetime(
+        2017, 7, 10, 1, 0, tzinfo=timezone(timedelta(hours=1))
+    )
+    normalized, _ = _normalize_partition_rows(
+        [
+            {
+                "symbol": "AAP",
+                "rebalance_date": date(2017, 7, 10),
+                "feature_timestamp": utc_value,
+                "decision_timestamp": offset_value,
+                "label_available_timestamp": None,
+            },
+            {
+                "symbol": "AAP",
+                "rebalance_date": "2017-07-11",
+                "feature_timestamp": "2017-07-10T00:00:00Z",
+                "decision_timestamp": "2017-07-10T01:00:00+01:00",
+                "label_available_timestamp": "",
+            },
+        ]
+    )
+
+    assert normalized[0]["rebalance_date"] == "2017-07-10"
+    assert normalized[0]["feature_timestamp"] == "2017-07-10T00:00:00Z"
+    assert normalized[1]["feature_timestamp"] == normalized[0][
+        "feature_timestamp"
+    ]
+    assert normalized[0]["decision_timestamp"] == "2017-07-10T00:00:00Z"
+    assert normalized[1]["decision_timestamp"] == normalized[0][
+        "decision_timestamp"
+    ]
+    assert normalized[0]["label_available_timestamp"] is None
+    assert normalized[1]["label_available_timestamp"] is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        datetime(2017, 7, 10),
+        "2017-07-10T00:00:00",
+        "not-a-timestamp",
+        object(),
+    ],
+)
+def test_alpha_temporal_contract_rejects_ambiguous_or_invalid_values(
+    value,
+) -> None:
+    with pytest.raises(ValueError, match="feature_timestamp"):
+        _normalize_partition_rows(
+            [
+                {
+                    "symbol": "AAP",
+                    "rebalance_date": "2017-07-10",
+                    "feature_timestamp": value,
+                }
+            ]
+        )
+
+
+def test_all_alpha_temporal_columns_have_explicit_semantics() -> None:
+    assert alpha_enrichment.TEMPORAL_COLUMNS
+    assert alpha_enrichment.TEMPORAL_COLUMNS <= set(
+        alpha_enrichment.ALPHA_OUTPUT_SCHEMA
+    )
+    assert all(
+        alpha_enrichment.ALPHA_OUTPUT_SCHEMA[column][0] == "temporal"
+        for column in alpha_enrichment.TEMPORAL_COLUMNS
+    )
+    assert alpha_enrichment._arrow_type_for_column(
+        "feature_timestamp"
+    ) == pa.string()
+
+
+def test_alpha_value_contract_preflight_rejects_temporal_producer_mismatch() -> None:
+    with pytest.raises(
+        ValueError, match="producer value contract mismatch for feature_timestamp"
+    ):
+        alpha_enrichment._validate_alpha_output_schema_coverage(
+            ["rebalance_date", "symbol"],
+            producer_values={
+                "feature_timestamp": datetime(2017, 7, 10),
+            },
+        )
+
+    source = inspect.getsource(
+        alpha_enrichment._write_partitioned_canonical_v2_alpha_features
+    )
+    assert source.index("_validate_alpha_output_schema_coverage(") < source.index(
+        "_execute_alpha_process_pool("
+    )
+
+
 def test_alpha_feature_producer_outputs_have_explicit_schema_kinds() -> None:
     from core.research.ml.stock_level.stock_level_alpha_features_builder import (
         _time_series_features,
@@ -508,9 +603,14 @@ def test_alpha_production_style_acgl_partition_round_trip(
     rows = [
         {
             "symbol": "ACGL",
-            "rebalance_date": f"2026-{(index // 28) + 1:02d}-{(index % 28) + 1:02d}",
+            "rebalance_date": (
+                date(2017, 7, 10) + timedelta(days=index)
+            ).isoformat(),
             "true_stock_level_row": True,
             "overlapping_targets": True,
+            "feature_timestamp": datetime(
+                2017, 7, 10, tzinfo=timezone.utc
+            ),
             "average_dollar_volume_21d": 71_335_728.87585714,
             "average_dollar_volume_63d": (
                 None if index < 63 else 70_000_000.0
@@ -552,9 +652,14 @@ def test_alpha_aap_boolean_partition_parquet_round_trip(tmp_path: Path) -> None:
     rows = [
         {
             "symbol": "AAP",
-            "rebalance_date": f"2026-01-{(index % 28) + 1:02d}-{index:04d}",
+            "rebalance_date": (
+                date(2017, 7, 10) + timedelta(days=index)
+            ).isoformat(),
             "true_stock_level_row": True,
             "overlapping_targets": index % 2 == 0,
+            "feature_timestamp": datetime(
+                2017, 7, 10, tzinfo=timezone.utc
+            ),
             "target_horizon_trading_days": 10,
             "predicted_forward_return_10d": (
                 None if index % 3 == 0 else index / 10_000
@@ -876,7 +981,12 @@ def test_alpha_partition_enrichment_preserves_v2_target_metadata_order_independe
             "benchmark_label_end_timestamp",
             "benchmark_label_available_timestamp",
         ):
-            assert enriched[column] == base_row[column]
+            expected = base_row[column]
+            if column in alpha_enrichment.TEMPORAL_COLUMNS:
+                expected = alpha_enrichment._canonical_utc_timestamp(
+                    expected, column=column
+                )
+            assert enriched[column] == expected
         assert base_row["target_provenance_contract_version"] == "stock_level_target_provenance_v2"
         assert base_row["decision_timestamp"] < base_row["label_start_timestamp"] <= base_row["label_end_timestamp"] <= base_row["label_available_timestamp"]
 

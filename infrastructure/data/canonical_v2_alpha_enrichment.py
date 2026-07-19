@@ -15,7 +15,8 @@ import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
-from datetime import datetime, timezone
+from datetime import date as calendar_date
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -85,6 +86,30 @@ BOOL_COLUMNS = {
 }
 STRICT_BOOL_COLUMNS = {"true_stock_level_row", "overlapping_targets"}
 NON_NULLABLE_COLUMNS = {"true_stock_level_row"}
+TEMPORAL_DATE_COLUMNS = {
+    "rebalance_date",
+    "decision_session_date",
+    "first_actionable_session",
+    "market_context_source_date",
+}
+TEMPORAL_TIMESTAMP_COLUMNS = {
+    "feature_timestamp",
+    "feature_data_cutoff_timestamp",
+    "decision_timestamp",
+    "target_start_timestamp",
+    "label_start_timestamp",
+    "label_end_timestamp",
+    "label_available_timestamp",
+    "benchmark_target_start_timestamp",
+    "benchmark_label_start_timestamp",
+    "benchmark_label_end_timestamp",
+    "benchmark_label_available_timestamp",
+    "context_source_timestamp",
+    "market_context_availability_timestamp",
+    "fundamentals_available_timestamp",
+    "fundamentals_latest_filing_timestamp",
+}
+TEMPORAL_COLUMNS = TEMPORAL_DATE_COLUMNS | TEMPORAL_TIMESTAMP_COLUMNS
 INT_COLUMNS = {
     "target_horizon_trading_days",
     "required_purge_horizon_trading_days",
@@ -173,11 +198,13 @@ def _build_alpha_output_schema_map(
     numeric_columns: Sequence[str] = tuple(
         sorted(NUMERIC_COLUMNS - INT_COLUMNS - BOOL_COLUMNS)
     ),
+    temporal_columns: Sequence[str] = tuple(sorted(TEMPORAL_COLUMNS)),
 ) -> dict[str, tuple[str, bool]]:
     kinds = {
         "bool": set(bool_columns),
         "int": set(int_columns),
         "float": set(numeric_columns),
+        "temporal": set(temporal_columns),
     }
     conflicts: dict[str, list[str]] = {}
     for column in set().union(*kinds.values()):
@@ -214,6 +241,60 @@ def _build_alpha_output_schema_map(
 
 
 ALPHA_OUTPUT_SCHEMA = _build_alpha_output_schema_map()
+
+
+def _canonical_utc_timestamp(value: Any, *, column: str) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(
+                f"temporal column {column} received naive datetime"
+            )
+        parsed = value.astimezone(timezone.utc)
+    elif isinstance(value, calendar_date):
+        if column not in TEMPORAL_DATE_COLUMNS:
+            raise ValueError(
+                f"timestamp column {column} received date without timezone"
+            )
+        return value.isoformat()
+    elif isinstance(value, str):
+        text = value.strip()
+        if column in TEMPORAL_DATE_COLUMNS:
+            if len(text) != 10:
+                raise ValueError(
+                    f"date column {column} requires YYYY-MM-DD"
+                )
+            try:
+                return calendar_date.fromisoformat(text).isoformat()
+            except ValueError as exc:
+                raise ValueError(
+                    f"date column {column} received invalid ISO date"
+                ) from exc
+        if len(text) == 10:
+            try:
+                day = calendar_date.fromisoformat(text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"timestamp column {column} received invalid ISO date"
+                ) from exc
+            parsed = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc)
+        else:
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    f"timestamp column {column} received invalid ISO-8601 text"
+                ) from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError(
+                    f"timestamp column {column} requires an explicit timezone"
+                )
+            parsed = parsed.astimezone(timezone.utc)
+    else:
+        raise ValueError(
+            f"temporal column {column} received {type(value).__name__}"
+        )
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    return parsed.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 class PartitionBuildError(RuntimeError):
@@ -386,9 +467,32 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
     ml = config["ml"]
     report_root = Path(str(ml.get("canonical_v2_alpha_report_root", DEFAULT_REPORT_ROOT / "alpha_enrichment")))
     report_root.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    _write_json(
+        report_root / "preflight_status.json",
+        {
+            "status": "RUNNING",
+            "source_commit": _source_commit(config),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    _write_json(
+        report_root / "failed_partitions.json",
+        {"failed_partition_count": 0, "failed_partitions": []},
+    )
+    _progress(report_root, 0, 0, 0, 0, started)
     base_validation = validate_alpha_base_artifact(config)
     schema_coverage = _validate_alpha_output_schema_coverage(
         base_validation["column_names"]
+    )
+    _write_json(
+        report_root / "preflight_status.json",
+        {
+            "status": "COMPLETE",
+            "source_commit": _source_commit(config),
+            "schema_coverage": schema_coverage,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
     )
     config["ml"]["canonical_v2_alpha_validated_base_sha256"] = base_validation["sha256"]
     config["ml"]["canonical_v2_alpha_validated_base_key_sha256"] = base_validation["economic_key_sha256"]
@@ -455,7 +559,6 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "resume_enabled": True,
         "retry_only_failed_command": "python .\\main.py --mode ml-stock-level-alpha-features --config .\\config\\config.ticket_6d_alpha_only_resume.yaml",
     }
-    started = time.perf_counter()
     _write_json(report_root / "partition_plan.json", plan)
     _write_json(
         report_root / "failed_partitions.json",
@@ -470,6 +573,9 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
     abort_reason = ""
     dominant_signature = ""
     tasks_cancelled = 0
+    abort_threshold_failure_count = 0
+    worker_failure_record_count = 0
+    in_flight_at_abort = 0
     fail_fast = _fail_fast_settings(ml)
     if pending:
         effective_workers = min(max(1, workers), len(pending))
@@ -511,7 +617,24 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
             abort_reason = str(execution["abort_reason"])
             dominant_signature = str(execution["dominant_signature"])
             tasks_cancelled += int(execution["tasks_cancelled"])
-    _write_json(report_root / "failed_partitions.json", {"failed_partition_count": len(failed), "failed_partitions": failed})
+            abort_threshold_failure_count = int(execution["abort_threshold_failure_count"])
+            worker_failure_record_count = int(execution["worker_failure_record_count"])
+            in_flight_at_abort = int(execution["in_flight_at_abort"])
+    _write_json(
+        report_root / "failed_partitions.json",
+        {
+            "failed_partition_count": len(failed),
+            "failed_partitions": failed,
+            "abort_threshold_failure_count": abort_threshold_failure_count,
+            "worker_failure_record_count": worker_failure_record_count,
+            "in_flight_at_abort": in_flight_at_abort,
+            "failure_count_explanation": (
+                "failed_partition_count contains failures observed by the parent "
+                "before fail-fast; worker_failure_record_count also includes "
+                "independently persisted failures from tasks already in flight"
+            ),
+        },
+    )
     if aborted_early:
         raise RuntimeError(f"canonical-v2 alpha aborted early: {abort_reason}; dominant_signature={dominant_signature}")
     if failed:
@@ -1228,6 +1351,9 @@ def _execute_alpha_process_pool(
     aborted = False
     abort_reason = ""
     dominant = ""
+    abort_threshold_failure_count = 0
+    in_flight_at_abort = 0
+    worker_failure_record_count = 0
     worker_exit_information: list[dict[str, Any]] = []
     executor_phase = "creation"
     executor = executor_cls(
@@ -1321,6 +1447,9 @@ def _execute_alpha_process_pool(
                         )
                         dominant = failure["failure_signature"]
                     aborted = should_abort
+                if aborted and not abort_threshold_failure_count:
+                    abort_threshold_failure_count = len(failures)
+                    in_flight_at_abort = len(futures)
                 _write_json(
                     report_root / "failed_partitions.json",
                     {
@@ -1373,6 +1502,26 @@ def _execute_alpha_process_pool(
         executor_phase = "shutdown"
         worker_exit_information = _executor_process_snapshot(executor)
         executor.shutdown(wait=True, cancel_futures=True)
+        worker_failure_record_count = sum(
+            1
+            for path in event_root.glob("*.json")
+            if _read_json(path).get("status") == "FAILED"
+        )
+        _progress(
+            report_root,
+            planned_partitions,
+            completed,
+            len(failures),
+            rows_processed,
+            started,
+            aborted_early=aborted,
+            abort_reason=abort_reason,
+            dominant_failure_signature=dominant,
+            tasks_cancelled=cancelled,
+            abort_threshold_failure_count=abort_threshold_failure_count,
+            worker_failure_record_count=worker_failure_record_count,
+            in_flight_at_abort=in_flight_at_abort,
+        )
         _write_json(
             report_root / "executor_lifecycle.json",
             {
@@ -1384,6 +1533,14 @@ def _execute_alpha_process_pool(
                 "started": started_count,
                 "completed": completed,
                 "failed": len(failures),
+                "abort_threshold_failure_count": abort_threshold_failure_count,
+                "worker_failure_record_count": worker_failure_record_count,
+                "in_flight_at_abort": in_flight_at_abort,
+                "failure_count_explanation": (
+                    "failed is the parent-observed fail-fast count; "
+                    "worker_failure_record_count includes persisted results from "
+                    "tasks that were already in flight during shutdown"
+                ),
                 "cancelled": cancelled,
                 "executor_phase": "shutdown_complete",
                 "source_commit": source_commit,
@@ -1398,6 +1555,9 @@ def _execute_alpha_process_pool(
         "abort_reason": abort_reason,
         "dominant_signature": dominant,
         "tasks_cancelled": cancelled,
+        "abort_threshold_failure_count": abort_threshold_failure_count,
+        "worker_failure_record_count": worker_failure_record_count,
+        "in_flight_at_abort": in_flight_at_abort,
     }
 
 
@@ -2585,7 +2745,11 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
             raise ValueError(f"non-nullable column {column} received null")
         return None, False
     if value == "":
-        return (None, True) if kind in {"float", "int", "bool"} else ("", False)
+        return (
+            (None, True)
+            if kind in {"float", "int", "bool", "temporal"}
+            else ("", False)
+        )
     if kind == "string":
         if isinstance(value, str):
             return value, False
@@ -2634,6 +2798,8 @@ def _normalize_value(column: str, value: Any, kind: str) -> tuple[Any, bool]:
         else:
             raise ValueError(f"float column {column} received {type(value).__name__}")
         return (None, True) if math.isnan(parsed) else (parsed, False)
+    if kind == "temporal":
+        return _canonical_utc_timestamp(value, column=column), False
     raise ValueError(f"unknown column kind {kind} for {column}")
 
 
@@ -2741,6 +2907,8 @@ def _column_kind(column: str) -> str:
 
 def _validate_alpha_output_schema_coverage(
     base_columns: Sequence[str],
+    *,
+    producer_values: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     unknown_base_columns = sorted(set(base_columns) - set(ALPHA_OUTPUT_SCHEMA))
     producer_columns = set(_time_series_features([], []))
@@ -2761,6 +2929,9 @@ def _validate_alpha_output_schema_coverage(
             f"unknown_producer_columns={unknown_producer_columns} "
             f"missing_expected_columns={missing_expected_columns}"
         )
+    value_contract = _validate_alpha_output_value_contract(
+        producer_values=producer_values
+    )
     return {
         "status": "COMPLETE",
         "base_column_count": len(set(base_columns)),
@@ -2768,6 +2939,82 @@ def _validate_alpha_output_schema_coverage(
         "expected_output_column_count": len(ALPHA_EXPECTED_OUTPUT_COLUMNS),
         "schema_map_column_count": len(ALPHA_OUTPUT_SCHEMA),
         "schema_identity": _feature_schema_identity(),
+        "value_contract": value_contract,
+    }
+
+
+def _validate_alpha_output_value_contract(
+    *,
+    producer_values: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    representative: dict[str, Any] = {}
+    for column, (kind, nullable) in ALPHA_OUTPUT_SCHEMA.items():
+        value: Any
+        if kind == "bool":
+            value = True
+        elif kind == "int":
+            value = 1
+        elif kind == "float":
+            value = 1.25
+        elif kind == "temporal":
+            value = (
+                calendar_date(2026, 1, 2)
+                if column in TEMPORAL_DATE_COLUMNS
+                else datetime(2026, 1, 2, 20, 5, tzinfo=timezone.utc)
+            )
+        else:
+            value = "contract-value"
+        normalized, _ = _normalize_value(column, value, kind)
+        representative[column] = normalized
+        if nullable:
+            null_value, _ = _normalize_value(column, None, kind)
+            if null_value is not None:
+                raise ValueError(
+                    f"nullable alpha output column did not preserve null: {column}"
+                )
+
+    if producer_values is None:
+        history = [
+            {
+                "date": (
+                    calendar_date(2025, 1, 1) + timedelta(days=index)
+                ).isoformat(),
+                "close": float(100 + index),
+                "high": float(101 + index),
+                "low": float(99 + index),
+            }
+            for index in range(260)
+        ]
+        observed_producer = _time_series_features(history, history)
+    else:
+        observed_producer = dict(producer_values)
+    unknown = sorted(set(observed_producer) - set(ALPHA_OUTPUT_SCHEMA))
+    if unknown:
+        raise ValueError(
+            f"alpha producer value contract has unknown columns: {unknown}"
+        )
+    for column, value in observed_producer.items():
+        if value in (None, ""):
+            continue
+        try:
+            _normalize_value(column, value, _column_kind(column))
+        except ValueError as exc:
+            raise ValueError(
+                f"alpha producer value contract mismatch for {column}: {exc}"
+            ) from exc
+
+    identity = hashlib.sha256(
+        json.dumps(
+            representative, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "status": "COMPLETE",
+        "representative_column_count": len(representative),
+        "producer_non_null_column_count": sum(
+            value not in (None, "") for value in observed_producer.values()
+        ),
+        "identity": identity,
     }
 
 
@@ -2779,6 +3026,8 @@ def _arrow_type_for_column(column: str) -> pa.DataType:
         return pa.int64()
     if kind == "float":
         return pa.float64()
+    if kind == "temporal":
+        return pa.string()
     return pa.string()
 
 
@@ -3004,6 +3253,9 @@ def _progress(
     abort_reason: str = "",
     dominant_failure_signature: str = "",
     tasks_cancelled: int = 0,
+    abort_threshold_failure_count: int = 0,
+    worker_failure_record_count: int = 0,
+    in_flight_at_abort: int = 0,
 ) -> None:
     elapsed = max(0.001, time.perf_counter() - started)
     payload = {
@@ -3018,6 +3270,9 @@ def _progress(
         "abort_reason": abort_reason,
         "dominant_failure_signature": dominant_failure_signature,
         "tasks_cancelled": tasks_cancelled,
+        "abort_threshold_failure_count": abort_threshold_failure_count,
+        "worker_failure_record_count": worker_failure_record_count,
+        "in_flight_at_abort": in_flight_at_abort,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_json(report_root / "progress_manifest.json", payload)
