@@ -8,6 +8,7 @@ import math
 import multiprocessing
 import os
 import pickle
+import re
 import shutil
 import subprocess
 import traceback
@@ -2823,43 +2824,13 @@ def _rows_to_table(
     row_offset: int = 0,
     allow_whitespace_numeric_missing: bool = False,
 ) -> pa.Table:
-    normalized: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        unknown = sorted(
-            set(row)
-            - set(ALPHA_OUTPUT_SCHEMA)
-            - {"__source_partition_path", "__source_row_index"}
-        )
-        if unknown:
-            raise ValueError(
-                "canonical alpha row contains unknown columns: "
-                f"{unknown}; symbol={row.get('symbol')!r} "
-                f"rebalance_date={row.get('rebalance_date')!r} "
-                f"source_partition_path={row.get('__source_partition_path') or source_partition_path!s} "
-                f"row_index={row.get('__source_row_index', row_offset + index)}"
-            )
-        output: dict[str, Any] = {}
-        for field in schema:
-            value = row.get(field.name)
-            try:
-                output[field.name], _coerced = _normalize_value(
-                    field.name,
-                    value,
-                    _column_kind(field.name),
-                    allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
-                )
-            except ValueError as exc:
-                raise ValueError(
-                    "canonical alpha value is incompatible: "
-                    f"column={field.name} expected_kind={_column_kind(field.name)} "
-                    f"expected_type={field.type} value={value!r} "
-                    f"symbol={row.get('symbol')!r} "
-                    f"rebalance_date={row.get('rebalance_date')!r} "
-                    f"source_partition_path={row.get('__source_partition_path') or source_partition_path!s} "
-                    f"row_index={row.get('__source_row_index', row_offset + index)}; "
-                    f"{exc}"
-                ) from exc
-        normalized.append(output)
+    normalized, _report = _normalize_partition_rows(
+        rows,
+        fieldnames=schema.names,
+        source_partition_path=source_partition_path,
+        row_offset=row_offset,
+        allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
+    )
     return pa.Table.from_pylist(normalized, schema=schema)
 
 
@@ -2885,12 +2856,14 @@ def _validate_and_cast_partition_table(
     for row_index, row in enumerate(rows):
         row["__source_partition_path"] = str(path)
         row["__source_row_index"] = row_offset + row_index
-    casted_table = _rows_to_table(
+    normalized_rows, canonicalization = _normalize_partition_rows(
         rows,
-        canonical_schema,
+        fieldnames=canonical_schema.names,
         source_partition_path=path,
+        row_offset=row_offset,
         allow_whitespace_numeric_missing=False,
     )
+    casted_table = pa.Table.from_pylist(normalized_rows, schema=canonical_schema)
     report = {
         "partition_path": str(path),
         "row_count": table.num_rows,
@@ -2899,6 +2872,7 @@ def _validate_and_cast_partition_table(
         "unexpected_columns": unexpected,
         "type_mismatches": type_mismatches,
         "cast_operations": casts,
+        "canonicalization": canonicalization,
     }
     return report, casted_table
 
@@ -2990,60 +2964,342 @@ def _column_type_inventory(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return inventory
 
 
+_FLOAT_TEXT_RE = re.compile(
+    r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
+)
+_INT_TEXT_RE = re.compile(r"^(?:0|[1-9]\d*|-[1-9]\d*)$")
+_DIAGNOSTIC_EXAMPLES_PER_CATEGORY = 3
+
+
+class CanonicalizationError(ValueError):
+    def __init__(self, message: str, *, action: str, source_category: str):
+        super().__init__(message)
+        self.action = action
+        self.source_category = source_category
+
+
+class CanonicalizationReportError(ValueError):
+    def __init__(self, message: str, report: Mapping[str, Any]):
+        super().__init__(message)
+        self.report = dict(report)
+
+
+def _source_value_category(value: Any) -> str:
+    if value is None:
+        return "null"
+    if value == "":
+        return "empty_string"
+    if isinstance(value, str):
+        return "whitespace_text" if not value.strip() else "text"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return type(value).__name__
+
+
+def _canonicalize_scalar(
+    column: str,
+    value: Any,
+    *,
+    allow_whitespace_numeric_missing: bool = False,
+) -> tuple[Any, str, str]:
+    try:
+        kind, nullable = ALPHA_OUTPUT_SCHEMA[column]
+    except KeyError as exc:
+        raise CanonicalizationError(
+            f"unknown canonical-v2 alpha output column: {column}",
+            action="rejected_unknown_column",
+            source_category=_source_value_category(value),
+        ) from exc
+    source = _source_value_category(value)
+
+    if value is None:
+        if not nullable:
+            raise CanonicalizationError(
+                f"non-nullable column {column} received null",
+                action="rejected_non_nullable_null",
+                source_category=source,
+            )
+        return None, "preserved_null", source
+    if value == "":
+        if nullable and kind != "string":
+            return None, "empty_string_to_null", source
+        if kind == "string":
+            return "", "preserved_text", source
+        raise CanonicalizationError(
+            f"non-nullable {kind} column {column} received empty string",
+            action="rejected_non_nullable_empty",
+            source_category=source,
+        )
+    if isinstance(value, str) and not value.strip() and kind in {"float", "int"}:
+        if allow_whitespace_numeric_missing and nullable:
+            return None, "whitespace_to_null", source
+        action = (
+            "rejected_non_nullable_empty"
+            if allow_whitespace_numeric_missing
+            else "rejected_whitespace_text"
+        )
+        raise CanonicalizationError(
+            f"{kind} column {column} received whitespace-only text",
+            action=action,
+            source_category=source,
+        )
+    if kind == "string":
+        if isinstance(value, str):
+            return value, "preserved_text", source
+        raise CanonicalizationError(
+            f"text column {column} received {type(value).__name__}",
+            action="rejected_type",
+            source_category=source,
+        )
+    if kind == "bool":
+        if isinstance(value, bool):
+            return value, "already_canonical", source
+        if column not in STRICT_BOOL_COLUMNS:
+            if isinstance(value, int) and not isinstance(value, bool) and value in {0, 1}:
+                return bool(value), "binary_numeric_to_bool", source
+            if isinstance(value, float) and math.isfinite(value) and value in {0.0, 1.0}:
+                return bool(value), "binary_numeric_to_bool", source
+        raise CanonicalizationError(
+            f"bool column {column} received incompatible value {value!r}",
+            action="rejected_non_binary_bool" if isinstance(value, (int, float)) else "rejected_type",
+            source_category=source,
+        )
+    if kind == "int":
+        if isinstance(value, bool):
+            raise CanonicalizationError(
+                f"int column {column} received bool",
+                action="rejected_type",
+                source_category=source,
+            )
+        if isinstance(value, int):
+            return value, "already_canonical", source
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise CanonicalizationError(
+                    f"int column {column} received non-finite value",
+                    action="rejected_non_finite",
+                    source_category=source,
+                )
+            if value.is_integer():
+                return int(value), "integral_float_to_int", source
+            raise CanonicalizationError(
+                f"int column {column} received fractional value {value!r}",
+                action="rejected_fractional",
+                source_category=source,
+            )
+        if isinstance(value, str):
+            if _INT_TEXT_RE.fullmatch(value):
+                return int(value), "numeric_text_to_integer", source
+            raise CanonicalizationError(
+                f"int column {column} received non-canonical integral text {value!r}",
+                action="rejected_ambiguous_numeric_text",
+                source_category=source,
+            )
+        raise CanonicalizationError(
+            f"int column {column} received {type(value).__name__}",
+            action="rejected_type",
+            source_category=source,
+        )
+    if kind == "float":
+        if isinstance(value, bool):
+            raise CanonicalizationError(
+                f"float column {column} received bool",
+                action="rejected_type",
+                source_category=source,
+            )
+        if isinstance(value, (int, float)):
+            parsed = float(value)
+            action = "numeric_to_float" if isinstance(value, int) else "already_canonical"
+        elif isinstance(value, str):
+            if value.lower() in {
+                "nan",
+                "+nan",
+                "-nan",
+                "inf",
+                "+inf",
+                "-inf",
+                "infinity",
+                "+infinity",
+                "-infinity",
+            }:
+                raise CanonicalizationError(
+                    f"float column {column} received non-finite numeric text",
+                    action="rejected_non_finite",
+                    source_category=source,
+                )
+            if not _FLOAT_TEXT_RE.fullmatch(value):
+                raise CanonicalizationError(
+                    f"float column {column} received malformed numeric text {value!r}",
+                    action="rejected_malformed_numeric_text",
+                    source_category=source,
+                )
+            parsed = float(value)
+            action = "numeric_text_to_float"
+        else:
+            raise CanonicalizationError(
+                f"float column {column} received {type(value).__name__}",
+                action="rejected_type",
+                source_category=source,
+            )
+        if not math.isfinite(parsed):
+            raise CanonicalizationError(
+                f"float column {column} received non-finite value",
+                action="rejected_non_finite",
+                source_category=source,
+            )
+        return parsed, action, source
+    if kind == "temporal":
+        try:
+            normalized = _canonical_utc_timestamp(value, column=column)
+        except ValueError as exc:
+            raise CanonicalizationError(
+                str(exc),
+                action="rejected_temporal",
+                source_category=source,
+            ) from exc
+        return normalized, "temporal_to_canonical_text", source
+    raise CanonicalizationError(
+        f"unknown column kind {kind} for {column}",
+        action="rejected_schema_kind",
+        source_category=source,
+    )
+
+
 def _normalize_partition_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
+    fieldnames: Sequence[str] | None = None,
+    source_partition_path: Path | str | None = None,
+    row_offset: int = 0,
     allow_whitespace_numeric_missing: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    fieldnames = list(dict.fromkeys(name for row in rows for name in row))
+    internal_columns = {"__source_partition_path", "__source_row_index"}
+    discovered = list(
+        dict.fromkeys(
+            name for row in rows for name in row if name not in internal_columns
+        )
+    )
+    selected = list(fieldnames) if fieldnames is not None else discovered
+    unknown = sorted(set(discovered) - set(ALPHA_OUTPUT_SCHEMA))
+    if unknown:
+        report = {
+            "input_row_count": len(rows),
+            "invalid_values_rejected_by_column": {
+                name: [{"error": "unknown canonical-v2 alpha output column"}]
+                for name in unknown
+            },
+            "valid": False,
+        }
+        raise CanonicalizationReportError(
+            f"canonical alpha rows contain unknown columns: {unknown}", report
+        )
     normalized: list[dict[str, Any]] = []
-    coerced_nulls: dict[str, int] = {name: 0 for name in fieldnames}
+    coerced_nulls: dict[str, int] = {name: 0 for name in selected}
     invalid_values: dict[str, list[dict[str, Any]]] = {}
+    rejected_counts: dict[str, int] = {}
+    category_counts: dict[tuple[str, str, str, str], int] = {}
+    category_examples: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for row_index, row in enumerate(rows):
         output: dict[str, Any] = {}
-        for column in fieldnames:
+        for column in selected:
             value = row.get(column)
             kind = _column_kind(column)
             try:
-                normalized_value, coerced = _normalize_value(
+                normalized_value, action, source_category = _canonicalize_scalar(
                     column,
                     value,
-                    kind,
                     allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
                 )
-            except ValueError as exc:
-                invalid_values.setdefault(column, []).append(
+            except CanonicalizationError as exc:
+                action, source_category = exc.action, exc.source_category
+                normalized_value = None
+                rejected_counts[column] = rejected_counts.get(column, 0) + 1
+                example = {
+                    "row_index": row.get("__source_row_index", row_offset + row_index),
+                    "symbol": row.get("symbol"),
+                    "rebalance_date": row.get("rebalance_date"),
+                    "source_partition_path": str(
+                        row.get("__source_partition_path") or source_partition_path or ""
+                    ),
+                    "value": repr(value),
+                    "error": str(exc),
+                    "action": action,
+                    "source_category": source_category,
+                }
+                examples = invalid_values.setdefault(column, [])
+                if len(examples) < _DIAGNOSTIC_EXAMPLES_PER_CATEGORY:
+                    examples.append(example)
+            if action in {"empty_string_to_null", "whitespace_to_null"}:
+                coerced_nulls[column] += 1
+            key = (column, source_category, kind, action)
+            category_counts[key] = category_counts.get(key, 0) + 1
+            reps = category_examples.setdefault(key, [])
+            if len(reps) < _DIAGNOSTIC_EXAMPLES_PER_CATEGORY:
+                reps.append(
                     {
-                        "row_index": row_index,
+                        "value": repr(value),
                         "symbol": row.get("symbol"),
                         "rebalance_date": row.get("rebalance_date"),
-                        "value": repr(value),
-                        "error": str(exc),
+                        "source_partition_path": str(
+                            row.get("__source_partition_path")
+                            or source_partition_path
+                            or ""
+                        ),
+                        "row_index": row.get(
+                            "__source_row_index", row_offset + row_index
+                        ),
                     }
                 )
-                normalized_value, coerced = None, False
-            if coerced:
-                coerced_nulls[column] += 1
             output[column] = normalized_value
         normalized.append(output)
     duplicate_count = _duplicate_symbol_date_count(normalized)
     report = {
         "input_row_count": len(rows),
         "output_row_count": len(normalized),
-        "column_count": len(fieldnames),
+        "column_count": len(selected),
         "columns": [
             {"name": name, "kind": _column_kind(name), "arrow_type": str(_arrow_type_for_column(name))}
-            for name in fieldnames
+            for name in selected
         ],
         "values_coerced_to_null_by_column": {k: v for k, v in coerced_nulls.items() if v},
         "invalid_values_rejected_by_column": invalid_values,
+        "rejected_value_counts_by_column": dict(sorted(rejected_counts.items())),
+        "canonicalization_counts": [
+            {
+                "column": key[0],
+                "source_category": key[1],
+                "target_schema_type": key[2],
+                "action": key[3],
+                "rejection_category": (
+                    key[3] if key[3].startswith("rejected_") else None
+                ),
+                "count": category_counts[key],
+                "representative_values": category_examples[key],
+            }
+            for key in sorted(category_counts)
+        ],
         "duplicate_symbol_date_keys": duplicate_count,
         "valid": len(rows) == len(normalized) and duplicate_count == 0 and not invalid_values,
     }
     if invalid_values:
-        first_column = next(iter(invalid_values))
-        first = invalid_values[first_column][0]
-        raise ValueError(f"Invalid value for column {first_column}: {first['value']} ({first['error']})")
+        summaries = [
+            (
+                f"column={column} rejected_count={rejected_counts[column]} "
+                f"value={examples[0]['value']} symbol={examples[0]['symbol']!r} "
+                f"rebalance_date={examples[0]['rebalance_date']!r} "
+                f"source_partition_path={examples[0]['source_partition_path']} "
+                f"row_index={examples[0]['row_index']}; {examples[0]['error']}"
+            )
+            for column, examples in sorted(invalid_values.items())
+        ]
+        raise CanonicalizationReportError(
+            "canonical alpha values are incompatible: " + "; ".join(summaries),
+            report,
+        )
     return normalized, report
 
 
@@ -3054,77 +3310,21 @@ def _normalize_value(
     *,
     allow_whitespace_numeric_missing: bool = False,
 ) -> tuple[Any, bool]:
-    if value is None:
-        if column in NON_NULLABLE_COLUMNS:
-            raise ValueError(f"non-nullable column {column} received null")
-        return None, False
-    if value == "":
-        if kind in {"float", "int"}:
-            if not ALPHA_OUTPUT_SCHEMA[column][1]:
-                raise ValueError(
-                    f"non-nullable {kind} column {column} received empty string"
-                )
-            return None, True
-        if kind == "temporal":
-            return None, True
-        if kind == "string":
-            return "", False
-        raise ValueError(f"{kind} column {column} received empty string")
-    if (
-        isinstance(value, str)
-        and not value.strip()
-        and kind in {"float", "int"}
-    ):
-        if not allow_whitespace_numeric_missing:
-            raise ValueError(
-                f"{kind} column {column} received whitespace-only text"
-            )
-        if not ALPHA_OUTPUT_SCHEMA[column][1]:
-            raise ValueError(
-                f"non-nullable {kind} column {column} received whitespace-only text"
-            )
-        return None, True
-    if kind == "string":
-        if isinstance(value, str):
-            return value, False
-        raise ValueError(f"text column {column} received {type(value).__name__}")
-    if kind == "bool":
-        if isinstance(value, bool):
-            return value, False
-        if column in STRICT_BOOL_COLUMNS:
-            raise ValueError(
-                f"bool column {column} received {type(value).__name__}"
-            )
-        if isinstance(value, int) and value in {0, 1}:
-            return bool(value), False
-        if isinstance(value, float) and value in {0.0, 1.0}:
-            return bool(value), False
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            raise ValueError(f"bool column {column} received non-binary numeric value {value!r}")
-        raise ValueError(f"bool column {column} received {type(value).__name__}")
-    if kind == "int":
-        if isinstance(value, bool):
-            raise ValueError(f"int column {column} received bool")
-        if isinstance(value, int):
-            return value, False
-        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
-            return int(value), False
-        if isinstance(value, str):
-            raise ValueError(f"int column {column} received text")
-        raise ValueError(f"int column {column} received non-integer value {value!r}")
-    if kind == "float":
-        if isinstance(value, bool):
-            raise ValueError(f"float column {column} received bool")
-        if isinstance(value, (int, float)):
-            parsed = float(value)
-        elif isinstance(value, str):
-            raise ValueError(f"float column {column} received text")
-        else:
-            raise ValueError(f"float column {column} received {type(value).__name__}")
-        return (None, True) if math.isnan(parsed) else (parsed, False)
-    if kind == "temporal":
-        return _canonical_utc_timestamp(value, column=column), False
-    raise ValueError(f"unknown column kind {kind} for {column}")
+    expected_kind = _column_kind(column)
+    if kind != expected_kind:
+        raise ValueError(
+            f"schema kind mismatch for {column}: supplied={kind} expected={expected_kind}"
+        )
+    normalized, action, _source = _canonicalize_scalar(
+        column,
+        value,
+        allow_whitespace_numeric_missing=allow_whitespace_numeric_missing,
+    )
+    return normalized, action not in {
+        "already_canonical",
+        "preserved_null",
+        "preserved_text",
+    }
 
 
 def _validate_normalized_rows(
@@ -3167,7 +3367,7 @@ def _schema_failure_payload(
     price_history_rows_read: int | None = None,
     timings: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "symbol": symbol,
         "phase": phase,
         "exception_type": type(exc).__name__,
@@ -3184,6 +3384,10 @@ def _schema_failure_payload(
         "price_history_rows_read": price_history_rows_read,
         "phase_timings": dict(timings or {}),
     }
+    report = getattr(exc, "report", None)
+    if isinstance(report, Mapping):
+        payload["canonicalization_diagnostics"] = dict(report)
+    return payload
 
 
 def _partition_failure_payload(
@@ -3288,10 +3492,10 @@ def _validate_alpha_output_value_contract(
             )
         else:
             value = "contract-value"
-        normalized, _ = _normalize_value(column, value, kind)
+        normalized, _action, _source = _canonicalize_scalar(column, value)
         representative[column] = normalized
         if nullable:
-            null_value, _ = _normalize_value(column, None, kind)
+            null_value, _action, _source = _canonicalize_scalar(column, None)
             if null_value is not None:
                 raise ValueError(
                     f"nullable alpha output column did not preserve null: {column}"
@@ -3321,7 +3525,7 @@ def _validate_alpha_output_value_contract(
         if value in (None, ""):
             continue
         try:
-            _normalize_value(column, value, _column_kind(column))
+            _canonicalize_scalar(column, value)
         except ValueError as exc:
             raise ValueError(
                 f"alpha producer value contract mismatch for {column}: {exc}"
@@ -3332,12 +3536,121 @@ def _validate_alpha_output_value_contract(
             representative, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
     ).hexdigest()
+    float_column = next(
+        column
+        for column, (kind, nullable) in ALPHA_OUTPUT_SCHEMA.items()
+        if kind == "float" and nullable
+    )
+    int_column = next(
+        column
+        for column, (kind, nullable) in ALPHA_OUTPUT_SCHEMA.items()
+        if kind == "int" and nullable
+    )
+    text_column = next(
+        column
+        for column, (kind, _nullable) in ALPHA_OUTPUT_SCHEMA.items()
+        if kind == "string"
+    )
+    bool_column = next(
+        column
+        for column, (kind, _nullable) in ALPHA_OUTPUT_SCHEMA.items()
+        if kind == "bool"
+    )
+    temporal_column = next(iter(TEMPORAL_TIMESTAMP_COLUMNS))
+    accepted_fixtures = [
+        (float_column, "1.25"),
+        (float_column, "-2.5e-3"),
+        (float_column, ""),
+        (int_column, "10"),
+        (text_column, "1.25"),
+        (temporal_column, "2026-01-02T20:05:00Z"),
+    ]
+    fixture_results: list[dict[str, Any]] = []
+    for column, value in accepted_fixtures:
+        normalized, action, source = _canonicalize_scalar(column, value)
+        fixture_results.append(
+            {
+                "column": column,
+                "input": repr(value),
+                "status": "accepted",
+                "normalized": repr(normalized),
+                "source_category": source,
+                "action": action,
+            }
+        )
+    rejected_fixtures = [
+        (float_column, "not-a-number"),
+        (float_column, "NaN"),
+        (float_column, "-inf"),
+        (float_column, float("nan")),
+        (float_column, float("inf")),
+        (int_column, "01"),
+        (int_column, "1.0"),
+        (bool_column, "true"),
+        (temporal_column, "not-a-timestamp"),
+    ]
+    for column, value in rejected_fixtures:
+        try:
+            _canonicalize_scalar(column, value)
+        except CanonicalizationError as exc:
+            fixture_results.append(
+                {
+                    "column": column,
+                    "input": repr(value),
+                    "status": "rejected",
+                    "source_category": exc.source_category,
+                    "action": exc.action,
+                }
+            )
+        else:
+            raise ValueError(
+                f"canonical alpha negative contract fixture was accepted: "
+                f"column={column} value={value!r}"
+            )
     return {
         "status": "COMPLETE",
+        "canonicalization_owner": (
+            "infrastructure.data.canonical_v2_alpha_enrichment:"
+            "_canonicalize_scalar"
+        ),
+        "enforcement_paths": [
+            "partition",
+            "consolidation_readback",
+            "value_contract_preflight",
+            "final_output",
+        ],
+        "producer_audit": {
+            "market_context_numeric_text_source": (
+                "certified base Parquet physical string columns; Parquet row "
+                "readback preserves those strings without additional stringification"
+            ),
+            "market_context_columns": [
+                "breadth_above_sma_200",
+                "spy_realized_volatility_21d",
+                "spy_realized_volatility_63d",
+                "spy_max_drawdown_63d",
+                "spy_max_drawdown_126d",
+            ],
+            "nullable_relative_field_source": (
+                "feature-producer missing-value placeholders; canonicalized to "
+                "null by schema without imputation"
+            ),
+            "nullable_relative_fields": [
+                "momentum_percentile",
+                "relative_momentum_vs_sector",
+                "sector_relative_strength",
+                "industry_momentum_percentile",
+                "industry_relative_strength",
+                "relative_momentum_vs_industry",
+                "industry_peer_count",
+                "industry_mapping_available",
+            ],
+        },
         "representative_column_count": len(representative),
         "producer_non_null_column_count": sum(
             value not in (None, "") for value in observed_producer.values()
         ),
+        "fixture_results": fixture_results,
         "identity": identity,
     }
 
