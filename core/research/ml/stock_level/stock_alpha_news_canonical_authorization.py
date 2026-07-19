@@ -10,7 +10,7 @@ REQUEST_V2 = "stock_alpha_news_canonical_materialisation_request.v2"
 AUTHORIZATION_V2 = "stock_alpha_news_canonical_materialisation_authorization.v2"
 SELECTION_CONTRACT = "stock_alpha_news_ingested_at_utc_selection.v1"
 STAGE = "CANONICAL_CORPUS_MATERIALISATION"
-NOTICE = "DRAFT ONLY - NOT EXECUTION AUTHORIZATION"
+NOTICE = "NOT PRODUCTION EXECUTION AUTHORIZATION"
 
 
 def normalize_ingested_at_utc(value: str) -> str:
@@ -92,6 +92,7 @@ def configuration_checksum(material):
 def authorization_template(v2, runtime_checksum, expected_run_id):
     validate_v2_request(v2)
     return {
+        "notice": NOTICE,
         "authorization_contract": AUTHORIZATION_V2,
         "execution_authorized": False,
         "materialisation_request_identity": v2["logical_request_identity"],
@@ -143,6 +144,10 @@ def validate_authorization(
     execution_required: bool,
 ):
     validate_v2_request(request)
+    if authorization.get("authorization_contract") != AUTHORIZATION_V2:
+        raise ValueError(
+            "INCOMPLETE_OR_SUPERSEDED_AUTHORIZATION_CONTRACT"
+        )
     expected = authorization_template(
         request, runtime_checksum, expected_run_id
     )

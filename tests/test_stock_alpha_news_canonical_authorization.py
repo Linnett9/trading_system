@@ -157,7 +157,10 @@ def test_unexpected_scope_key_and_old_authorization_rejected(tmp_path):
     authorization["authorization_contract"] = (
         "stock_alpha_news_canonical_materialisation_authorization.v1"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError,
+        match="INCOMPLETE_OR_SUPERSEDED_AUTHORIZATION_CONTRACT",
+    ):
         validate_authorization(
             authorization, request, runtime["configuration_checksum"], run_id,
             execution_required=False,

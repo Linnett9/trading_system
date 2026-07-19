@@ -179,10 +179,20 @@ def main(argv=None):
         ], cwd=REPO_ROOT, check=False)
         return completed.returncode
     except Exception as exc:
-        print(json.dumps({
+        failure = {
             "status": "AUTHORIZED_MATERIALISATION_REJECTED",
             "error_type": type(exc).__name__,
-        }), file=sys.stderr)
+        }
+        if isinstance(exc, ValueError):
+            error_code = str(exc)
+            if error_code and all(
+                character.isupper()
+                or character.isdigit()
+                or character == "_"
+                for character in error_code
+            ):
+                failure["error_code"] = error_code
+        print(json.dumps(failure), file=sys.stderr)
         return 2
 
 
