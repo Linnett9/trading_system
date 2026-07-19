@@ -950,13 +950,142 @@ def test_alpha_consolidation_successful_retry_publishes_after_failure(tmp_path: 
     assert output.exists()
 
 
+def _alpha_smoke_current_contract_issues(path: Path) -> list[str]:
+    if not path.is_file():
+        return ["artifact_missing"]
+    schema = pq.ParquetFile(path).schema_arrow
+    issues: list[str] = []
+    for name in ("true_stock_level_row", "overlapping_targets"):
+        if name not in schema.names:
+            issues.append(f"{name}:missing")
+        elif schema.field(name).type != pa.bool_():
+            issues.append(f"{name}:{schema.field(name).type}")
+    smoke_root = path.parents[2]
+    manifest_path = (
+        smoke_root / "partition_manifests" / f"{path.parent.name.removeprefix('symbol=')}.json"
+    )
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
+    compatibility = dict(manifest.get("compatibility_identity") or {})
+    if not compatibility:
+        issues.append("compatibility_identity:missing")
+    else:
+        if (
+            compatibility.get("alpha_enrichment_contract_version")
+            != alpha_enrichment.ALPHA_ENRICHMENT_CONTRACT_VERSION
+        ):
+            issues.append("alpha_enrichment_contract_version:mismatch")
+        if (
+            compatibility.get("feature_schema_identity")
+            != alpha_enrichment._feature_schema_identity()
+        ):
+            issues.append("feature_schema_identity:mismatch")
+    return issues
+
+
+def _write_current_alpha_smoke_fixture(path: Path) -> None:
+    path.parent.mkdir(parents=True)
+    normalized, _ = _normalize_partition_rows(
+        [
+            {
+                "symbol": path.parent.name.removeprefix("symbol="),
+                "rebalance_date": "2026-01-01",
+                "true_stock_level_row": True,
+                "overlapping_targets": False,
+                "actual_forward_return_10d": 0.1,
+            }
+        ]
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            normalized, schema=_schema_for_fieldnames(list(normalized[0]))
+        ),
+        path,
+    )
+    manifest_path = (
+        path.parents[2]
+        / "partition_manifests"
+        / f"{path.parent.name.removeprefix('symbol=')}.json"
+    )
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "status": "COMPLETE",
+                "compatibility_identity": {
+                    "alpha_enrichment_contract_version": (
+                        alpha_enrichment.ALPHA_ENRICHMENT_CONTRACT_VERSION
+                    ),
+                    "feature_schema_identity": (
+                        alpha_enrichment._feature_schema_identity()
+                    ),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_alpha_smoke_contract_detection_is_consistent_when_absent(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "smoke" / "partitions" / "symbol=AAPL" / "rows.parquet"
+
+    assert _alpha_smoke_current_contract_issues(path) == ["artifact_missing"]
+
+
+def test_alpha_smoke_contract_detection_rejects_legacy_boolean_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "smoke" / "partitions" / "symbol=AAPL" / "rows.parquet"
+    path.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "symbol": ["AAPL"],
+                "rebalance_date": ["2026-01-01"],
+                "overlapping_targets": [""],
+                "actual_forward_return_10d": [0.1],
+            }
+        ),
+        path,
+    )
+
+    issues = _alpha_smoke_current_contract_issues(path)
+
+    assert "true_stock_level_row:missing" in issues
+    assert "overlapping_targets:string" in issues
+    assert "compatibility_identity:missing" in issues
+
+
+def test_alpha_smoke_contract_detection_accepts_current_boolean_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "smoke" / "partitions" / "symbol=AAPL" / "rows.parquet"
+    _write_current_alpha_smoke_fixture(path)
+
+    assert _alpha_smoke_current_contract_issues(path) == []
+    report = _validate_partition_dataset([path])
+    assert report["row_count"] == 1
+    assert report["partitions"][0]["type_mismatches"] == []
+
+
 def test_alpha_validate_real_aapl_partition_has_no_numeric_empty_strings() -> None:
     path = Path(
         "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/"
         "alpha_enrichment_smoke_1/partitions/symbol=AAPL/rows.parquet"
     )
-    if not path.exists():
+    issues = _alpha_smoke_current_contract_issues(path)
+    if issues == ["artifact_missing"]:
         pytest.skip("AAPL smoke partition is not present in this checkout")
+    if issues:
+        pytest.skip(
+            "legacy AAPL smoke partition is not current-schema authoritative: "
+            + ", ".join(issues)
+        )
 
     report = _validate_partition_dataset([path])
 
