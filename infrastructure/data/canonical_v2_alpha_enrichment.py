@@ -8,6 +8,7 @@ import math
 import multiprocessing
 import os
 import pickle
+import shutil
 import traceback
 import time
 import uuid
@@ -597,87 +598,95 @@ def prepare_alpha_base_partitions(
     ):
         return existing
 
-    attempt_root = target_root.with_name(
-        f".{target_root.name}.attempt-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-    )
+    attempt_root = _alpha_base_attempt_root(target_root, checksum)
     attempt_root.mkdir(parents=True, exist_ok=False)
-    parquet = pq.ParquetFile(settings.base_artifact_path)
-    compression = str(ml.get("stock_level_parquet_compression", "zstd")).lower()
-    writers: dict[str, pq.ParquetWriter] = {}
-    row_counts: dict[str, int] = {}
-    paths: dict[str, Path] = {}
     try:
-        for batch in parquet.iter_batches(
-            batch_size=int(ml.get("canonical_v2_alpha_base_partition_batch_rows", 32_768))
-        ):
-            table = pa.Table.from_batches([batch])
-            for scalar in pc.unique(table["symbol"]):
-                symbol = str(scalar.as_py() or "").upper()
-                if not symbol:
-                    raise ValueError("alpha base contains a blank symbol")
-                selected = table.filter(pc.equal(table["symbol"], pa.scalar(scalar.as_py())))
-                path = attempt_root / f"symbol={_safe_symbol(symbol)}" / "rows.parquet"
-                if symbol not in writers:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    writers[symbol] = pq.ParquetWriter(path, parquet.schema_arrow, compression=compression)
-                    paths[symbol] = path
-                    row_counts[symbol] = 0
-                writers[symbol].write_table(selected)
-                row_counts[symbol] += selected.num_rows
-    finally:
-        for writer in writers.values():
-            writer.close()
-    observed_rows = sum(row_counts.values())
-    if observed_rows != int(base_validation["row_count"]):
-        raise ValueError(
-            f"alpha base partition row count {observed_rows} does not match "
-            f"validated base row count {base_validation['row_count']}"
-        )
-    partitions: list[dict[str, Any]] = []
-    for symbol in sorted(paths):
-        path = paths[symbol]
-        identity = {
+        parquet = pq.ParquetFile(settings.base_artifact_path)
+        compression = str(ml.get("stock_level_parquet_compression", "zstd")).lower()
+        writers: dict[str, pq.ParquetWriter] = {}
+        row_counts: dict[str, int] = {}
+        paths: dict[str, Path] = {}
+        try:
+            for batch in parquet.iter_batches(
+                batch_size=int(ml.get("canonical_v2_alpha_base_partition_batch_rows", 32_768))
+            ):
+                table = pa.Table.from_batches([batch])
+                for scalar in pc.unique(table["symbol"]):
+                    symbol = str(scalar.as_py() or "").upper()
+                    if not symbol:
+                        raise ValueError("alpha base contains a blank symbol")
+                    selected = table.filter(pc.equal(table["symbol"], pa.scalar(scalar.as_py())))
+                    path = attempt_root / f"symbol={_safe_symbol(symbol)}" / "rows.parquet"
+                    if symbol not in writers:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        writers[symbol] = pq.ParquetWriter(
+                            path, parquet.schema_arrow, compression=compression
+                        )
+                        paths[symbol] = path
+                        row_counts[symbol] = 0
+                    writers[symbol].write_table(selected)
+                    row_counts[symbol] += selected.num_rows
+        finally:
+            for writer in writers.values():
+                writer.close()
+        observed_rows = sum(row_counts.values())
+        if observed_rows != int(base_validation["row_count"]):
+            raise ValueError(
+                f"alpha base partition row count {observed_rows} does not match "
+                f"validated base row count {base_validation['row_count']}"
+            )
+        partitions: list[dict[str, Any]] = []
+        for symbol in sorted(paths):
+            path = paths[symbol]
+            published_path = target_root / path.relative_to(attempt_root)
+            identity = {
+                "contract_version": ALPHA_BASE_CONTRACT_VERSION,
+                "status": "COMPLETE",
+                "symbol": symbol,
+                "path": str(published_path),
+                "row_count": row_counts[symbol],
+                "sha256": _file_sha256(path),
+                "source_base_sha256": checksum,
+                "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
+                "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+            }
+            _write_json(_base_partition_identity_path(path), identity)
+            partitions.append(identity)
+        payload = {
             "contract_version": ALPHA_BASE_CONTRACT_VERSION,
             "status": "COMPLETE",
-            "symbol": symbol,
-            "path": str(path),
-            "row_count": row_counts[symbol],
-            "sha256": _file_sha256(path),
+            "path": str(target_root),
+            "source_base_path": str(settings.base_artifact_path),
             "source_base_sha256": checksum,
             "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
             "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
+            "row_count": observed_rows,
+            "symbol_count": len(partitions),
+            "partition_count": len(partitions),
+            "partitions": partitions,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "streaming_source_read": True,
+            "full_table_materialized": False,
         }
-        _write_json(_base_partition_identity_path(path), identity)
-        partitions.append(identity)
-    payload = {
-        "contract_version": ALPHA_BASE_CONTRACT_VERSION,
-        "status": "COMPLETE",
-        "path": str(target_root),
-        "source_base_path": str(settings.base_artifact_path),
-        "source_base_sha256": checksum,
-        "source_base_schema_fingerprint": base_validation["schema_fingerprint"],
-        "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
-        "row_count": observed_rows,
-        "symbol_count": len(partitions),
-        "partition_count": len(partitions),
-        "partitions": partitions,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
-        "streaming_source_read": True,
-        "full_table_materialized": False,
-    }
-    _write_json(attempt_root / manifest_path.name, payload)
-    target_root.parent.mkdir(parents=True, exist_ok=True)
-    if target_root.exists():
-        raise FileExistsError(
-            f"incompatible alpha base partition root already exists: {target_root}"
-        )
-    os.replace(attempt_root, target_root)
-    for row in payload["partitions"]:
-        relative = Path(str(row["path"])).relative_to(attempt_root)
-        row["path"] = str(target_root / relative)
-        _write_json(_base_partition_identity_path(Path(str(row["path"]))), row)
-    _write_json(manifest_path, payload)
-    return payload
+        _write_json(attempt_root / manifest_path.name, payload)
+        target_root.parent.mkdir(parents=True, exist_ok=True)
+        if target_root.exists():
+            raise FileExistsError(
+                f"incompatible alpha base partition root already exists: {target_root}"
+            )
+        os.replace(attempt_root, target_root)
+        return payload
+    except BaseException:
+        if attempt_root.exists():
+            shutil.rmtree(attempt_root)
+        raise
+
+
+def _alpha_base_attempt_root(target_root: Path, checksum: str) -> Path:
+    """Return a bounded sibling name without duplicating the full checksum."""
+    return target_root.with_name(
+        f".attempt-{checksum[:8]}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
 
 
 def _small_alpha_worker_config(config: Mapping[str, Any]) -> dict[str, Any]:

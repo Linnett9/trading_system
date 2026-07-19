@@ -140,6 +140,71 @@ def test_base_partition_preparation_is_streaming_checksum_owned_and_reusable(
     assert all(Path(row["path"]).exists() for row in first["partitions"])
 
 
+def test_base_partition_attempt_path_is_windows_safe_under_long_report_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report_root = (
+        tmp_path
+        / "ticket_7b3_daily_large_history"
+        / "regeneration_canonical_v2"
+        / "alpha_enrichment"
+    )
+    config, _ = _base_fixture(tmp_path / "fixture")
+    validation = alpha.validate_alpha_base_artifact(config)
+    target_root = report_root / "alpha_base_partitions_v2" / validation["sha256"]
+    attempt_root = alpha._alpha_base_attempt_root(target_root, validation["sha256"])
+    configured_target = (
+        Path(config["ml"]["canonical_v2_alpha_report_root"])
+        / "alpha_base_partitions_v2"
+        / validation["sha256"]
+    )
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = alpha.os.replace
+
+    def record_replace(source, destination):
+        replacements.append((Path(source), Path(destination)))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(alpha.os, "replace", record_replace)
+    result = alpha.prepare_alpha_base_partitions(config, base_validation=validation)
+
+    assert len(str(attempt_root.resolve())) < 260
+    assert validation["sha256"] not in attempt_root.name
+    assert Path(result["path"]).name == validation["sha256"]
+    assert replacements[-1][0].name.startswith(
+        f".attempt-{validation['sha256'][:8]}-"
+    )
+    assert replacements[-1][1] == configured_target
+
+
+def test_base_partition_interruption_cleans_attempt_and_can_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = _base_fixture(tmp_path)
+    validation = alpha.validate_alpha_base_artifact(config)
+    real_replace = alpha.os.replace
+
+    def interrupt_publication(source, destination):
+        if Path(destination).name == validation["sha256"]:
+            raise KeyboardInterrupt("synthetic interruption")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(alpha.os, "replace", interrupt_publication)
+    with pytest.raises(KeyboardInterrupt, match="synthetic interruption"):
+        alpha.prepare_alpha_base_partitions(config, base_validation=validation)
+
+    partition_parent = (
+        Path(config["ml"]["canonical_v2_alpha_report_root"])
+        / "alpha_base_partitions_v2"
+    )
+    assert not list(partition_parent.glob(".attempt-*"))
+    assert not (partition_parent / validation["sha256"]).exists()
+
+    monkeypatch.setattr(alpha.os, "replace", real_replace)
+    resumed = alpha.prepare_alpha_base_partitions(config, base_validation=validation)
+    assert Path(resumed["path"]).is_dir()
+
+
 def test_worker_payload_is_small_and_excludes_unrelated_configuration(
     tmp_path: Path,
 ) -> None:
