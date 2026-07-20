@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import infrastructure.data.canonical_v2_alpha_enrichment as alpha_enrichment
+from core.research.ml.stock_level.stock_level_alpha_features_io import _markdown
 from core.research.ml.stock_level.prediction_artifacts.sources import (
     _load_canonical_daily_v2_closes,
 )
@@ -203,6 +204,18 @@ def test_alpha_numeric_placeholders_normalise_to_float_nulls() -> None:
 
     assert [row["momentum_250d"] for row in normalized] == [None, None, 1.0, 1.5]
     assert report["values_coerced_to_null_by_column"] == {"momentum_250d": 1}
+
+
+def test_alpha_markdown_derives_optional_audit_counts_without_key_error() -> None:
+    text = _markdown(
+        {
+            "row_count": 2,
+            "features": [],
+            "parallelism": {"requested_workers": 3, "partition": "symbol"},
+        }
+    )
+    assert "Engineered features: 0" in text
+    assert "Alpha feature workers: 3" in text
 
 
 def test_alpha_text_column_rejects_float_with_column_name() -> None:

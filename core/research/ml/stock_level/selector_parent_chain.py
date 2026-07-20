@@ -67,6 +67,8 @@ class ParentChainInputs:
     labeled_spine_root: Path | None = None
     labeled_spine_manifest: Path | None = None
     inference_spine_manifest: Path | None = None
+    fundamentals_artifact: Path | None = None
+    fundamentals_manifest: Path | None = None
     data_root: Path | None = None
     workers: int = 6
     max_in_flight_tasks: int = 12
@@ -123,6 +125,9 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         for column in feature_columns
     ):
         blockers.append("TARGET_COLUMN_IN_FEATURE_ALLOWLIST")
+    final_schema_assembly = _final_schema_assembly_plan(inputs)
+    if inputs.production and final_schema_assembly["unresolved_columns"]:
+        blockers.append("FINAL_SCHEMA_PRODUCER_UNRESOLVED")
     try:
         alpha_config = _parent_alpha_config(
             inputs,
@@ -145,7 +150,9 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
             "base_sha256": base_identity.get("sha256"),
             "feature_schema_checksum": _hash_json(schema),
             "adapted_configuration_sha256": _adapted_configuration_hash(alpha_config),
-            "resolved_inputs_sha256": _hash_json(resolved_inputs),
+            "resolved_inputs_sha256": _hash_json(
+                _partition_producing_resolved_inputs(resolved_inputs)
+            ),
         }
         if owner != expected_owner:
             blockers.append("RESOLVED_INPUT_IDENTITY_CHANGED")
@@ -178,6 +185,7 @@ def prepare_parent_chain_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         "asset_registry_version": APPROVED_ASSET_REGISTRY_VERSION,
         "asset_registry_checksum": APPROVED_ASSET_REGISTRY_CHECKSUM,
         "feature_schema_checksum": _hash_json(schema),
+        "final_schema_assembly": final_schema_assembly,
         "resolved_inputs": resolved_inputs,
         "alpha_input_resolution": alpha_input_resolution,
         "adapted_configuration_sha256": _adapted_configuration_hash(alpha_config),
@@ -442,13 +450,52 @@ def build_production_enriched_child(
             config_path=config_path,
         )
         _write_json(output / "owner.json", _owner(plan))
+        _write_json(
+            output / "final_schema_ownership.json",
+            plan["final_schema_assembly"],
+        )
         from infrastructure.data.canonical_v2_alpha_enrichment import (
             write_partitioned_canonical_v2_alpha_features,
         )
 
         paths = write_partitioned_canonical_v2_alpha_features(config)
+        final_artifact = _assemble_final_selector_parent(
+            alpha_child=paths.enriched_parquet_path,
+            labeled_spine_root=inputs.labeled_spine_root,
+            fundamentals_artifact=inputs.fundamentals_artifact,
+            output_path=output / "selector_parent_182.parquet",
+            expected_base=plan["base"],
+        )
+        lifecycle = _json(
+            output / "alpha_enrichment" / "partition_dataset_status.json",
+            [],
+            "PARTITION_LIFECYCLE_MISSING",
+        )
+        alpha_run = _json(
+            output / "alpha_enrichment" / "alpha_only_run_manifest.json",
+            [],
+            "ALPHA_RUN_MANIFEST_MISSING",
+        )
+        progress = _json(
+            output / "alpha_enrichment" / "progress_manifest.json",
+            [],
+            "ALPHA_PROGRESS_MISSING",
+        )
         result = {
             "status": "COMPLETE",
+            "partition_generation_status": "COMPLETE",
+            "consolidation_status": "COMPLETE",
+            "publication_status": "PUBLISHED",
+            "overall_status": "COMPLETE",
+            "planned_partitions": int(
+                progress.get("planned_partitions", 0) or 0
+            ),
+            "completed_partitions": int(
+                progress.get("completed_partitions", 0) or 0
+            ),
+            "failed_partitions": int(
+                progress.get("failed_partitions", 0) or 0
+            ),
             "contract_version": CONTRACT_VERSION,
             "run_id": inputs.run_id,
             "plan_checksum": _plan_identity_hash(plan),
@@ -479,8 +526,47 @@ def build_production_enriched_child(
                 for key, value in vars(paths).items()
                 if isinstance(value, Path)
             },
+            "intermediate_alpha_child": {
+                "path": str(paths.enriched_parquet_path),
+                "contract_version": "canonical_v2_alpha_child_120.v1",
+            },
+            "final_selector_parent": final_artifact,
+            "resume_finalization": {
+                "reused_partition_count": int(
+                    lifecycle.get("partitions_reused", 0) or 0
+                ),
+                "recomputed_partition_count": int(
+                    lifecycle.get("partitions_recomputed", 0) or 0
+                ),
+                "partition_namespace_identity": lifecycle.get(
+                    "partition_namespace_identity"
+                ),
+                "original_source_commit": alpha_run.get(
+                    "original_source_commit"
+                ),
+                "finalization_source_commit": alpha_run.get(
+                    "finalization_source_commit"
+                ),
+                "compatibility_decision": alpha_run.get(
+                    "compatibility_decision"
+                ),
+            },
         }
+        if (
+            result["resume_finalization"]["recomputed_partition_count"] == 0
+            and result["resume_finalization"]["reused_partition_count"] == 0
+        ):
+            raise ValueError("finalization resume reported no reusable partitions")
+        if not (
+            result["planned_partitions"]
+            == result["completed_partitions"]
+            and result["failed_partitions"] == 0
+        ):
+            raise ValueError(
+                "parent-chain partition status is inconsistent with publication"
+            )
         _write_json(output / "production_result.json", result)
+        _write_json(output / "parent_chain_result.json", result)
         return result
     finally:
         lock_path.unlink(missing_ok=True)
@@ -552,6 +638,427 @@ def _base_identity(path: Path, manifest_path: Path, blockers: list[str]) -> dict
         "economic_target_id": economic,
         "target_provenance_contract_version": provenance,
         "missing_required_columns": missing,
+    }
+
+
+def _parquet_columns(path: Path | None) -> set[str]:
+    if path is None or not path.is_file():
+        return set()
+    return set(pq.ParquetFile(path).schema_arrow.names)
+
+
+def _representative_spine_columns(root: Path | None) -> set[str]:
+    if root is None or not root.is_dir():
+        return set()
+    representative = next(iter(sorted(root.glob("symbol=*/spine.parquet"))), None)
+    return _parquet_columns(representative)
+
+
+def _final_schema_assembly_plan(inputs: ParentChainInputs) -> dict[str, Any]:
+    """Prove physical column ownership; schema declarations are not producers."""
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        ALPHA_OUTPUT_SCHEMA,
+        _time_series_features,
+    )
+    from core.research.ml.stock_level.stock_fundamentals import (
+        FUNDAMENTAL_FEATURE_COLUMNS,
+        FUNDAMENTAL_METADATA_COLUMNS,
+    )
+
+    final_columns = list(ALPHA_OUTPUT_SCHEMA)
+    base_columns = _parquet_columns(inputs.base_artifact)
+    alpha_columns = set(_time_series_features([], []))
+    intermediate_columns = base_columns | alpha_columns
+    spine_columns = _representative_spine_columns(inputs.labeled_spine_root)
+    spine_aliases = {
+        "asset_id",
+        "canonical_symbol",
+        "model_close",
+        "source_provider",
+        "compatibility_tier",
+        "eligibility_reason",
+        "selector_eligible",
+        "provider_transition_flag",
+        "provider_transition_id",
+    } & spine_columns
+    fundamental_columns = set(FUNDAMENTAL_FEATURE_COLUMNS) | set(
+        FUNDAMENTAL_METADATA_COLUMNS
+    )
+    supplied_fundamental_columns = _parquet_columns(inputs.fundamentals_artifact)
+    fundamentals_binding = _certified_fundamentals_binding(
+        inputs.fundamentals_artifact, inputs.fundamentals_manifest
+    )
+    fundamentals_join_keys_present = (
+        "asset_id" in supplied_fundamental_columns
+        and bool(
+            {"rebalance_date", "decision_session_date"}
+            & supplied_fundamental_columns
+        )
+    )
+    fundamentals_population_matches = bool(
+        inputs.fundamentals_artifact
+        and inputs.fundamentals_artifact.is_file()
+        and pq.ParquetFile(inputs.fundamentals_artifact).metadata.num_rows
+        == pq.ParquetFile(inputs.base_artifact).metadata.num_rows
+    )
+    fundamentals_bound = bool(
+        fundamentals_binding["valid"]
+        and fundamentals_join_keys_present
+        and fundamentals_population_matches
+    )
+
+    records: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    for column in final_columns:
+        kind, nullable = ALPHA_OUTPUT_SCHEMA[column]
+        if column in base_columns:
+            producer = "immutable_canonical_v2_alpha_base"
+            source = str(inputs.base_artifact.resolve())
+            join_key = "physical inheritance"
+            availability = "preserve certified base value and timestamps"
+            stage = "alpha_child"
+            resolved = True
+        elif column in alpha_columns:
+            producer = "canonical_v2_alpha_feature_producer"
+            source = (
+                "core.research.ml.stock_level.stock_level_alpha_features_builder"
+            )
+            join_key = "symbol + rebalance_date"
+            availability = "trailing inputs strictly before decision timestamp"
+            stage = "alpha_child"
+            resolved = True
+        elif column in spine_aliases:
+            producer = "canonical_v2_labeled_spine_registry_bound"
+            source = str(inputs.labeled_spine_root.resolve())
+            join_key = "canonical_symbol + session_date -> symbol + rebalance_date"
+            availability = "spine session must equal decision session"
+            stage = "selector_parent_assembly"
+            resolved = True
+        elif column in fundamental_columns:
+            producer = "stock_fundamentals_pit_enrichment"
+            source = (
+                (
+                    str(inputs.fundamentals_artifact.resolve())
+                    + " | "
+                    + str(inputs.fundamentals_manifest.resolve())
+                )
+                if inputs.fundamentals_artifact
+                and inputs.fundamentals_manifest
+                else ""
+            )
+            join_key = "asset_id + latest fundamentals_available_timestamp <= decision_timestamp"
+            availability = (
+                "fundamentals_available_timestamp <= decision_timestamp; "
+                "latest eligible certified snapshot only"
+            )
+            stage = "selector_parent_assembly"
+            resolved = (
+                fundamentals_bound and column in supplied_fundamental_columns
+            )
+        else:
+            producer = "unresolved"
+            source = ""
+            join_key = ""
+            availability = ""
+            stage = "selector_parent_assembly"
+            resolved = False
+        record = {
+            "column": column,
+            "declared_schema_type": kind,
+            "nullable": nullable,
+            "authoritative_producer": producer,
+            "authoritative_source_path_or_manifest": source,
+            "join_key": join_key,
+            "availability_timestamp_rule": availability,
+            "expected_stage": stage,
+            "physically_produced": resolved,
+        }
+        records.append(record)
+        if not resolved:
+            unresolved.append(
+                {
+                    "column": column,
+                    "expected_owner": producer,
+                    "expected_stage": stage,
+                }
+            )
+    physically_planned = {row["column"] for row in records if row["physically_produced"]}
+    missing_from_alpha_child = sorted(set(final_columns) - intermediate_columns)
+    return {
+        "contract_version": "selector_parent_final_schema_assembly.v1",
+        "contract_decision": "B",
+        "alpha_child_contract": {
+            "column_count": len(intermediate_columns),
+            "columns": sorted(intermediate_columns),
+        },
+        "final_selector_parent_contract": {
+            "column_count": len(final_columns),
+            "columns": final_columns,
+        },
+        "base_physical_column_count": len(base_columns),
+        "alpha_producer_physical_column_count": len(alpha_columns),
+        "alpha_child_physical_column_count": len(intermediate_columns),
+        "missing_from_alpha_child_count": len(missing_from_alpha_child),
+        "missing_from_alpha_child": missing_from_alpha_child,
+        "planned_final_physical_column_count": len(physically_planned),
+        "unresolved_column_count": len(unresolved),
+        "unresolved_columns": unresolved,
+        "ownership": records,
+        "fundamentals_binding": fundamentals_binding,
+        "fundamentals_join_keys_present": fundamentals_join_keys_present,
+        "fundamentals_population_matches": fundamentals_population_matches,
+        "status": "READY" if not unresolved else "BLOCKED",
+        "blocker": None if not unresolved else "FINAL_SCHEMA_PRODUCER_UNRESOLVED",
+    }
+
+
+def _certified_fundamentals_binding(
+    artifact: Path | None, manifest_path: Path | None
+) -> dict[str, Any]:
+    if (
+        artifact is None
+        or manifest_path is None
+        or not artifact.is_file()
+        or not manifest_path.is_file()
+    ):
+        return {"valid": False, "reason": "artifact_or_manifest_missing"}
+    manifest = _json(manifest_path, [], "FUNDAMENTALS_MANIFEST_INVALID")
+    canonical = dict(manifest.get("canonical_artifact", {}) or {})
+    expected_sha = str(
+        canonical.get("sha256")
+        or manifest.get("artifact_sha256")
+        or manifest.get("sha256")
+        or ""
+    )
+    observed_sha = _sha256(artifact)
+    contract_text = json.dumps(manifest, sort_keys=True)
+    complete = str(
+        manifest.get("status")
+        or manifest.get("completion_status")
+        or canonical.get("completion_status")
+        or ""
+    ).upper() == "COMPLETE"
+    contract_valid = any(
+        token in contract_text
+        for token in (
+            "stock_level_fundamentals_enrichment_contract_v1",
+            "fundamentals_pit_snapshot_contract_v1",
+        )
+    )
+    valid = complete and bool(expected_sha) and expected_sha == observed_sha and contract_valid
+    return {
+        "valid": valid,
+        "reason": (
+            "certified"
+            if valid
+            else "manifest_status_hash_or_contract_mismatch"
+        ),
+        "artifact_path": str(artifact.resolve()),
+        "manifest_path": str(manifest_path.resolve()),
+        "observed_sha256": observed_sha,
+        "manifest_sha256": expected_sha,
+        "completion_status_valid": complete,
+        "contract_valid": contract_valid,
+    }
+
+
+def _assemble_final_selector_parent(
+    *,
+    alpha_child: Path,
+    labeled_spine_root: Path | None,
+    fundamentals_artifact: Path | None,
+    output_path: Path,
+    expected_base: Mapping[str, Any],
+) -> dict[str, Any]:
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        ALPHA_OUTPUT_SCHEMA,
+        _rows_to_table,
+        _schema_for_fieldnames,
+    )
+    from core.research.ml.stock_level.stock_fundamentals import (
+        FUNDAMENTAL_FEATURE_COLUMNS,
+        FUNDAMENTAL_METADATA_COLUMNS,
+    )
+
+    if labeled_spine_root is None or not labeled_spine_root.is_dir():
+        raise ValueError("FINAL_SCHEMA_PRODUCER_UNRESOLVED: labeled spine")
+    if fundamentals_artifact is None or not fundamentals_artifact.is_file():
+        raise ValueError("FINAL_SCHEMA_PRODUCER_UNRESOLVED: PIT fundamentals")
+    final_columns = list(ALPHA_OUTPUT_SCHEMA)
+    fundamental_columns = [
+        *FUNDAMENTAL_FEATURE_COLUMNS,
+        *FUNDAMENTAL_METADATA_COLUMNS,
+    ]
+    required_fundamental_columns = {
+        "asset_id",
+        *fundamental_columns,
+    }
+    fundamentals_schema = set(pq.ParquetFile(fundamentals_artifact).schema_arrow.names)
+    date_column = (
+        "rebalance_date"
+        if "rebalance_date" in fundamentals_schema
+        else "decision_session_date"
+        if "decision_session_date" in fundamentals_schema
+        else ""
+    )
+    missing_fundamentals = sorted(
+        required_fundamental_columns - fundamentals_schema
+    )
+    if not date_column:
+        missing_fundamentals.append("rebalance_date|decision_session_date")
+    if missing_fundamentals:
+        raise ValueError(
+            "FINAL_SCHEMA_PRODUCER_UNRESOLVED: PIT fundamentals missing "
+            + repr(missing_fundamentals)
+        )
+
+    read_columns = ["asset_id", date_column, *fundamental_columns]
+    fundamentals_parquet = pq.ParquetFile(fundamentals_artifact)
+    if fundamentals_parquet.metadata.num_rows != pq.ParquetFile(alpha_child).metadata.num_rows:
+        raise ValueError(
+            "PIT fundamentals population differs from alpha child; "
+            "row loss or multiplication would occur"
+        )
+
+    def fundamental_rows():
+        for fundamental_batch in fundamentals_parquet.iter_batches(
+            batch_size=16_384, columns=read_columns
+        ):
+            yield from pa.Table.from_batches([fundamental_batch]).to_pylist()
+
+    fundamental_iterator = iter(fundamental_rows())
+
+    alpha_parquet = pq.ParquetFile(alpha_child)
+    alpha_columns = set(alpha_parquet.schema_arrow.names)
+    if len(alpha_columns) != 120:
+        raise ValueError(
+            f"alpha-child contract mismatch: expected 120 columns, got {len(alpha_columns)}"
+        )
+    schema = _schema_for_fieldnames(final_columns)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".tmp")
+    writer: pq.ParquetWriter | None = None
+    row_count = 0
+    key_hasher = hashlib.sha256()
+    spine_indexes: dict[str, dict[str, dict[str, Any]]] = {}
+    try:
+        writer = pq.ParquetWriter(temporary, schema, compression="zstd")
+        for batch in alpha_parquet.iter_batches(batch_size=16_384):
+            output_rows: list[dict[str, Any]] = []
+            for alpha_row in pa.Table.from_batches([batch]).to_pylist():
+                symbol = str(alpha_row.get("symbol") or "").upper()
+                decision_date = str(alpha_row.get("rebalance_date") or "")[:10]
+                spine_path = (
+                    labeled_spine_root / f"symbol={symbol}" / "spine.parquet"
+                )
+                if not spine_path.is_file():
+                    raise ValueError(f"unmatched required spine identity: {symbol}")
+                if symbol not in spine_indexes:
+                    by_date: dict[str, dict[str, Any]] = {}
+                    for candidate in pq.read_table(spine_path).to_pylist():
+                        candidate_date = str(
+                            candidate.get("session_date") or ""
+                        )[:10]
+                        if candidate_date in by_date:
+                            raise ValueError(
+                                "spine row multiplication risk: "
+                                f"symbol={symbol} date={candidate_date}"
+                            )
+                        by_date[candidate_date] = candidate
+                    spine_indexes[symbol] = by_date
+                spine = spine_indexes[symbol].get(decision_date)
+                if spine is None:
+                    raise ValueError(
+                        "spine join must preserve one row: "
+                        f"symbol={symbol} date={decision_date} matches=0"
+                    )
+                if str(spine.get("canonical_symbol") or "").upper() != symbol:
+                    raise ValueError(f"ambiguous canonical symbol mapping: {symbol}")
+                asset_id = str(spine.get("asset_id") or "")
+                try:
+                    fundamental = next(fundamental_iterator)
+                except StopIteration as exc:
+                    raise ValueError(
+                        "PIT fundamentals row loss during aligned join"
+                    ) from exc
+                fundamental_key = (
+                    str(fundamental.get("asset_id") or ""),
+                    str(fundamental.get(date_column) or "")[:10],
+                )
+                if fundamental_key != (asset_id, decision_date):
+                    raise ValueError(
+                        "PIT fundamentals alignment mismatch: "
+                        f"expected={(asset_id, decision_date)} observed={fundamental_key}"
+                    )
+                available = str(
+                    fundamental.get("fundamentals_available_timestamp") or ""
+                )
+                decision = str(alpha_row.get("decision_timestamp") or "")
+                if available and decision and available > decision:
+                    raise ValueError(
+                        "future PIT fundamentals availability: "
+                        f"asset_id={asset_id} available={available} decision={decision}"
+                    )
+                assembled = dict(alpha_row)
+                for column in (
+                    "asset_id",
+                    "canonical_symbol",
+                    "model_close",
+                    "source_provider",
+                    "compatibility_tier",
+                    "eligibility_reason",
+                    "selector_eligible",
+                    "provider_transition_flag",
+                    "provider_transition_id",
+                ):
+                    assembled[column] = spine.get(column)
+                for column in fundamental_columns:
+                    assembled[column] = fundamental.get(column)
+                output_rows.append(assembled)
+                key_hasher.update(
+                    f"{decision_date}\x1f{symbol}\n".encode("utf-8")
+                )
+            table = _rows_to_table(output_rows, schema)
+            writer.write_table(table)
+            row_count += table.num_rows
+        writer.close()
+        writer = None
+        if row_count != alpha_parquet.metadata.num_rows:
+            raise ValueError(
+                f"final assembly row loss: input={alpha_parquet.metadata.num_rows} output={row_count}"
+            )
+        try:
+            next(fundamental_iterator)
+        except StopIteration:
+            pass
+        else:
+            raise ValueError("PIT fundamentals row multiplication during aligned join")
+        expected_rows = int(expected_base.get("row_count", 0) or 0)
+        expected_keys = str(expected_base.get("economic_key_sha256", ""))
+        if expected_rows and row_count != expected_rows:
+            raise ValueError(
+                f"final assembly population mismatch: {row_count} != {expected_rows}"
+            )
+        if expected_keys and key_hasher.hexdigest() != expected_keys:
+            raise ValueError("final assembly economic-key checksum mismatch")
+        published_schema = pq.ParquetFile(temporary).schema_arrow
+        if published_schema.names != final_columns:
+            raise ValueError("final selector-parent schema ordering mismatch")
+        os.replace(temporary, output_path)
+    except Exception:
+        if writer is not None:
+            writer.close()
+        temporary.unlink(missing_ok=True)
+        raise
+    return {
+        "status": "COMPLETE",
+        "contract_version": "selector_parent_final_schema_assembly.v1",
+        "path": str(output_path),
+        "sha256": _sha256(output_path),
+        "row_count": row_count,
+        "column_count": len(final_columns),
+        "economic_key_sha256": key_hasher.hexdigest(),
+        "atomic_publication": {"status": "COMPLETE"},
     }
 
 
@@ -628,8 +1135,13 @@ def _parent_alpha_config(
         "canonical_v2_labeled_spine_root": inputs.labeled_spine_root,
         "canonical_v2_labeled_spine_manifest_path": inputs.labeled_spine_manifest,
         "canonical_v2_inference_spine_manifest_path": inputs.inference_spine_manifest,
+        "canonical_v2_fundamentals_artifact_path": inputs.fundamentals_artifact,
+        "canonical_v2_fundamentals_manifest_path": inputs.fundamentals_manifest,
     }.items():
-        if inputs.production or explicit is not None:
+        if key.startswith("canonical_v2_fundamentals_"):
+            if explicit is not None:
+                ml[key] = str(explicit.resolve())
+        elif inputs.production or explicit is not None:
             ml[key] = str(_resolve_production_path(explicit, configured.get(key), inputs.data_root, key))
     config["ml"] = ml
     return config
@@ -672,6 +1184,8 @@ def _resolved_input_report(
         "asset_registry_manifest": ("canonical_asset_registry_manifest_path", inputs.asset_registry_manifest),
         "base_artifact": ("stock_level_base_prediction_artifacts_path", inputs.base_artifact),
         "base_publication_manifest": ("canonical_v2_alpha_base_manifest_path", inputs.base_manifest),
+        "fundamentals_artifact": ("canonical_v2_fundamentals_artifact_path", inputs.fundamentals_artifact),
+        "fundamentals_manifest": ("canonical_v2_fundamentals_manifest_path", inputs.fundamentals_manifest),
     }
     return {
         label: {
@@ -698,8 +1212,21 @@ def _resolved_input_report(
 
 def _adapted_configuration_hash(config: Mapping[str, Any]) -> str:
     payload = json.loads(json.dumps(config, default=str))
-    payload.setdefault("ml", {})["stock_alpha_resume_existing_outputs"] = False
+    ml = payload.setdefault("ml", {})
+    ml["stock_alpha_resume_existing_outputs"] = False
+    ml.pop("canonical_v2_fundamentals_artifact_path", None)
+    ml.pop("canonical_v2_fundamentals_manifest_path", None)
     return _hash_json(payload)
+
+
+def _partition_producing_resolved_inputs(
+    resolved: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in resolved.items()
+        if key not in {"fundamentals_artifact", "fundamentals_manifest"}
+    }
 
 
 def _alpha_namespace_path_plan(
@@ -844,7 +1371,11 @@ def _owner(plan: Mapping[str, Any]) -> dict[str, Any]:
         "base_sha256": plan["base"].get("sha256"),
         "feature_schema_checksum": plan["feature_schema_checksum"],
         "adapted_configuration_sha256": plan.get("adapted_configuration_sha256"),
-        "resolved_inputs_sha256": _hash_json(plan.get("resolved_inputs", {})),
+        "resolved_inputs_sha256": _hash_json(
+            _partition_producing_resolved_inputs(
+                plan.get("resolved_inputs", {})
+            )
+        ),
     }
 
 
@@ -1056,6 +1587,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--labeled-spine-root", type=Path)
     parser.add_argument("--labeled-spine-manifest", type=Path)
     parser.add_argument("--inference-spine-manifest", type=Path)
+    parser.add_argument("--fundamentals-artifact", type=Path)
+    parser.add_argument("--fundamentals-manifest", type=Path)
     parser.add_argument("--data-root", type=Path)
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--max-in-flight-tasks", type=int, default=12)
@@ -1078,6 +1611,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         labeled_spine_root=args.labeled_spine_root,
         labeled_spine_manifest=args.labeled_spine_manifest,
         inference_spine_manifest=args.inference_spine_manifest,
+        fundamentals_artifact=args.fundamentals_artifact,
+        fundamentals_manifest=args.fundamentals_manifest,
         data_root=args.data_root,
         workers=args.workers,
         max_in_flight_tasks=args.max_in_flight_tasks,
