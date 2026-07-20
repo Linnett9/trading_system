@@ -143,7 +143,7 @@ def publish_planned_ordinary_component(
             predict, scores, probabilities, model_id, prediction_date,
             gate, identity,
         )
-        temp = owner.with_name(f".{owner.name}.{uuid.uuid4().hex}.tmp")
+        temp = owner.with_name(f".tmp-{uuid.uuid4().hex[:16]}")
         temp.mkdir(parents=True, exist_ok=False)
         prediction_path = temp / "predictions.csv"
         _write_csv(prediction_path, output_rows)

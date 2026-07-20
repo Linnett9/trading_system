@@ -100,3 +100,24 @@ def test_completion_is_required_and_control_paths_are_owned(tmp_path: Path) -> N
         publish_artifact_package(
             tmp_path / "bad", template(), {"manifest.json": b"overwrite"}
         )
+
+
+def test_temporary_package_names_preserve_windows_path_budget(tmp_path: Path) -> None:
+    root = (
+        tmp_path
+        / "components"
+        / "model=ordered_logit_ranker"
+        / "date=2024-03-15"
+        / "shared_model_artifact"
+        / "prediction"
+    )
+
+    status, manifest = publish_artifact_package(
+        root,
+        template(),
+        {"metadata/prediction_binding.json": b"{}"},
+    )
+
+    assert status == "COMPLETE"
+    assert validate_artifact_package(root)["package_checksum"] == manifest["package_checksum"]
+    assert not list(root.parent.glob("*.writing-*"))

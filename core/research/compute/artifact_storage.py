@@ -27,7 +27,7 @@ def publish_artifact_package(
 ) -> tuple[str, dict[str, Any]]:
     root = artifact_root.resolve()
     root.parent.mkdir(parents=True, exist_ok=True)
-    temporary = root.with_name(f".{root.name}.writing-{uuid.uuid4().hex}")
+    temporary = root.with_name(f".writing-{uuid.uuid4().hex[:16]}")
     if temporary.exists():
         raise FileExistsError(temporary)
     temporary.mkdir()
