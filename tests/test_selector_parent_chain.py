@@ -249,7 +249,7 @@ def _final_assembly_fixture(tmp_path, *, future_fundamentals=False):
     }
     fundamental_row.update(
         {
-            "asset_id": "asset-a",
+            "symbol": "A",
             "rebalance_date": "2026-01-02",
             "fundamentals_available_timestamp": (
                 "2026-01-03T20:05:00Z"
@@ -284,6 +284,9 @@ def test_final_assembly_is_pit_safe_row_preserving_and_deterministic(tmp_path):
     assert result["row_count"] == 1
     assert result["column_count"] == 182
     assert pq.ParquetFile(output).schema_arrow.names == list(ALPHA_OUTPUT_SCHEMA)
+    row = pq.read_table(output).to_pylist()[0]
+    assert row["asset_id"] == "asset-a"
+    assert row["symbol"] == "A"
 
 
 def test_final_assembly_rejects_future_fundamentals(tmp_path):
@@ -299,6 +302,63 @@ def test_final_assembly_rejects_future_fundamentals(tmp_path):
             expected_base=expected,
         )
     assert not (tmp_path / "selector_parent.parquet").exists()
+
+
+def test_final_schema_preflight_resolves_with_certified_pit_fundamentals(
+    tmp_path, monkeypatch
+):
+    alpha, spine_root, fundamentals, expected = _final_assembly_fixture(tmp_path)
+    manifest = tmp_path / "fundamentals.manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "COMPLETE",
+                "canonical_artifact": {"sha256": chain._sha256(fundamentals)},
+                "enrichment_contract_version": "stock_level_fundamentals_enrichment_contract_v1",
+                "snapshot_contract_version": "fundamentals_pit_snapshot_contract_v1",
+            }
+        )
+    )
+    inputs = ParentChainInputs(
+        run_id="ownership",
+        output_root=tmp_path / "out",
+        base_artifact=alpha,
+        base_manifest=tmp_path / "base.json",
+        canonical_daily_manifest=tmp_path / "daily.json",
+        asset_registry_manifest=tmp_path / "registry.json",
+        feature_schema=tmp_path / "schema.json",
+        labeled_spine_root=spine_root,
+        fundamentals_artifact=fundamentals,
+        fundamentals_manifest=manifest,
+    )
+
+    plan = chain._final_schema_assembly_plan(inputs)
+
+    assert plan["status"] == "READY"
+    assert plan["unresolved_column_count"] == 0
+    assert plan["fundamentals_binding"]["valid"] is True
+    assert plan["fundamentals_binding"]["required_column_count"] == 53
+    assert plan["fundamentals_binding"]["symbol_key_present"] is True
+    assert plan["fundamentals_binding"]["asset_id_present"] is False
+    assert plan["planned_final_physical_column_count"] == 182
+
+
+def test_final_assembly_rejects_missing_spine_asset_id(tmp_path):
+    alpha, spine_root, fundamentals, expected = _final_assembly_fixture(tmp_path)
+    spine = spine_root / "symbol=A" / "spine.parquet"
+    row = pq.read_table(spine).to_pylist()[0]
+    row.pop("symbol", None)
+    row["asset_id"] = ""
+    pq.write_table(pa.Table.from_pylist([row]), spine)
+
+    with pytest.raises(ValueError, match="spine asset_id missing"):
+        chain._assemble_final_selector_parent(
+            alpha_child=alpha,
+            labeled_spine_root=spine_root,
+            fundamentals_artifact=fundamentals,
+            output_path=tmp_path / "selector_parent.parquet",
+            expected_base=expected,
+        )
 
 
 def test_parent_preflight_plans_authoritative_bounded_namespaces(

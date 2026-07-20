@@ -23,6 +23,7 @@ from core.research.ml.stock_level.stock_fundamentals import (
     build_stock_fundamentals_pipeline,
     canonical_fact_dictionary,
     enrich_stock_artifact_with_fundamentals_partitioned,
+    certify_pit_fundamentals_artifact,
     normalize_sec_company_facts,
     validate_cached_companyfacts,
     write_stock_fundamentals_collect,
@@ -547,6 +548,173 @@ def test_ticket_5b4_snapshot_and_enrich_do_not_access_network_training_or_tradin
 
     assert len(enriched) == 1
     assert audit["row_preservation"]["status"] == "PASS"
+
+
+def test_final_pit_fundamentals_certification_validates_manifest_schema_and_population(tmp_path):
+    rows = [
+        {
+            "asset_id": "asset-a",
+            "rebalance_date": "2023-06-15",
+            **{column: None for column in sf.FUNDAMENTAL_FEATURE_COLUMNS},
+            **{column: None for column in sf.FUNDAMENTAL_METADATA_COLUMNS},
+            "fundamentals_snapshot_status": "available",
+            "fundamentals_available_timestamp": "2023-05-01T23:59:59Z",
+            "fundamentals_contract_identity": "snapshot-id",
+            "analyst_estimate_status": "source_not_configured",
+        }
+    ]
+    artifact = tmp_path / "fundamentals.parquet"
+    sf._write_parquet(artifact, rows, list(rows[0]))
+    manifest = tmp_path / "fundamentals.manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "status": "COMPLETE",
+                "canonical_artifact": {"sha256": sf.file_sha256(artifact)},
+                "enrichment_contract_version": sf.ENRICHMENT_CONTRACT_VERSION,
+                "snapshot_contract_version": sf.SNAPSHOT_CONTRACT_VERSION,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    certified = certify_pit_fundamentals_artifact(
+        artifact, manifest, expected_row_count=1
+    )
+    wrong_population = certify_pit_fundamentals_artifact(
+        artifact, manifest, expected_row_count=2
+    )
+    malformed_artifact = tmp_path / "malformed.parquet"
+    sf._write_parquet(malformed_artifact, [{"asset_id": "asset-a"}], ["asset_id"])
+    malformed_manifest = tmp_path / "malformed.manifest.json"
+    malformed_manifest.write_text(
+        json.dumps(
+            {
+                "status": "COMPLETE",
+                "canonical_artifact": {"sha256": sf.file_sha256(malformed_artifact)},
+                "enrichment_contract_version": sf.ENRICHMENT_CONTRACT_VERSION,
+                "snapshot_contract_version": sf.SNAPSHOT_CONTRACT_VERSION,
+            }
+        ),
+        encoding="utf-8",
+    )
+    malformed = certify_pit_fundamentals_artifact(
+        malformed_artifact, malformed_manifest, expected_row_count=1
+    )
+
+    assert certified["valid"] is True
+    assert certified["required_column_count"] == 53
+    assert certified["date_columns_present"] == ["rebalance_date"]
+    assert wrong_population["valid"] is False
+    assert wrong_population["row_count_valid"] is False
+    assert malformed["valid"] is False
+    assert "fundamentals_available_timestamp" in malformed["missing_columns"]
+
+
+def test_filing_recency_score_is_monotonic_null_and_pit_safe():
+    selected = {
+        "revenue": {
+            "value": 100.0,
+            "available_timestamp": "2023-05-01T23:59:59Z",
+        }
+    }
+    fresh = sf._calculate_features(
+        selected,
+        {"decision_timestamp": "2023-05-02T23:59:59+00:00", "close": 10.0},
+        minimum_denominator=1e-9,
+    )
+    stale = sf._calculate_features(
+        selected,
+        {"decision_timestamp": "2023-05-11T23:59:59Z", "close": 10.0},
+        minimum_denominator=1e-9,
+    )
+    missing = sf._calculate_features(
+        {},
+        {"decision_timestamp": "2023-05-11T23:59:59Z", "close": 10.0},
+        minimum_denominator=1e-9,
+    )
+    future_only = [
+        {
+            "reporting_entity_id": "CIK0000320193",
+            "canonical_fact_id": "revenue",
+            "value": 100.0,
+            "available_timestamp": "2023-06-01T23:59:59Z",
+            "filing_timestamp": "2023-06-01T23:59:59Z",
+            "source_document_id": "future",
+            "filing_accession": "future",
+            "period_end": "2023-03-31",
+            "fiscal_year": 2023,
+            "fiscal_period": "Q1",
+        }
+    ]
+    snapshots, _audit = build_fundamental_snapshots(
+        [{"symbol": "AAPL", "decision_timestamp": "2023-05-01T00:00:00Z"}],
+        _mapping(),
+        future_only,
+        maximum_data_age_days=None,
+        minimum_denominator=1e-9,
+    )
+
+    assert fresh["filing_recency_score"] > stale["filing_recency_score"]
+    assert missing["filing_recency_score"] is None
+    assert snapshots[0]["filing_recency_score"] is None
+
+
+def test_selected_amendment_lineage_drives_restatement_audit_without_rewriting_earlier_snapshot():
+    base_rows = [
+        {"symbol": "AAPL", "decision_timestamp": "2023-06-15T00:00:00Z", "close": 10.0},
+        {"symbol": "AAPL", "decision_timestamp": "2023-09-15T00:00:00Z", "close": 10.0},
+    ]
+    facts = [
+        {
+            "reporting_entity_id": "CIK0000320193",
+            "canonical_fact_id": "revenue",
+            "value": 100.0,
+            "available_timestamp": "2023-05-01T23:59:59Z",
+            "filing_timestamp": "2023-05-01T23:59:59Z",
+            "source_document_id": "orig-q1",
+            "filing_accession": "orig-q1",
+            "form_type": "10-Q",
+            "period_end": "2023-03-31",
+            "period_start": "2023-01-01",
+            "fiscal_year": 2023,
+            "fiscal_period": "Q1",
+            "is_amendment": False,
+        },
+        {
+            "reporting_entity_id": "CIK0000320193",
+            "canonical_fact_id": "revenue",
+            "value": 120.0,
+            "available_timestamp": "2023-08-01T23:59:59Z",
+            "filing_timestamp": "2023-08-01T23:59:59Z",
+            "source_document_id": "amend-q1",
+            "filing_accession": "amend-q1",
+            "form_type": "10-Q/A",
+            "period_end": "2023-03-31",
+            "period_start": "2023-01-01",
+            "fiscal_year": 2023,
+            "fiscal_period": "Q1",
+            "is_amendment": True,
+        },
+    ]
+
+    snapshots, audit = build_fundamental_snapshots(
+        base_rows,
+        _mapping(),
+        facts,
+        maximum_data_age_days=None,
+        minimum_denominator=1e-9,
+    )
+    june, september = snapshots
+    september_lineage = json.loads(september["selected_source_document_lineage"])
+
+    assert june["fundamentals_available_timestamp"] == "2023-05-01T23:59:59Z"
+    assert june["restatement_indicator"] == 0.0
+    assert "amend-q1" not in june["selected_source_document_identities"]
+    assert september["fundamentals_available_timestamp"] == "2023-08-01T23:59:59Z"
+    assert september["restatement_indicator"] == 1.0
+    assert any(row["form_type"] == "10-Q/A" and row["source_document_id"] == "amend-q1" for row in september_lineage)
+    assert audit["amendment_available_snapshot_count"] == 1
 
 
 def _mapping():

@@ -26,8 +26,9 @@ def test_all_registries_validate_and_hash_deterministically():
     first = load_registry_bundle(); second = load_registry_bundle()
     assert first.registry_set_hash == second.registry_set_hash
     assert {kind: len(doc.entries) for kind, doc in first.documents.items()} == {
-        "equations": 13, "indicators": 29, "selector_models": 15,
-        "exposure": 20, "portfolio_policies": 5,
+        "equations": 13, "indicators": 29, "selector_models": 23,
+        "exposure": 20, "portfolio_policies": 17,
+        "target_contracts": 12, "ranking_contracts": 3,
     }
     assert [entry.canonical_id for entry in first.documents["indicators"].entries] == sorted(
         entry.canonical_id for entry in first.documents["indicators"].entries

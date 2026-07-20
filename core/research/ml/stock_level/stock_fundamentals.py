@@ -151,6 +151,12 @@ FUNDAMENTAL_METADATA_COLUMNS = (
     "analyst_estimate_status",
 )
 
+FINAL_FUNDAMENTALS_JOIN_KEY_COLUMNS = (
+    "asset_id",
+    "rebalance_date",
+    "decision_session_date",
+)
+
 
 @dataclass(frozen=True)
 class StockFundamentalsPaths:
@@ -856,6 +862,7 @@ def build_fundamental_snapshots(
                 "fundamental_data_age_days": age,
                 "available_filing_count": len({fact.get("filing_accession") for fact in available if fact.get("filing_accession")}),
                 "selected_source_document_identities": json.dumps(sorted({str(fact.get("source_document_id")) for fact in selected.values()})),
+                "selected_source_document_lineage": json.dumps(_selected_source_lineage(selected.values()), sort_keys=True),
                 "snapshot_contract_identity": _snapshot_identity(entity_id, decision_ts, selected),
                 "snapshot_status": status,
                 "fundamentals_available_timestamp": latest_available,
@@ -872,7 +879,7 @@ def build_fundamental_snapshots(
         "unresolved_entity_count": sum(1 for row in snapshots if row.get("snapshot_status") == "unresolved_entity"),
         "no_prior_filing_count": sum(1 for row in snapshots if row.get("snapshot_status") == "no_prior_filing"),
         "future_filing_exclusion_count": future_exclusion_count,
-        "amendment_available_snapshot_count": amendment_cases,
+        "amendment_available_snapshot_count": sum(1 for row in snapshots if _snapshot_has_selected_amendment(row)),
         "availability_rule": "facts included only when available_timestamp <= decision_timestamp",
         "missing_snapshot_policy": "missing snapshots preserve NaN fundamentals and explicit status; no zero fill",
     }
@@ -1027,6 +1034,94 @@ def enrich_stock_artifact_with_fundamentals_partitioned(
         }
     )
     return enriched, audit
+
+
+def certify_pit_fundamentals_artifact(
+    artifact_path: Path | None,
+    manifest_path: Path | None,
+    *,
+    expected_row_count: int | None = None,
+) -> dict[str, Any]:
+    required_columns = {
+        *FUNDAMENTAL_FEATURE_COLUMNS,
+        *FUNDAMENTAL_METADATA_COLUMNS,
+    }
+    if (
+        artifact_path is None
+        or manifest_path is None
+        or not artifact_path.is_file()
+        or not manifest_path.is_file()
+    ):
+        return {
+            "valid": False,
+            "reason": "artifact_or_manifest_missing",
+            "required_column_count": len(required_columns),
+            "missing_columns": sorted(required_columns),
+        }
+    manifest = _read_json(manifest_path)
+    canonical = dict(manifest.get("canonical_artifact", {}) or {})
+    expected_sha = str(
+        canonical.get("sha256")
+        or manifest.get("artifact_sha256")
+        or manifest.get("sha256")
+        or ""
+    )
+    observed_sha = file_sha256(artifact_path)
+    status = str(
+        manifest.get("status")
+        or manifest.get("completion_status")
+        or canonical.get("completion_status")
+        or ""
+    ).upper()
+    contract_text = json.dumps(manifest, sort_keys=True, default=str)
+    contract_valid = (
+        ENRICHMENT_CONTRACT_VERSION in contract_text
+        and SNAPSHOT_CONTRACT_VERSION in contract_text
+    )
+    parquet = pq.ParquetFile(artifact_path)
+    columns = set(parquet.schema_arrow.names)
+    date_columns = {"rebalance_date", "decision_session_date"} & columns
+    symbol_key_present = "symbol" in columns
+    asset_key_present = "asset_id" in columns
+    missing_columns = sorted(required_columns - columns)
+    row_count = parquet.metadata.num_rows
+    row_count_valid = (
+        expected_row_count is None or int(expected_row_count) == int(row_count)
+    )
+    valid = (
+        status == "COMPLETE"
+        and bool(expected_sha)
+        and expected_sha == observed_sha
+        and contract_valid
+        and not missing_columns
+        and bool(date_columns)
+        and (symbol_key_present or asset_key_present)
+        and row_count_valid
+    )
+    return {
+        "valid": valid,
+        "reason": "certified" if valid else "manifest_schema_or_population_mismatch",
+        "artifact_path": str(artifact_path.resolve()),
+        "manifest_path": str(manifest_path.resolve()),
+        "observed_sha256": observed_sha,
+        "manifest_sha256": expected_sha,
+        "completion_status": status,
+        "completion_status_valid": status == "COMPLETE",
+        "contract_valid": contract_valid,
+        "required_column_count": len(required_columns),
+        "required_columns": sorted(required_columns),
+        "missing_columns": missing_columns,
+        "date_columns_present": sorted(date_columns),
+        "join_key_columns_present": sorted(
+            ({column for column in ("symbol", "asset_id") if column in columns})
+            | date_columns
+        ),
+        "asset_id_present": asset_key_present,
+        "symbol_key_present": symbol_key_present,
+        "row_count": row_count,
+        "expected_row_count": expected_row_count,
+        "row_count_valid": row_count_valid,
+    }
 
 
 def provider_contract() -> dict[str, Any]:
@@ -1531,7 +1626,7 @@ def _calculate_features(selected: Mapping[str, Mapping[str, Any]], base: Mapping
         "book_to_market": _safe_ratio(latest.get("shareholders_equity"), market_cap, minimum_denominator),
         "sales_to_price": _safe_ratio(latest.get("revenue"), market_cap, minimum_denominator),
         "free_cash_flow_yield": _safe_ratio(fcf, market_cap, minimum_denominator),
-        "filing_recency_score": None,
+        "filing_recency_score": _filing_recency_score(base, selected),
         "fundamental_coverage_count": coverage_count,
         "fundamental_missing_fraction": _safe_ratio(missing_inputs, len(_core_feature_facts()), 1.0),
         "restatement_indicator": 1.0 if restated else 0.0,
@@ -1557,6 +1652,51 @@ def _latest_fact_values(available: Sequence[Mapping[str, Any]]) -> dict[str, Map
             for index, hist in enumerate(ordered):
                 selected[f"{fact_id}::history::{index}"] = hist
     return selected
+
+
+def _filing_recency_score(base: Mapping[str, Any], selected: Mapping[str, Mapping[str, Any]]) -> float | None:
+    timestamps = [
+        str(row.get("available_timestamp") or "")
+        for row in selected.values()
+        if row.get("available_timestamp")
+    ]
+    if not timestamps:
+        return None
+    age = _age_days(_decision_timestamp(base), max(timestamps))
+    if age is None:
+        return None
+    return 1.0 / (1.0 + float(age))
+
+
+def _selected_source_lineage(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    lineage = []
+    seen = set()
+    for row in rows:
+        key = (
+            str(row.get("source_document_id") or ""),
+            str(row.get("canonical_fact_id") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        lineage.append(
+            {
+                "canonical_fact_id": key[1],
+                "source_document_id": key[0],
+                "filing_accession": str(row.get("filing_accession") or ""),
+                "form_type": str(row.get("form_type") or ""),
+                "available_timestamp": str(row.get("available_timestamp") or ""),
+                "is_amendment": bool(row.get("is_amendment")),
+            }
+        )
+    return sorted(
+        lineage,
+        key=lambda item: (
+            item["canonical_fact_id"],
+            item["available_timestamp"],
+            item["source_document_id"],
+        ),
+    )
 
 
 def _settings(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -2908,10 +3048,23 @@ def _snapshot_audit_from_rows(snapshots: Sequence[Mapping[str, Any]], normalized
         "unresolved_entity_count": sum(1 for row in snapshots if row.get("snapshot_status") == "unresolved_entity"),
         "no_prior_filing_count": sum(1 for row in snapshots if row.get("snapshot_status") == "no_prior_filing"),
         "future_filing_exclusion_count": _future_filing_exclusion_count(snapshots, normalized_facts),
-        "amendment_available_snapshot_count": sum(1 for row in snapshots if "10-Q/A" in str(row.get("selected_source_document_identities", ""))),
+        "amendment_available_snapshot_count": sum(1 for row in snapshots if _snapshot_has_selected_amendment(row)),
         "availability_rule": "facts included only when available_timestamp <= decision_timestamp",
         "missing_snapshot_policy": "missing snapshots preserve NaN fundamentals and explicit status; no zero fill",
     }
+
+
+def _snapshot_has_selected_amendment(row: Mapping[str, Any]) -> bool:
+    try:
+        lineage = json.loads(str(row.get("selected_source_document_lineage") or "[]"))
+    except json.JSONDecodeError:
+        lineage = []
+    return any(
+        bool(item.get("is_amendment"))
+        or str(item.get("form_type") or "").endswith("/A")
+        for item in lineage
+        if isinstance(item, Mapping)
+    )
 
 
 def _future_filing_exclusion_count(snapshots: Sequence[Mapping[str, Any]], normalized_facts: Sequence[Mapping[str, Any]]) -> int:

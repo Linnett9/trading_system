@@ -685,21 +685,22 @@ def _final_schema_assembly_plan(inputs: ParentChainInputs) -> dict[str, Any]:
         FUNDAMENTAL_METADATA_COLUMNS
     )
     supplied_fundamental_columns = _parquet_columns(inputs.fundamentals_artifact)
+    expected_fundamentals_rows = (
+        pq.ParquetFile(inputs.base_artifact).metadata.num_rows
+        if inputs.base_artifact.is_file()
+        else None
+    )
     fundamentals_binding = _certified_fundamentals_binding(
-        inputs.fundamentals_artifact, inputs.fundamentals_manifest
+        inputs.fundamentals_artifact,
+        inputs.fundamentals_manifest,
+        expected_row_count=expected_fundamentals_rows,
     )
     fundamentals_join_keys_present = (
-        "asset_id" in supplied_fundamental_columns
-        and bool(
-            {"rebalance_date", "decision_session_date"}
-            & supplied_fundamental_columns
-        )
+        bool({"symbol", "asset_id"} & supplied_fundamental_columns)
+        and bool({"rebalance_date", "decision_session_date"} & supplied_fundamental_columns)
     )
     fundamentals_population_matches = bool(
-        inputs.fundamentals_artifact
-        and inputs.fundamentals_artifact.is_file()
-        and pq.ParquetFile(inputs.fundamentals_artifact).metadata.num_rows
-        == pq.ParquetFile(inputs.base_artifact).metadata.num_rows
+        fundamentals_binding.get("row_count_valid")
     )
     fundamentals_bound = bool(
         fundamentals_binding["valid"]
@@ -746,7 +747,7 @@ def _final_schema_assembly_plan(inputs: ParentChainInputs) -> dict[str, Any]:
                 and inputs.fundamentals_manifest
                 else ""
             )
-            join_key = "asset_id + latest fundamentals_available_timestamp <= decision_timestamp"
+            join_key = "symbol/date before assembly; asset_id required after labeled-spine join"
             availability = (
                 "fundamentals_available_timestamp <= decision_timestamp; "
                 "latest eligible certified snapshot only"
@@ -813,53 +814,20 @@ def _final_schema_assembly_plan(inputs: ParentChainInputs) -> dict[str, Any]:
 
 
 def _certified_fundamentals_binding(
-    artifact: Path | None, manifest_path: Path | None
+    artifact: Path | None,
+    manifest_path: Path | None,
+    *,
+    expected_row_count: int | None = None,
 ) -> dict[str, Any]:
-    if (
-        artifact is None
-        or manifest_path is None
-        or not artifact.is_file()
-        or not manifest_path.is_file()
-    ):
-        return {"valid": False, "reason": "artifact_or_manifest_missing"}
-    manifest = _json(manifest_path, [], "FUNDAMENTALS_MANIFEST_INVALID")
-    canonical = dict(manifest.get("canonical_artifact", {}) or {})
-    expected_sha = str(
-        canonical.get("sha256")
-        or manifest.get("artifact_sha256")
-        or manifest.get("sha256")
-        or ""
+    from core.research.ml.stock_level.stock_fundamentals import (
+        certify_pit_fundamentals_artifact,
     )
-    observed_sha = _sha256(artifact)
-    contract_text = json.dumps(manifest, sort_keys=True)
-    complete = str(
-        manifest.get("status")
-        or manifest.get("completion_status")
-        or canonical.get("completion_status")
-        or ""
-    ).upper() == "COMPLETE"
-    contract_valid = any(
-        token in contract_text
-        for token in (
-            "stock_level_fundamentals_enrichment_contract_v1",
-            "fundamentals_pit_snapshot_contract_v1",
-        )
+
+    return certify_pit_fundamentals_artifact(
+        artifact,
+        manifest_path,
+        expected_row_count=expected_row_count,
     )
-    valid = complete and bool(expected_sha) and expected_sha == observed_sha and contract_valid
-    return {
-        "valid": valid,
-        "reason": (
-            "certified"
-            if valid
-            else "manifest_status_hash_or_contract_mismatch"
-        ),
-        "artifact_path": str(artifact.resolve()),
-        "manifest_path": str(manifest_path.resolve()),
-        "observed_sha256": observed_sha,
-        "manifest_sha256": expected_sha,
-        "completion_status_valid": complete,
-        "contract_valid": contract_valid,
-    }
 
 
 def _assemble_final_selector_parent(
@@ -889,11 +857,15 @@ def _assemble_final_selector_parent(
         *FUNDAMENTAL_FEATURE_COLUMNS,
         *FUNDAMENTAL_METADATA_COLUMNS,
     ]
-    required_fundamental_columns = {
-        "asset_id",
-        *fundamental_columns,
-    }
+    required_fundamental_columns = {*fundamental_columns}
     fundamentals_schema = set(pq.ParquetFile(fundamentals_artifact).schema_arrow.names)
+    key_column = (
+        "asset_id"
+        if "asset_id" in fundamentals_schema
+        else "symbol"
+        if "symbol" in fundamentals_schema
+        else ""
+    )
     date_column = (
         "rebalance_date"
         if "rebalance_date" in fundamentals_schema
@@ -904,6 +876,8 @@ def _assemble_final_selector_parent(
     missing_fundamentals = sorted(
         required_fundamental_columns - fundamentals_schema
     )
+    if not key_column:
+        missing_fundamentals.append("symbol|asset_id")
     if not date_column:
         missing_fundamentals.append("rebalance_date|decision_session_date")
     if missing_fundamentals:
@@ -912,7 +886,7 @@ def _assemble_final_selector_parent(
             + repr(missing_fundamentals)
         )
 
-    read_columns = ["asset_id", date_column, *fundamental_columns]
+    read_columns = [key_column, date_column, *fundamental_columns]
     fundamentals_parquet = pq.ParquetFile(fundamentals_artifact)
     if fundamentals_parquet.metadata.num_rows != pq.ParquetFile(alpha_child).metadata.num_rows:
         raise ValueError(
@@ -975,20 +949,29 @@ def _assemble_final_selector_parent(
                 if str(spine.get("canonical_symbol") or "").upper() != symbol:
                     raise ValueError(f"ambiguous canonical symbol mapping: {symbol}")
                 asset_id = str(spine.get("asset_id") or "")
+                if not asset_id:
+                    raise ValueError(f"spine asset_id missing: {symbol} {decision_date}")
                 try:
                     fundamental = next(fundamental_iterator)
                 except StopIteration as exc:
                     raise ValueError(
                         "PIT fundamentals row loss during aligned join"
                     ) from exc
+                observed_key_value = str(fundamental.get(key_column) or "")
+                if key_column == "symbol":
+                    observed_key_value = observed_key_value.upper()
                 fundamental_key = (
-                    str(fundamental.get("asset_id") or ""),
+                    observed_key_value,
                     str(fundamental.get(date_column) or "")[:10],
                 )
-                if fundamental_key != (asset_id, decision_date):
+                expected_key = (
+                    asset_id if key_column == "asset_id" else symbol,
+                    decision_date,
+                )
+                if fundamental_key != expected_key:
                     raise ValueError(
                         "PIT fundamentals alignment mismatch: "
-                        f"expected={(asset_id, decision_date)} observed={fundamental_key}"
+                        f"expected={expected_key} observed={fundamental_key}"
                     )
                 available = str(
                     fundamental.get("fundamentals_available_timestamp") or ""
