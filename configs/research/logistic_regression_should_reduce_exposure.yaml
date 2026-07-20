@@ -14,6 +14,7 @@ ml:
   label_type: should_reduce_exposure
   prediction_target: should_reduce_exposure
   feature_set: expanded_rebalance_v1
+  legacy_research_exposure_input: true
   research_label: LOGISTIC_REGRESSION_SHOULD_REDUCE_EXPOSURE_RESEARCH_ONLY
   minimum_history_years: 4
   output_dir: reports/ml/logistic_regression_should_reduce_exposure

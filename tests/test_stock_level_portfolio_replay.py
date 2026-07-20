@@ -5,9 +5,14 @@ import json
 import pytest
 
 from core.research.ml.data.datasets import build_dataset, dataset_leakage_audit
+from core.research.ml.exposure_input import (
+    SELECTOR_DERIVED_SOURCE_TYPE,
+    validate_exposure_input_resolution,
+)
 from core.research.ml.features.labels import ShouldReduceExposureLabelBuilder
 from core.research.ml.stock_level import stock_level_portfolio_replay
 from core.research.ml.stock_level.stock_level_portfolio_replay import (
+    assert_stock_selector_rebalance_dataset_reuse_compatible,
     build_stock_selector_rebalance_dataset_from_artifacts,
     build_stock_level_portfolio_replay,
     write_stock_selector_rebalance_dataset,
@@ -151,6 +156,14 @@ def test_stock_selector_rebalance_dataset_preserves_replay_artifacts(tmp_path):
     assert metadata["selected_signal"] == "ml_signal"
     assert metadata["selected_policy"] == "long_only_top_n_equal_weight"
     assert metadata["source_dataset_hash"] == "source-hash-1"
+    assert metadata["source_type"] == SELECTOR_DERIVED_SOURCE_TYPE
+    contract = metadata["input_source_contract"]
+    assert contract["selector_dataset_identity"] == "source-hash-1"
+    assert contract["strict_oos_fold_identity"]["fold_ids"] == ["1", "2"]
+    assert contract["holdings_and_weights_checksum"]
+    assert contract["return_lineage"]["field"] == "net_return"
+    assert contract["benchmark_lineage"]["field"] == "benchmark_return"
+    assert contract["exposure_label_contract"] == "should_reduce_exposure"
 
 
 def test_stock_selector_rebalance_uses_real_benchmark_for_relative_labels(tmp_path):
@@ -287,6 +300,126 @@ def test_stock_selector_rebalance_dataset_rejects_missing_benchmark_return(tmp_p
         )
 
 
+def test_stock_selector_rebalance_rejects_final_fit_and_missing_fold_lineage(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    prediction_rows = list(csv.DictReader(paths["predictions"].open("r", encoding="utf-8", newline="")))
+    prediction_rows[0]["prediction_scope"] = "final_fit"
+    _write_csv(paths["predictions"], prediction_rows)
+
+    with pytest.raises(ValueError, match="Final-fit selector predictions"):
+        build_stock_selector_rebalance_dataset_from_artifacts(
+            predictions_path=paths["predictions"],
+            summary_path=paths["summary"],
+            equity_curves_path=paths["equity"],
+            holdings_path=paths["holdings"],
+            selected_signal="ml_signal",
+            selected_policy="long_only_top_n_equal_weight",
+        )
+
+    paths = _write_selector_rebalance_source_artifacts(tmp_path / "missing-fold")
+    prediction_rows = list(csv.DictReader(paths["predictions"].open("r", encoding="utf-8", newline="")))
+    prediction_rows[0]["fold_id"] = ""
+    _write_csv(paths["predictions"], prediction_rows)
+
+    with pytest.raises(ValueError, match="require fold_id"):
+        build_stock_selector_rebalance_dataset_from_artifacts(
+            predictions_path=paths["predictions"],
+            summary_path=paths["summary"],
+            equity_curves_path=paths["equity"],
+            holdings_path=paths["holdings"],
+            selected_signal="ml_signal",
+            selected_policy="long_only_top_n_equal_weight",
+        )
+
+
+def test_selector_derived_input_resolution_rejects_legacy_and_validates_contract(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    output = tmp_path / "stock_selector_rebalance_dataset.csv"
+    metadata = tmp_path / "stock_selector_rebalance_dataset.json"
+    write_stock_selector_rebalance_dataset({
+        "ml": {
+            "output_dir": str(tmp_path),
+            "stock_selector_rebalance_source_dir": str(tmp_path),
+            "stock_selector_rebalance_predictions_path": str(paths["predictions"]),
+            "stock_selector_rebalance_selected_signal": "ml_signal",
+            "stock_selector_rebalance_selected_policy": "long_only_top_n_equal_weight",
+            "stock_selector_rebalance_dataset_path": str(output),
+            "stock_selector_rebalance_metadata_path": str(metadata),
+        }
+    })
+
+    identity = validate_exposure_input_resolution({
+        "ml": {
+            "label_type": "should_reduce_exposure",
+            "feature_set": "selector_derived_rebalance_v1",
+            "exposure_production_campaign": True,
+            "exposure_input_source_type": SELECTOR_DERIVED_SOURCE_TYPE,
+            "stock_selector_rebalance_dataset_path": str(output),
+        }
+    })
+
+    assert identity["source_type"] == SELECTOR_DERIVED_SOURCE_TYPE
+    assert identity["input_source_contract"]["dataset_identity"]
+
+    with pytest.raises(RuntimeError, match="cannot resolve legacy"):
+        validate_exposure_input_resolution({
+            "ml": {
+                "feature_set": "selector_derived_rebalance_v1",
+                "exposure_production_campaign": True,
+                "exposure_input_source_type": SELECTOR_DERIVED_SOURCE_TYPE,
+                "stock_selector_rebalance_dataset_path": str(tmp_path / "expanded_rebalance_dataset.csv"),
+            }
+        })
+
+
+def test_legacy_exposure_input_must_be_explicitly_labelled(tmp_path):
+    with pytest.raises(RuntimeError, match="explicitly labelled"):
+        validate_exposure_input_resolution({
+            "ml": {
+                "label_type": "should_reduce_exposure",
+                "feature_set": "expanded_rebalance_v1",
+                "expanded_rebalance_dataset_path": str(tmp_path / "expanded_rebalance_dataset.csv"),
+            }
+        })
+
+    identity = validate_exposure_input_resolution({
+        "ml": {
+            "label_type": "should_reduce_exposure",
+            "feature_set": "expanded_rebalance_v1",
+            "legacy_research_exposure_input": True,
+            "expanded_rebalance_dataset_path": str(tmp_path / "expanded_rebalance_dataset.csv"),
+        }
+    })
+    assert identity["source_type"] == "legacy_expanded_rebalance_v1"
+
+
+def test_selector_derived_dataset_identity_changes_with_policy(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    first, first_meta = build_stock_selector_rebalance_dataset_from_artifacts(
+        predictions_path=paths["predictions"],
+        summary_path=paths["summary"],
+        equity_curves_path=paths["equity"],
+        holdings_path=paths["holdings"],
+        selected_signal="ml_signal",
+        selected_policy="long_only_top_n_equal_weight",
+    )
+    second, second_meta = build_stock_selector_rebalance_dataset_from_artifacts(
+        predictions_path=paths["predictions"],
+        summary_path=paths["summary"],
+        equity_curves_path=paths["equity"],
+        holdings_path=paths["holdings"],
+        selected_signal="ml_signal",
+        selected_policy="long_only_top_n_equal_weight",
+        cost_bps=99,
+    )
+
+    assert first == second
+    assert (
+        first_meta["input_source_contract"]["dataset_identity"]
+        != second_meta["input_source_contract"]["dataset_identity"]
+    )
+
+
 def test_stock_selector_rebalance_feature_ids_are_row_order_stable(tmp_path):
     paths = _write_selector_rebalance_source_artifacts(tmp_path)
     first, _ = build_stock_selector_rebalance_dataset_from_artifacts(
@@ -382,6 +515,90 @@ def test_stock_selector_rebalance_writer_outputs_dataset_and_metadata(tmp_path):
     assert rows[0]["dataset_hash"] == rows[1]["dataset_hash"]
     assert payload["training_performed"] is False
     assert output.name == "stock_selector_rebalance_dataset.csv"
+
+
+def test_stock_selector_rebalance_writer_reuses_compatible_immutable_dataset(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    output = tmp_path / "stock_selector_rebalance_dataset.csv"
+    metadata = tmp_path / "stock_selector_rebalance_dataset.json"
+    config = {
+        "ml": {
+            "output_dir": str(tmp_path),
+            "stock_selector_rebalance_source_dir": str(tmp_path),
+            "stock_selector_rebalance_predictions_path": str(paths["predictions"]),
+            "stock_selector_rebalance_selected_signal": "ml_signal",
+            "stock_selector_rebalance_selected_policy": "long_only_top_n_equal_weight",
+            "stock_selector_rebalance_dataset_path": str(output),
+            "stock_selector_rebalance_metadata_path": str(metadata),
+        }
+    }
+
+    write_stock_selector_rebalance_dataset(config)
+    first_payload = json.loads(metadata.read_text(encoding="utf-8"))
+    write_stock_selector_rebalance_dataset(config)
+    second_payload = json.loads(metadata.read_text(encoding="utf-8"))
+
+    assert first_payload == second_payload
+    assert_stock_selector_rebalance_dataset_reuse_compatible(
+        tmp_path,
+        first_payload["dataset_hash"],
+    )
+
+
+def test_stock_selector_rebalance_writer_rejects_incompatible_existing_output(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    output = tmp_path / "stock_selector_rebalance_dataset.csv"
+    metadata = tmp_path / "stock_selector_rebalance_dataset.json"
+    write_stock_selector_rebalance_dataset({
+        "ml": {
+            "output_dir": str(tmp_path),
+            "stock_selector_rebalance_source_dir": str(tmp_path),
+            "stock_selector_rebalance_predictions_path": str(paths["predictions"]),
+            "stock_selector_rebalance_selected_signal": "ml_signal",
+            "stock_selector_rebalance_selected_policy": "long_only_top_n_equal_weight",
+            "stock_selector_rebalance_dataset_path": str(output),
+            "stock_selector_rebalance_metadata_path": str(metadata),
+        }
+    })
+    replacement_paths = _write_selector_rebalance_source_artifacts(tmp_path / "replacement")
+    replacement_rows = list(csv.DictReader(replacement_paths["predictions"].open("r", encoding="utf-8", newline="")))
+    for row in replacement_rows:
+        row["dataset_hash"] = "source-hash-2"
+    _write_csv(replacement_paths["predictions"], replacement_rows)
+
+    with pytest.raises(RuntimeError, match="reuse identity mismatch"):
+        write_stock_selector_rebalance_dataset({
+            "ml": {
+                "output_dir": str(tmp_path),
+                "stock_selector_rebalance_source_dir": str(replacement_paths["summary"].parent),
+                "stock_selector_rebalance_predictions_path": str(replacement_paths["predictions"]),
+                "stock_selector_rebalance_selected_signal": "ml_signal",
+                "stock_selector_rebalance_selected_policy": "long_only_top_n_equal_weight",
+                "stock_selector_rebalance_dataset_path": str(output),
+                "stock_selector_rebalance_metadata_path": str(metadata),
+            }
+        })
+
+
+def test_stock_selector_rebalance_requires_selector_dataset_identity(tmp_path):
+    paths = _write_selector_rebalance_source_artifacts(tmp_path)
+    prediction_rows = list(csv.DictReader(paths["predictions"].open("r", encoding="utf-8", newline="")))
+    for row in prediction_rows:
+        row["dataset_hash"] = ""
+    _write_csv(paths["predictions"], prediction_rows)
+    summary = json.loads(paths["summary"].read_text(encoding="utf-8"))
+    summary.pop("dataset_hash")
+    paths["summary"].write_text(json.dumps(summary), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="requires selector dataset identity"):
+        build_stock_selector_rebalance_dataset_from_artifacts(
+            predictions_path=paths["predictions"],
+            summary_path=paths["summary"],
+            equity_curves_path=paths["equity"],
+            holdings_path=paths["holdings"],
+            selected_signal="ml_signal",
+            selected_policy="long_only_top_n_equal_weight",
+        )
 
 
 def test_replay_has_no_operational_imports():

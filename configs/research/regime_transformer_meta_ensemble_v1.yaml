@@ -4,6 +4,7 @@ ml:
   ensemble_name: regime_transformer_meta_ensemble_v1
   label_type: should_reduce_exposure
   feature_set: expanded_rebalance_v1
+  legacy_research_exposure_input: true
   output_dir: reports/ml/regime_transformer_meta_ensemble_v1
   expanded_rebalance_dataset_path: cache/ml/expanded_rebalance_dataset.csv
   meta_dataset_path: cache/ml/meta_ensemble_dataset.csv

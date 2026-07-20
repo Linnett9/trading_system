@@ -18,6 +18,12 @@ from core.research.ml.immutable_runs import (
     deterministic_run_id,
     file_digest,
     preserve_immutable_run,
+    read_run_manifest,
+    run_dir_from_latest_completed,
+)
+from core.research.ml.exposure_input import (
+    SELECTOR_DERIVED_SOURCE_TYPE,
+    selector_exposure_input_contract,
 )
 from core.research.ml.stock_level.stock_alpha_run_profile import apply_stock_alpha_run_profile
 from core.research.ml.stock_level.stock_alpha_paths import stock_alpha_report_metadata
@@ -165,8 +171,10 @@ def write_stock_selector_rebalance_dataset(
         selected_signal=settings.stock_selector_rebalance_selected_signal,
         selected_policy=settings.stock_selector_rebalance_selected_policy,
         outcome_horizon_days=settings.stock_selector_rebalance_outcome_horizon_days,
+        cost_bps=settings.portfolio_cost_bps,
+        slippage_bps=settings.portfolio_slippage_bps,
     )
-    dataset_hash = _stable_dataset_hash(rows)
+    dataset_hash = str(metadata["input_source_contract"]["dataset_identity"])
     for row in rows:
         row["dataset_hash"] = dataset_hash
     metadata.update({
@@ -174,8 +182,13 @@ def write_stock_selector_rebalance_dataset(
         "output_row_count": len(rows),
         "earliest_feature_date": rows[0]["feature_date"] if rows else None,
         "latest_feature_date": rows[-1]["feature_date"] if rows else None,
-        "generated_at": _utc_timestamp(),
+        "generated_at": "deterministic_from_input_contract",
     })
+    _reject_incompatible_existing_selector_rebalance_dataset(
+        settings.stock_selector_rebalance_dataset_path,
+        settings.stock_selector_rebalance_metadata_path,
+        dataset_hash,
+    )
 
     writer = ResearchArtifactWriter()
     writer.write_csv(
@@ -184,6 +197,12 @@ def write_stock_selector_rebalance_dataset(
         fieldnames=list(rows[0]) if rows else ["feature_id"],
     )
     writer.write_json(settings.stock_selector_rebalance_metadata_path, metadata)
+    _preserve_stock_selector_rebalance_dataset_run(
+        settings.stock_selector_rebalance_dataset_path.parent,
+        settings.stock_selector_rebalance_dataset_path,
+        settings.stock_selector_rebalance_metadata_path,
+        metadata,
+    )
     return StockSelectorRebalanceDatasetPaths(
         dataset_path=settings.stock_selector_rebalance_dataset_path,
         metadata_path=settings.stock_selector_rebalance_metadata_path,
@@ -200,6 +219,8 @@ def build_stock_selector_rebalance_dataset_from_artifacts(
     selected_signal: str,
     selected_policy: str,
     outcome_horizon_days: int = 10,
+    cost_bps: Any = None,
+    slippage_bps: Any = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     _require_existing_artifacts(
         predictions_path,
@@ -212,6 +233,8 @@ def build_stock_selector_rebalance_dataset_from_artifacts(
     equity_rows = CsvRowRepository().read(equity_curves_path)
     holding_rows = CsvRowRepository().read(holdings_path)
     _require_columns(predictions_path, predictions, {"rebalance_date", "symbol"})
+    _reject_final_fit_predictions(predictions, predictions_path)
+    _require_strict_oos_folds(predictions, predictions_path)
     _require_columns(equity_curves_path, equity_rows, {
         "rebalance_date",
         "strategy_id",
@@ -307,9 +330,25 @@ def build_stock_selector_rebalance_dataset_from_artifacts(
             "holdings": holdings_path,
         },
     )
+    source_dataset_hash = _source_dataset_hash(predictions, summary)
+    contract = selector_exposure_input_contract(
+        rows=rows,
+        predictions_path=predictions_path,
+        summary_path=summary_path,
+        equity_curves_path=equity_curves_path,
+        holdings_path=holdings_path,
+        selected_signal=selected_signal,
+        selected_policy=selected_policy,
+        strategy_id=strategy_id,
+        source_dataset_hash=source_dataset_hash,
+        cost_bps=cost_bps,
+        slippage_bps=slippage_bps,
+    )
     metadata = {
         "mode": "stock_selector_rebalance_dataset",
+        "source_type": SELECTOR_DERIVED_SOURCE_TYPE,
         "contract_version": 1,
+        "input_source_contract": contract,
         "research_only": True,
         "trading_impact": "none",
         "training_performed": False,
@@ -325,7 +364,7 @@ def build_stock_selector_rebalance_dataset_from_artifacts(
         "source_prediction_row_count": len(predictions),
         "source_equity_row_count": len(selected_equity),
         "source_holding_row_count": len(selected_holdings),
-        "source_dataset_hash": _source_dataset_hash(predictions, summary),
+        "source_dataset_hash": source_dataset_hash,
         "input_contract": {
             "predictions_required_columns": ["rebalance_date", "symbol", selected_signal],
             "equity_curves_required_columns": [
@@ -586,6 +625,12 @@ def _selector_rebalance_rows(
             label_end_date,
             outcome_horizon_days,
         )
+        if label_end_date > label_available_timestamp:
+            raise ValueError(
+                "Stock selector rebalance outcome is not mature: "
+                f"rebalance_date={feature_date}; label_end_date={label_end_date}; "
+                f"label_available_timestamp={label_available_timestamp}"
+            )
         gross_exposure = sum(abs(value) for value in weights.values())
         net_exposure = sum(weights.values())
         normalized_abs = _normalized_abs_weights(weights)
@@ -794,18 +839,132 @@ def _require_columns(path: Path, rows: list[dict[str, Any]], required: set[str])
         )
 
 
+def _reject_final_fit_predictions(
+    rows: list[dict[str, Any]],
+    predictions_path: Path,
+) -> None:
+    for row in rows:
+        markers = {
+            str(row.get("final_fit", "")).strip().lower(),
+            str(row.get("prediction_scope", "")).strip().lower(),
+            str(row.get("workflow", "")).strip().lower(),
+            str(row.get("source_workflow", "")).strip().lower(),
+        }
+        if "true" in markers or "final_fit" in markers or "stock_selector_final_fit" in markers:
+            raise ValueError(
+                "Final-fit selector predictions cannot construct historical "
+                f"exposure rows: {predictions_path}"
+            )
+
+
+def _require_strict_oos_folds(
+    rows: list[dict[str, Any]],
+    predictions_path: Path,
+) -> None:
+    missing = [
+        (str(row.get("rebalance_date", "")), str(row.get("symbol", "")))
+        for row in rows
+        if not str(row.get("fold_id", "")).strip()
+    ]
+    if missing:
+        raise ValueError(
+            "Strict-OOS selector predictions require fold_id on every row: "
+            f"path={predictions_path}; missing={missing[:5]}"
+        )
+
+
 def _source_dataset_hash(
     predictions: list[dict[str, Any]],
     summary: dict[str, Any],
 ) -> str:
+    row_hashes: set[str] = set()
     for row in predictions:
         for key in ("dataset_hash", "source_dataset_hash", "data_hash"):
             if row.get(key):
-                return str(row[key])
+                row_hashes.add(str(row[key]))
+                break
+    if len(row_hashes) > 1:
+        raise ValueError(
+            "Selector prediction rows reference multiple source dataset identities: "
+            f"{sorted(row_hashes)}"
+        )
+    if row_hashes:
+        return next(iter(row_hashes))
     for key in ("dataset_hash", "source_dataset_hash", "data_hash"):
         if summary.get(key):
             return str(summary[key])
-    return ""
+    raise ValueError("Selector-derived exposure input requires selector dataset identity")
+
+
+def _reject_incompatible_existing_selector_rebalance_dataset(
+    dataset_path: Path,
+    metadata_path: Path,
+    dataset_hash: str,
+) -> None:
+    if not dataset_path.exists() and not metadata_path.exists():
+        return
+    if not dataset_path.exists() or not metadata_path.exists():
+        raise RuntimeError(
+            "Incompatible selector-derived exposure reuse: dataset and metadata "
+            f"must be present together; dataset={dataset_path}; metadata={metadata_path}"
+        )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(
+            f"Incompatible selector-derived exposure reuse metadata: {metadata_path}"
+        ) from exc
+    existing_hash = str(metadata.get("dataset_hash") or "")
+    if existing_hash != dataset_hash:
+        raise RuntimeError(
+            "Incompatible selector-derived exposure reuse identity mismatch: "
+            f"existing={existing_hash}; requested={dataset_hash}; path={dataset_path}"
+        )
+
+
+def _preserve_stock_selector_rebalance_dataset_run(
+    output_dir: Path,
+    dataset_path: Path,
+    metadata_path: Path,
+    metadata: dict[str, Any],
+) -> None:
+    identity = {
+        "source_type": SELECTOR_DERIVED_SOURCE_TYPE,
+        "dataset_identity": metadata["dataset_hash"],
+        "input_source_contract": metadata["input_source_contract"],
+        "selected_signal": metadata["selected_signal"],
+        "selected_policy": metadata["selected_policy"],
+        "strategy_id": metadata["strategy_id"],
+    }
+    run_id = deterministic_run_id("stock_selector_rebalance_dataset", identity)
+    preserve_immutable_run(
+        output_dir=output_dir,
+        run_id=run_id,
+        kind="stock_selector_rebalance_dataset",
+        identity=identity,
+        artifact_paths=(dataset_path, metadata_path),
+        extra_manifest={
+            "source_type": SELECTOR_DERIVED_SOURCE_TYPE,
+            "dataset_hash": metadata["dataset_hash"],
+            "output_row_count": metadata["output_row_count"],
+        },
+    )
+
+
+def assert_stock_selector_rebalance_dataset_reuse_compatible(
+    output_dir: Path,
+    expected_dataset_identity: str,
+) -> None:
+    latest = run_dir_from_latest_completed(output_dir)
+    manifest = read_run_manifest(latest) if latest else None
+    if not manifest or manifest.get("run_status") != "complete":
+        raise RuntimeError(f"No completed selector rebalance dataset run found: {output_dir}")
+    identity = manifest.get("identity", {})
+    if identity.get("dataset_identity") != expected_dataset_identity:
+        raise RuntimeError(
+            "Selector rebalance dataset reuse identity mismatch: "
+            f"existing={identity.get('dataset_identity')}; expected={expected_dataset_identity}"
+        )
 
 
 def _should_reduce_exposure_label(

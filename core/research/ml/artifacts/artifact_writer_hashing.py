@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 from typing import Any
 
 from core.research.ml.data.datasets import MODEL_INPUT_CONTRACT_VERSION, MLDataset
+from core.research.ml.exposure_input import exposure_model_input_source_path
 
 
 class MLArtifactHashingMixin:
@@ -69,14 +69,7 @@ class MLArtifactHashingMixin:
             return []
         return list(dataset.features[0].keys())
     def model_input_source_path(self) -> str:
-        ml_config = self._config.get("ml", {}) or {}
-        source_path = ml_config.get("expanded_rebalance_dataset_path")
-        if source_path is None:
-            source_path = (
-                Path(self._config.get("cache", {}).get("ml_dir", "cache/ml"))
-                / "expanded_rebalance_dataset.csv"
-            )
-        return str(Path(str(source_path)).resolve())
+        return exposure_model_input_source_path(self._config)
     @staticmethod
     def hash_payload(payload: Any) -> str:
         serialized = json.dumps(payload, sort_keys=True, default=str)

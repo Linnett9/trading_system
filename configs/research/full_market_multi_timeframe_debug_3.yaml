@@ -12,6 +12,7 @@ ml:
   parquet_dir: data/processed
   stooq_parquet_dir: data/processed
   feature_set: expanded_rebalance_v1
+  legacy_research_exposure_input: true
   output_dir: reports/ml/full_market_multi_timeframe/debug_3
   expanded_rebalance_dataset_path: cache/ml/full_market_multi_timeframe/expanded_rebalance_dataset.csv
   inventory_output_dir: reports/ml/full_market_multi_timeframe/inventory

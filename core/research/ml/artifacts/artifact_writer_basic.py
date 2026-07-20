@@ -229,6 +229,9 @@ class MLArtifactBasicWritersMixin:
             "training_date_min": feature_date_min,
             "training_date_max": feature_date_max,
             "model_input_source_path": self.model_input_source_path(),
+            "exposure_input_source": (
+                self._config.get("ml", {}).get("exposure_input_source_type")
+            ),
             "source_dataset_row_count": dataset.sample_count,
             "git_commit": self.git_commit(),
             "model_name": self._experiment_config.model_type,

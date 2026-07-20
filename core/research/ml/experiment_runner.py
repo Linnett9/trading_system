@@ -8,6 +8,7 @@ from typing import Any
 
 from core.research.ml.config import MLExperimentConfig
 from core.research.ml.data.datasets import MLDataset, write_dataset
+from core.research.ml.exposure_input import validate_exposure_input_resolution
 from core.research.ml.experiment_result import MLExperimentResult
 from core.research.ml.overlays.drawdown_review import write_drawdown_event_review
 from core.research.ml.html_report import write_research_html_report
@@ -67,6 +68,9 @@ class MLExperimentRunner(
     def run(self) -> MLExperimentResult:
         feature_result, candles_by_symbol = self._build_features()
         if self.experiment_config.label_type == "should_reduce_exposure":
+            self._exposure_input_identity = validate_exposure_input_resolution(
+                self.config
+            )
             feature_result = self._build_expanded_rebalance_features(
                 feature_result,
                 candles_by_symbol,

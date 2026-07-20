@@ -1,0 +1,20 @@
+ml:
+  research_label: selector_derived_exposure_production
+  label_type: should_reduce_exposure
+  feature_set: selector_derived_rebalance_v1
+  model_type: logistic_regression
+  exposure_production_campaign: true
+  exposure_input_source_type: selector_derived_replay_v1
+  stock_selector_rebalance_dataset_path: cache/ml/selector_derived_exposure/stock_selector_rebalance_dataset.csv
+  stock_selector_rebalance_metadata_path: cache/ml/selector_derived_exposure/stock_selector_rebalance_dataset.json
+  stock_selector_rebalance_source_dir: reports/ml/selector_replay
+  stock_selector_rebalance_selected_signal: stock_level_predicted_forward_return_10d_lightgbm_rank_xendcg
+  stock_selector_rebalance_selected_policy: long_only_top_n_equal_weight
+  expanded_rebalance_dataset_path: null
+  walk_forward_folds: 3
+  exposure_minimum_training_rows: 3
+  exposure_minimum_positive_labels: 1
+  exposure_minimum_negative_labels: 1
+  output_dir: reports/ml/selector_derived_exposure_production
+reports:
+  ml_dir: reports/ml/selector_derived_exposure_production
