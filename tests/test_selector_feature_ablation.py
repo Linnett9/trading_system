@@ -46,7 +46,7 @@ def _rows(date_count=8):
                     "actual_rank_normalized_forward_return_10d": (2 - symbol_index) / 2,
                     "actual_top_decile_label_10d": int(symbol_index == 0),
                     "decision_session_date": rebalance_date,
-                    "target_provenance_contract_version": "stock_level_target_provenance_v1",
+                    "target_provenance_contract_version": "stock_level_target_provenance_v2",
                     "feature_timestamp": rebalance_date,
                     "feature_data_cutoff_timestamp": rebalance_date,
                     "decision_timestamp": rebalance_date,
