@@ -70,10 +70,11 @@ def publish_finbert_scoring_plan(
     if supplied_checksum != corpus_manifest["canonical_rows_logical_checksum"]:
         raise ValueError("Supplied canonical article inventory checksum mismatch")
 
-    eligible, invalid_count = _eligible_inventory(
-        canonical_rows,
-        max_characters=max_characters,
+    eligible, exclusions = build_eligible_scoring_inventory(
+        canonical_rows, max_characters=max_characters,
+        canonical_identity=corpus_manifest["canonical_corpus_identity"],
     )
+    invalid_count = len(exclusions)
     configuration_checksum = MLCoreArtifactWriter.hash_payload(scoring_config)
     chunks = []
     for index, start in enumerate(range(0, len(eligible), chunk_size), start=1):
@@ -148,13 +149,14 @@ def publish_finbert_scoring_plan(
     return {**manifest, "publication_result": publication_result}
 
 
-def _eligible_inventory(
-    rows: Sequence[Mapping[str, Any]], *, max_characters: int
-) -> tuple[list[dict[str, Any]], int]:
+def build_eligible_scoring_inventory(
+    rows: Sequence[Mapping[str, Any]], *, max_characters: int,
+    canonical_identity: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     eligible = []
-    invalid_count = 0
+    exclusions: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for source in rows:
+    for row_number, source in enumerate(rows, 1):
         row = dict(source)
         article_id = str(
             row.get("article_id")
@@ -164,23 +166,39 @@ def _eligible_inventory(
         ).strip()
         symbol = str(row.get("symbol") or row.get("ticker") or "").strip().upper()
         if not article_id or not symbol:
-            invalid_count += 1
-            continue
+            raise ValueError("Canonical scoring owner identity is incomplete")
         owner = (article_id, symbol)
         if owner in seen:
             raise ValueError(f"Duplicate canonical article identity: {article_id}|{symbol}")
         seen.add(owner)
         try:
             text = select_article_text(row, max_characters=max_characters)
-            resolve_news_available_timestamp(row)
         except ValueError:
-            invalid_count += 1
+            owner = _hash({
+                "canonical_identity": canonical_identity,
+                "article_id": article_id, "symbol": symbol,
+                "source_row_number": row_number,
+            }).lower()
+            exclusion = {
+                "owner_identity": owner,
+                "provider_article_identity_hash": _hash(article_id).lower(),
+                "symbol": symbol,
+                "reason_code": "NO_SELECTABLE_SCORING_TEXT",
+                "canonical_identity": canonical_identity,
+                "text_selection_contract":
+                    FINBERT_TEXT_SELECTION_CONTRACT_VERSION,
+            }
+            exclusion["exclusion_identity"] = _hash(exclusion).lower()
+            exclusions.append(exclusion)
             continue
+        availability = resolve_news_available_timestamp(row)
         eligible.append(
             {
                 "article_id": article_id,
                 "symbol": symbol,
                 "text": text,
+                "availability": availability,
+                "source_row": row,
             }
         )
     eligible.sort(
@@ -188,7 +206,7 @@ def _eligible_inventory(
             item["article_id"], item["symbol"], item["text"].text_hash
         )
     )
-    return eligible, invalid_count
+    return eligible, exclusions
 
 
 def _validate_pinned_identity(identity: FinBertModelIdentity) -> None:
