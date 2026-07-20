@@ -16,9 +16,13 @@ from core.research.ml.stock_level.stock_alpha_finbert_scoring_foundation import 
     logical_identity,
     validate_model_package,
 )
+from core.research.ml.stock_level.stock_alpha_finbert_authorized_execution import (
+    ProductionExecutionFactory,
+    execute_authorized_scoring,
+)
 
 
-def main(argv=None) -> int:
+def main(argv=None, *, factory_builder=ProductionExecutionFactory) -> int:
     parser = argparse.ArgumentParser(
         description="Validate or execute an exactly authorized FinBERT scoring request."
     )
@@ -26,6 +30,11 @@ def main(argv=None) -> int:
     parser.add_argument("--runtime-config", required=True, type=Path)
     parser.add_argument("--authorization", required=True, type=Path)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--chunk-plan", type=Path)
+    parser.add_argument("--run-root", type=Path)
+    parser.add_argument("--resource-ledger", type=Path)
+    parser.add_argument("--registry", type=Path)
     args = parser.parse_args(argv)
     try:
         request = json.loads(args.request.read_text(encoding="utf-8-sig"))
@@ -34,9 +43,38 @@ def main(argv=None) -> int:
             args.authorization.read_text(encoding="utf-8-sig")
         )
         runtime_checksum = logical_identity(runtime)
+        if args.plan_only == args.execute:
+            raise ValueError("EXACTLY_ONE_OF_PLAN_ONLY_OR_EXECUTE_REQUIRED")
+        if args.execute:
+            required = {
+                "--chunk-plan": args.chunk_plan, "--run-root": args.run_root,
+                "--resource-ledger": args.resource_ledger,
+                "--registry": args.registry,
+            }
+            missing = [key for key, value in required.items() if value is None]
+            if missing:
+                raise ValueError(
+                    "EXECUTION_SHARED_PATHS_REQUIRED:" + ",".join(missing)
+                )
+            chunk_plan = json.loads(
+                args.chunk_plan.read_text(encoding="utf-8-sig")
+            )
+            factory = factory_builder(
+                request=request, runtime=runtime, chunk_plan=chunk_plan,
+                runs_root=args.run_root, ledger_path=args.resource_ledger,
+                registry_path=args.registry,
+            )
+            result = execute_authorized_scoring(
+                request=request, runtime=runtime,
+                runtime_checksum=runtime_checksum,
+                authorization=authorization, chunk_plan=chunk_plan,
+                callbacks=factory.callbacks(), plan_only=False,
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
         result = execute_authorized_boundary(
             request=request, runtime_checksum=runtime_checksum,
-            authorization=authorization, plan_only=args.plan_only,
+            authorization=authorization, plan_only=True,
             validate_package=lambda: validate_model_package(
                 Path(request["model_package_root"]),
                 expected_model_name=request["model_name"],

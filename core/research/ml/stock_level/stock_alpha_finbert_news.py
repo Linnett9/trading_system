@@ -256,6 +256,7 @@ class HuggingFaceFinBertAdapter:
         max_token_length: int = 256,
         local_files_only: bool = True,
         cache_dir: str | None = None,
+        tokenizer_instance: Any | None = None,
     ) -> None:
         try:
             import torch
@@ -277,11 +278,9 @@ class HuggingFaceFinBertAdapter:
             tokenizer_revision=tokenizer_revision,
             inference_device=resolved_device,
         )
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_path or tokenizer_id,
-            revision=tokenizer_revision,
-            local_files_only=local_files_only,
-            cache_dir=cache_dir,
+        self._tokenizer = tokenizer_instance or AutoTokenizer.from_pretrained(
+            tokenizer_path or tokenizer_id, revision=tokenizer_revision,
+            local_files_only=local_files_only, cache_dir=cache_dir,
         )
         self._model = AutoModelForSequenceClassification.from_pretrained(
             model_path or model_id,
@@ -328,6 +327,20 @@ class HuggingFaceFinBertAdapter:
                 )
             )
         return output
+
+
+def load_local_finbert_tokenizer(
+    *, tokenizer_path: str, revision: str, cache_dir: str,
+) -> Any:
+    """Activate the immutable local tokenizer without loading model weights."""
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError("FinBERT tokenizer requires transformers") from exc
+    return AutoTokenizer.from_pretrained(
+        tokenizer_path, revision=revision, local_files_only=True,
+        cache_dir=cache_dir,
+    )
 
 
 def select_article_text(row: Mapping[str, Any], *, max_characters: int = 10_000) -> TextSelection:

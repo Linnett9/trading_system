@@ -224,10 +224,12 @@ class AuthoritativeFinBertChunkAdapter:
 
     def __init__(
         self, *, scoring_plan: Mapping[str, Any],
-        source_rows: Sequence[Mapping[str, Any]], output_dir: Path,
+        source_rows: Sequence[Mapping[str, Any]] | None, output_dir: Path,
         scoring_config: Mapping[str, Any], model_factory: Callable[
             [Mapping[str, Any], FinBertExecutionPolicy], FinBertAdapter],
         scored_at: str,
+        prepared_items_by_chunk: Mapping[str, Sequence[Mapping[str, Any]]]
+        | None = None,
     ) -> None:
         self.plan = dict(scoring_plan)
         self.output_dir = output_dir
@@ -236,7 +238,23 @@ class AuthoritativeFinBertChunkAdapter:
         self.scored_at = scored_at
         self.model_load_count = 0
         self._active_identity = None
-        self._items = _prepared_items(source_rows, self.plan)
+        if prepared_items_by_chunk is None:
+            if source_rows is None:
+                raise ValueError("Source rows or explicit prepared items are required")
+            self._items = _prepared_items(source_rows, self.plan)
+        else:
+            self._items = {
+                str(key): [dict(item) for item in values]
+                for key, values in prepared_items_by_chunk.items()
+            }
+            expected = {
+                str(chunk["chunk_id"]): int(chunk["article_count"])
+                for chunk in self.plan["expected_chunks"]
+            }
+            if set(self._items) != set(expected) or any(
+                len(self._items[key]) != count for key, count in expected.items()
+            ):
+                raise ValueError("Explicit FinBERT chunk item population mismatch")
 
     def compatible_output(self, chunk):
         path = self.output_dir / "chunks" / f"{chunk['chunk_id']}.json"
@@ -269,9 +287,10 @@ class AuthoritativeFinBertChunkAdapter:
         return model.score_batch(tokenized)
 
     def publish(self, chunk, predictions):
+        return self.publish_rows(chunk, self.build_rows(chunk, predictions))
+
+    def build_rows(self, chunk, predictions):
         items = self._items[chunk["chunk_id"]]
-        identity = chunk["identity"]
-        ordinal = int(chunk["ordinal"])
         rows = [
             _scored_row(
                 item, prediction,
@@ -283,6 +302,14 @@ class AuthoritativeFinBertChunkAdapter:
         ]
         if len(rows) != len(items):
             raise ValueError("FinBERT prediction count mismatch")
+        return rows
+
+    def publish_rows(self, chunk, rows):
+        items = self._items[chunk["chunk_id"]]
+        identity = chunk["identity"]
+        ordinal = int(chunk["ordinal"])
+        if len(rows) != len(items):
+            raise ValueError("FinBERT scored row count mismatch")
         payload = {
             "status": "completed", "identity": identity, "rows": rows,
             "scoring_plan": {
