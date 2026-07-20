@@ -428,13 +428,27 @@ def write_partitioned_canonical_v2_alpha_features(
     report_root.mkdir(parents=True, exist_ok=True)
     run_id = f"alpha-only-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     manifest_path = report_root / "alpha_only_run_manifest.json"
+    prior_state = _read_json(manifest_path)
+    original_source_commit = str(
+        prior_state.get("original_source_commit")
+        or prior_state.get("source_commit")
+        or _source_commit(config)
+    )
+    finalization_source_commit = _source_commit(config)
     base = validate_alpha_base_artifact(config)
     state = {
         "contract_version": "canonical_v2_alpha_only_run.v1",
         "run_id": run_id,
         "mode": "ml-stock-level-alpha-features",
         "status": "RUNNING",
-        "source_commit": _source_commit(config),
+        "source_commit": finalization_source_commit,
+        "original_source_commit": original_source_commit,
+        "finalization_source_commit": finalization_source_commit,
+        "compatibility_decision": (
+            "FINALIZATION_ONLY_COMPATIBLE"
+            if original_source_commit != finalization_source_commit
+            else "SAME_COMMIT"
+        ),
         "immutable_parent": base,
         "stages": {
             "stock_artifact": {
@@ -452,21 +466,35 @@ def write_partitioned_canonical_v2_alpha_features(
         result = _write_partitioned_canonical_v2_alpha_features(config)
     except BaseException as exc:
         lifecycle = _read_json(report_root / "partition_dataset_status.json")
+        consolidation = _read_json(report_root / "consolidation_manifest.json")
+        consolidation_complete = (
+            str(consolidation.get("status", "")).upper() == "COMPLETE"
+            or str(
+                dict(consolidation.get("artifact", {}) or {}).get(
+                    "completion_status", ""
+                )
+            ).upper()
+            == "COMPLETE"
+        )
         state["status"] = "FAILED"
         state["partition_generation_status"] = (
             "COMPLETE"
             if lifecycle.get("partition_processing_status") == "complete"
             else "FAILED"
         )
-        state["consolidation_status"] = lifecycle.get(
-            "consolidation_status", "FAILED"
-        ).upper()
+        state["consolidation_status"] = (
+            "COMPLETE"
+            if consolidation_complete
+            else lifecycle.get("consolidation_status", "FAILED").upper()
+        )
         state["publication_status"] = "NOT_PUBLISHED"
         state["overall_status"] = "FAILED"
         state["stages"]["alpha_features"] = {
             "status": "failed",
             "exception_type": type(exc).__name__,
             "exception_message": str(exc),
+            "structured_failure": True,
+            "consolidated_artifact_preserved": consolidation_complete,
         }
         state["ended_at"] = datetime.now(timezone.utc).isoformat()
         _write_json(manifest_path, state)
@@ -486,6 +514,12 @@ def write_partitioned_canonical_v2_alpha_features(
     )
     state["reused_partition_count"] = int(
         lifecycle.get("partitions_reused", 0) or 0
+    )
+    state["recomputed_partition_count"] = int(
+        lifecycle.get("partitions_recomputed", 0) or 0
+    )
+    state["partition_namespace_identity"] = lifecycle.get(
+        "partition_namespace_identity"
     )
     state["workers_submitted"] = int(
         lifecycle.get("workers_submitted", 0) or 0
@@ -753,9 +787,22 @@ def _write_partitioned_canonical_v2_alpha_features(config: dict[str, Any]) -> St
         "source_base_sha256": base_validation["sha256"],
         "source_base_economic_key_sha256": base_validation["economic_key_sha256"],
         "row_count": identity["row_count"],
+        "audit_schema_version": "stock_level_alpha_feature_audit.v2",
+        "engineered_feature_count": len(ENGINEERED_FEATURE_COLUMNS),
+        "engineered_feature_count_source": (
+            "ENGINEERED_FEATURE_COLUMNS certified producer contract"
+        ),
+        "source_columns_preserved": base_validation["column_count"],
+        "unique_symbol_date_rows": identity["row_count"],
+        "industry_metadata_available": any(
+            row["feature"] in {"industry_relative_strength", "industry_momentum_percentile"}
+            and int(row.get("populated_count", 0) or 0) > 0
+            for row in identity["feature_coverage"]
+        ),
         "features": identity.pop("feature_coverage"),
         "parallelism": {
             "requested_workers": workers,
+            "stock_alpha_feature_n_jobs": workers,
             "effective_workers": plan["effective_workers"],
             "partition": "symbol",
             "symbol_count": len(symbols),

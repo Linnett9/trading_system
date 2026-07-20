@@ -419,6 +419,32 @@ def test_bounded_alpha_partition_namespace_is_deterministic_and_full_identity(
     assert len(first["configuration_sha256"]) == 64
 
 
+def test_final_assembly_sources_do_not_change_partition_producer_identity() -> None:
+    base = {
+        "sha256": "a" * 64,
+        "logical_content_sha256": "b" * 64,
+        "schema_fingerprint": "c" * 64,
+        "economic_key_sha256": "d" * 64,
+        "row_count": 10,
+        "column_count": 70,
+        "target_provenance_contract_versions": [
+            "stock_level_target_provenance_v2"
+        ],
+    }
+    original = {"ml": {"stock_alpha_feature_n_jobs": 6}}
+    finalization = {
+        "ml": {
+            **original["ml"],
+            "canonical_v2_fundamentals_artifact_path": "C:/pit/fundamentals.parquet",
+            "canonical_v2_fundamentals_manifest_path": "C:/pit/fundamentals.json",
+        }
+    }
+
+    assert alpha._alpha_partition_namespace_identity(
+        original, base_validation=base
+    ) == alpha._alpha_partition_namespace_identity(
+        finalization, base_validation=base
+    )
 def test_bounded_alpha_partition_namespace_stays_within_windows_path_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

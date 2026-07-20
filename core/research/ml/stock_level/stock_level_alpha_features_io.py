@@ -118,24 +118,29 @@ def _write_audit_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     ResearchArtifactWriter().write_csv(path, rows, fieldnames=fieldnames)
 def _markdown(audit: dict[str, Any]) -> str:
+    features = list(audit.get("features", []) or [])
+    parallelism = dict(audit.get("parallelism", {}) or {})
+    engineered_feature_count = int(
+        audit.get("engineered_feature_count", len(features)) or 0
+    )
     lines = [
         "# Stock-Level Alpha Feature Audit",
         "",
         NOTICE,
         "",
         f"- Rows: {audit['row_count']}",
-        f"- Engineered features: {audit['engineered_feature_count']}",
-        f"- Source columns preserved: {audit['source_columns_preserved']}",
-        f"- Unique symbol/date rows: {audit['unique_symbol_date_rows']}",
-        f"- Industry metadata available: {audit['industry_metadata_available']}",
-        f"- Alpha feature workers: {audit['parallelism']['stock_alpha_feature_n_jobs']}",
-        f"- Parallel partition: {audit['parallelism']['partition']}",
+        f"- Engineered features: {engineered_feature_count}",
+        f"- Source columns preserved: {int(audit.get('source_columns_preserved', 0) or 0)}",
+        f"- Unique symbol/date rows: {int(audit.get('unique_symbol_date_rows', audit.get('row_count', 0)) or 0)}",
+        f"- Industry metadata available: {bool(audit.get('industry_metadata_available', False))}",
+        f"- Alpha feature workers: {int(parallelism.get('stock_alpha_feature_n_jobs', parallelism.get('requested_workers', 0)) or 0)}",
+        f"- Parallel partition: {parallelism.get('partition', 'unknown')}",
         "- Promotion thresholds changed: false",
         "",
         "| Feature | Populated | Missing | Availability | Definition |",
         "|---|---:|---:|---:|---|",
     ]
-    for row in audit["features"]:
+    for row in features:
         lines.append(
             f"| {row['feature']} | {row['populated_count']} | {row['missing_count']} | "
             f"{row['availability_rate']:.4f} | {row['definition']} |"

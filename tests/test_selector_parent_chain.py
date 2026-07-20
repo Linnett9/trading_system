@@ -89,6 +89,218 @@ def test_preflight_is_deterministic_and_read_only(tmp_path, monkeypatch):
     assert not inputs.output_root.exists()
 
 
+def test_final_schema_plan_distinguishes_120_column_alpha_child_from_182_final(
+    tmp_path, monkeypatch
+):
+    from core.research.ml.stock_level.stock_fundamentals import (
+        FUNDAMENTAL_FEATURE_COLUMNS,
+        FUNDAMENTAL_METADATA_COLUMNS,
+    )
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        ALPHA_OUTPUT_SCHEMA,
+        _time_series_features,
+    )
+
+    missing_spine = {
+        "asset_id",
+        "canonical_symbol",
+        "model_close",
+        "source_provider",
+        "compatibility_tier",
+        "eligibility_reason",
+        "selector_eligible",
+        "provider_transition_flag",
+        "provider_transition_id",
+    }
+    missing_fundamentals = set(FUNDAMENTAL_FEATURE_COLUMNS) | set(
+        FUNDAMENTAL_METADATA_COLUMNS
+    )
+    expected_missing = missing_spine | missing_fundamentals
+    producer = set(_time_series_features([], []))
+    base_columns = set(ALPHA_OUTPUT_SCHEMA) - producer - expected_missing
+    assert len(base_columns) == 70
+    base = tmp_path / "physical_base.parquet"
+    pq.write_table(
+        pa.table({column: pa.array([None]) for column in sorted(base_columns)}),
+        base,
+    )
+    labeled = tmp_path / "labeled" / "symbol=A" / "spine.parquet"
+    labeled.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "session_date": ["2026-01-02"],
+                **{
+                    column: pa.array([None])
+                    for column in sorted(missing_spine - {"model_close"})
+                },
+                "model_close": [100.0],
+            }
+        ),
+        labeled,
+    )
+    inputs = ParentChainInputs(
+        run_id="ownership",
+        output_root=tmp_path / "out",
+        base_artifact=base,
+        base_manifest=tmp_path / "base.json",
+        canonical_daily_manifest=tmp_path / "daily.json",
+        asset_registry_manifest=tmp_path / "registry.json",
+        feature_schema=tmp_path / "schema.json",
+        labeled_spine_root=labeled.parents[1],
+    )
+    plan = chain._final_schema_assembly_plan(inputs)
+
+    assert plan["contract_decision"] == "B"
+    assert plan["alpha_child_physical_column_count"] == 120
+    assert plan["final_selector_parent_contract"]["column_count"] == 182
+    assert plan["missing_from_alpha_child_count"] == 62
+    assert set(plan["missing_from_alpha_child"]) == expected_missing
+    assert plan["unresolved_column_count"] == 53
+    assert {
+        row["column"] for row in plan["unresolved_columns"]
+    } == missing_fundamentals
+
+
+def _final_assembly_fixture(tmp_path, *, future_fundamentals=False):
+    import hashlib
+
+    from core.research.ml.stock_level.stock_fundamentals import (
+        FUNDAMENTAL_FEATURE_COLUMNS,
+        FUNDAMENTAL_METADATA_COLUMNS,
+    )
+    from infrastructure.data.canonical_v2_alpha_enrichment import (
+        ALPHA_OUTPUT_SCHEMA,
+        _schema_for_fieldnames,
+        _time_series_features,
+    )
+
+    fundamental_columns = set(FUNDAMENTAL_FEATURE_COLUMNS) | set(
+        FUNDAMENTAL_METADATA_COLUMNS
+    )
+    spine_columns = {
+        "asset_id",
+        "canonical_symbol",
+        "model_close",
+        "source_provider",
+        "compatibility_tier",
+        "eligibility_reason",
+        "selector_eligible",
+        "provider_transition_flag",
+        "provider_transition_id",
+    }
+    alpha_columns = set(ALPHA_OUTPUT_SCHEMA) - fundamental_columns - spine_columns
+    assert len(alpha_columns) == 120
+    row = {}
+    for column in alpha_columns:
+        kind, nullable = ALPHA_OUTPUT_SCHEMA[column]
+        if column == "true_stock_level_row":
+            value = True
+        elif nullable:
+            value = None
+        elif kind == "bool":
+            value = True
+        elif kind == "int":
+            value = 1
+        elif kind == "float":
+            value = 1.0
+        else:
+            value = "value"
+        row[column] = value
+    row.update(
+        {
+            "symbol": "A",
+            "rebalance_date": "2026-01-02",
+            "decision_timestamp": "2026-01-02T20:05:00Z",
+            "target_provenance_contract_version": (
+                "stock_level_target_provenance_v2"
+            ),
+        }
+    )
+    alpha = tmp_path / "alpha.parquet"
+    schema = _schema_for_fieldnames(
+        [name for name in ALPHA_OUTPUT_SCHEMA if name in alpha_columns]
+    )
+    pq.write_table(pa.Table.from_pylist([row], schema=schema), alpha)
+
+    spine = tmp_path / "spines" / "symbol=A" / "spine.parquet"
+    spine.parent.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "asset_id": "asset-a",
+                    "canonical_symbol": "A",
+                    "session_date": "2026-01-02",
+                    "model_close": 100.0,
+                    "source_provider": "canonical",
+                    "compatibility_tier": "TIER_A",
+                    "eligibility_reason": "eligible",
+                    "selector_eligible": True,
+                    "provider_transition_flag": False,
+                    "provider_transition_id": "",
+                }
+            ]
+        ),
+        spine,
+    )
+    fundamental_row = {
+        column: None for column in fundamental_columns
+    }
+    fundamental_row.update(
+        {
+            "asset_id": "asset-a",
+            "rebalance_date": "2026-01-02",
+            "fundamentals_available_timestamp": (
+                "2026-01-03T20:05:00Z"
+                if future_fundamentals
+                else "2026-01-02T19:00:00Z"
+            ),
+        }
+    )
+    fundamentals = tmp_path / "fundamentals.parquet"
+    pq.write_table(pa.Table.from_pylist([fundamental_row]), fundamentals)
+    key = hashlib.sha256(b"2026-01-02\x1fA\n").hexdigest()
+    return alpha, spine.parents[1], fundamentals, {
+        "row_count": 1,
+        "economic_key_sha256": key,
+    }
+
+
+def test_final_assembly_is_pit_safe_row_preserving_and_deterministic(tmp_path):
+    from infrastructure.data.canonical_v2_alpha_enrichment import ALPHA_OUTPUT_SCHEMA
+
+    alpha, spine_root, fundamentals, expected = _final_assembly_fixture(tmp_path)
+    output = tmp_path / "selector_parent.parquet"
+    result = chain._assemble_final_selector_parent(
+        alpha_child=alpha,
+        labeled_spine_root=spine_root,
+        fundamentals_artifact=fundamentals,
+        output_path=output,
+        expected_base=expected,
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert result["row_count"] == 1
+    assert result["column_count"] == 182
+    assert pq.ParquetFile(output).schema_arrow.names == list(ALPHA_OUTPUT_SCHEMA)
+
+
+def test_final_assembly_rejects_future_fundamentals(tmp_path):
+    alpha, spine_root, fundamentals, expected = _final_assembly_fixture(
+        tmp_path, future_fundamentals=True
+    )
+    with pytest.raises(ValueError, match="future PIT fundamentals"):
+        chain._assemble_final_selector_parent(
+            alpha_child=alpha,
+            labeled_spine_root=spine_root,
+            fundamentals_artifact=fundamentals,
+            output_path=tmp_path / "selector_parent.parquet",
+            expected_base=expected,
+        )
+    assert not (tmp_path / "selector_parent.parquet").exists()
+
+
 def test_parent_preflight_plans_authoritative_bounded_namespaces(
     tmp_path, monkeypatch
 ):
@@ -330,12 +542,33 @@ def test_unknown_duplicate_and_changed_protected_values_fail_or_preserve(tmp_pat
     assert output[0]["actual_forward_return_10d"] == rows[0]["actual_forward_return_10d"]
 
 
-def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch):
+def test_production_build_blocks_when_final_schema_producer_is_unresolved(
+    tmp_path, monkeypatch
+):
     inputs = _fixture(tmp_path, monkeypatch)
     canonical_root = tmp_path / "canonical"
     canonical_root.mkdir()
     labeled_root = tmp_path / "labeled"
     labeled_root.mkdir()
+    spine_path = labeled_root / "symbol=A" / "spine.parquet"
+    spine_path.parent.mkdir()
+    pq.write_table(
+        pa.table(
+            {
+                "asset_id": ["asset-a"],
+                "canonical_symbol": ["A"],
+                "session_date": ["2026-01-02"],
+                "model_close": [100.0],
+                "source_provider": ["canonical"],
+                "compatibility_tier": ["TIER_A"],
+                "eligibility_reason": ["eligible"],
+                "selector_eligible": [True],
+                "provider_transition_flag": [False],
+                "provider_transition_id": [""],
+            }
+        ),
+        spine_path,
+    )
     labeled_manifest = tmp_path / "labeled.json"
     labeled_manifest.write_text(json.dumps({"status": "BUILT"}))
     inference_manifest = tmp_path / "inference.json"
@@ -358,39 +591,20 @@ def test_production_build_delegates_to_authoritative_owner(tmp_path, monkeypatch
     })
     config = tmp_path / "config.yaml"
     config.write_text("ml: {}\n")
-    observed = {}
-
-    class Paths:
-        enriched_parquet_path = tmp_path / "child.parquet"
-
-    def build(payload):
-        observed.update(payload["ml"])
-        return Paths()
-
-    import infrastructure.data.canonical_v2_alpha_enrichment as enrichment
-    monkeypatch.setattr(
-        enrichment, "write_partitioned_canonical_v2_alpha_features", build
+    plan = prepare_parent_chain_plan(
+        chain.ParentChainInputs(
+            **{**inputs.__dict__, "config_path": config}
+        )
     )
-    result = build_production_enriched_child(inputs, config_path=config)
-    assert result["status"] == "COMPLETE"
-    assert observed["stock_level_base_prediction_artifacts_path"] == str(
-        inputs.base_artifact.resolve()
-    )
-    assert observed["stock_alpha_feature_n_jobs"] == 6
-    assert observed["economic_target_id"] == "forward_return_10d"
-    assert observed["canonical_v2_labeled_spine_root"] == str(labeled_root.resolve())
-    assert observed["canonical_v2_alpha_base_manifest_path"] == str(
-        inputs.base_manifest.resolve()
-    )
-    assert result["alpha_namespaces"]["layout"] == "bounded_v1"
-    assert (
-        result["parent_lineage"]["canonical_daily_logical_checksum"]
-        == chain.APPROVED_CANONICAL_DAILY_HASH
-    )
-    assert (
-        result["parent_lineage"]["target_provenance_contract_version"]
-        == "stock_level_target_provenance_v2"
-    )
+    assert plan["status"] == "BLOCKED"
+    assert "FINAL_SCHEMA_PRODUCER_UNRESOLVED" in plan["blockers"]
+    assert sum(
+        row["expected_owner"] == "stock_fundamentals_pit_enrichment"
+        for row in plan["final_schema_assembly"]["unresolved_columns"]
+    ) == 53
+    with pytest.raises(ValueError, match="FINAL_SCHEMA_PRODUCER_UNRESOLVED"):
+        build_production_enriched_child(inputs, config_path=config)
+    assert not inputs.output_root.exists()
 
 
 def test_parent_publication_runbook_requires_explicit_v2_child():
