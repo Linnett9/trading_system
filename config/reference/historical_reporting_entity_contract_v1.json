@@ -1,0 +1,31 @@
+{
+  "contract_version": "historical_reporting_entity_mapping_v1",
+  "interval_semantics": "effective_start_date <= decision_date < effective_end_date (or open end), and knowledge_available_timestamp <= decision_timestamp",
+  "mapping_precedence": [
+    "versioned_manual_override",
+    "canonical_asset_registry_historical_identity",
+    "sec_issuer_temporal_evidence",
+    "provider_symbol_history",
+    "independently_proven_current_static_mapping"
+  ],
+  "current_static_mapping_authorizes_history": false,
+  "multiple_active_reporting_entities_per_asset": false,
+  "non_company_fundamentals_behavior": {
+    "fundamentals_snapshot_status": "not_applicable",
+    "feature_values": null,
+    "fundamental_coverage_count": 0,
+    "fundamental_missing_fraction": 1.0
+  },
+  "manual_override_requirements": [
+    "asset_id",
+    "canonical_symbol",
+    "reporting_entity_id",
+    "cik",
+    "effective_start_date",
+    "effective_end_date",
+    "knowledge_available_timestamp",
+    "reason",
+    "evidence_reference",
+    "review_status"
+  ]
+}

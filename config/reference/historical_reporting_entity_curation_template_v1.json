@@ -1,0 +1,28 @@
+{
+  "contract_version": "historical_reporting_entity_mapping_v1",
+  "records": [
+    {
+      "asset_id": "",
+      "canonical_symbol": "",
+      "security_type": "",
+      "reporting_entity_id": "",
+      "cik": "",
+      "mapping_status": "insufficient_historical_evidence",
+      "mapping_quality": "",
+      "effective_start_date": "",
+      "effective_end_date": "",
+      "knowledge_available_timestamp": "",
+      "source_identity": "",
+      "source_record_identity": "",
+      "evidence_type": "",
+      "issuer_name": "",
+      "former_symbol": "",
+      "successor_symbol": "",
+      "share_class": "",
+      "corporate_action_type": "",
+      "reason": "",
+      "evidence_reference": "",
+      "review_status": "pending"
+    }
+  ]
+}
