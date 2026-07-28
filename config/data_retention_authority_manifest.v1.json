@@ -1,0 +1,1104 @@
+{
+  "authority_domains": {
+    "adjusted_prices": {
+      "canonical_family_id": "adjusted_price_csv_collection",
+      "conflict_policy": "fail_closed_until_manifest_covers_every_file",
+      "fallback_policy": "no_unmanifested_adjusted_file_may_be_promoted",
+      "intended_authority": "data/reference/adjusted_prices/manifest.json after reconciliation"
+    },
+    "asset_identity": {
+      "canonical_family_id": "universe_registry_files",
+      "conflict_policy": "current_registry_is_lineage_only_for_history",
+      "fallback_policy": "PIT security master supersedes current static registry for historical decisions",
+      "intended_authority": "PIT security master once populated; current registry is static reference only"
+    },
+    "corporate_actions": {
+      "canonical_family_id": "pit_universe_authority_data",
+      "conflict_policy": "manual verified corporate-action records outrank inferred price gaps",
+      "fallback_policy": "unknown corporate action state is unresolved, not eligible",
+      "intended_authority": "PIT corporate-action lineage records"
+    },
+    "daily_prices": {
+      "canonical_family_id": "canonical_daily_v2",
+      "conflict_policy": "canonical_daily_v2 wins for canonical-v2 workflows; Stooq remains retained source input",
+      "fallback_policy": "stooq_processed_parquet is permitted only for legacy workflows explicitly configured for it",
+      "intended_authority": "canonical_daily_v2 full root plus COMPLETE build manifest"
+    },
+    "features": {
+      "canonical_family_id": "frozen_experiment_inputs",
+      "conflict_policy": "frozen feature inputs used by accepted runs outrank regenerable caches",
+      "fallback_policy": "regenerate caches from retained authorities and feature code",
+      "intended_authority": "feature-family manifests attached to frozen research datasets"
+    },
+    "frozen_research_datasets": {
+      "canonical_family_id": "frozen_experiment_inputs",
+      "conflict_policy": "accepted frozen dataset identity wins over same-shaped regenerated output",
+      "fallback_policy": "new immutable frozen package must cite superseded package before demotion",
+      "intended_authority": "immutable frozen dataset manifests"
+    },
+    "fundamentals": {
+      "canonical_family_id": "sec_fundamentals_raw_evidence",
+      "conflict_policy": "raw SEC evidence with checksums outranks derived fundamentals features",
+      "fallback_policy": "derived fundamentals are blocked when raw evidence provenance is missing",
+      "intended_authority": "SEC raw evidence manifests and future data/raw fundamentals layout"
+    },
+    "intraday_prices": {
+      "canonical_family_id": "alpaca_final_5m_store",
+      "conflict_policy": "final symbol/year archive wins for consumers; raw chunks remain immutable source evidence",
+      "fallback_policy": "converted chunks may feed rebuilds but are not canonical when final archive is valid",
+      "intended_authority": "Alpaca SIP 5m final symbol/year archive"
+    },
+    "model_binaries": {
+      "canonical_family_id": "model_binaries_finbert",
+      "conflict_policy": "content-addressed production model package outranks development probe copy",
+      "fallback_policy": "development copy remains until consumer configuration is redirected",
+      "intended_authority": "cache/ml/production/model_packages with content hash"
+    },
+    "news": {
+      "canonical_family_id": "news_canonical_exports_and_backups",
+      "conflict_policy": "contract/corpus manifests outrank timestamped backup naming",
+      "fallback_policy": "raw backups are retained until article-id/date coverage diff proves redundancy",
+      "intended_authority": "news contract and canonical corpus manifests"
+    },
+    "universe_membership": {
+      "canonical_family_id": "pit_universe_authority_data",
+      "conflict_policy": "effective-dated PIT membership outranks static current universe YAMLs",
+      "fallback_policy": "static universes return STATIC_UNCERTIFIED for historical decisions",
+      "intended_authority": "PIT universe membership intervals"
+    }
+  },
+  "cleanup_executed": false,
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "exact_duplicate_reviews": [
+    {
+      "cleanup_can_be_proposed_later": true,
+      "consumer_redirect_possible": true,
+      "content_addressed_storage_appropriate": true,
+      "group_id": "DUP-001",
+      "intended_canonical_path": "cache/ml/production/model_packages/ProsusAI--finbert/4556d13015211d73dccd3fdd39d39232506f3e43/pytorch_model.bin",
+      "known_consumers": [
+        "config/config.ticket_9b_finbert_real_model_probe.yaml currently points at the development model directory",
+        "production model package consumers may load the content-addressed production package"
+      ],
+      "lineage_or_packaging_requirement": "production package is required; development copy remains until config redirection is accepted",
+      "paths": [
+        "cache/ml/development/ticket_9b_finbert_real_model_probe/model/pytorch_model.bin",
+        "cache/ml/production/model_packages/ProsusAI--finbert/4556d13015211d73dccd3fdd39d39232506f3e43/pytorch_model.bin"
+      ],
+      "ticket37a_recoverable_bytes": 437992753
+    },
+    {
+      "cleanup_can_be_proposed_later": false,
+      "consumer_redirect_possible": false,
+      "content_addressed_storage_appropriate": false,
+      "group_id": "DUP-002",
+      "intended_canonical_path": "UNRESOLVED_KEEP_ALL_RUN_IDENTITIES",
+      "known_consumers": [
+        "selector alpha source rebinding publication review",
+        "run-specific reproducibility evidence"
+      ],
+      "lineage_or_packaging_requirement": "both run paths may be publication evidence until lineage owner declares a canonical run",
+      "paths": [
+        "reports/ml/selector_alpha_source_rebinding_production/run=20260723T_alpha_child_publication_numeric_replay_codex/output/stock_level_prediction_artifacts_enriched.parquet",
+        "reports/ml/selector_alpha_source_rebinding_production/run=20260724T_alpha_child_publication_launcher_recovery_codex/output/stock_level_prediction_artifacts_enriched.parquet"
+      ],
+      "ticket37a_recoverable_bytes": 169999757
+    },
+    {
+      "cleanup_can_be_proposed_later": true,
+      "consumer_redirect_possible": true,
+      "content_addressed_storage_appropriate": false,
+      "group_id": "DUP-003",
+      "intended_canonical_path": "reports/ml/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/stock_level_prediction_artifacts.csv",
+      "known_consumers": [
+        "benchmark report readers",
+        "development report readers"
+      ],
+      "lineage_or_packaging_requirement": "development copy may be demoted only after benchmark path is accepted as canonical evidence",
+      "paths": [
+        "reports/ml/regime_transformer_meta_ensemble_v1/stock_alpha/benchmark/stock_level_prediction_artifacts.csv",
+        "reports/ml/regime_transformer_meta_ensemble_v1/stock_alpha/dev/stock_level_prediction_artifacts.csv"
+      ],
+      "ticket37a_recoverable_bytes": 106129606
+    },
+    {
+      "cleanup_can_be_proposed_later": false,
+      "consumer_redirect_possible": false,
+      "content_addressed_storage_appropriate": false,
+      "group_id": "DUP-004",
+      "intended_canonical_path": "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet",
+      "known_consumers": [
+        "canonical-v2 large-history benchmark review",
+        "target provenance repair lineage review"
+      ],
+      "lineage_or_packaging_requirement": "pre-target-provenance repair copy is retained until repair acceptance evidence is superseded",
+      "paths": [
+        "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.parquet",
+        "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts.pre_target_provenance_repair.parquet"
+      ],
+      "ticket37a_recoverable_bytes": 102404260
+    }
+  ],
+  "families": [
+    {
+      "authority_precedence": "source evidence for Alpaca 5m; retained below final normalized archive",
+      "authority_role": "raw provider evidence for Alpaca SIP 5-minute bars",
+      "canonical_status": "SOURCE_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "raw evidence is not equivalent to converted or final parquet without deterministic rebuild proof",
+      "data_domain": "intraday_prices",
+      "evidence_reference": [
+        "Ticket 37A dataset_family_inventory.csv",
+        "config/config.alpaca_5m_symbol_year_finalizer_production.yaml:3"
+      ],
+      "expected_schema_or_manifest_reference": "raw chunk manifest.json files under data/raw/alpaca/stock_bars",
+      "expiry_or_rotation_policy": "append-only until immutable raw archive policy exists",
+      "family_id": "alpaca_raw_5m_archive",
+      "known_consumers": [
+        "scripts/convert_completed_alpaca_raw_chunks_to_parquet.py",
+        "Alpaca 5m provenance and finalizer diagnostics"
+      ],
+      "notes": "Ticket 37A measured about 1.95 GiB.",
+      "owner_or_responsible_component": "infrastructure/data/historical_bar_providers.py",
+      "path_pattern": "data/raw/alpaca/stock_bars/sip/5m",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "Alpaca historical bar backfill",
+      "rebuild_prerequisites": [
+        "provider entitlement",
+        "original request manifests",
+        "collection code and config"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "retain raw provider responses with checksum-backed cryptographic evidence",
+      "retention_classification": "RAW_IMMUTABLE_AUTHORITY",
+      "retention_requirement": "retain; no cleanup proposal without external archive and checksum manifest",
+      "storage_layer": "raw",
+      "unresolved_questions": [
+        "final long-term raw archive location"
+      ]
+    },
+    {
+      "authority_precedence": "intermediate below raw and final archive",
+      "authority_role": "converted chunk-level parquet used to build final symbol/year archive",
+      "canonical_status": "NON_CANONICAL",
+      "cleanup_confidence": "LOW",
+      "cleanup_eligibility": "REVIEW_ONLY",
+      "conflict_policy": "may not replace raw chunks or final archive",
+      "data_domain": "intraday_prices",
+      "evidence_reference": [
+        "Ticket 37A semantic overlap SEM-002",
+        "scripts/convert_completed_alpaca_raw_chunks_to_parquet.py:21-22"
+      ],
+      "expected_schema_or_manifest_reference": "converter output bars.parquet plus source chunk manifests",
+      "expiry_or_rotation_policy": "eligible for future review only after final archive validation",
+      "family_id": "alpaca_converted_chunks",
+      "known_consumers": [
+        "infrastructure/data/alpaca_5m_symbol_year_finalizer.py",
+        "Alpaca finalizer maintenance diagnostics"
+      ],
+      "notes": "Ticket 37A measured about 3.07 GiB.",
+      "owner_or_responsible_component": "scripts/convert_completed_alpaca_raw_chunks_to_parquet.py",
+      "path_pattern": "data/processed/alpaca/stock_bars_parquet/sip/5m",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "Alpaca raw chunk converter",
+      "rebuild_prerequisites": [
+        "raw Alpaca chunks",
+        "converter code version",
+        "conversion manifest filters"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "manifest and checksum proof required before demotion",
+      "retention_classification": "SEMANTIC_OVERLAP_REQUIRES_DIFF",
+      "retention_requirement": "retain pending finalizer retention decision",
+      "storage_layer": "processed",
+      "unresolved_questions": [
+        "whether converted chunks are cache or retained provenance"
+      ]
+    },
+    {
+      "authority_precedence": "canonical intraday consumer store when manifest-complete",
+      "authority_role": "final Alpaca SIP 5-minute symbol/year store",
+      "canonical_status": "CANONICAL_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "wins over converted chunks for consumers; raw remains source evidence",
+      "data_domain": "intraday_prices",
+      "evidence_reference": [
+        "Ticket 37A dataset family inventory",
+        "infrastructure/data/alpaca_5m_symbol_year_finalizer.py:43-45"
+      ],
+      "expected_schema_or_manifest_reference": "symbol=/year=/bars.parquet and finalizer partition manifests",
+      "expiry_or_rotation_policy": "retain all valid symbol/year partitions",
+      "family_id": "alpaca_final_5m_store",
+      "known_consumers": [
+        "intraday research",
+        "Alpaca readiness and reconciliation",
+        "canonical daily support diagnostics"
+      ],
+      "notes": "Ticket 37A measured about 6.85 GiB.",
+      "owner_or_responsible_component": "infrastructure/data/alpaca_5m_symbol_year_finalizer.py",
+      "path_pattern": "data/processed/alpaca/symbol_bars/sip/5m",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "Alpaca 5m symbol-year finalizer",
+      "rebuild_prerequisites": [
+        "raw chunks",
+        "converted chunks or converter",
+        "asset registry",
+        "finalizer configuration"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "partition manifests and checksums required",
+      "retention_classification": "DERIVED_REQUIRED",
+      "retention_requirement": "retain as intraday canonical store",
+      "storage_layer": "processed",
+      "unresolved_questions": [
+        "complete validation status for every partition"
+      ]
+    },
+    {
+      "authority_precedence": "unknown legacy source; below documented Alpaca authority",
+      "authority_role": "legacy non-Alpaca raw 5-minute text data",
+      "canonical_status": "NON_CANONICAL",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "unknown provenance fails closed",
+      "data_domain": "intraday_prices",
+      "evidence_reference": [
+        "Ticket 37A dataset family inventory"
+      ],
+      "expected_schema_or_manifest_reference": "unknown raw text layout",
+      "expiry_or_rotation_policy": "none until source is identified",
+      "family_id": "legacy_raw_5m_text",
+      "known_consumers": [
+        "potential market_parquet import path"
+      ],
+      "notes": "Ticket 37A measured about 2.86 GiB.",
+      "owner_or_responsible_component": "application/services/market_parquet_commands.py",
+      "path_pattern": "data/raw/5m/5 min/us",
+      "pit_or_knowledge_time_significance": "POSSIBLE_LOOKAHEAD_RISK",
+      "producer_or_provider": "unknown legacy market-data provider",
+      "rebuild_prerequisites": [
+        "identify original provider",
+        "identify import configs",
+        "consumer inventory"
+      ],
+      "rebuildability": "UNKNOWN",
+      "reproducibility_requirement": "provider and checksum manifest required before any cleanup",
+      "retention_classification": "UNKNOWN_DO_NOT_DELETE",
+      "retention_requirement": "retain until classified",
+      "storage_layer": "raw",
+      "unresolved_questions": [
+        "provider identity",
+        "whether any current consumer still imports it"
+      ]
+    },
+    {
+      "authority_precedence": "canonical daily price authority for canonical-v2 workflows",
+      "authority_role": "canonical daily price and selector-eligibility row store",
+      "canonical_status": "CANONICAL_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "wins for canonical-v2 workflows when manifest status is COMPLETE",
+      "data_domain": "daily_prices",
+      "evidence_reference": [
+        "reports/data_lineage/canonical_daily_v2/build_manifest.json",
+        "core/research/ml/stock_level/prediction_artifacts/sources.py:70-107"
+      ],
+      "expected_schema_or_manifest_reference": "reports/data_lineage/canonical_daily_v2/build_manifest.json",
+      "expiry_or_rotation_policy": "append versioned replacements only after manifest and lineage comparison",
+      "family_id": "canonical_daily_v2",
+      "known_consumers": [
+        "stock-level prediction artifacts",
+        "canonical_v2_alpha_enrichment.py",
+        "canonical_daily_v2_spines.py"
+      ],
+      "notes": "Ticket 37A reported COMPLETE manifest, 4,132,023 rows, 514 symbols.",
+      "owner_or_responsible_component": "infrastructure/data/canonical_daily_v2_builder.py",
+      "path_pattern": "data/processed/market_data/canonical_daily_v2/full",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "canonical_daily_v2 builder from Stooq, Alpaca daily, residual quarantines, and registry",
+      "rebuild_prerequisites": [
+        "Stooq processed parquet",
+        "Alpaca daily archive",
+        "provider residual reports",
+        "canonical asset registry",
+        "builder code"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "complete manifest, validation summary, source checksums",
+      "retention_classification": "CANONICAL_NORMALIZED",
+      "retention_requirement": "retain current complete canonical build",
+      "storage_layer": "processed",
+      "unresolved_questions": []
+    },
+    {
+      "authority_precedence": "candidate below canonical_daily_v2 until diffed",
+      "authority_role": "parallel repair candidate for canonical daily v2",
+      "canonical_status": "PENDING_CANONICAL_DECISION",
+      "cleanup_confidence": "LOW",
+      "cleanup_eligibility": "REVIEW_ONLY",
+      "conflict_policy": "matching partition counts are not equivalence evidence",
+      "data_domain": "daily_prices",
+      "evidence_reference": [
+        "Ticket 37A semantic overlap SEM-001"
+      ],
+      "expected_schema_or_manifest_reference": "candidate build manifest or row checksum diff",
+      "expiry_or_rotation_policy": "retain until row-key and value diff proves supersession",
+      "family_id": "seven_row_canonical_daily_candidate",
+      "known_consumers": [
+        "no direct consumer found by Ticket 37A bounded search"
+      ],
+      "notes": "Ticket 37A found same file count and about 560 MiB, but different metadata signature.",
+      "owner_or_responsible_component": "infrastructure/data/canonical_daily_v2_builder.py",
+      "path_pattern": "data/processed/market_data/canonical_daily_v2_seven_row_candidate_20260721T214504Z/full",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "canonical daily repair workflow",
+      "rebuild_prerequisites": [
+        "candidate manifest",
+        "current canonical manifest",
+        "row-key diff tooling"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "row-key proof and value comparison manifest before consolidation",
+      "retention_classification": "SEMANTIC_OVERLAP_REQUIRES_DIFF",
+      "retention_requirement": "retain pending diff",
+      "storage_layer": "processed",
+      "unresolved_questions": [
+        "promotion state",
+        "exact seven-row repair identity"
+      ]
+    },
+    {
+      "authority_precedence": "raw source evidence for daily Stooq",
+      "authority_role": "raw Stooq daily source archive",
+      "canonical_status": "SOURCE_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "raw source is not replaced by processed parquet",
+      "data_domain": "daily_prices",
+      "evidence_reference": [
+        "docs/data_lineage.md:14",
+        "infrastructure/data/stooq_bulk_importer.py:58-64"
+      ],
+      "expected_schema_or_manifest_reference": "Stooq raw ASCII files and importer report",
+      "expiry_or_rotation_policy": "retain immutable raw source",
+      "family_id": "stooq_daily_raw_store",
+      "known_consumers": [
+        "StooqBulkImporter"
+      ],
+      "notes": "Ticket 37A measured about 1.72 GiB for raw US daily tree.",
+      "owner_or_responsible_component": "infrastructure/data/stooq_bulk_importer.py",
+      "path_pattern": "data/raw/stooq_bulk/data/daily/us",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "Stooq bulk provider",
+      "rebuild_prerequisites": [
+        "external Stooq availability",
+        "bulk archive identity"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "source archive checksum manifest",
+      "retention_classification": "RAW_IMMUTABLE_AUTHORITY",
+      "retention_requirement": "retain as raw authority",
+      "storage_layer": "raw",
+      "unresolved_questions": [
+        "original zip identity"
+      ]
+    },
+    {
+      "authority_precedence": "legacy daily input and fallback below canonical_daily_v2 for canonical workflows",
+      "authority_role": "processed Stooq daily parquet store",
+      "canonical_status": "LEGACY_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "permitted only for workflows explicitly configured for stooq_parquet",
+      "data_domain": "daily_prices",
+      "evidence_reference": [
+        "config/config_defaults_ml.py:12-17",
+        "infrastructure/data/stooq_parquet_data_feed.py:10-13"
+      ],
+      "expected_schema_or_manifest_reference": "stooq_bulk_import.json or per-symbol parquet schema",
+      "expiry_or_rotation_policy": "retain while defaults or audits consume it",
+      "family_id": "stooq_daily_processed_store",
+      "known_consumers": [
+        "StooqParquetDataFeed",
+        "stock-level artifacts",
+        "dual momentum",
+        "canonical_daily_v2 builder"
+      ],
+      "notes": "Ticket 37A measured about 134.71 MiB.",
+      "owner_or_responsible_component": "infrastructure/data/stooq_parquet_data_feed.py",
+      "path_pattern": "data/processed/stooq_parquet",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "StooqBulkImporter",
+      "rebuild_prerequisites": [
+        "raw Stooq archive",
+        "importer settings"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "import manifest and source checksums",
+      "retention_classification": "DERIVED_REQUIRED",
+      "retention_requirement": "retain while active consumers exist",
+      "storage_layer": "processed",
+      "unresolved_questions": []
+    },
+    {
+      "authority_precedence": "legacy provider below canonical_daily_v2 and stooq_parquet unless explicitly configured",
+      "authority_role": "legacy market_parquet daily layout",
+      "canonical_status": "NON_CANONICAL",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "consumer-dependent; no silent replacement by flat Stooq or canonical_daily_v2",
+      "data_domain": "daily_prices",
+      "evidence_reference": [
+        "application/services/market_parquet_commands.py:15-94",
+        "infrastructure/data/market_parquet.py:568-586"
+      ],
+      "expected_schema_or_manifest_reference": "market_parquet_import.json",
+      "expiry_or_rotation_policy": "retain until every active market_parquet consumer is migrated",
+      "family_id": "market_parquet_daily_store",
+      "known_consumers": [
+        "MarketParquetDataFeed",
+        "dual momentum local data comparisons",
+        "online ML commands"
+      ],
+      "notes": "Part of legacy data/processed symbol trees.",
+      "owner_or_responsible_component": "infrastructure/data/market_parquet.py",
+      "path_pattern": "data/processed/<symbol>/1Day/bars.parquet",
+      "pit_or_knowledge_time_significance": "POSSIBLE_LOOKAHEAD_RISK",
+      "producer_or_provider": "market_parquet importer",
+      "rebuild_prerequisites": [
+        "raw daily source",
+        "market_parquet import configuration",
+        "consumer migration plan"
+      ],
+      "rebuildability": "UNKNOWN",
+      "reproducibility_requirement": "source and import report required",
+      "retention_classification": "LEGACY_CONSUMER_DEPENDENT",
+      "retention_requirement": "retain until consumer inventory is complete",
+      "storage_layer": "processed",
+      "unresolved_questions": [
+        "complete active consumer list"
+      ]
+    },
+    {
+      "authority_precedence": "legacy processed tree below named canonical roots",
+      "authority_role": "legacy processed-symbol trees across timeframes",
+      "canonical_status": "NON_CANONICAL",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "unknown symbol/timeframe consumers fail closed",
+      "data_domain": "mixed_prices",
+      "evidence_reference": [
+        "Ticket 37A dataset_family_inventory.csv"
+      ],
+      "expected_schema_or_manifest_reference": "data/processed/<symbol>/<timeframe>/bars.parquet",
+      "expiry_or_rotation_policy": "retain pending migration and consumer proof",
+      "family_id": "legacy_processed_symbol_trees",
+      "known_consumers": [
+        "MarketParquetDataFeed",
+        "dual momentum local comparisons",
+        "online ML commands"
+      ],
+      "notes": "Ticket 37A measured about 1.96 GiB excluding named roots.",
+      "owner_or_responsible_component": "infrastructure/data/market_parquet.py",
+      "path_pattern": "data/processed/<symbol>/<timeframe>/bars.parquet",
+      "pit_or_knowledge_time_significance": "POSSIBLE_LOOKAHEAD_RISK",
+      "producer_or_provider": "legacy market_parquet and historical importers",
+      "rebuild_prerequisites": [
+        "per-timeframe raw source",
+        "import reports",
+        "consumer migration proof"
+      ],
+      "rebuildability": "UNKNOWN",
+      "reproducibility_requirement": "deterministic import proof before demotion",
+      "retention_classification": "LEGACY_CONSUMER_DEPENDENT",
+      "retention_requirement": "retain pending migration",
+      "storage_layer": "processed",
+      "unresolved_questions": [
+        "which symbols/timeframes remain active"
+      ]
+    },
+    {
+      "authority_precedence": "adjusted price authority blocked until manifest/file mismatch is resolved",
+      "authority_role": "adjusted-price CSV collection and manifest",
+      "canonical_status": "PENDING_CANONICAL_DECISION",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "manifest wins only for files it enumerates; unmanifested files are quarantined by policy",
+      "data_domain": "adjusted_prices",
+      "evidence_reference": [
+        "Ticket 37A adjusted price inspection",
+        "application/services/adjusted_price_commands.py"
+      ],
+      "expected_schema_or_manifest_reference": "data/reference/adjusted_prices/manifest.json",
+      "expiry_or_rotation_policy": "no rotation until manifest covers all files",
+      "family_id": "adjusted_price_csv_collection",
+      "known_consumers": [
+        "adjusted replay alignment audits",
+        "adjusted data comparison audits"
+      ],
+      "notes": "Ticket 37A found 359 CSV files on disk and manifest coverage for 28 symbols.",
+      "owner_or_responsible_component": "application/services/adjusted_price_commands.py",
+      "path_pattern": "data/reference/adjusted_prices",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "Yahoo adjusted price importer",
+      "rebuild_prerequisites": [
+        "provider availability",
+        "complete symbol list",
+        "manifest reconciliation"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "every CSV requires manifest row and checksum",
+      "retention_classification": "SEMANTIC_OVERLAP_REQUIRES_DIFF",
+      "retention_requirement": "retain all files pending manifest reconciliation",
+      "storage_layer": "reference",
+      "unresolved_questions": [
+        "source of the 331 unmanifested CSV files"
+      ]
+    },
+    {
+      "authority_precedence": "raw news exports feed contracts; contracts/corpora are canonical only with manifests",
+      "authority_role": "news raw exports, canonical exports, and timestamped backups",
+      "canonical_status": "SOURCE_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "backup names do not prove equivalence; article-id/date diff required",
+      "data_domain": "news",
+      "evidence_reference": [
+        "Ticket 37A data/news supplemental scan",
+        "config/config.stock_alpha_news_contract_ingest_real_template.yaml:2-3"
+      ],
+      "expected_schema_or_manifest_reference": "news contract ingest manifest and canonical corpus manifest",
+      "expiry_or_rotation_policy": "timestamped backups reviewable only after article-level diff",
+      "family_id": "news_canonical_exports_and_backups",
+      "known_consumers": [
+        "news contract ingest",
+        "news feature builders",
+        "news provider audits"
+      ],
+      "notes": "Ticket 37A found no exact duplicate groups under data/news.",
+      "owner_or_responsible_component": "core/research/ml/stock_level/news_sources",
+      "path_pattern": "data/news",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "stock_alpha news collection and ingest workflows",
+      "rebuild_prerequisites": [
+        "provider entitlement",
+        "article IDs",
+        "published and available timestamps"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "provider, article, and availability timestamps retained with manifest and checksum evidence",
+      "retention_classification": "RAW_RETAIN_FOR_REPROCESSING",
+      "retention_requirement": "retain raw/current plus backups until diffed",
+      "storage_layer": "raw",
+      "unresolved_questions": [
+        "which backup is the accepted raw source"
+      ]
+    },
+    {
+      "authority_precedence": "raw SEC evidence outranks derived fundamentals features",
+      "authority_role": "SEC and fundamentals raw evidence",
+      "canonical_status": "SOURCE_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "raw evidence under reports is still raw authority; not disposable report output",
+      "data_domain": "fundamentals",
+      "evidence_reference": [
+        "Ticket 37A authority finding",
+        "core/research/ml/stock_level/stock_fundamentals.py"
+      ],
+      "expected_schema_or_manifest_reference": "future data/raw/fundamentals manifest and SEC companyfacts checksums",
+      "expiry_or_rotation_policy": "retain until migrated to immutable raw authority layout",
+      "family_id": "sec_fundamentals_raw_evidence",
+      "known_consumers": [
+        "stock fundamentals feature builders",
+        "SEC event/news coverage"
+      ],
+      "notes": "Ticket 37A found large SEC source evidence stored under reports.",
+      "owner_or_responsible_component": "core/research/ml/stock_level/stock_fundamentals.py",
+      "path_pattern": "reports/data_sources/sec_edgar;reports/ml/development/<sec_ticket>/raw",
+      "pit_or_knowledge_time_significance": "KNOWLEDGE_TIME_CRITICAL",
+      "producer_or_provider": "SEC EDGAR and stock fundamentals workflows",
+      "rebuild_prerequisites": [
+        "SEC provider availability",
+        "CIK mapping",
+        "request manifests"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "raw checksums and request manifests required",
+      "retention_classification": "RAW_IMMUTABLE_AUTHORITY",
+      "retention_requirement": "retain; migrate future raw evidence out of reports",
+      "storage_layer": "reports",
+      "unresolved_questions": [
+        "future canonical raw fundamentals root"
+      ]
+    },
+    {
+      "authority_precedence": "cache below frozen feature datasets and source authorities",
+      "authority_role": "large ML feature-bank cache files",
+      "canonical_status": "CACHE_NON_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "unknown producer/consumer fails closed",
+      "data_domain": "features",
+      "evidence_reference": [
+        "Ticket 37A cache_ml_features finding"
+      ],
+      "expected_schema_or_manifest_reference": "unknown; producer manifest required",
+      "expiry_or_rotation_policy": "none until producer and consumers are identified",
+      "family_id": "ml_feature_banks",
+      "known_consumers": [
+        "unknown direct consumer from bounded search"
+      ],
+      "notes": "Ticket 37A measured about 2.84 GiB in cache/ml/features.",
+      "owner_or_responsible_component": "core/research/ml/features",
+      "path_pattern": "cache/ml/features",
+      "pit_or_knowledge_time_significance": "POSSIBLE_LOOKAHEAD_RISK",
+      "producer_or_provider": "unknown feature-bank producer",
+      "rebuild_prerequisites": [
+        "producer identification",
+        "source authority versions",
+        "feature code and configuration"
+      ],
+      "rebuildability": "UNKNOWN",
+      "reproducibility_requirement": "producer manifest before cleanup review",
+      "retention_classification": "UNKNOWN_DO_NOT_DELETE",
+      "retention_requirement": "retain until classified",
+      "storage_layer": "cache",
+      "unresolved_questions": [
+        "producer",
+        "current consumers",
+        "feature schema version"
+      ]
+    },
+    {
+      "authority_precedence": "accepted frozen package outranks regenerable caches and same-shaped reruns",
+      "authority_role": "frozen experiment input/readiness datasets",
+      "canonical_status": "FROZEN_EVIDENCE",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "do not demote without signed superseding frozen package",
+      "data_domain": "frozen_research_datasets",
+      "evidence_reference": [
+        "reports/ml/readiness/canonical_v2_selector_dataset_v1/frozen",
+        "Ticket 37A dataset family inventory"
+      ],
+      "expected_schema_or_manifest_reference": "frozen dataset manifest and row identity checksum",
+      "expiry_or_rotation_policy": "retain permanently unless superseded by explicit acceptance reference",
+      "family_id": "frozen_experiment_inputs",
+      "known_consumers": [
+        "readiness review",
+        "promotion review",
+        "acceptance evidence"
+      ],
+      "notes": "Ticket 37A measured about 1.01 GiB for canonical-v2 selector frozen dataset.",
+      "owner_or_responsible_component": "core/research/ml/stock_level",
+      "path_pattern": "reports/ml/readiness/<dataset_id>/frozen",
+      "pit_or_knowledge_time_significance": "FROZEN_REPRODUCIBILITY",
+      "producer_or_provider": "selector readiness freeze workflow",
+      "rebuild_prerequisites": [
+        "all source authority versions",
+        "freeze config",
+        "code commit",
+        "row identity checksum"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "explicit immutable identity required",
+      "retention_classification": "FROZEN_EXPERIMENT_INPUT",
+      "retention_requirement": "retain frozen acceptance inputs",
+      "storage_layer": "reports",
+      "unresolved_questions": []
+    },
+    {
+      "authority_precedence": "acceptance and ledger evidence outranks regenerable reports",
+      "authority_role": "reproducibility-critical reports and acceptance evidence",
+      "canonical_status": "FROZEN_EVIDENCE",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "reports tied to ledger, promotion, DSR/PBO, or ticket acceptance are not disposable",
+      "data_domain": "reports",
+      "evidence_reference": [
+        "Ticket 37A report retention finding"
+      ],
+      "expected_schema_or_manifest_reference": "experiment ledger, run manifest, or ticket acceptance reference",
+      "expiry_or_rotation_policy": "permanent unless superseded by tracked acceptance reference",
+      "family_id": "reproducibility_critical_reports",
+      "known_consumers": [
+        "experiment ledger",
+        "promotion framework",
+        "ticket acceptance review"
+      ],
+      "notes": "Includes reports under reports/audits and reports/ml/readiness when used as evidence.",
+      "owner_or_responsible_component": "core/research/ml/stock_level/run_manifest",
+      "path_pattern": "reports/<evidence_family>/<run_or_ticket_id>",
+      "pit_or_knowledge_time_significance": "FROZEN_REPRODUCIBILITY",
+      "producer_or_provider": "research report writers",
+      "rebuild_prerequisites": [
+        "source data",
+        "config",
+        "code commit",
+        "ledger event"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "original report hash or immutable replacement",
+      "retention_classification": "REPORT_ACCEPTANCE_EVIDENCE",
+      "retention_requirement": "retain acceptance evidence",
+      "storage_layer": "reports",
+      "unresolved_questions": [
+        "complete ledger-to-report keep list"
+      ]
+    },
+    {
+      "authority_precedence": "below acceptance evidence and frozen inputs",
+      "authority_role": "reproducible intermediate report runs",
+      "canonical_status": "NON_CANONICAL",
+      "cleanup_confidence": "LOW",
+      "cleanup_eligibility": "REVIEW_ONLY",
+      "conflict_policy": "not disposable without source/config/code and consumer proof",
+      "data_domain": "reports",
+      "evidence_reference": [
+        "Ticket 37A reports/ml semantic overlap finding"
+      ],
+      "expected_schema_or_manifest_reference": "run manifest or command config",
+      "expiry_or_rotation_policy": "future cleanup batch after report classification",
+      "family_id": "regenerable_report_runs",
+      "known_consumers": [
+        "human review",
+        "benchmark comparisons"
+      ],
+      "notes": "Includes repeatable development/benchmark outputs only after acceptance evidence is excluded.",
+      "owner_or_responsible_component": "application/services/ml_commands_batch.py",
+      "path_pattern": "reports/ml/<run_family>/<run_id>",
+      "pit_or_knowledge_time_significance": "FROZEN_REPRODUCIBILITY",
+      "producer_or_provider": "ML research commands",
+      "rebuild_prerequisites": [
+        "run config",
+        "source data authority versions",
+        "code commit"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "manifest-backed rebuild proof",
+      "retention_classification": "REPORT_REGENERABLE",
+      "retention_requirement": "retain pending evidence classification",
+      "storage_layer": "reports",
+      "unresolved_questions": [
+        "which report runs are ledger or promotion evidence"
+      ]
+    },
+    {
+      "authority_precedence": "production content-addressed package outranks development duplicate",
+      "authority_role": "model binaries including duplicate FinBERT files",
+      "canonical_status": "CANONICAL_AUTHORITY",
+      "cleanup_confidence": "MEDIUM",
+      "cleanup_eligibility": "REVIEW_ONLY",
+      "conflict_policy": "do not remove development copy until probe config redirects or packaging proves offline loading",
+      "data_domain": "model_binaries",
+      "evidence_reference": [
+        "Ticket 37A exact duplicate group 1",
+        "config/config.ticket_9b_finbert_real_model_probe.yaml:14-15"
+      ],
+      "expected_schema_or_manifest_reference": "model package manifest or HuggingFace revision hash",
+      "expiry_or_rotation_policy": "future content-addressed storage review",
+      "family_id": "model_binaries_finbert",
+      "known_consumers": [
+        "FinBERT real model probe",
+        "production model package loaders"
+      ],
+      "notes": "Exact duplicate is not deleted in this ticket.",
+      "owner_or_responsible_component": "core/research/ml/stock_level/stock_alpha_finbert_news.py",
+      "path_pattern": "cache/ml/development/ticket_9b_finbert_real_model_probe/model;cache/ml/production/model_packages/<model>/<revision>",
+      "pit_or_knowledge_time_significance": "NONE",
+      "producer_or_provider": "FinBERT model package/probe workflow",
+      "rebuild_prerequisites": [
+        "model revision",
+        "tokenizer files",
+        "offline package manifest"
+      ],
+      "rebuildability": "EXTERNAL_PROVIDER_DEPENDENT",
+      "reproducibility_requirement": "content hash and model revision must be retained",
+      "retention_classification": "EXACT_DUPLICATE_PENDING_CANONICAL_PATH",
+      "retention_requirement": "retain both copies until redirect proof",
+      "storage_layer": "cache",
+      "unresolved_questions": [
+        "all offline model-loading paths"
+      ]
+    },
+    {
+      "authority_precedence": "PIT authority outranks these static current references for history",
+      "authority_role": "current static universe YAMLs, asset registry, and provider aliases",
+      "canonical_status": "STATIC_UNCERTIFIED",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "static universes cannot certify historical membership",
+      "data_domain": "asset_identity",
+      "evidence_reference": [
+        "data/reference/universes/*.yaml",
+        "core/research/ml/reference/canonical_assets.py:301-319"
+      ],
+      "expected_schema_or_manifest_reference": "canonical_asset_registry.csv and provider_symbol_aliases.csv",
+      "expiry_or_rotation_policy": "retain current static references; version PIT replacements separately",
+      "family_id": "universe_registry_files",
+      "known_consumers": [
+        "stock-alpha artifacts",
+        "Alpaca finalizer",
+        "news collection configs",
+        "fundamentals collection"
+      ],
+      "notes": "Ticket 37A found all 514 registry assets active with open-ended validity.",
+      "owner_or_responsible_component": "core/research/ml/reference/canonical_assets.py",
+      "path_pattern": "data/reference/universes;data/reference/assets",
+      "pit_or_knowledge_time_significance": "STATIC_CURRENT_ONLY",
+      "producer_or_provider": "Stooq inventory and canonical asset registry builder",
+      "rebuild_prerequisites": [
+        "current universe YAML",
+        "provider symbol maps"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "registry version and content hash",
+      "retention_classification": "LEGACY_CONSUMER_DEPENDENT",
+      "retention_requirement": "retain, but do not treat as historical authority",
+      "storage_layer": "reference",
+      "unresolved_questions": [
+        "historical security master population"
+      ]
+    },
+    {
+      "authority_precedence": "intended canonical universe membership and corporate-action authority",
+      "authority_role": "future production-scale PIT universe authority",
+      "canonical_status": "CANONICAL_AUTHORITY",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "effective-dated records and precedence policy decide; static snapshots are derived caches only",
+      "data_domain": "universe_membership",
+      "evidence_reference": [
+        "Ticket 37B PIT universe storage requirement",
+        "core/research/ml/reference/pit_universe_authority.py"
+      ],
+      "expected_schema_or_manifest_reference": "manifest.json, security_master, membership, symbol_history, corporate_actions",
+      "expiry_or_rotation_policy": "append-only authority versions; never mutate prior versions",
+      "family_id": "pit_universe_authority_data",
+      "known_consumers": [
+        "future PIT universe queries",
+        "historical artifact builders",
+        "promotion gates"
+      ],
+      "notes": "Daily snapshots are allowed only as regenerable derived caches.",
+      "owner_or_responsible_component": "core/research/ml/reference/pit_universe_authority.py",
+      "path_pattern": "data/reference/pit_universe_authority/<universe_id>/<authority_version>",
+      "pit_or_knowledge_time_significance": "PIT_CRITICAL",
+      "producer_or_provider": "PIT security master and membership population workflow",
+      "rebuild_prerequisites": [
+        "source authority records",
+        "recorded_at timestamps",
+        "source checksums"
+      ],
+      "rebuildability": "NOT_REBUILDABLE_FROM_LOCAL_STATE",
+      "reproducibility_requirement": "append-only versioned manifests and source checksums",
+      "retention_classification": "CANONICAL_NORMALIZED",
+      "retention_requirement": "retain as source of truth for historical universe",
+      "storage_layer": "reference",
+      "unresolved_questions": [
+        "production source population coverage"
+      ]
+    },
+    {
+      "authority_precedence": "test-only evidence",
+      "authority_role": "small deterministic fixtures for validation",
+      "canonical_status": "FROZEN_EVIDENCE",
+      "cleanup_confidence": "FAIL_CLOSED",
+      "cleanup_eligibility": "NOT_ELIGIBLE",
+      "conflict_policy": "fixtures are not production data and must not be collapsed with production authorities",
+      "data_domain": "test_fixtures",
+      "evidence_reference": [
+        "tests/fixtures/pit_universe_authority"
+      ],
+      "expected_schema_or_manifest_reference": "fixture README and fixture manifest",
+      "expiry_or_rotation_policy": "retain with tests until fixture superseded by reviewed fixture",
+      "family_id": "test_fixtures",
+      "known_consumers": [
+        "pytest validation"
+      ],
+      "notes": "Fixtures are small and tracked when useful for tests.",
+      "owner_or_responsible_component": "tests",
+      "path_pattern": "tests/fixtures/<fixture_family>",
+      "pit_or_knowledge_time_significance": "FROZEN_REPRODUCIBILITY",
+      "producer_or_provider": "test fixture authors",
+      "rebuild_prerequisites": [
+        "test contract",
+        "expected behavior"
+      ],
+      "rebuildability": "REBUILDABLE_WITH_PREREQUISITES",
+      "reproducibility_requirement": "fixture contents remain deterministic",
+      "retention_classification": "FROZEN_EXPERIMENT_INPUT",
+      "retention_requirement": "retain for focused validation",
+      "storage_layer": "tests",
+      "unresolved_questions": []
+    }
+  ],
+  "manifest_contract_version": "data_retention_authority_manifest.v1",
+  "proposed_cleanup_batches": [
+    {
+      "batch_id": "BATCH-01",
+      "confidence": "MEDIUM",
+      "proof_required": [
+        "consumer redirect proof",
+        "canonical keep-copy approval",
+        "no offline-loading regression"
+      ],
+      "scope": "exact duplicate review for FinBERT and obvious report duplicates"
+    },
+    {
+      "batch_id": "BATCH-02",
+      "confidence": "MEDIUM_LOW",
+      "proof_required": [
+        "row-key comparison",
+        "value comparison",
+        "manifest identity comparison"
+      ],
+      "scope": "canonical_daily_v2 seven-row candidate"
+    },
+    {
+      "batch_id": "BATCH-03",
+      "confidence": "LOW",
+      "proof_required": [
+        "final archive completeness",
+        "raw chunk retention",
+        "deterministic rebuild proof",
+        "consumer path verification"
+      ],
+      "scope": "Alpaca converted chunk parquet"
+    },
+    {
+      "batch_id": "BATCH-04",
+      "confidence": "LOW",
+      "proof_required": [
+        "ledger keep-list",
+        "promotion evidence keep-list",
+        "source/config/code rebuild proof"
+      ],
+      "scope": "regenerable report runs"
+    },
+    {
+      "batch_id": "BATCH-05",
+      "confidence": "FAIL_CLOSED",
+      "proof_required": [
+        "producer identification",
+        "consumer inventory",
+        "feature schema and source authority versions"
+      ],
+      "scope": "cache/ml/features"
+    },
+    {
+      "batch_id": "BATCH-06",
+      "confidence": "FAIL_CLOSED",
+      "proof_required": [
+        "provider identity",
+        "consumer migration",
+        "source and import manifests"
+      ],
+      "scope": "legacy raw 5m and legacy market_parquet trees"
+    }
+  ],
+  "semantic_overlap_reviews": [
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-001",
+      "proof_required": [
+        "row-key comparison",
+        "value comparison",
+        "schema comparison",
+        "date and symbol coverage comparison",
+        "manifest and checksum comparison"
+      ],
+      "scope": "canonical_daily_v2 full versus seven-row candidate"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-002",
+      "proof_required": [
+        "raw-to-converted deterministic rebuild proof",
+        "converted-to-final partition completeness proof",
+        "consumer-path verification"
+      ],
+      "scope": "Alpaca raw, converted, and final 5-minute stores"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-003",
+      "proof_required": [
+        "schema comparison",
+        "adjusted-versus-unadjusted policy comparison",
+        "date and symbol coverage comparison",
+        "configured consumer path verification"
+      ],
+      "scope": "Stooq, canonical daily v2, and market_parquet daily layouts"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-004",
+      "proof_required": [
+        "ledger evidence classification",
+        "run manifest comparison",
+        "source/config/code reproducibility proof"
+      ],
+      "scope": "large report regeneration families"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-005",
+      "proof_required": [
+        "article-id comparison",
+        "published-at and available-at comparison",
+        "symbol coverage comparison",
+        "provider entitlement reproducibility"
+      ],
+      "scope": "news backups and canonical exports"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-006",
+      "proof_required": [
+        "manifest row for every adjusted CSV",
+        "checksum for every adjusted CSV",
+        "adjustment policy comparison"
+      ],
+      "scope": "adjusted price CSV collection"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-007",
+      "proof_required": [
+        "row-key comparison",
+        "canonical corpus manifest comparison",
+        "consumer-path verification"
+      ],
+      "scope": "stock-alpha news canonical corpus report copies"
+    },
+    {
+      "consolidation_allowed": false,
+      "overlap_id": "SEM-008",
+      "proof_required": [
+        "CIK-level checksum comparison",
+        "request manifest comparison",
+        "raw authority migration plan"
+      ],
+      "scope": "SEC companyfacts raw evidence under reports"
+    }
+  ],
+  "source_audit": {
+    "classification": "Not cleanup-certified; authority consolidation required before destructive cleanup.",
+    "preserved_artifact_root": "reports/audits/ticket_37a_data_footprint_audit_20260728",
+    "ticket_id": "Ticket 37A",
+    "tracked_acceptance_reference": "docs/audits/ticket_37a_data_footprint_acceptance_reference.json"
+  },
+  "unresolved_families": [
+    "legacy_raw_5m_text",
+    "seven_row_canonical_daily_candidate",
+    "market_parquet_daily_store",
+    "legacy_processed_symbol_trees",
+    "adjusted_price_csv_collection",
+    "ml_feature_banks",
+    "regenerable_report_runs"
+  ]
+}

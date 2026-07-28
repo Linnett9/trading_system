@@ -1,0 +1,28 @@
+{
+  "audit_date": "2026-07-28",
+  "classification": "Not cleanup-certified; authority consolidation required before destructive cleanup.",
+  "cleanup_executed": false,
+  "headline_figures": {
+    "confirmed_exact_duplicate_groups": 200,
+    "data_processed_gib": 13.12,
+    "data_raw_gib": 6.58,
+    "exact_duplicate_one_copy_recovery_gib": 1.28,
+    "reports_gib": 17.22,
+    "review_only_candidates_gib": 20.03,
+    "scoped_file_count": 248859,
+    "scoped_total_gib": 40.89
+  },
+  "preserved_artifacts": {
+    "local_artifact_root": "reports/audits/ticket_37a_data_footprint_audit_20260728",
+    "preserved_json": {
+      "path": "reports/audits/ticket_37a_data_footprint_audit_20260728/ticket37a_data_footprint_audit_summary.json",
+      "sha256": "63AAEC2C641BFDCDCF116925EE1F295B937D6E7D3AFCF2F37CD846EE2DAE1B36"
+    },
+    "preserved_markdown": {
+      "path": "reports/audits/ticket_37a_data_footprint_audit_20260728/ticket37a_data_footprint_audit.md",
+      "sha256": "D75ED207A9FF62B0594A2FE729011D411423EFB73746B00FC49D6B522A88461E"
+    }
+  },
+  "statement": "Ticket 37A was a read-only audit. Ticket 37B preserved the accepted audit bundle and added a tracked retention/authority manifest. No dataset cleanup, movement, compression, rewrite, or deduplication was executed.",
+  "ticket_id": "Ticket 37A"
+}
