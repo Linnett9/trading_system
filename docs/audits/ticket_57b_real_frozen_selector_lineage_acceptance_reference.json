@@ -1,0 +1,32 @@
+{
+  "artifact_lineage_status": "NOT_APPLICABLE",
+  "blocking_reasons": [
+    "DATASET_MANIFEST_MISSING",
+    "INTENDED_USE_NOT_PERMITTED:PROMOTION_GRADE",
+    "SELECTOR_DATASET_LINEAGE_UNVERIFIED",
+    "Incomplete selector dataset lineage manifest: ['builder_run_identity', 'daily_feature_store_checksum', 'daily_feature_store_identity', 'daily_stock_spine_checksum', 'daily_stock_spine_identity', 'feature_schema_checksum', 'logical_checksum', 'manifest_schema_version', 'publication_status', 'row_population_checksum', 'symbol_registry_checksum', 'symbol_registry_identity', 'target_contract_checksum', 'target_schema_checksum', 'validation_status']"
+  ],
+  "classification": "DIAGNOSTIC_ONLY",
+  "classification_scope": "lineage_only_no_model_or_policy_promotion",
+  "combined_guard_hash": "0A60DC554730D1609F94569A7E6647BECCAC9A6B7E9EDFEF535D275B1331ECF2",
+  "command_record": "reports/ml/lineage/ticket_57b_real_frozen_selector_lineage_acceptance_20260729T084523Z/command_record.json",
+  "command_returncode": 1,
+  "dataset_hashes_unchanged": true,
+  "evidence_root": "reports/ml/lineage/ticket_57b_real_frozen_selector_lineage_acceptance_20260729T084523Z",
+  "generic_dataset_status": "LEGACY_NO_MANIFEST",
+  "legacy_selector_source_parent_observation": {
+    "current_source_sha256": "EB632DD620558F624B94D6C81B39BC904EA4FCBA11B46E7C99D1DF55EAC01093",
+    "matches": false,
+    "selector_manifest_source_sha256": "49647DAEEBE3EC935EC843C5F4BFED429BF1591406B0D2AD9F9518D2A290926A",
+    "source_path": "reports\\ml\\development\\ticket_7b3_daily_large_history\\regeneration_canonical_v2\\benchmark\\stock_level_prediction_artifacts_enriched.parquet"
+  },
+  "model_or_policy_promoted": false,
+  "permitted_use": "DIAGNOSTIC_ONLY",
+  "promotion_eligible": false,
+  "reference_version": "ticket_57b_acceptance_reference_v1",
+  "run_timestamp_utc": "2026-07-29T08:45:23Z",
+  "selected_dataset_root": "reports/ml/readiness/canonical_v2_selector_dataset_v1/frozen",
+  "selector_lineage_status": "UNVERIFIED",
+  "strict_sequence_required": true,
+  "validation_report": "reports/ml/lineage/ticket_57b_real_frozen_selector_lineage_acceptance_20260729T084523Z/validation_report.json"
+}

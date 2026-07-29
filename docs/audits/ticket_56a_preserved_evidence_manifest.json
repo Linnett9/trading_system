@@ -1,0 +1,149 @@
+{
+  "schema": "ticket_56a_preserved_evidence_manifest_v1",
+  "audit_id": "ticket_56a_immutable_candidate_lineage_20260729",
+  "preservation_ticket": "56A-P",
+  "candidate_id": "single_model:raw_return_10d__ridge__seed_1729",
+  "long_candidate_id": "raw_return_10d::ridge::seed_1729",
+  "historical_commit": "cf5f69dfb88b100245b7b7b973e3ec6bce25feb0",
+  "historical_commit_object_exists": true,
+  "historical_worktree": "C:/tmp/trading_system_ticket_56a_historical_replay_20260729",
+  "temporary_evidence_path": "C:/tmp/ticket_56a_immutable_candidate_lineage_20260729",
+  "stable_evidence_path": "reports/audits/ticket_56a_immutable_candidate_lineage_20260729",
+  "classification": "ARTIFACT_REPLAY_REPRODUCED_TRAINING_NOT_REPRODUCED",
+  "artifact_replay_classification": "REPRODUCED",
+  "training_reproduction_classification": "NOT_REPRODUCED",
+  "training_rerun_performed": false,
+  "candidate_promotion_performed": false,
+  "preserved_net_cumulative_return": 0.41308711504230433,
+  "replayed_net_cumulative_return": 0.41308711504230433,
+  "net_cumulative_return_absolute_difference": 0.0,
+  "bundle_manifest_sha256": "6d29b42d6c4c8bfb7f07511f2c5748d2ad006ba58812ab9ec183b912d8e30255",
+  "bundle_manifest_sha256_method": "SHA-256 over UTF-8 text lines sorted by file name: name TAB length TAB sha256 LF.",
+  "complete_bundle_files": [
+    {
+      "name": "environment_report.json",
+      "length": 1960,
+      "sha256": "64c1440675bf8d1f33b04f87cf4a115ccd90c909a02f4552085f836f2640f245"
+    },
+    {
+      "name": "environment_report.md",
+      "length": 244,
+      "sha256": "1c49be934d92370def015e8f7df38670df987c69c4dad819d1a5ce79565870c4"
+    },
+    {
+      "name": "hash_table.csv",
+      "length": 7270,
+      "sha256": "2b450cd3292e4a2fa8dc9b15c3fb03cd20a9370a08e968f50cb2ae1af262a156"
+    },
+    {
+      "name": "hash_table.json",
+      "length": 12368,
+      "sha256": "ceb1801bf2076fab3d23ac4ebc8727d2452c54af7f8d449d0878375fdfd74c34"
+    },
+    {
+      "name": "immutable_candidate_manifest.json",
+      "length": 20867,
+      "sha256": "8fcd14ab7a80f0f17d797f69f2589e1f250c88b794ed78a2480fb41bc64dc61b"
+    },
+    {
+      "name": "missing_lineage_report.json",
+      "length": 2599,
+      "sha256": "3cac7c3eacb38ff15d9f9217722a668a7a1f609e080a7cbf392dc30dd438d79f"
+    },
+    {
+      "name": "missing_lineage_report.md",
+      "length": 1002,
+      "sha256": "7a15fafbd9f6b6db18d8301ea611757cf9cd63ba95070266f7a511c6adf4ca7a"
+    },
+    {
+      "name": "replay_comparison_report.json",
+      "length": 9609,
+      "sha256": "9b4898b48d8117416222bdf3bf171447b18754eceb1fbaa480e2c5e823a53ab4"
+    },
+    {
+      "name": "replay_comparison_report.md",
+      "length": 843,
+      "sha256": "a07207c3bb7db2352e4d348c96e54200a709866cd9804ed06699c0fb661c8df6"
+    },
+    {
+      "name": "ticket_56a_replay.py",
+      "length": 33633,
+      "sha256": "c988b53018fcba6c1cf7c123d7e4064a7096ebea51e88c5d4e1e21fb2281b003"
+    }
+  ],
+  "json_files_validated": [
+    "environment_report.json",
+    "hash_table.json",
+    "immutable_candidate_manifest.json",
+    "missing_lineage_report.json",
+    "replay_comparison_report.json"
+  ],
+  "expected_files_verified": [
+    "immutable_candidate_manifest.json",
+    "replay_comparison_report.json",
+    "environment_report.json",
+    "missing_lineage_report.json",
+    "hash_table.csv",
+    "ticket_56a_replay.py"
+  ],
+  "source_destination_hashes_match": true,
+  "canonical_rerun_command_original": "cd C:/tmp/trading_system_ticket_56a_historical_replay_20260729; python C:/tmp/ticket_56a_immutable_candidate_lineage_20260729/ticket_56a_replay.py",
+  "canonical_rerun_command_preserved_script": "cd C:/tmp/trading_system_ticket_56a_historical_replay_20260729; python C:/Users/Brandon/trading_system/reports/audits/ticket_56a_immutable_candidate_lineage_20260729/ticket_56a_replay.py",
+  "artifact_hashes": {
+    "source_artifact_sha256": "0d99df8363e4ef763bf9ee5418b73904d5e582dcd94e1e9c1feb43496361bba7",
+    "source_logical_content_hash": "540de49df5efc3ae3ed1a4c0ecdb3b5c72110e81dc206cd0f6c0c41d5038ab46",
+    "source_audit_logical_content_sha256": "62d5549b713cc5f6f188c5460638684108250fb166fe59090acbe8c02bed78ec",
+    "oos_prediction_sha256": "f85d8ccfd59f9c6bc6db815b6de31d28143bb56dcdaa08255ee2c33388dde6cf",
+    "promotion_evidence_sha256": "c0d2fd781cc23b6a9c52bf7d3400af97e7706d7a12851854c037a3c23fa77299",
+    "target_contract_sha256": "7a9e665cacd0e9ba823444ef30ed975cb5d21e5f23cb2bc933275139fb1ee40f",
+    "tournament_report_sha256": "1c333efb48692ed3d37000e2bc2dd01e7014c7fe39afed1d8c4145b9e0533154",
+    "universe_sha256": "1df2ee40a746c01d82e731a90addb23694291d01732c225ad50e7f613b053fb2",
+    "replay_input_hash": "7fba24a50b60d49c899984b9432e139c7436ecc48efe6c58b3ac976bd591cbc3",
+    "replay_output_hash": "e8bf68b0897d2812fe8d12316c3bb63f3bdda60371c3d1d3d3d504eb89bb46b2",
+    "replay_bounded_rows_hash": "27ea601f87bba1b52cadb9b091ce06714c4a473c651187be4fe2cbe5a1928848"
+  },
+  "config_hashes": {
+    "historical_worktree_source_config_sha256": "be2c4ddab152992a68c279f9c8903547fd16079c0ece962216008839fd6b72e6",
+    "preserved_main_source_config_sha256": "ab0558ee4d57a772f48a9d6eb0656dd64956ac5d2eeb1013b7eb8b7899a03e3c",
+    "logical_config_hash_from_report": "7601d6df87d0e3971c0157fd4014f17541e00b04915adbc0229a4c27ba6c23ee",
+    "tournament_configuration_hash": "e806e0c7c16a37ee43fcfc8eb8386a5a601ef51957ec27d81158a72b2658886b",
+    "promotion_configuration_hash": "05c06aea7f88c1ee9f640fa1184105bc42f05d1fbebe83c1c6b6b37109fd7ed3",
+    "policy_configuration_hash": "fb8343727a590bf4a1b997d14c8099c94453c1959d3ba54368cc9bc91c27c605"
+  },
+  "target_version_status": {
+    "historical_code_target_provenance_version": "stock_level_target_provenance_v1",
+    "current_registry_target_provenance_version": "stock_level_target_provenance_v2",
+    "v1_reconstructable_from_historical_commit": true,
+    "migration_safe": false,
+    "regenerated_v2_evidence_is_new_experiment": true
+  },
+  "environment": {
+    "python_version": "3.11.9 (tags/v3.11.9:de54cf5, Apr  2 2024, 10:12:12) [MSC v.1938 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "packages": {
+      "PyYAML": "6.0.2",
+      "joblib": "1.5.3",
+      "numpy": "2.0.2",
+      "pandas": "3.0.3",
+      "pyarrow": "24.0.0",
+      "scikit-learn": "1.6.1",
+      "scipy": "1.17.1"
+    },
+    "differences_from_original_run": [
+      "Original Python version, package lockfile, and installed package set were not preserved in candidate lineage.",
+      "Replay ran on Windows from a clean detached worktree; preserved paths were read from the main checkout.",
+      "Historical commit supports target_provenance v1, while current selector target registry requires v2.",
+      "Historical cf5f69df tournament code does not implement multi-seed seed-suffixed candidate generation."
+    ]
+  },
+  "validation": {
+    "all_expected_files_exist": true,
+    "all_json_files_parse": true,
+    "hashes_match_acceptance_reference": true,
+    "replay_result_exact": true,
+    "historical_commit_exists": true,
+    "no_unrelated_historical_worktree_files_copied": true,
+    "no_candidate_promotion": true,
+    "no_training_rerun": true
+  }
+}

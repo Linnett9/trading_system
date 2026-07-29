@@ -1,0 +1,36 @@
+{
+  "artifact_inventory": "reports/ml/lineage/ticket_57e_parent_chain_reissue_20260729T093000Z/artifact_inventory.json",
+  "artifact_inventory_sha256": "C0DA4CD66082B26A1EBD0440947CEB5971E3164A386AFDFA1409703993493C34",
+  "classification": "BLOCKED_TARGET_PARENT",
+  "dirty_patch_hash": "A95356CB933FDFDCF8016EA8CA9408016F91B27EBEB75D7D895820A7566DD088",
+  "evidence_root": "reports/ml/lineage/ticket_57e_parent_chain_reissue_20260729T093000Z",
+  "legacy_source": {
+    "path": "reports/ml/development/ticket_7b3_daily_large_history/regeneration_canonical_v2/benchmark/stock_level_prediction_artifacts_enriched.parquet",
+    "sha256": "EB632DD620558F624B94D6C81B39BC904EA4FCBA11B46E7C99D1DF55EAC01093"
+  },
+  "lineage_cli": {
+    "py_compile": "PASSED",
+    "pytest": "39 passed, 1 warning",
+    "source_lineage_smoke": "PASSED"
+  },
+  "no_model_training_or_promotion": true,
+  "planned_source_root_created": false,
+  "spine_verify_only_result": {
+    "blockers": [
+      "missing_future_label_observation"
+    ],
+    "price_feature_dataset_id": "daily_price_features-8627a4fe6c3d101d",
+    "spine_dataset_id": "canonical_daily_stock_spine-99484a42d1757924",
+    "status": "BLOCKED"
+  },
+  "target_blocker": {
+    "missing_future_label_observation_rows": 175417,
+    "target_id": "forward_return_10d",
+    "target_provenance_contract": "stock_level_target_provenance_v2",
+    "temporal_violation_count": 0
+  },
+  "ticket": "57E",
+  "ticket_57b_status": "NOT_RUN_NO_NEW_FROZEN_ROOT",
+  "ticket_57c_status": "NOT_RUN_SOURCE_NOT_ACCEPTED",
+  "ticket_63_ready": false
+}
