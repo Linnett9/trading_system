@@ -1,0 +1,172 @@
+{
+  "content_hash": "AC6F061874467321ECD8BE46A8EFD67F2C05B3101DB3830ECF45DAD8B58BD1C3",
+  "generated_at": "2026-07-29T00:00:00Z",
+  "inventory_version": "target_surface_inventory.v1",
+  "rows": [
+    {
+      "availability_rule": "label_available_timestamp at first later decision close",
+      "conflicts_or_ambiguity": [
+        "legacy suffix d can be read as calendar days instead of eligible sessions"
+      ],
+      "consumers": [
+        "stock-level selector datasets",
+        "bounded selector runner",
+        "ordinary selector publication",
+        "portfolio replay diagnostics",
+        "model ranking benchmark"
+      ],
+      "decision_timeframe": "1Day",
+      "entry_rule": "decision-session close",
+      "exit_rule": "tenth eligible future session close",
+      "horizon": 10,
+      "horizon_unit": "eligible_trading_sessions",
+      "maturity_rule": "Ticket 57F target_is_trainable true only for MATURED_VALID rows",
+      "missing_bar_rule": "legacy target_status plus Ticket 57F target_resolution fields",
+      "name": "forward_return_10d / actual_forward_return_10d",
+      "session_boundary_behavior": "ordered exchange sessions; holidays/weekends skipped; early-close timestamp retained",
+      "source_timeframe": "1Day"
+    },
+    {
+      "availability_rule": "per-horizon maturity timestamp where present",
+      "conflicts_or_ambiguity": [
+        "legacy d suffix remains less explicit than sessions"
+      ],
+      "consumers": [
+        "multi-horizon selector adapters",
+        "target tournament"
+      ],
+      "decision_timeframe": "1Day",
+      "entry_rule": "daily close target family",
+      "exit_rule": "configured eligible future session close",
+      "horizon": "1/5/20",
+      "horizon_unit": "eligible_trading_sessions",
+      "maturity_rule": "multi-horizon panels use MATURE/IMMATURE/INVALID state",
+      "missing_bar_rule": "per-horizon invalid or immature state",
+      "name": "forward_return_1d, forward_return_5d, forward_return_20d registry entries",
+      "session_boundary_behavior": "daily session order",
+      "source_timeframe": "1Day"
+    },
+    {
+      "availability_rule": "inherits raw target availability",
+      "conflicts_or_ambiguity": [
+        "future drawdown and volatility are path labels, not point-in-time features"
+      ],
+      "consumers": [
+        "target comparison",
+        "model ranking benchmark",
+        "portfolio replay diagnostics"
+      ],
+      "decision_timeframe": "1Day",
+      "entry_rule": "shares raw 10-session close anchor",
+      "exit_rule": "shares raw 10-session close endpoint plus benchmark/future path transforms",
+      "horizon": 10,
+      "horizon_unit": "eligible_trading_sessions",
+      "maturity_rule": "inherits Ticket 57F target trainability fields when materialized",
+      "missing_bar_rule": "blank when benchmark or future path is unavailable",
+      "name": "risk-adjusted and benchmark daily labels",
+      "session_boundary_behavior": "daily session order",
+      "source_timeframe": "1Day"
+    },
+    {
+      "availability_rule": "bars at or before feature cutoff",
+      "conflicts_or_ambiguity": [
+        "no authoritative hourly target contract existed before Ticket 71"
+      ],
+      "consumers": [
+        "add_intraday_summary_features"
+      ],
+      "decision_timeframe": "1Day or intraday feature cutoff",
+      "entry_rule": "as-of feature fusion only",
+      "exit_rule": "not applicable",
+      "horizon": "not a supervised target",
+      "horizon_unit": "",
+      "maturity_rule": "not applicable",
+      "missing_bar_rule": "feature omitted when no bars are available",
+      "name": "hourly intraday features",
+      "session_boundary_behavior": "prior implementation did not define target horizons",
+      "source_timeframe": "1h"
+    },
+    {
+      "availability_rule": "finalized symbol/year bars.parquet plus source_row_hash",
+      "conflicts_or_ambiguity": [
+        "bar-start timestamp could be mistaken for realised outcome availability"
+      ],
+      "consumers": [
+        "five-minute archive finalizer",
+        "intraday feature planning"
+      ],
+      "decision_timeframe": "5m candidate",
+      "entry_rule": "source bar timestamp is bar start; target authority derives finalization time",
+      "exit_rule": "not previously defined",
+      "horizon": "not a supervised target",
+      "horizon_unit": "",
+      "maturity_rule": "not previously defined for labels",
+      "missing_bar_rule": "finalizer records validation and completeness diagnostics",
+      "name": "Alpaca five-minute final symbol/year archive",
+      "session_boundary_behavior": "session_type from maintained market session wrapper",
+      "source_timeframe": "5m"
+    },
+    {
+      "availability_rule": "sequence authority rejects target information inside feature window",
+      "conflicts_or_ambiguity": [
+        "sequence length is context history, not forecast horizon"
+      ],
+      "consumers": [
+        "DLinear",
+        "PatchTST",
+        "Transformer",
+        "TFT",
+        "iTransformer"
+      ],
+      "decision_timeframe": "1Day",
+      "entry_rule": "inherits selector target",
+      "exit_rule": "inherits selector target",
+      "horizon": "consumer-selected daily target",
+      "horizon_unit": "eligible_trading_sessions",
+      "maturity_rule": "strict sequence context plus target maturity fields",
+      "missing_bar_rule": "strict context rejects missing windows when configured",
+      "name": "sequence model labels",
+      "session_boundary_behavior": "daily chronological windows",
+      "source_timeframe": "1Day"
+    },
+    {
+      "availability_rule": "report-only labels, not canonical selector target authority",
+      "conflicts_or_ambiguity": [
+        "uses price-row observations and remains outside canonical multi-timeframe contract"
+      ],
+      "consumers": [
+        "news transformer report-only diagnostics"
+      ],
+      "decision_timeframe": "event available timestamp",
+      "entry_rule": "first price row on or after event availability date",
+      "exit_rule": "N later price row",
+      "horizon": "1/5/20 price observations",
+      "horizon_unit": "eligible daily price observations",
+      "maturity_rule": "rows unlabeled when future bars are insufficient",
+      "missing_bar_rule": "separates missing price file from insufficient future bars",
+      "name": "news transformer report-only price labels",
+      "session_boundary_behavior": "daily adjusted price order",
+      "source_timeframe": "1Day adjusted price rows"
+    },
+    {
+      "availability_rule": "label_available_timestamp emitted by replay dataset",
+      "conflicts_or_ambiguity": [
+        "calendar-day exposure horizon is not a price-bar forecast horizon"
+      ],
+      "consumers": [
+        "exposure policy dataset",
+        "portfolio replay certification"
+      ],
+      "decision_timeframe": "daily feature_date",
+      "entry_rule": "portfolio state at feature date",
+      "exit_rule": "configured replay outcome endpoint",
+      "horizon": "configured outcome_horizon_days",
+      "horizon_unit": "calendar_days",
+      "maturity_rule": "maximum_target_available_timestamp must pass evidence cutoff",
+      "missing_bar_rule": "replay rows validate target contract hash and source equity curve path",
+      "name": "portfolio replay exposure label should_reduce_exposure",
+      "session_boundary_behavior": "portfolio replay calendar-day helper",
+      "source_timeframe": "portfolio replay equity curves"
+    }
+  ]
+}

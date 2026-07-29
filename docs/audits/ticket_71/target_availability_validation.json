@@ -1,0 +1,13 @@
+{
+  "checked_invariants": [
+    "target_available_timestamp >= target_end_timestamp",
+    "target_end_timestamp > decision_timestamp for trainable rows",
+    "target_available_timestamp <= training_cutoff for trainable rows",
+    "target_is_trainable implies MATURED_VALID"
+  ],
+  "row_count": 26,
+  "status": "PASSED",
+  "validation_version": "multi_timeframe_target_availability_validation.v1",
+  "violation_count": 0,
+  "violations": []
+}

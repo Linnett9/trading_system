@@ -1,0 +1,7 @@
+decision_session_date,decision_rows,matured_rows,trainable_rows,right_censored_rows,missing_source_bars,quarantined_or_ineligible_rows,session_boundary_failures,unknown_source_gaps,classification_counts
+2024-01-02,312,260,221,0,0,0,91,0,"{""MATURED_VALID"": 221, ""SESSION_BOUNDARY_CONFLICT"": 91}"
+2024-01-05,312,260,221,0,0,0,91,0,"{""MATURED_VALID"": 221, ""SESSION_BOUNDARY_CONFLICT"": 91}"
+2024-01-12,312,260,221,0,0,0,91,0,"{""MATURED_VALID"": 221, ""SESSION_BOUNDARY_CONFLICT"": 91}"
+2024-01-31,312,260,221,0,0,0,91,0,"{""MATURED_VALID"": 221, ""SESSION_BOUNDARY_CONFLICT"": 91}"
+2024-03-08,312,260,221,0,0,0,91,0,"{""MATURED_VALID"": 221, ""SESSION_BOUNDARY_CONFLICT"": 91}"
+2024-07-03,312,260,208,0,0,0,104,0,"{""MATURED_VALID"": 208, ""SESSION_BOUNDARY_CONFLICT"": 104}"

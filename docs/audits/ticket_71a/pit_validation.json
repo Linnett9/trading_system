@@ -1,0 +1,20 @@
+{
+  "checked_invariants": [
+    "feature_cutoff <= decision_timestamp",
+    "target_end > decision_timestamp",
+    "target_available >= target_end",
+    "target_available <= training_cutoff for trainable rows",
+    "target values are not feature columns"
+  ],
+  "checked_rows": 1313,
+  "excluded_session_boundary_conflict_rows": 559,
+  "feature_columns": [
+    "feature_cutoff"
+  ],
+  "status": "PASSED",
+  "target_value_feature_leakage": false,
+  "target_value_feature_leakage_columns": [],
+  "validation_version": "ticket_71a_pit_validation.v1",
+  "violation_count": 0,
+  "violations": []
+}

@@ -1,0 +1,81 @@
+{
+  "bounded": true,
+  "content_hash": "E493D273944ADF3FEA6FB4934939141396FAC4E3F43E3E6EF35ECE16823D3E0C",
+  "decision_dates": [
+    "2024-01-02",
+    "2024-01-05",
+    "2024-01-12",
+    "2024-01-31",
+    "2024-03-08",
+    "2024-07-03"
+  ],
+  "depends_on": {
+    "target_catalogue_hash": "47ECC6B9414AAD860218D4A27E044D05C5C5DA3C4D9D6B76E6F54BE7A47B77B3",
+    "target_catalogue_version": "multi_timeframe_target_catalogue.v1",
+    "ticket": "71"
+  },
+  "generated_at": "2026-07-29T00:00:00Z",
+  "missing_requested_symbols": [
+    "IWM"
+  ],
+  "model_training_performed": false,
+  "pilot_version": "ticket_71a_bounded_five_minute_target_pilot.v1",
+  "portfolio_replay_run": false,
+  "positions_created": false,
+  "production_or_paper_trading_altered": false,
+  "requested_symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "TSLA",
+    "AMD",
+    "AVGO",
+    "JPM",
+    "XOM",
+    "SPY",
+    "QQQ",
+    "IWM"
+  ],
+  "selected_symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "TSLA",
+    "AMD",
+    "AVGO",
+    "JPM",
+    "XOM",
+    "SPY",
+    "QQQ"
+  ],
+  "source_cutoff": "2024-07-06T00:00:00Z",
+  "source_dates_loaded": [
+    "2024-01-02",
+    "2024-01-03",
+    "2024-01-05",
+    "2024-01-08",
+    "2024-01-12",
+    "2024-01-16",
+    "2024-01-31",
+    "2024-02-01",
+    "2024-03-08",
+    "2024-03-11",
+    "2024-07-03",
+    "2024-07-05"
+  ],
+  "source_root": "data\\processed\\alpaca\\symbol_bars\\sip\\5m",
+  "source_year": 2024,
+  "strategy_performance_compared": false,
+  "target_ids": [
+    "forward_return_30m__decision_5m",
+    "forward_return_60m__decision_5m",
+    "forward_return_to_close__decision_5m",
+    "forward_return_next_open__decision_5m"
+  ]
+}

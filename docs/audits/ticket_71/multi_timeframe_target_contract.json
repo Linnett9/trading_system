@@ -1,0 +1,77 @@
+{
+  "calendar_authority": {
+    "authority_version": "market_calendar_authority.v1",
+    "calendar_authority_id": "market_calendar_authority.v1:XNYS",
+    "calendar_id": "XNYS",
+    "date_range_used": {
+      "end": "2024-07-10",
+      "start": "2024-01-02"
+    },
+    "exchange": "XNYS",
+    "fallback_state": "MAINTAINED_USED",
+    "fallback_used": false,
+    "generated_at": "2026-07-29T00:00:00Z",
+    "package": "exchange_calendars",
+    "package_version": "4.13.2",
+    "schedule_hash": "532290F34233D2732A14BAF8C9C0481B8BF2636F5EDA194618A8CA57FD270AA6",
+    "selected_package_version": "4.13.2",
+    "version": "market_calendar_authority.v1:exchange_calendars:exchange_calendars:4.13.2"
+  },
+  "catalogue_version": "multi_timeframe_target_catalogue.v1",
+  "content_hash": "633F3DE01621D89C1E3ED468AD9E6DA6D6F8ED941615695B78BB9C181D5FD09E",
+  "contract_version": "multi_timeframe_target_contract.v1",
+  "generated_at": "2026-07-29T00:00:00Z",
+  "model_promotion_allowed": false,
+  "model_training_allowed": false,
+  "required_fields": [
+    "target_id",
+    "legacy_aliases",
+    "decision_timeframe",
+    "source_bar_timeframe",
+    "decision_schedule",
+    "horizon_value",
+    "horizon_unit",
+    "session_boundary_rule",
+    "entry_price_rule",
+    "exit_price_rule",
+    "target_start_rule",
+    "target_end_rule",
+    "availability_rule",
+    "missing_bar_policy",
+    "partial_session_policy",
+    "early_close_policy",
+    "overnight_policy",
+    "calendar_authority_version",
+    "price_authority_version",
+    "target_code_hash",
+    "resolution_policy_version"
+  ],
+  "required_invariants": [
+    "decision_timeframe is not forecast horizon",
+    "source_bar_timeframe is explicit",
+    "target_available_timestamp >= target_end_timestamp",
+    "target_is_trainable requires target_available_timestamp <= training_cutoff",
+    "intraday elapsed-minute targets do not cross market-session boundaries unless contract says so",
+    "legacy forward_return_10d maps only to forward_return_10_sessions__decision_1Day"
+  ],
+  "resolution_policy_version": "multi_timeframe_target_resolution_policy.v1",
+  "supported_horizon_units": [
+    "eligible_trading_sessions",
+    "elapsed_market_minutes",
+    "eligible_bars",
+    "to_session_close",
+    "to_next_session_open"
+  ],
+  "supported_result_states": [
+    "HALT_AFFECTED",
+    "INELIGIBLE_SOURCE_BAR",
+    "MATURED_VALID",
+    "MISSING_SOURCE_BAR",
+    "NOT_YET_MATURE",
+    "QUARANTINED_SOURCE_BAR",
+    "RIGHT_CENSORED",
+    "SESSION_BOUNDARY_CONFLICT",
+    "UNKNOWN_SOURCE_GAP"
+  ],
+  "target_code_hash": "99F59C93E1B0EF70276E693B36DE3157CB88104AD86ADDD8F9C80214852627CE"
+}

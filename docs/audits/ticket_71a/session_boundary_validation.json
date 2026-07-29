@@ -1,0 +1,62 @@
+{
+  "calendar_identity": {
+    "authority_version": "market_calendar_authority.v1",
+    "calendar_authority_id": "market_calendar_authority.v1:XNYS",
+    "calendar_id": "XNYS",
+    "date_range_used": {
+      "end": "2024-07-05",
+      "start": "2024-01-02"
+    },
+    "exchange": "XNYS",
+    "fallback_state": "MAINTAINED_USED",
+    "fallback_used": false,
+    "generated_at": "2026-07-29T00:00:00Z",
+    "package": "exchange_calendars",
+    "package_version": "4.13.2",
+    "schedule_hash": "9F6305A5ED873B92BD148922B09ABCED196BB8307D26E1A2077A7DE42FB28B23",
+    "selected_package_version": "4.13.2",
+    "version": "market_calendar_authority.v1:exchange_calendars:exchange_calendars:4.13.2"
+  },
+  "checks": {
+    "dst_boundary": {
+      "row_count": 312,
+      "status": "PASSED"
+    },
+    "early_close": {
+      "row_count": 312,
+      "status": "PASSED"
+    },
+    "final_30_minutes": {
+      "row_count": 676,
+      "status": "PASSED"
+    },
+    "final_hour": {
+      "row_count": 988,
+      "status": "PASSED"
+    },
+    "holiday_rollover": {
+      "row_count": 312,
+      "status": "PASSED"
+    },
+    "missing_five_minute_bars": {
+      "classification": "NO_MISSING_BARS_OBSERVED",
+      "missing_bar_count": 0,
+      "row_count": 156,
+      "status": "PASSED"
+    },
+    "next_session_open": {
+      "row_count": 468,
+      "status": "PASSED"
+    },
+    "regular_session": {
+      "row_count": 884,
+      "status": "PASSED"
+    },
+    "weekend_rollover": {
+      "row_count": 312,
+      "status": "PASSED"
+    }
+  },
+  "status": "PASSED",
+  "validation_version": "ticket_71a_session_boundary_validation.v1"
+}

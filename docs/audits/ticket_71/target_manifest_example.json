@@ -1,0 +1,127 @@
+{
+  "calendar_authority_version": "market_calendar_authority.v1",
+  "calendar_identity": {
+    "authority_version": "market_calendar_authority.v1",
+    "calendar_authority_id": "market_calendar_authority.v1:XNYS",
+    "calendar_id": "XNYS",
+    "date_range_used": {
+      "end": "2024-07-10",
+      "start": "2024-01-02"
+    },
+    "exchange": "XNYS",
+    "fallback_state": "MAINTAINED_USED",
+    "fallback_used": false,
+    "generated_at": "2026-07-29T00:00:00Z",
+    "package": "exchange_calendars",
+    "package_version": "4.13.2",
+    "schedule_hash": "532290F34233D2732A14BAF8C9C0481B8BF2636F5EDA194618A8CA57FD270AA6",
+    "selected_package_version": "4.13.2",
+    "version": "market_calendar_authority.v1:exchange_calendars:exchange_calendars:4.13.2"
+  },
+  "certification_envelope_integration": {
+    "authority_versions.market_calendar_authority": {
+      "authority_version": "market_calendar_authority.v1",
+      "calendar_authority_id": "market_calendar_authority.v1:XNYS",
+      "calendar_id": "XNYS",
+      "date_range_used": {
+        "end": "2024-07-10",
+        "start": "2024-01-02"
+      },
+      "exchange": "XNYS",
+      "fallback_state": "MAINTAINED_USED",
+      "fallback_used": false,
+      "generated_at": "2026-07-29T00:00:00Z",
+      "package": "exchange_calendars",
+      "package_version": "4.13.2",
+      "schedule_hash": "532290F34233D2732A14BAF8C9C0481B8BF2636F5EDA194618A8CA57FD270AA6",
+      "selected_package_version": "4.13.2",
+      "version": "market_calendar_authority.v1:exchange_calendars:exchange_calendars:4.13.2"
+    },
+    "authority_versions.target_contract_version": "forward_return_30m__decision_5m"
+  },
+  "code_config_hash": "73E00D5F416D1D102B80A3A770D579469130825CD6FCE8D9F3190AF999D1599C",
+  "content_hash": "7BED0BBE1DA07C538EFE9B1852D75F908989296FBCEF3D902A1E7C4F3761EA08",
+  "dataset_manifest_integration": {
+    "compatible_manifest_schema": "dataset_build_manifest_v1",
+    "label_code_version_field": "99F59C93E1B0EF70276E693B36DE3157CB88104AD86ADDD8F9C80214852627CE",
+    "market_calendar_authority_version_field": "market_calendar_authority.v1",
+    "target_contract_version_field": "forward_return_30m__decision_5m"
+  },
+  "decision_timeframe": "5m",
+  "generated_at": "2026-07-29T00:00:00Z",
+  "git_patch_provenance": {
+    "contract_version": "source_worktree_provenance_v1",
+    "dirty_worktree": true,
+    "git_branch": "feature/selector-compute-adoption-20260718",
+    "git_commit": "9c2a750dead45569268c012ca8bd3dc4d7363f70"
+  },
+  "horizon_unit": "elapsed_market_minutes",
+  "horizon_value": 30,
+  "legacy_aliases": [],
+  "manifest_hash": "35DB176DEF06320A5BC7B2C4DAD576A1D1EF876E9759E36465F40542AAA229DF",
+  "manifest_schema_version": "multi_timeframe_target_dataset_manifest.v1",
+  "model_or_policy_promoted": false,
+  "model_training_performed": false,
+  "output_hashes": [
+    {
+      "exists": true,
+      "path": "docs\\audits\\ticket_71\\daily_target_examples.parquet",
+      "sha256": "A8D2AEB5CD81BABE1DE58CCCC739665B3239AC3CB961D6367A9245630BF0E8AF",
+      "size_bytes": 17919
+    },
+    {
+      "exists": true,
+      "path": "docs\\audits\\ticket_71\\hourly_target_examples.parquet",
+      "sha256": "0E7EF7AF6BA0C8D79FA8D44732FF951F95CE73B8DC9B970116FFDF2120C5523F",
+      "size_bytes": 17694
+    },
+    {
+      "exists": true,
+      "path": "docs\\audits\\ticket_71\\five_minute_target_examples.parquet",
+      "sha256": "8C6D98548476BEB9CD1E549552B64839366F6507B531BA48C897426279E8C548",
+      "size_bytes": 18929
+    }
+  ],
+  "price_authority_version": "source_bar_ohlcv_price_authority.v1",
+  "producer_command": "python scripts/ticket_71_multi_timeframe_target_authority.py",
+  "producer_module": "scripts.ticket_71_multi_timeframe_target_authority",
+  "resolution_classification_counts": {
+    "HALT_AFFECTED": 1,
+    "INELIGIBLE_SOURCE_BAR": 1,
+    "MATURED_VALID": 8,
+    "MISSING_SOURCE_BAR": 2,
+    "QUARANTINED_SOURCE_BAR": 1,
+    "RIGHT_CENSORED": 1,
+    "SESSION_BOUNDARY_CONFLICT": 1,
+    "UNKNOWN_SOURCE_GAP": 1
+  },
+  "resolution_reason_counts": {
+    "elapsed_market_minutes_crosses_session_close": 1,
+    "exit_source_bar_missing": 1,
+    "ineligible_source_bar:AAA-5m-2024-01-02T15:00:00Z": 1,
+    "quarantined_source_bar:AAA-5m-2024-01-02T15:00:00Z": 1,
+    "represented_halt_fixture": 1,
+    "required_source_bar_missing:2024-01-02T14:50:00Z": 1,
+    "target_end_after_source_cutoff": 1,
+    "unknown_source_gap:AAA-5m-2024-01-02T15:00:00Z": 1,
+    "value_realised_and_trainable": 8
+  },
+  "row_counts": {
+    "ineligible_source_bar": 1,
+    "matured": 14,
+    "missing_source_bar": 2,
+    "quarantined_source_bar": 1,
+    "realised": 8,
+    "right_censored": 1,
+    "session_boundary_conflict": 1,
+    "total": 16,
+    "trainable": 8
+  },
+  "selected_target_id": "forward_return_30m__decision_5m",
+  "session_boundary_rule": "must mature within the same regular session",
+  "source_bar_timeframe": "5m",
+  "source_cutoff": "2024-01-16T21:00:00Z",
+  "source_paths": [],
+  "target_catalogue_version": "multi_timeframe_target_catalogue.v1",
+  "target_contract_version": "multi_timeframe_target_contract.v1"
+}

@@ -1,0 +1,238 @@
+{
+  "bounded": true,
+  "content_hash": "61353E087826C10FB0D7130EB88E31927E49658E1B991DD933AEDD47E6633F72",
+  "dataset_versions_by_symbol": {
+    "AAPL": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "AMD": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "AMZN": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "AVGO": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "GOOGL": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "JPM": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "META": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "MSFT": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "NVDA": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "QQQ": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "SPY": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "TSLA": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ],
+    "XOM": [
+      "alpaca_sip_5m_symbol_year_v1"
+    ]
+  },
+  "feeds_by_symbol": {
+    "AAPL": [
+      "SIP"
+    ],
+    "AMD": [
+      "SIP"
+    ],
+    "AMZN": [
+      "SIP"
+    ],
+    "AVGO": [
+      "SIP"
+    ],
+    "GOOGL": [
+      "SIP"
+    ],
+    "JPM": [
+      "SIP"
+    ],
+    "META": [
+      "SIP"
+    ],
+    "MSFT": [
+      "SIP"
+    ],
+    "NVDA": [
+      "SIP"
+    ],
+    "QQQ": [
+      "SIP"
+    ],
+    "SPY": [
+      "SIP"
+    ],
+    "TSLA": [
+      "SIP"
+    ],
+    "XOM": [
+      "SIP"
+    ]
+  },
+  "generated_at": "2026-07-29T00:00:00Z",
+  "manifest_version": "ticket_71a_five_minute_source_manifest.v1",
+  "missing_requested_symbols": [
+    "IWM"
+  ],
+  "model_training_performed": false,
+  "requested_symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "TSLA",
+    "AMD",
+    "AVGO",
+    "JPM",
+    "XOM",
+    "SPY",
+    "QQQ",
+    "IWM"
+  ],
+  "row_counts_by_symbol": {
+    "AAPL": 2183,
+    "AMD": 2159,
+    "AMZN": 2127,
+    "AVGO": 1249,
+    "GOOGL": 1953,
+    "JPM": 1375,
+    "META": 1836,
+    "MSFT": 1971,
+    "NVDA": 2192,
+    "QQQ": 2209,
+    "SPY": 2180,
+    "TSLA": 2231,
+    "XOM": 1530
+  },
+  "selected_symbols": [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "META",
+    "GOOGL",
+    "TSLA",
+    "AMD",
+    "AVGO",
+    "JPM",
+    "XOM",
+    "SPY",
+    "QQQ"
+  ],
+  "source_dates": [
+    "2024-01-02",
+    "2024-01-03",
+    "2024-01-05",
+    "2024-01-08",
+    "2024-01-12",
+    "2024-01-16",
+    "2024-01-31",
+    "2024-02-01",
+    "2024-03-08",
+    "2024-03-11",
+    "2024-07-03",
+    "2024-07-05"
+  ],
+  "source_paths": [
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=AAPL\\year=2024\\bars.parquet",
+      "sha256": "1E6BA03390FD6C5DAB9DAE4A330213C9C994A4113922B26747CA8D61FE68AE11",
+      "size_bytes": 2996195
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=MSFT\\year=2024\\bars.parquet",
+      "sha256": "DBD5B063883058F57F6BD536F11F5EB48D19F4AFBEB3DD9B4D1CAE12455D3BF3",
+      "size_bytes": 2727421
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=NVDA\\year=2024\\bars.parquet",
+      "sha256": "434DD508B55A88111BC7DB533AA3C2F6854D686269D21C7336CC0D7E6C0AF68E",
+      "size_bytes": 3216862
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=AMZN\\year=2024\\bars.parquet",
+      "sha256": "3F967F162FFB1E79508AE07A868C601189722CA6A6676E6F5EE5BE26835D0F1B",
+      "size_bytes": 3120296
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=META\\year=2024\\bars.parquet",
+      "sha256": "F0A0D5CFAECE48B570E4E60B1B33D9AF4DBA4FEDB879C82F82537B19A242B522",
+      "size_bytes": 2700705
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=GOOGL\\year=2024\\bars.parquet",
+      "sha256": "9E17DBD0E3F08AF9CC33C673B2637760DCA1BB705022E57592D284B24226B9EC",
+      "size_bytes": 2773522
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=TSLA\\year=2024\\bars.parquet",
+      "sha256": "228B62C78A8023440FBE65B5D09AB56260729061D63D8255C4D88D7755C08228",
+      "size_bytes": 3501547
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=AMD\\year=2024\\bars.parquet",
+      "sha256": "7FBED4AC258E19308E56108A764F645AF341A4BBFBC7909ACB7C0D832A08EA89",
+      "size_bytes": 3258883
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=AVGO\\year=2024\\bars.parquet",
+      "sha256": "628246B5B1F9B00A2E50F675E82A97E0968D833D41F3A803F059785191C09151",
+      "size_bytes": 2289285
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=JPM\\year=2024\\bars.parquet",
+      "sha256": "58E505759CBB17C18BBAD14012570938CD5A619470926979F2AE379FDEAB82AD",
+      "size_bytes": 1813585
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=XOM\\year=2024\\bars.parquet",
+      "sha256": "7C28D977AC5B1CED0A582BE780F85EBEFB741BBD1A905556781670F5ED113A09",
+      "size_bytes": 1972193
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=SPY\\year=2024\\bars.parquet",
+      "sha256": "305C4A9690A1724C2BCA061D26D61D3BDEED269301651B63003855A26B06A0E5",
+      "size_bytes": 3146916
+    },
+    {
+      "exists": true,
+      "path": "data\\processed\\alpaca\\symbol_bars\\sip\\5m\\symbol=QQQ\\year=2024\\bars.parquet",
+      "sha256": "E8B6570649C3A8DD6DD6D9E4294AC03D209FCE439A9FC7AB5E8ED566E92F966E",
+      "size_bytes": 3158930
+    }
+  ],
+  "source_root": "data\\processed\\alpaca\\symbol_bars\\sip\\5m",
+  "target_row_count": 1872,
+  "target_rows_sha256": "44F7CA3300278B4AC43B5EFDFA639D112D40B1907668719A0FE2CE9472C08E9C",
+  "total_source_rows_loaded": 25195,
+  "whole_archive_scanned": false,
+  "year": 2024
+}
