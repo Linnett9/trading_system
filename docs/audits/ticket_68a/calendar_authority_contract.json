@@ -1,0 +1,46 @@
+{
+  "authority_version": "market_calendar_authority.v1",
+  "conflict_precedence": [
+    "Pinned maintained package exact version",
+    "Reviewed, versioned, hashed local override",
+    "Compact fallback only when maintained package is unavailable or mismatched and fallback is allowed"
+  ],
+  "contract_version": "calendar_authority_contract.v1",
+  "fallback_calendar_version": "compact_nyse_like_rth_2016_2026_v1",
+  "fallback_policy": "Fallback rows set fallback_used=true and source_status=FALLBACK_CALENDAR_USED unless outside range.",
+  "required_fields": [
+    "exchange",
+    "calendar_id",
+    "authority_version",
+    "package",
+    "package_version",
+    "schedule_generation_parameters",
+    "session_date",
+    "market_timezone",
+    "open_timestamp",
+    "close_timestamp",
+    "pre_market_open_timestamp",
+    "after_hours_close_timestamp",
+    "early_close",
+    "closure_reason",
+    "source_status",
+    "base_status",
+    "generated_at",
+    "schedule_hash"
+  ],
+  "selected_calendar": "XNYS",
+  "selected_package": "exchange_calendars",
+  "selected_package_version": "4.13.2",
+  "statuses": [
+    "REGULAR_SESSION",
+    "EARLY_CLOSE",
+    "CLOSED_HOLIDAY",
+    "CLOSED_WEEKEND",
+    "SPECIAL_CLOSURE",
+    "OUTSIDE_AUTHORITY_RANGE",
+    "CONFLICTING_CALENDAR_EVIDENCE",
+    "FALLBACK_CALENDAR_USED"
+  ],
+  "third_party_call_boundary": "infrastructure.data.calendar_authority",
+  "timestamp_policy": "All persisted timestamps are UTC ISO-8601 with Z suffix."
+}

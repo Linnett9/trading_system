@@ -1,0 +1,78 @@
+{
+  "contract_version": "calendar_source_audit.v1",
+  "runtime_backend_status": "MAINTAINED",
+  "runtime_backend_status_reason": "",
+  "selected_authority": "exchange_calendars",
+  "selected_version": "4.13.2",
+  "sources": [
+    {
+      "determinism_concerns": "must pin exact package version; package upgrades can change past/future schedules",
+      "early_close_support": "supported through package special close schedule",
+      "future_schedule_behaviour": "bounded future generation; schedules must be hashed and version-pinned for replay",
+      "historical_range": "package-defined generated schedules; supports historical research subject to package calendar bounds",
+      "holiday_source": "maintained package rules and contributed exchange definitions",
+      "installed": true,
+      "licence": "Apache Software License / Apache-2.0",
+      "package": "exchange_calendars",
+      "selected": true,
+      "special_closures": "supported where package exchange definition includes adhoc holidays and special closes",
+      "status": "INSTALLED",
+      "supported_exchanges": [
+        "XNYS",
+        "XNAS",
+        "ARCX",
+        "BATS",
+        "XASE",
+        "XLON",
+        "XHKG",
+        "XTKS",
+        "XASX",
+        "XPAR"
+      ],
+      "timezone_handling": "UTC schedule timestamps with exchange timezone metadata",
+      "version": "4.13.2"
+    },
+    {
+      "determinism_concerns": "would add second competing calendar dependency",
+      "early_close_support": "not selected",
+      "future_schedule_behaviour": "not selected",
+      "historical_range": "not selected",
+      "holiday_source": "not selected",
+      "installed": false,
+      "licence": "not audited locally",
+      "package": "pandas_market_calendars",
+      "selected": false,
+      "special_closures": "not selected",
+      "status": "REJECTED_TO_AVOID_COMPETING_DEPENDENCY",
+      "supported_exchanges": [
+        "XNYS",
+        "NASDAQ",
+        "NYSE"
+      ],
+      "timezone_handling": "not selected",
+      "version": "not added"
+    },
+    {
+      "determinism_concerns": "not maintained authority evidence; use must be explicit",
+      "early_close_support": "limited deterministic rules",
+      "future_schedule_behaviour": "no future authority beyond verified coverage",
+      "historical_range": "2016-01-01 through 2026-12-31",
+      "holiday_source": "embedded deterministic rules",
+      "installed": true,
+      "licence": "project local",
+      "package": "compact embedded fallback",
+      "selected": false,
+      "special_closures": "explicit local list only",
+      "status": "FALLBACK_ONLY",
+      "supported_exchanges": [
+        "XNYS",
+        "XNAS",
+        "ARCX",
+        "BATS",
+        "XASE"
+      ],
+      "timezone_handling": "zoneinfo America/New_York",
+      "version": "compact_nyse_like_rth_2016_2026_v1"
+    }
+  ]
+}

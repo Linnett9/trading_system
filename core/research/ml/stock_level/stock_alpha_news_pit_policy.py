@@ -4,10 +4,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
+from core.research.ml.reference.market_information_availability_authority import (
+    AVAILABLE,
+    MarketInformationAvailabilityAuthority,
+    MarketInformationEvent,
+    any_timestamp_session_policy,
+)
+
 
 STRICT_COLLECTED_AT = "strict_collected_at"
 PROVIDER_AVAILABLE_AT = "provider_available_at"
 SUPPORTED_PIT_POLICIES = (STRICT_COLLECTED_AT, PROVIDER_AVAILABLE_AT)
+NEWS_AVAILABILITY_AUTHORITY = MarketInformationAvailabilityAuthority(
+    session_policy=any_timestamp_session_policy("stock_alpha_news_legacy_decision_timestamp_policy_v1")
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +67,8 @@ def pit_policy_payload(policy: StockAlphaNewsPitPolicy) -> dict[str, Any]:
         "provider_availability_research_mode": policy.mode == PROVIDER_AVAILABLE_AT,
         "production_pit_validated": policy.production_pit_validated,
         "ingested_at_semantics": "local_collection_time_alias_collected_at_utc",
+        "availability_authority_version": NEWS_AVAILABILITY_AUTHORITY.authority_version,
+        "session_policy": NEWS_AVAILABILITY_AUTHORITY.session_policy.policy_id,
     }
 
 
@@ -79,14 +91,7 @@ def article_is_pit_eligible(
     rebalance: datetime,
     policy: StockAlphaNewsPitPolicy,
 ) -> bool:
-    published = row.get("published_at_utc")
-    eligibility_timestamp = row.get(policy.eligibility_timestamp_field)
-    return (
-        isinstance(published, datetime)
-        and isinstance(eligibility_timestamp, datetime)
-        and published <= rebalance
-        and eligibility_timestamp <= rebalance
-    )
+    return _article_availability_result(row, rebalance, policy)["status"] == AVAILABLE
 
 
 def article_pit_exclusion_flags(
@@ -119,3 +124,37 @@ def _available_at(
     if policy.mode == PROVIDER_AVAILABLE_AT:
         return published + timedelta(hours=policy.availability_lag_hours)
     return None
+
+
+def _article_availability_result(
+    row: Mapping[str, Any],
+    rebalance: datetime,
+    policy: StockAlphaNewsPitPolicy,
+) -> dict[str, Any]:
+    published = row.get("published_at_utc")
+    collected = row.get("collected_at_utc") or row.get("ingested_at")
+    available = row.get("available_at_utc") or row.get("provider_available_at_utc")
+    if policy.mode == PROVIDER_AVAILABLE_AT:
+        event = MarketInformationEvent(
+            source_kind="news",
+            decision_timestamp=rebalance,
+            source_event_timestamp=published,
+            provider_published_timestamp=published,
+            provider_received_timestamp=available,
+            source_version=str(row.get("article_id") or row.get("provider_article_id") or ""),
+            required_knowledge_fields=("provider_published_timestamp", "provider_received_timestamp"),
+            availability_basis_fields=("provider_published_timestamp", "provider_received_timestamp"),
+        )
+    else:
+        event = MarketInformationEvent(
+            source_kind="news",
+            decision_timestamp=rebalance,
+            source_event_timestamp=published,
+            provider_published_timestamp=published,
+            first_seen_timestamp=collected,
+            ingestion_timestamp=collected,
+            source_version=str(row.get("article_id") or row.get("provider_article_id") or ""),
+            required_knowledge_fields=("provider_published_timestamp", "first_seen_timestamp"),
+            availability_basis_fields=("provider_published_timestamp", "first_seen_timestamp"),
+        )
+    return NEWS_AVAILABILITY_AUTHORITY.evaluate(event)

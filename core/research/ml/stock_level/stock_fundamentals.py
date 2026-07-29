@@ -19,6 +19,12 @@ import pyarrow.parquet as pq
 import yaml
 
 from core.research.framework.reporting import ResearchArtifactWriter
+from core.research.ml.reference.market_information_availability_authority import (
+    AVAILABLE,
+    MarketInformationAvailabilityAuthority,
+    any_timestamp_session_policy,
+    fundamental_fact_event_from_row,
+)
 from core.research.ml.stock_level.news_sources.providers import (
     SEC_COMPANY_TICKERS_URL,
     normalize_sec_company_tickers,
@@ -44,6 +50,9 @@ ENRICHMENT_CONTRACT_VERSION = "stock_level_fundamentals_enrichment_contract_v1"
 DIAGNOSTIC_STATUS = "BOUNDED DIAGNOSTIC ONLY / NOT FEATURE PROMOTION EVIDENCE"
 LARGE_SOURCE_GATE_VERSION = "ticket_5b4_large_source_gate_v1"
 PARTITION_MANIFEST_VERSION = "ticket_5b4_fundamentals_partition_v1"
+FUNDAMENTALS_AVAILABILITY_AUTHORITY = MarketInformationAvailabilityAuthority(
+    session_policy=any_timestamp_session_policy("fundamental_snapshot_decision_timestamp_policy_v1")
+)
 
 BASE_ROW_KEY_COLUMNS = ("decision_timestamp", "rebalance_date", "symbol")
 TARGET_PROVENANCE_REQUIRED_COLUMNS = (
@@ -61,6 +70,7 @@ BENCHMARK_REQUIRED_COLUMNS = (
 )
 SOURCE_IDENTITY_REQUIRED_COLUMNS = (
     "decision_grid_identity",
+    "target_status",
 )
 
 CANONICAL_FACT_COLUMNS = (
@@ -74,6 +84,10 @@ CANONICAL_FACT_COLUMNS = (
     "acceptance_timestamp",
     "first_seen_timestamp",
     "available_timestamp",
+    "earliest_permitted_use",
+    "availability_authority_status",
+    "availability_authority_version",
+    "availability_authority_reason_codes",
     "period_start",
     "period_end",
     "fiscal_year",
@@ -742,6 +756,12 @@ def normalize_sec_company_facts(
                         available_timestamp = _available_timestamp(fact)
                         if not available_timestamp:
                             continue
+                        filing_timestamp = _date_end_timestamp(str(fact.get("filed") or ""))
+                        acceptance_timestamp = _sec_acceptance_timestamp(
+                            fact.get("accepted")
+                            or fact.get("acceptance_timestamp")
+                            or fact.get("acceptanceDateTime")
+                        )
                         period_start = str(fact.get("start") or "")
                         period_end = str(fact.get("end") or "")
                         value = _number(fact.get("val"))
@@ -757,10 +777,14 @@ def normalize_sec_company_facts(
                             "source_document_id": accession,
                             "filing_accession": accession,
                             "form_type": form_type,
-                            "filing_timestamp": _date_end_timestamp(str(fact.get("filed") or "")),
-                            "acceptance_timestamp": "",
+                            "filing_timestamp": filing_timestamp,
+                            "acceptance_timestamp": acceptance_timestamp,
                             "first_seen_timestamp": retrieval_timestamp,
                             "available_timestamp": available_timestamp,
+                            "earliest_permitted_use": available_timestamp,
+                            "availability_authority_status": "",
+                            "availability_authority_version": "",
+                            "availability_authority_reason_codes": "",
                             "period_start": period_start,
                             "period_end": period_end,
                             "fiscal_year": fact.get("fy"),
@@ -778,6 +802,20 @@ def normalize_sec_company_facts(
                             "source_raw_sha256": raw_sha,
                             "normalisation_contract_identity": _normalisation_identity(dictionary),
                         }
+                        authority_result = FUNDAMENTALS_AVAILABILITY_AUTHORITY.evaluate(
+                            fundamental_fact_event_from_row(
+                                row,
+                                decision_timestamp=available_timestamp,
+                            )
+                        )
+                        row.update(
+                            {
+                                "earliest_permitted_use": authority_result["earliest_permitted_use"] or available_timestamp,
+                                "availability_authority_status": authority_result["status"],
+                                "availability_authority_version": authority_result["authority_version"],
+                                "availability_authority_reason_codes": json.dumps(authority_result["reason_codes"]),
+                            }
+                        )
                         key = (
                             row["reporting_entity_id"],
                             row["source_document_id"],
@@ -799,7 +837,14 @@ def normalize_sec_company_facts(
         "unit_conflict_count": len(unit_conflicts),
         "unit_conflicts": unit_conflicts[:200],
         "duplicate_fact_key_count": sum(1 for value in duplicate_keys.values() if value > 1),
-        "availability_rule": "available_timestamp is SEC filed date at 23:59:59Z; period_end is never used as availability",
+        "availability_rule": (
+            "available_timestamp is SEC filed date at 23:59:59Z when "
+            "acceptance timestamp is absent; market-information availability "
+            "authority uses SEC acceptance timestamp when present; period_end "
+            "is never used as availability"
+        ),
+        "availability_authority_version": FUNDAMENTALS_AVAILABILITY_AUTHORITY.authority_version,
+        "availability_authority_status_counts": _count_values(rows, "availability_authority_status"),
         "status": "PASS" if rows else "BLOCK",
     }
     return rows, audit
@@ -822,6 +867,7 @@ def build_fundamental_snapshots(
     snapshots: list[dict[str, Any]] = []
     future_exclusion_count = 0
     amendment_cases = 0
+    availability_status_counts: dict[str, int] = {}
     for base in base_rows:
         symbol = str(base.get("symbol") or "").upper()
         decision_ts = _decision_timestamp(base)
@@ -831,7 +877,18 @@ def build_fundamental_snapshots(
             continue
         entity_id = str(mapping["reporting_entity_id"])
         entity_facts = facts_by_entity.get(entity_id, [])
-        available = [fact for fact in entity_facts if str(fact.get("available_timestamp", "")) <= decision_ts]
+        fact_availability = [
+            (fact, _fundamental_availability_result(fact, decision_ts))
+            for fact in entity_facts
+        ]
+        for _fact_row, result in fact_availability:
+            status = str(result.get("status") or "")
+            availability_status_counts[status] = availability_status_counts.get(status, 0) + 1
+        available = [
+            fact
+            for fact, result in fact_availability
+            if result.get("status") == AVAILABLE
+        ]
         future_exclusion_count += len(entity_facts) - len(available)
         if not available:
             snapshots.append(_empty_snapshot(base, decision_ts, "no_prior_filing", entity_id=entity_id, mapping=mapping))
@@ -873,7 +930,9 @@ def build_fundamental_snapshots(
         "no_prior_filing_count": sum(1 for row in snapshots if row.get("snapshot_status") == "no_prior_filing"),
         "future_filing_exclusion_count": future_exclusion_count,
         "amendment_available_snapshot_count": amendment_cases,
-        "availability_rule": "facts included only when available_timestamp <= decision_timestamp",
+        "availability_rule": "facts included only when market-information availability authority returns AVAILABLE",
+        "availability_authority_version": FUNDAMENTALS_AVAILABILITY_AUTHORITY.authority_version,
+        "availability_authority_status_counts": dict(sorted(availability_status_counts.items())),
         "missing_snapshot_policy": "missing snapshots preserve NaN fundamentals and explicit status; no zero fill",
     }
     return snapshots, audit
@@ -1130,7 +1189,7 @@ def formula_contracts() -> dict[str, Any]:
                 "minimum_absolute_denominator": "configurable ml.stock_fundamentals.features.minimum_denominator",
                 "winsorisation_policy": "none in producer; model folds may apply fold-local preprocessing only",
                 "missingness_policy": "preserve missing values; never zero-fill economic fundamentals",
-                "availability_rule": "source facts must have available_timestamp <= decision_timestamp",
+                "availability_rule": "source facts must be AVAILABLE under the market-information availability authority",
                 "formula_version": FEATURE_FORMULA_VERSION,
             }
         )
@@ -1793,8 +1852,20 @@ def _validate_source_identity_columns(rows: Sequence[Mapping[str, Any]], expecte
 def _validate_base_artifact_provenance(rows: Sequence[Mapping[str, Any]]) -> None:
     missing = []
     for column in TARGET_PROVENANCE_REQUIRED_COLUMNS + BENCHMARK_REQUIRED_COLUMNS:
-        if any(row.get(column) in (None, "") for row in rows):
+        if any(
+            str(row.get("target_status") or "").strip().lower() == "realized"
+            and row.get(column) in (None, "")
+            for row in rows
+        ):
             missing.append(column)
+    missing_status_count = sum(
+        1
+        for row in rows
+        if str(row.get("target_status") or "").strip().lower()
+        not in {"realized", "missing_source_price", "unrealized_boundary"}
+    )
+    if missing_status_count:
+        missing.append("target_status")
     if missing:
         raise ValueError(f"Ticket 5B.4 source artifact has missing target/benchmark provenance columns: {sorted(set(missing))}")
 
@@ -2497,8 +2568,31 @@ def _normalised_unit(unit: str) -> str:
 
 
 def _available_timestamp(fact: Mapping[str, Any]) -> str:
+    accepted = _sec_acceptance_timestamp(
+        fact.get("accepted")
+        or fact.get("acceptance_timestamp")
+        or fact.get("acceptanceDateTime")
+    )
+    if accepted:
+        return accepted
     filed = str(fact.get("filed") or "")
     return _date_end_timestamp(filed)
+
+
+def _sec_acceptance_timestamp(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        if len(text) >= 14 and text[:14].isdigit():
+            parsed = datetime.strptime(text[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        else:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except ValueError:
+        return _date_end_timestamp(text)
 
 
 def _date_end_timestamp(value: str) -> str:
@@ -2540,6 +2634,15 @@ def _dedupe_normalized(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
         if key not in by_key or str(row.get("source_fact_name")) < str(by_key[key].get("source_fact_name")):
             by_key[key] = row
     return [dict(row) for row in by_key.values()]
+
+
+def _fundamental_availability_result(
+    fact: Mapping[str, Any],
+    decision_ts: str,
+) -> dict[str, Any]:
+    return FUNDAMENTALS_AVAILABILITY_AUTHORITY.evaluate(
+        fundamental_fact_event_from_row(fact, decision_timestamp=decision_ts)
+    )
 
 
 def _empty_snapshot(base: Mapping[str, Any], decision_ts: str, status: str, *, entity_id: str = "", mapping: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -2909,7 +3012,8 @@ def _snapshot_audit_from_rows(snapshots: Sequence[Mapping[str, Any]], normalized
         "no_prior_filing_count": sum(1 for row in snapshots if row.get("snapshot_status") == "no_prior_filing"),
         "future_filing_exclusion_count": _future_filing_exclusion_count(snapshots, normalized_facts),
         "amendment_available_snapshot_count": sum(1 for row in snapshots if "10-Q/A" in str(row.get("selected_source_document_identities", ""))),
-        "availability_rule": "facts included only when available_timestamp <= decision_timestamp",
+        "availability_rule": "facts included only when market-information availability authority returns AVAILABLE",
+        "availability_authority_version": FUNDAMENTALS_AVAILABILITY_AUTHORITY.authority_version,
         "missing_snapshot_policy": "missing snapshots preserve NaN fundamentals and explicit status; no zero fill",
     }
 

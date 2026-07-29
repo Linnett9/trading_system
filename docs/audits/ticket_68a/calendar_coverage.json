@@ -1,0 +1,14 @@
+{
+  "contract_version": "calendar_coverage.v1",
+  "fallback_verified_coverage": {
+    "end": "2026-12-31",
+    "promotion_grade_outside_range": "fail_closed",
+    "start": "2016-01-01"
+  },
+  "maintained_future_schedule_behaviour": "bounded by package calendar generation parameters; record schedule hash for every used range",
+  "maintained_historical_range": "package-defined; adapter records OUTSIDE_AUTHORITY_RANGE when the generated calendar declines a date",
+  "selected_authority": "exchange_calendars",
+  "selected_package_version": "4.13.2",
+  "selected_supported_exchange": "XNYS",
+  "timezone": "America/New_York"
+}

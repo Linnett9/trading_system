@@ -1,0 +1,81 @@
+{
+  "classification": "MAINTAINED_CALENDAR_AUTHORITY_IMPLEMENTED",
+  "contract_version": "calendar_validation.v1",
+  "dependency_activation": {
+    "dependency_conflicts": [
+      "pip check reports torch 2.13.0+cpu requires setuptools>=77.0.3; venv has setuptools 65.5.0"
+    ],
+    "environment": ".venv-ticket-68a",
+    "import_result": "import exchange_calendars succeeded",
+    "install_command": ".\\.venv-ticket-68a\\Scripts\\python.exe -m pip install exchange-calendars==4.13.2",
+    "resolved_package_version": "4.13.2"
+  },
+  "focused_tests": [
+    "regular session",
+    "early close",
+    "holiday",
+    "weekend",
+    "DST start",
+    "DST end",
+    "pre-market",
+    "after-hours",
+    "previous/next session",
+    "outside authority range",
+    "maintained dependency unavailable",
+    "explicit fallback",
+    "special closure",
+    "local override",
+    "conflicting evidence",
+    "deterministic schedule hash",
+    "session_type compatibility",
+    "Ticket 68 integration",
+    "manifest/certification lineage",
+    "no trading behaviour changes"
+  ],
+  "runtime_backend_status": "MAINTAINED",
+  "runtime_backend_status_reason": "",
+  "runtime_fallback_used": false,
+  "runtime_package": "exchange_calendars",
+  "runtime_package_version": "4.13.2",
+  "trading_impact": "none",
+  "validation_dates": [
+    "2018-12-05",
+    "2021-12-31",
+    "2025-01-09",
+    "2025-07-03",
+    "2025-11-27",
+    "2025-11-28",
+    "2025-12-24",
+    "2025-12-25",
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-03",
+    "2026-03-09",
+    "2026-11-02",
+    "2026-12-24"
+  ],
+  "validation_runs": [
+    {
+      "command": ".\\.venv-ticket-68a\\Scripts\\python.exe -m pytest tests/test_calendar_authority.py tests/test_market_information_availability_authority.py tests/test_dataset_build_manifest.py tests/test_frozen_selector_lineage_guard.py tests/test_selector_dataset_lineage.py tests/test_research_certification.py tests/test_historical_bar_backfill.py tests/test_alpaca_5m_symbol_year_finalizer.py tests/test_stock_level_prediction_artifacts.py -q",
+      "mode": "maintained",
+      "passed": 191,
+      "result": "passed",
+      "warnings": 1
+    },
+    {
+      "command": ".\\.venv-ticket-68a\\Scripts\\python.exe -m pytest tests/test_calendar_authority.py -k \"fallback or session_type or regular_early_close_holiday_weekend\" -q",
+      "deselected": 10,
+      "mode": "forced_fallback",
+      "passed": 3,
+      "result": "passed"
+    },
+    {
+      "command": "python -m pytest tests/test_calendar_authority.py tests/test_market_information_availability_authority.py -q",
+      "mode": "dependency_unavailable_fallback",
+      "passed": 23,
+      "result": "passed",
+      "skipped": 5,
+      "warnings": 1
+    }
+  ]
+}

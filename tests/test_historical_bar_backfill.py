@@ -30,7 +30,13 @@ from infrastructure.data.historical_bar_providers import (
     free_historical_bar_source_inventory,
     resolve_alpaca_credentials,
 )
-from infrastructure.data.market_sessions import expected_rth_timestamps, is_trading_session, nyse_early_closes, session_type
+from infrastructure.data.market_sessions import (
+    calendar_status_for_date,
+    expected_rth_timestamps,
+    is_trading_session,
+    nyse_early_closes,
+    session_type,
+)
 from infrastructure.data.historical_bar_staging import (
     aggregate_5m_to_1h,
     compare_aggregated_1h,
@@ -588,7 +594,12 @@ def test_expected_normal_full_day_has_78_rth_5m_bars_and_early_close_has_42():
 
 def test_market_calendar_covers_2016_2026_holidays_and_early_closes():
     assert not is_trading_session(datetime(2016, 3, 25).date())  # Good Friday.
-    assert not is_trading_session(datetime(2021, 12, 31).date())  # New Year observed.
+    new_year_eve_2021 = datetime(2021, 12, 31).date()
+    new_year_eve_status = calendar_status_for_date(new_year_eve_2021)
+    if new_year_eve_status["fallback_used"]:
+        assert not is_trading_session(new_year_eve_2021)  # Compact fallback limitation.
+    else:
+        assert is_trading_session(new_year_eve_2021)  # Maintained NYSE calendar correction.
     assert not is_trading_session(datetime(2025, 1, 9).date())  # Carter mourning closure.
     assert not is_trading_session(datetime(2026, 4, 3).date())  # Good Friday.
     assert not is_trading_session(datetime(2026, 7, 4).date())  # Weekend.

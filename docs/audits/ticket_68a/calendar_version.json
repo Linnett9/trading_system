@@ -1,0 +1,18 @@
+{
+  "authority_version": "market_calendar_authority.v1",
+  "calendar_authority_id": "market_calendar_authority.v1:XNYS",
+  "calendar_id": "XNYS",
+  "date_range_used": {
+    "end": "2026-12-24",
+    "start": "2018-12-05"
+  },
+  "exchange": "XNYS",
+  "fallback_state": "MAINTAINED_USED",
+  "fallback_used": false,
+  "generated_at": "2026-07-29T00:00:00Z",
+  "package": "exchange_calendars",
+  "package_version": "4.13.2",
+  "schedule_hash": "DB2DFE26E3CA6C96B23DAFD01BDEEFA33B356362AEE4991F1826E8DD222E4E1D",
+  "selected_package_version": "4.13.2",
+  "version": "market_calendar_authority.v1:exchange_calendars:exchange_calendars:4.13.2"
+}

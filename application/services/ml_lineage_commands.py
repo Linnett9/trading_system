@@ -4,20 +4,15 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from core.research.ml.artifact_lineage import VERIFIED_STRICT_OOS, verify_lineage_graph
-from core.research.ml.experiment_ledger import append_ledger_event, experiment_spec_hash, new_experiment_run_id
-from core.research.ml.provenance import source_provenance
-from core.research.ml.registries import RegistryResolver, load_registry_bundle
-from core.research.ml.legacy_evidence import import_legacy_evidence
-from core.research.ml.reference.canonical_assets import (
-    file_sha256,
-    read_aliases_csv,
-    read_assets_csv,
-    registry_content_hash,
+from core.research.ml.dataset_build_manifest import (
+    DatasetLineageExpectation,
+    check_dataset_lineage,
 )
 
 
 def run_artifact_lineage_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    from core.research.ml.artifact_lineage import VERIFIED_STRICT_OOS, verify_lineage_graph
+
     if not args.artifact_manifest:
         raise ValueError("--artifact-manifest is required for ml-artifact-lineage-verify")
     manifest = Path(args.artifact_manifest)
@@ -50,7 +45,73 @@ def run_artifact_lineage_verify(config: Mapping[str, Any], args: Any) -> dict[st
     return result
 
 
+def run_research_certification_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    from core.research.ml.research_certification import (
+        verify_research_certification_envelope,
+    )
+
+    if not getattr(args, "certification_envelope", None):
+        raise ValueError("--certification-envelope is required for ml-research-certification-verify")
+    result = verify_research_certification_envelope(
+        Path(args.certification_envelope),
+        tolerance=float(getattr(args, "replay_tolerance", 0.0) or 0.0),
+    )
+    if getattr(args, "verification_output", None):
+        _write_reports(Path(args.verification_output), result)
+    print(json.dumps({
+        "reproduction_status": result["reproduction_status"],
+        "exact_reproduction": result["exact_reproduction"],
+        "tolerance_based_reproduction": result["tolerance_based_reproduction"],
+        "blocking_reasons": result["blocking_reasons"],
+        "training_rerun_performed": result["training_rerun_performed"],
+    }, sort_keys=True))
+    if result["reproduction_status"] not in {"EXACT_ARTIFACT_REPLAY", "TOLERANCE_REPLAY"}:
+        raise SystemExit(2)
+    return result
+
+
+def run_dataset_lineage_check(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    if not getattr(args, "dataset_path", None) and not getattr(args, "dataset_manifest", None):
+        raise ValueError("--dataset-path or --dataset-manifest is required for ml-dataset-lineage-check")
+    producer = getattr(args, "expected_producer", None)
+    expectation = DatasetLineageExpectation(
+        dataset_id=getattr(args, "expected_dataset_id", None),
+        dataset_type=getattr(args, "expected_dataset_type", None),
+        schema_version=getattr(args, "expected_schema_version", None),
+        producer_command=getattr(args, "expected_producer_command", None),
+        producer_module=getattr(args, "expected_producer_module", None) or producer,
+        universe_authority_version=getattr(args, "universe_authority_version", None),
+        identity_authority_version=getattr(args, "identity_authority_version", None),
+        corporate_action_authority_version=getattr(args, "corporate_action_authority_version", None),
+        market_calendar_authority_version=getattr(args, "market_calendar_authority_version", None),
+        feature_code_version=getattr(args, "expected_feature_code_version", None),
+        label_code_version=getattr(args, "expected_label_code_version", None),
+        configuration_hash=getattr(args, "expected_config_hash", None),
+    )
+    result = check_dataset_lineage(
+        dataset_path=Path(args.dataset_path) if getattr(args, "dataset_path", None) else None,
+        manifest_path=Path(args.dataset_manifest) if getattr(args, "dataset_manifest", None) else None,
+        expected=expectation,
+        intended_use=getattr(args, "intended_use", None) or "research",
+    )
+    output = getattr(args, "lineage_output", None) or getattr(args, "verification_output", None)
+    if output:
+        _write_reports(Path(output), result)
+    print(json.dumps({
+        "status": result["status"],
+        "reasons": result["reasons"],
+        "permitted_use": result["permitted_use"],
+        "use_authorized": result["use_authorized"],
+        "manifest_version": result["manifest_version"],
+    }, sort_keys=True))
+    if not result["use_authorized"]:
+        raise SystemExit(2)
+    return result
+
+
 def run_registry_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    from core.research.ml.registries import RegistryResolver, load_registry_bundle
+
     if getattr(args, "artifact_manifest", None):
         return _run_canonical_registry_publication_verify(args)
     first = load_registry_bundle()
@@ -79,6 +140,13 @@ def run_registry_verify(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
 
 
 def _run_canonical_registry_publication_verify(args: Any) -> dict[str, Any]:
+    from core.research.ml.reference.canonical_assets import (
+        file_sha256,
+        read_aliases_csv,
+        read_assets_csv,
+        registry_content_hash,
+    )
+
     manifest_path = Path(args.artifact_manifest)
     expected_run_id = str(getattr(args, "registry_run_id", None) or "")
     blockers: list[str] = []
@@ -156,6 +224,8 @@ def _read_json(path: Path, blockers: list[str], blocker: str) -> dict[str, Any]:
 
 
 def run_legacy_evidence_import(config: Mapping[str, Any], args: Any) -> dict[str, Any]:
+    from core.research.ml.legacy_evidence import import_legacy_evidence
+
     if not args.legacy_manifest: raise ValueError("--legacy-manifest is required")
     if not args.verification_output: raise ValueError("--verification-output is required for a separate legacy evidence report")
     result = import_legacy_evidence(Path(args.legacy_manifest), expected_artifact_kind=args.expected_artifact_kind)
@@ -170,15 +240,23 @@ def _write_reports(path: Path, payload: Mapping[str, Any]) -> list[str]:
     md_path = json_path.with_suffix(".md")
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    lines = ["# Artifact verification", "", f"- Status: `{payload.get('verification_status', payload.get('status'))}`"]
+    status = payload.get(
+        "verification_status",
+        payload.get("status", payload.get("reproduction_status")),
+    )
+    lines = ["# Artifact verification", "", f"- Status: `{status}`"]
     if "promotion" in payload: lines.append(f"- Promotion eligible: `{payload['promotion'].get('promotion_eligible')}`")
-    for reason in payload.get("verification_reasons", []): lines.append(f"- Reason: `{reason}`")
+    for reason in payload.get("verification_reasons", payload.get("reasons", [])): lines.append(f"- Reason: `{reason}`")
     if payload.get("failing_edge"): lines.append(f"- Failing edge: `{payload['failing_edge']}`")
+    for reason in payload.get("blocking_reasons", []): lines.append(f"- Blocking reason: `{reason}`")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return [str(json_path), str(md_path)]
 
 
 def _append_audit_event(config: Mapping[str, Any], manifest: Path, result: Mapping[str, Any], reports: list[str]) -> None:
+    from core.research.ml.experiment_ledger import append_ledger_event, experiment_spec_hash, new_experiment_run_id
+    from core.research.ml.provenance import source_provenance
+
     specification = {"artifact_manifest": str(manifest), "artifact_link_hash": result.get("artifact_link_hash")}
     spec_hash = experiment_spec_hash(specification)
     source = source_provenance()

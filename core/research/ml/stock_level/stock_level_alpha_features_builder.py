@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from statistics import mean, median, pstdev
 from typing import Any
 
+from core.research.ml.reference.market_information_availability_authority import (
+    MarketInformationAvailabilityAuthority,
+    any_timestamp_session_policy,
+    daily_price_feature_event,
+)
 from core.research.ml.stock_level.stock_level_alpha_features_audit import _audit
 from core.research.ml.stock_level.stock_level_alpha_features_math import (
     _atr_percentile,
@@ -34,6 +39,11 @@ from core.research.ml.stock_level.stock_level_alpha_features_types import (
 )
 from core.research.ml.stock_level.selector_lineage import (
     merge_enrichment_preserving_base,
+)
+
+
+DAILY_PRICE_AVAILABILITY_AUTHORITY = MarketInformationAvailabilityAuthority(
+    session_policy=any_timestamp_session_policy("daily_price_feature_cutoff_decision_timestamp_policy_v1")
 )
 
 
@@ -164,6 +174,7 @@ def _build_symbol_rows(
         history_before = _history_before(history, rebalance_date)
         spy_before = _history_before(spy_history, rebalance_date)
         row.update(_time_series_features(history_before, spy_before))
+        row.update(_daily_price_availability_metadata(history_before, source))
         output.append(row)
     return output
 def _time_series_features(
@@ -368,6 +379,27 @@ def _history_before(
 ) -> list[dict[str, float | str]]:
     dates = [str(row["date"]) for row in history]
     return history[: bisect_left(dates, rebalance_date)]
+
+
+def _daily_price_availability_metadata(
+    history: list[dict[str, float | str]],
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    rebalance_date = str(source.get("rebalance_date", ""))
+    decision = source.get("decision_timestamp") or f"{rebalance_date}T00:00:00Z"
+    observation = history[-1]["date"] if history else None
+    result = DAILY_PRICE_AVAILABILITY_AUTHORITY.evaluate(
+        daily_price_feature_event(
+            observation_timestamp=observation,
+            decision_timestamp=decision,
+            source_version="stock_level_daily_price_feature_cutoff_v1",
+        )
+    )
+    return {
+        "daily_price_availability_status": result["status"],
+        "daily_price_earliest_permitted_use": result["earliest_permitted_use"] or "",
+        "daily_price_availability_authority_version": result["authority_version"],
+    }
 
 
 def _distance_from_average(values: list[float], lookback: int) -> float | str:

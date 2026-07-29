@@ -71,6 +71,24 @@ def _audit(
             "lookbacks": ["20", "60", "120", "200"],
             "missing_session_behaviour": "remain missing; no forward fill from future observations",
         },
+        "daily_price_feature_availability_authority": {
+            "authority_version": next(
+                (
+                    str(row.get("daily_price_availability_authority_version"))
+                    for row in rows
+                    if row.get("daily_price_availability_authority_version")
+                ),
+                "",
+            ),
+            "availability_rule": "daily feature observations must be available before decision_timestamp",
+            "status_counts": _count_values(rows, "daily_price_availability_status"),
+            "future_feature_inclusion_count": sum(
+                1
+                for row in rows
+                if str(row.get("daily_price_availability_status") or "")
+                in {"NOT_YET_AVAILABLE", "REVISED_AFTER_DECISION", "CONFLICTING_EVIDENCE"}
+            ),
+        },
         "breadth_contract": {
             "contract_version": BREADTH_CONTRACT_VERSION,
             "universe_identity": "source artifact decision-date cross-section",
@@ -114,3 +132,11 @@ def alpha_feature_registry() -> FeatureRegistry[str]:
             metadata={"definition": FEATURE_DEFINITIONS[name]},
         )
     return registry
+
+
+def _count_values(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or "")
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))

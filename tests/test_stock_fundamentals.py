@@ -445,6 +445,53 @@ def test_ticket_5b4_gate_accepts_complete_identity_and_provenance(tmp_path):
     assert [row["symbol"] for row in loaded] == ["AAPL", "MSFT"]
 
 
+def test_ticket_5b4_gate_allows_unrealized_tail_without_labels(tmp_path):
+    realized = _large_source_row("2024-01-02", "AAPL")
+    unrealized = {
+        **_large_source_row("2024-01-03", "MSFT"),
+        "actual_benchmark_return_10d": None,
+        "target_start_timestamp": None,
+        "label_start_timestamp": None,
+        "label_end_timestamp": None,
+        "label_available_timestamp": None,
+        "benchmark_label_start_timestamp": None,
+        "benchmark_label_end_timestamp": None,
+        "benchmark_label_available_timestamp": None,
+        "target_status": "unrealized_boundary",
+    }
+    rows = [realized, unrealized]
+    path = tmp_path / "large" / "stock_level_prediction_artifacts.parquet"
+    identity = write_stock_level_artifact(
+        path,
+        rows,
+        fieldnames=list(rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )
+    identity["decision_grid_identity"] = "grid-fixture"
+    identity["universe_identity"] = "universe-fixture"
+
+    loaded = _load_base_rows(_settings(_gate_config(tmp_path, path, identity)))
+
+    assert [row["target_status"] for row in loaded] == ["realized", "unrealized_boundary"]
+
+
+def test_ticket_5b4_gate_rejects_realized_row_missing_label_provenance(tmp_path):
+    rows = [_large_source_row("2024-01-02", "AAPL")]
+    rows[0]["label_available_timestamp"] = None
+    path = tmp_path / "large" / "stock_level_prediction_artifacts.parquet"
+    identity = write_stock_level_artifact(
+        path,
+        rows,
+        fieldnames=list(rows[0]),
+        config={"ml": {"stock_level_artifact_format": "parquet", "stock_level_parquet_compression": "zstd"}},
+    )
+    identity["decision_grid_identity"] = "grid-fixture"
+    identity["universe_identity"] = "universe-fixture"
+
+    with pytest.raises(ValueError, match="label_available_timestamp"):
+        _load_base_rows(_settings(_gate_config(tmp_path, path, identity)))
+
+
 def test_ticket_5b4_pit_partitions_prevent_amendment_leakage_and_resume(tmp_path, monkeypatch):
     facts = _normalized_fixture_facts(tmp_path)
     base_rows = [_large_source_row("2023-06-15", "AAPL"), _large_source_row("2023-09-15", "AAPL")]
@@ -603,6 +650,7 @@ def _large_source_row(date: str, symbol: str) -> dict:
         "benchmark_label_start_timestamp": f"{date}T00:00:00Z",
         "benchmark_label_end_timestamp": f"{date}T00:00:00Z",
         "benchmark_label_available_timestamp": f"{date}T00:00:00Z",
+        "target_status": "realized",
         "decision_grid_identity": "grid-fixture",
         "universe_identity": "universe-fixture",
     }
