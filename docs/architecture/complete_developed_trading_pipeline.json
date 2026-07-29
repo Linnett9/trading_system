@@ -1,0 +1,617 @@
+﻿{
+  "artifacts_created": [
+    {
+      "path": "docs/architecture/complete_developed_trading_pipeline.md",
+      "purpose": "human_readable_reference_report"
+    },
+    {
+      "path": "docs/architecture/complete_developed_trading_pipeline.json",
+      "purpose": "machine_readable_pipeline_inventory"
+    }
+  ],
+  "authoritative_components": [
+    {
+      "authority_level": "committed_runtime_authority_with_dispatch_gaps",
+      "component": "cli_runtime",
+      "evidence": [
+        "main.py",
+        "application/cli_parser.py",
+        "application/cli_runtime.py",
+        "application/cli_dispatch.py"
+      ]
+    },
+    {
+      "authority_level": "committed_configuration_authority",
+      "component": "configuration",
+      "evidence": [
+        "config/config_defaults.py",
+        "config/config_defaults_ml.py",
+        "config/config.yaml",
+        "config/config_validation.py"
+      ]
+    },
+    {
+      "authority_level": "local_ignored_data_authority_evidence",
+      "component": "canonical_daily_v2",
+      "evidence": [
+        "reports/data_lineage/canonical_daily_v2/build_manifest.json",
+        "data/processed/market_data/canonical_daily_v2/full"
+      ]
+    },
+    {
+      "authority_level": "committed_registry_authority",
+      "component": "ml_registries",
+      "evidence": [
+        "config/ml_registries/selector_models.v1.json",
+        "config/ml_registries/target_contracts.v1.json",
+        "config/ml_registries/portfolio_policies.v1.json",
+        "config/ml_registries/ranking_contracts.v1.json",
+        "config/ml_registries/equations.v1.json"
+      ]
+    },
+    {
+      "authority_level": "committed_implementation_authority",
+      "component": "paper_trading_engine_and_risk",
+      "evidence": [
+        "application/services/paper_commands.py",
+        "application/services/paper_service.py",
+        "core/paper",
+        "core/risk/paper_risk_pre_trade.py",
+        "core/risk/paper_risk_post_trade.py"
+      ]
+    },
+    {
+      "authority_level": "committed_retention_authority",
+      "component": "data_retention_manifest",
+      "evidence": [
+        "config/data_retention_authority_manifest.v1.json"
+      ]
+    }
+  ],
+  "classification": {
+    "overall": "REFERENCE_COMPLETE_WITH_LIMITATIONS",
+    "production_readiness": "NOT_PRODUCTION_PROMOTION_READY",
+    "reason": "Research and paper-trading pipeline is broad and developed, but current evidence leaves critical PIT, identity, reproducibility, lineage, uncertainty, and execution controls incomplete or untracked."
+  },
+  "cli": {
+    "dispatch_gaps": [
+      "ml-selector-dataset-build-preflight",
+      "ml-selector-dataset-validate",
+      "ml-selector-spine-validate"
+    ],
+    "feedless_mode_count": 86,
+    "mode_count": 118,
+    "mode_groups": [
+      {
+        "group": "data_ingestion_and_authority",
+        "modes": [
+          "import-market-parquet",
+          "import-stooq-bulk",
+          "ml-build-universes",
+          "ml-historical-bar-backfill-benchmark",
+          "ml-historical-bar-backfill-collect",
+          "ml-historical-bar-backfill-probe",
+          "ml-historical-bar-feed-overlap",
+          "ml-refresh-adjusted-prices"
+        ]
+      },
+      {
+        "group": "governance_and_lineage",
+        "modes": [
+          "ml-artifact-lineage-verify",
+          "ml-data-inventory",
+          "ml-data-retention-build-evidence",
+          "ml-data-retention-check",
+          "ml-dataset-lineage-check",
+          "ml-legacy-artifact-evidence-import",
+          "ml-registry-verify",
+          "ml-selector-artifact-audit",
+          "ml-selector-component-preflight",
+          "ml-selector-component-publish",
+          "ml-selector-dataset-lineage-audit",
+          "ml-selector-evaluation-preflight",
+          "ml-selector-parent-gate",
+          "ml-selector-panel-resolve",
+          "ml-validate-artifacts"
+        ]
+      },
+      {
+        "group": "news_and_fundamentals",
+        "modes": [
+          "ml-stock-alpha-finbert-news-probe",
+          "ml-stock-alpha-news-canonical-corpus",
+          "ml-stock-alpha-news-collect-free-sources",
+          "ml-stock-alpha-news-coverage-audit",
+          "ml-stock-alpha-news-daily-confirmation",
+          "ml-stock-alpha-news-features",
+          "ml-stock-alpha-news-historical-backfill",
+          "ml-stock-alpha-news-provider-audit",
+          "ml-stock-alpha-news-provider-sample-check",
+          "ml-stock-alpha-news-risk-overlay-research",
+          "ml-stock-alpha-news-source-diagnostics",
+          "ml-stock-fundamentals-audit",
+          "ml-stock-fundamentals-collect",
+          "ml-stock-fundamentals-enrich",
+          "ml-stock-fundamentals-normalize",
+          "ml-stock-fundamentals-pipeline",
+          "ml-stock-fundamentals-preflight",
+          "ml-stock-fundamentals-snapshots"
+        ]
+      },
+      {
+        "group": "paper_trading",
+        "modes": [
+          "paper-dry-run",
+          "paper-fill",
+          "paper-promotion-checklist",
+          "paper-repair",
+          "paper-report",
+          "paper-reset",
+          "paper-run",
+          "paper-status",
+          "paper-trade",
+          "paper-trading",
+          "paper-trial",
+          "paper-weekly-summary"
+        ]
+      },
+      {
+        "group": "selector_and_portfolio",
+        "modes": [
+          "ml-full-daily-selector-campaign",
+          "ml-selector-confidence-ensemble",
+          "ml-selector-cost-aware-policy-evaluation",
+          "ml-selector-exposure-comparison",
+          "ml-selector-feature-ablation",
+          "ml-selector-portfolio-promotion",
+          "ml-selector-target-tournament",
+          "ml-stock-level-alpha-benchmark",
+          "ml-stock-level-alpha-features",
+          "ml-stock-level-feature-attribution",
+          "ml-stock-level-portfolio-policy-sweep",
+          "ml-stock-level-portfolio-replay",
+          "ml-stock-selector-bounded",
+          "ml-stock-selector-final-fit",
+          "ml-stock-selector-rebalance-dataset"
+        ]
+      },
+      {
+        "group": "traditional_research",
+        "modes": [
+          "backtest",
+          "champion-robustness",
+          "compare-strategies",
+          "data-audit",
+          "dataset-audit",
+          "dual-momentum",
+          "dual-momentum-diagnosis",
+          "dual-momentum-risk-regimes",
+          "dual-momentum-walk-forward",
+          "multi-strategy",
+          "multi-strategy-walk-forward",
+          "optimize",
+          "relative-strength",
+          "walk-forward"
+        ]
+      }
+    ]
+  },
+  "data_artifacts": {
+    "adjusted_prices": {
+      "csv_file_count": 359,
+      "latest_manifest_date": "2026-06-25",
+      "manifest_imported_symbol_count": 28,
+      "root": "data/reference/adjusted_prices",
+      "status": "RESEARCH_ONLY_WITH_MANIFEST_DIRECTORY_MISMATCH"
+    },
+    "canonical_asset_registry": {
+      "asset_count": 514,
+      "alias_count": 2570,
+      "paths": [
+        "data/reference/assets/canonical_asset_registry.csv",
+        "data/reference/assets/provider_symbol_aliases.csv"
+      ],
+      "status": "STATIC_CURRENT_REFERENCE_NOT_PIT_PROMOTION_AUTHORITY"
+    },
+    "canonical_daily_v2": {
+      "date_max": "2026-07-10",
+      "date_min": "1962-01-02",
+      "manifest": "reports/data_lineage/canonical_daily_v2/build_manifest.json",
+      "row_count": 4132023,
+      "schema": "canonical_daily_v2.partitioned.v1",
+      "status": "COMPLETE",
+      "symbol_count": 514
+    },
+    "frozen_selector_dataset": {
+      "dataset_id": "canonical_v2_selector_dataset_v1",
+      "git_commit_recorded": "848d144f907f7b2c8ec22a52c23dd6c7d2810606",
+      "manifest": "reports/ml/readiness/canonical_v2_selector_dataset_v1/frozen/manifest.json",
+      "source_row_count": 3224797,
+      "source_symbol_count": 406,
+      "status": "LOCAL_IGNORED_EVIDENCE_WITH_OLDER_COMMIT"
+    }
+  },
+  "defaults": {
+    "adaptive_conformal_challenger_enabled": false,
+    "broker_adapter_default": "fake",
+    "forecast_interval_coverage_monitoring_enabled": false,
+    "live_trading_enabled": false,
+    "ml_enabled": false,
+    "ml_mode": "research",
+    "paper_submit_orders": false,
+    "paper_trading_enabled": false,
+    "sequential_change_point_detection_enabled": false,
+    "stock_fundamentals_enabled": false,
+    "stock_portfolio_policy_sweep_subsettings_enabled": true,
+    "stock_portfolio_replay_subsettings_enabled": true
+  },
+  "evidence_files": [
+    {
+      "exists": true,
+      "path": "application/cli_dispatch.py"
+    },
+    {
+      "exists": true,
+      "path": "application/cli_parser.py"
+    },
+    {
+      "exists": true,
+      "path": "application/cli_runtime.py"
+    },
+    {
+      "exists": true,
+      "path": "config/config.yaml"
+    },
+    {
+      "exists": true,
+      "path": "config/data_retention_authority_manifest.v1.json"
+    },
+    {
+      "exists": true,
+      "path": "config/ml_registries/portfolio_policies.v1.json"
+    },
+    {
+      "exists": true,
+      "path": "config/ml_registries/selector_models.v1.json"
+    },
+    {
+      "exists": true,
+      "path": "config/ml_registries/target_contracts.v1.json"
+    },
+    {
+      "exists": true,
+      "path": "core/research/ml/data/sequence_window_authority.py",
+      "tracked_status": "untracked"
+    },
+    {
+      "exists": true,
+      "path": "core/research/ml/full_daily_selector_campaign.py",
+      "tracked_status": "untracked"
+    },
+    {
+      "exists": true,
+      "path": "core/research/ml/reference/historical_identity_authority.py",
+      "tracked_status": "untracked"
+    },
+    {
+      "exists": true,
+      "path": "core/research/ml/reference/pit_universe_authority.py",
+      "tracked_status": "untracked"
+    },
+    {
+      "exists": true,
+      "path": "data/reference/assets/canonical_asset_registry.csv",
+      "tracked_status": "ignored_local_data"
+    },
+    {
+      "exists": true,
+      "path": "reports/audits/ticket_56_end_to_end_research_integrity_20260728/findings.json",
+      "tracked_status": "ignored_local_report"
+    },
+    {
+      "exists": true,
+      "path": "reports/data_lineage/canonical_daily_v2/build_manifest.json",
+      "tracked_status": "ignored_local_report"
+    },
+    {
+      "exists": false,
+      "path": "core/research/ml/selector_campaign_authority.py",
+      "tracked_status": "missing_referenced_by_older_docs"
+    },
+    {
+      "exists": false,
+      "path": "core/research/ml/selector_campaign_contract.py",
+      "tracked_status": "missing_referenced_by_older_docs"
+    }
+  ],
+  "framework_only_components": [
+    "adaptive_conformal",
+    "dataset_build_manifest",
+    "forecast_interval_coverage_monitoring",
+    "full_daily_selector_campaign",
+    "historical_identity_authority",
+    "persistent_daily_price_portfolio_replay",
+    "pit_universe_authority",
+    "sequential_change_point_detection",
+    "uncertainty_baseline_audit"
+  ],
+  "generated_at": "2026-07-28T22:38:14.9326159+01:00",
+  "model_registry": {
+    "model_count": 23,
+    "models": [
+      {
+        "id": "contextual_elastic_net",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "dlinear",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "elastic_net",
+        "status": "IMPLEMENTED_AND_BOUNDED_RUNNABLE"
+      },
+      {
+        "id": "gradient_boosting",
+        "status": "IMPLEMENTED_AND_BOUNDED_RUNNABLE"
+      },
+      {
+        "id": "huber",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "itransformer",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "lightgbm_lambdarank",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "lightgbm_rank_xendcg",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "market_context_encoder",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "momentum_120d",
+        "status": "BASELINE_COMPLETE"
+      },
+      {
+        "id": "momentum_transformer",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "multi_horizon_elastic_net",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "multi_horizon_ordered_logit",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "multi_horizon_ridge",
+        "status": "IMPLEMENTED_AND_AUTHORITATIVE_RUNNABLE"
+      },
+      {
+        "id": "multitask_transformer",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "news_analysis_transformer",
+        "status": "BLOCKED_BY_DATA"
+      },
+      {
+        "id": "ordered_logit_ranker",
+        "status": "IMPLEMENTED_AND_BOUNDED_RUNNABLE"
+      },
+      {
+        "id": "patchtst",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "random_forest",
+        "status": "IMPLEMENTED_AND_BOUNDED_RUNNABLE"
+      },
+      {
+        "id": "ridge",
+        "status": "IMPLEMENTED_AND_BOUNDED_RUNNABLE"
+      },
+      {
+        "id": "risk_adjusted_momentum",
+        "status": "BASELINE_COMPLETE"
+      },
+      {
+        "id": "temporal_fusion_transformer",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      },
+      {
+        "id": "transformer",
+        "status": "IMPLEMENTED_BUT_UNVALIDATED"
+      }
+    ]
+  },
+  "pipeline_stages": [
+    {
+      "evidence": [
+        "main.py",
+        "application/cli_runtime.py"
+      ],
+      "name": "cli_runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "evidence": [
+        "config/config_defaults.py",
+        "config/config_defaults_ml.py",
+        "config/config.yaml"
+      ],
+      "name": "configuration",
+      "status": "IMPLEMENTED_DEFENSIVE_DEFAULTS"
+    },
+    {
+      "evidence": [
+        "infrastructure/alpaca",
+        "application/services/stooq_bulk_commands.py",
+        "application/services/historical_bar_backfill_commands.py"
+      ],
+      "name": "provider_ingestion",
+      "status": "IMPLEMENTED_OPT_IN"
+    },
+    {
+      "evidence": [
+        "reports/data_lineage/canonical_daily_v2/build_manifest.json"
+      ],
+      "name": "canonical_daily_data",
+      "status": "LOCAL_COMPLETE_AUTHORITY_EVIDENCE"
+    },
+    {
+      "evidence": [
+        "data/reference/assets/canonical_asset_registry.csv",
+        "core/research/ml/reference/canonical_assets.py"
+      ],
+      "name": "asset_identity",
+      "status": "STATIC_REFERENCE_WITH_PIT_LIMITATIONS"
+    },
+    {
+      "evidence": [
+        "core/research/ml/reference/pit_universe_authority.py"
+      ],
+      "name": "pit_universe",
+      "status": "UNTRACKED_FRAMEWORK"
+    },
+    {
+      "evidence": [
+        "core/research/ml/stock_level/stock_level_alpha_features.py"
+      ],
+      "name": "features",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "evidence": [
+        "config/ml_registries/target_contracts.v1.json"
+      ],
+      "name": "targets",
+      "status": "IMPLEMENTED_WITH_VERSION_MISMATCH_RISK_IN_OLD_ARTIFACTS"
+    },
+    {
+      "evidence": [
+        "reports/ml/readiness/canonical_v2_selector_dataset_v1/frozen/manifest.json"
+      ],
+      "name": "frozen_datasets",
+      "status": "LOCAL_EVIDENCE_PRESENT"
+    },
+    {
+      "evidence": [
+        "config/ml_registries/selector_models.v1.json"
+      ],
+      "name": "model_registry",
+      "status": "IMPLEMENTED_RESEARCH_ONLY"
+    },
+    {
+      "evidence": [
+        "core/research/ml/stock_level_benchmark_execution.py"
+      ],
+      "name": "walk_forward_and_oos",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "evidence": [
+        "core/research/ml/data/sequence_window_authority.py"
+      ],
+      "name": "sequence_window_authority",
+      "status": "UNTRACKED_FRAMEWORK"
+    },
+    {
+      "evidence": [
+        "core/research/ml/stock_level/stock_level_portfolio_replay.py",
+        "config/ml_registries/portfolio_policies.v1.json"
+      ],
+      "name": "portfolio_replay_and_policy",
+      "status": "IMPLEMENTED_RESEARCH_ONLY"
+    },
+    {
+      "evidence": [
+        "application/services/paper_commands.py",
+        "core/paper",
+        "core/risk/paper_risk_pre_trade.py"
+      ],
+      "name": "paper_trading",
+      "status": "IMPLEMENTED_DISABLED_BY_DEFAULT"
+    },
+    {
+      "evidence": [
+        "core/research/ml/adaptive_conformal.py",
+        "core/research/ml/forecast_interval_coverage_monitoring.py",
+        "core/research/ml/sequential_change_point.py"
+      ],
+      "name": "uncertainty_and_monitoring",
+      "status": "UNTRACKED_FRAMEWORK_DISABLED"
+    }
+  ],
+  "repository": {
+    "ahead_behind": "+1 -0",
+    "branch": "feature/selector-compute-adoption-20260718",
+    "dirty_worktree_at_inspection": true,
+    "head": "f1b77c876f4fd2ca3a37b4f5820b077f927110f9",
+    "python": "Python 3.11.9",
+    "root": "C:/Users/Brandon/trading_system",
+    "staged_changes_at_inspection_start": false,
+    "upstream": "origin/feature/selector-compute-adoption-20260718"
+  },
+  "risks": [
+    {
+      "risk": "Historical universe and asset identity are not promotion-grade.",
+      "severity": "critical"
+    },
+    {
+      "risk": "Candidate promotion evidence is not reproducible from current dirty tree.",
+      "severity": "critical"
+    },
+    {
+      "risk": "Raw and processed data lineage is incomplete inside selected candidate artifacts.",
+      "severity": "high"
+    },
+    {
+      "risk": "Target authority version mismatch exists between older artifacts and current registry.",
+      "severity": "high"
+    },
+    {
+      "risk": "DSR, PBO, and full trial-family accounting are missing.",
+      "severity": "high"
+    },
+    {
+      "risk": "Execution, fill, adverse-selection, and capacity assumptions are under-challenged.",
+      "severity": "high"
+    },
+    {
+      "risk": "CLI parser accepts selector validation modes without explicit dispatch mappings.",
+      "severity": "medium"
+    },
+    {
+      "risk": "Market session calendar is hand-coded only for 2016-2026.",
+      "severity": "medium"
+    }
+  ],
+  "schema_version": "complete_developed_trading_pipeline.v1",
+  "ticket_ledger_summary": {
+    "ticket_1_to_35": "reported_foundational_work; individual original scopes not reconstructed from current repo evidence",
+    "ticket_35": "partially corroborated by cost, slippage, no-trade, adverse-excursion, and execution tests; production fill/adverse-selection remains incomplete",
+    "ticket_37": "PIT universe and historical identity framework visible but untracked",
+    "ticket_37a_37b": "data footprint and retention evidence visible; cleanup not executed",
+    "ticket_42_42a_44_45": "uncertainty, adaptive conformal, sequential change-point, and coverage monitoring frameworks visible but untracked/disabled",
+    "ticket_56": "ignored audit evidence classifies selected candidate UNABLE_TO_REPRODUCE",
+    "ticket_57": "dataset build manifest framework visible but untracked",
+    "ticket_61": "documentation artifacts created"
+  },
+  "validation": {
+    "expensive_jobs_run": false,
+    "implementation_files_changed_by_ticket_61": false,
+    "json_parse_expected": true,
+    "network_used": false,
+    "tests_run": false,
+    "trading_or_order_submission_run": false
+  }
+}
