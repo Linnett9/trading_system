@@ -1,0 +1,171 @@
+{
+  "ticket": "68B",
+  "title": "News Contract Regression Triage and Repair",
+  "final_classification": "ALL_NEWS_CONTRACT_FAILURES_RESOLVED",
+  "starting_state": {
+    "branch": "feature/selector-compute-adoption-20260718",
+    "commit": "0c09699a54a9f5d49b85e2daf4d1740b481afac3",
+    "dirty_tree_state": "dirty before Ticket 68B edits; branch was ahead of origin by 3 commits with many pre-existing modified, deleted, staged, and untracked files",
+    "baseline_output_path": "docs/audits/ticket_68b_baseline_pytest.txt",
+    "historical_commit_checked": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+    "historical_output_path": "docs/audits/ticket_68b_historical_pytest.txt",
+    "historical_check_result": "all seven current failures reproduced at the clean remote baseline"
+  },
+  "ticket_68_files_observed_at_start": [
+    "core/research/ml/reference/market_information_availability_authority.py",
+    "tests/test_market_information_availability_authority.py",
+    "core/research/ml/stock_level/news_sources/providers.py",
+    "core/research/ml/stock_level/stock_alpha_news_pit_policy.py",
+    "core/research/ml/stock_level/stock_fundamentals.py",
+    "tests/test_stock_fundamentals.py"
+  ],
+  "relevant_existing_news_provider_artifacts": [
+    "config/config.stock_alpha_news_feature_diagnostics_tiny_fixture.yaml",
+    "config/config.stock_alpha_news_source_setup_check_free_sources.yaml",
+    "config/config.stock_alpha_news_collect_free_sources_keyed_dry_run.yaml",
+    "tests/fixtures/stock_alpha_news/news_contract_tiny.csv",
+    "tests/fixtures/stock_alpha_news/raw_provider_export_alias_tiny.csv",
+    "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv",
+    "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_tiny_fixture/dev/stock_alpha_news_features.csv",
+    "scripts/stock_alpha_news_coverage_audit.py",
+    "scripts/stock_alpha_news_contract_ingest_preflight.py"
+  ],
+  "failures": [
+    {
+      "test_name": "test_news_feature_diagnostics_tiny_report_is_read_only",
+      "expected_behavior": "Tiny feature diagnostics should read a real-shaped feature CSV with all required news feature columns, use nearby PIT audit evidence, compute exploratory correlations, and remain read-only.",
+      "actual_behavior": "The configured feature CSV was absent because it pointed under ignored reports output, so diagnostics had no columns and reported required_columns_present=false.",
+      "failure_message": "assert False is True",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:1617: assert payload[\"input_status\"][\"required_columns_present\"] is True",
+      "responsible_module": "config/config.stock_alpha_news_feature_diagnostics_tiny_fixture.yaml and core/research/ml/stock_level/stock_alpha_news_feature_diagnostics.py",
+      "fixture_input_artifact": [
+        "reports/ml/benchmark/regime_transformer_meta_ensemble_v1/stock_alpha_news_pipeline_preflight_tiny_fixture/dev/stock_alpha_news_features.csv",
+        "tests/fixtures/stock_alpha_news/stock_rows_tiny.csv"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "PRE_EXISTING_FIXTURE_DRIFT",
+      "resolution": "Moved the tiny diagnostics config to tracked fixtures and added a nearby tracked PIT audit fixture.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_news_feature_diagnostics_tiny_report_is_read_only"
+      ]
+    },
+    {
+      "test_name": "test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only",
+      "expected_behavior": "With only GDELT enabled, no API key should be required and the next action should be run_free_source_dry_collection.",
+      "actual_behavior": "Project overlay credentials outside the news provider config were scanned as key-like literals, causing next_action=remove_key_values_from_config.",
+      "failure_message": "AssertionError: assert 'remove_key_values_from_config' == 'run_free_source_dry_collection'",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:2548: assert payload[\"next_action\"] == \"run_free_source_dry_collection\"",
+      "responsible_module": "core/research/ml/stock_level/stock_alpha_news_source_setup_check.py",
+      "fixture_input_artifact": [
+        "config/config.stock_alpha_news_source_setup_check_free_sources.yaml",
+        "project overlay config"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "PROVIDER_SETUP_DEFECT",
+      "resolution": "Scoped key-like literal scanning to stock_alpha_news_collect.providers so unrelated top-level credentials do not override news setup diagnostics.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only"
+      ]
+    },
+    {
+      "test_name": "test_news_source_setup_check_key_presence_without_value_disclosure",
+      "expected_behavior": "With keyed news providers enabled and environment variables absent, the next action should name the first missing news provider API key without exposing any secret value.",
+      "actual_behavior": "Unrelated project overlay credentials were treated as key-like literals, causing next_action=remove_key_values_from_config instead of set_alpha_vantage_api_key.",
+      "failure_message": "AssertionError: assert 'remove_key_values_from_config' == 'set_alpha_vantage_api_key'",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:2563: assert payload[\"next_action\"] == \"set_alpha_vantage_api_key\"",
+      "responsible_module": "core/research/ml/stock_level/stock_alpha_news_source_setup_check.py",
+      "fixture_input_artifact": [
+        "config/config.stock_alpha_news_collect_free_sources_keyed_dry_run.yaml",
+        "project overlay config"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "PROVIDER_SETUP_DEFECT",
+      "resolution": "Scoped literal detection to configured news providers while retaining the provider api_key literal block.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_key_presence_without_value_disclosure",
+        "tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_disabled_keyed_provider_does_not_block_and_literal_is_flagged"
+      ]
+    },
+    {
+      "test_name": "test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts",
+      "expected_behavior": "SEC prefer_12mo selection should select the 12-month artifact for the batch and reject the shorter dry-run artifact.",
+      "actual_behavior": "Both short and 12-month event rows were included on Windows because the selector searched for '/_12mo_dry_run/' using a forward slash only.",
+      "failure_message": "assert 2 == 1",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:3254: assert audit[\"sec_dry_run_row_count\"] == 1",
+      "responsible_module": "scripts/stock_alpha_news_coverage_audit.py",
+      "fixture_input_artifact": [
+        "tmp SEC event rows under stock_alpha_news_collect_sec_company_filings_batch_05_dry_run/dev",
+        "tmp SEC event rows under stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run/dev"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "SEC_ARTIFACT_SELECTION_DEFECT",
+      "resolution": "Normalized path separators before SEC artifact matching and added rejected-candidate reason codes.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts"
+      ]
+    },
+    {
+      "test_name": "test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo",
+      "expected_behavior": "SEC merge_36mo_pilots should preserve the 12-month baseline row count and add only non-data-news 36-month pilot evidence.",
+      "actual_behavior": "The baseline calculation included the 36-month pilot artifact on Windows, inflating baseline_12mo_sec_row_count from 2 to 3.",
+      "failure_message": "assert 3 == 2",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:3400: assert audit[\"baseline_12mo_sec_row_count\"] == 2",
+      "responsible_module": "scripts/stock_alpha_news_coverage_audit.py",
+      "fixture_input_artifact": [
+        "tmp reports/stock_alpha_news_collect_sec_company_filings_batch_04_12mo_dry_run/dev/sec_company_filings_event_rows.jsonl",
+        "tmp reports/stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run/dev/sec_company_filings_event_rows.jsonl",
+        "tmp data/news/stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run/dev/sec_company_filings_event_rows.jsonl"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "SEC_ARTIFACT_SELECTION_DEFECT",
+      "resolution": "Normalized path separators before baseline/overlay selection and added rejection diagnostics for data/news duplicate artifacts.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo"
+      ]
+    },
+    {
+      "test_name": "test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts",
+      "expected_behavior": "Contract ingest preflight prefer_12mo should include only the 12-month event rows path for a batch.",
+      "actual_behavior": "Both short and 12-month event rows paths were reported as included on Windows.",
+      "failure_message": "AssertionError: left contains short dry-run path in addition to 12-month path",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:3611: assert report[\"sec_event_rows_included\"] == [str(long_events)]",
+      "responsible_module": "scripts/stock_alpha_news_contract_ingest_preflight.py",
+      "fixture_input_artifact": [
+        "tmp SEC event rows under stock_alpha_news_collect_sec_company_filings_batch_05_dry_run/dev",
+        "tmp SEC event rows under stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run/dev"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "SEC_ARTIFACT_SELECTION_DEFECT",
+      "resolution": "Applied the same cross-platform SEC path normalization and candidate diagnostics to ingest preflight.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts"
+      ]
+    },
+    {
+      "test_name": "test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo",
+      "expected_behavior": "Contract ingest preflight merge_36mo_pilots should compare selected rows against a 12-month-only baseline.",
+      "actual_behavior": "The Windows path matcher treated the 36-month pilot artifact as part of the baseline, inflating baseline_12mo_sec_row_count from 2 to 3.",
+      "failure_message": "assert 3 == 2",
+      "stack_trace_excerpt": "tests/test_stock_alpha_news_contract.py:3706: assert report[\"baseline_12mo_sec_row_count\"] == 2",
+      "responsible_module": "scripts/stock_alpha_news_contract_ingest_preflight.py",
+      "fixture_input_artifact": [
+        "tmp reports/stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run/dev/sec_company_filings_event_rows.jsonl",
+        "tmp reports/stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run/dev/sec_company_filings_event_rows.jsonl",
+        "tmp data/news/stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run/dev/sec_company_filings_event_rows.jsonl"
+      ],
+      "fails_on_clean_historical_commit": true,
+      "historical_commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+      "classification": "SEC_ARTIFACT_SELECTION_DEFECT",
+      "resolution": "Applied the same baseline/overlay path normalization and data/news rejection diagnostics to ingest preflight.",
+      "regression_coverage": [
+        "tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo"
+      ]
+    }
+  ]
+}

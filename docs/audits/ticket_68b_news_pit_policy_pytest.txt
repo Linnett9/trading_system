@@ -1,0 +1,13 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Brandon\AppData\Local\Programs\Python\Python311\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Brandon\trading_system
+plugins: anyio-4.14.1
+collecting ... collected 136 items / 132 deselected / 4 selected
+
+tests/test_stock_alpha_news_contract.py::test_news_coverage_audit_provider_available_policy_uses_explicit_availability_lag PASSED [ 25%]
+tests/test_stock_alpha_news_contract.py::test_news_coverage_audit_provider_available_policy_requires_explicit_research_flag PASSED [ 50%]
+tests/test_stock_alpha_news_contract.py::test_news_feature_aggregation_enforces_point_in_time_windows PASSED [ 75%]
+tests/test_stock_alpha_news_contract.py::test_news_feature_writer_excludes_future_archive_rows PASSED [100%]
+
+====================== 4 passed, 132 deselected in 0.46s ======================

@@ -1,0 +1,101 @@
+{
+  "ticket": "68B",
+  "final_classification": "ALL_NEWS_CONTRACT_FAILURES_RESOLVED",
+  "repository_state": {
+    "branch": "feature/selector-compute-adoption-20260718",
+    "commit": "0c09699a54a9f5d49b85e2daf4d1740b481afac3",
+    "dirty_tree_state": "dirty before and after Ticket 68B; unrelated local changes were left intact",
+    "ticket_68b_changed_files": [
+      "config/config.stock_alpha_news_feature_diagnostics_tiny_fixture.yaml",
+      "core/research/ml/stock_level/stock_alpha_news_source_setup_check.py",
+      "scripts/stock_alpha_news_coverage_audit.py",
+      "scripts/stock_alpha_news_contract_ingest_preflight.py",
+      "tests/test_stock_alpha_news_contract.py",
+      "tests/fixtures/stock_alpha_news/feature_diagnostics_tiny/stock_alpha_news_features.csv",
+      "tests/fixtures/stock_alpha_news/feature_diagnostics_tiny/news_features/stock_alpha_news_features_audit.json",
+      "docs/audits/ticket_68b_baseline_pytest.txt",
+      "docs/audits/ticket_68b_historical_pytest.txt",
+      "docs/audits/ticket_68b_news_contract_after_repair_pytest.txt",
+      "docs/audits/ticket_68b_market_information_authority_pytest.txt",
+      "docs/audits/ticket_68b_news_pit_policy_pytest.txt",
+      "docs/audits/ticket_68b_sec_fundamentals_pytest.txt",
+      "docs/audits/ticket_68b_failure_inventory.json",
+      "docs/audits/ticket_68b_failure_matrix.csv",
+      "docs/audits/ticket_68b_validation.json",
+      "docs/audits/ticket_68b_summary.md"
+    ],
+    "ticket_68_files_observed_at_start": [
+      "core/research/ml/reference/market_information_availability_authority.py",
+      "tests/test_market_information_availability_authority.py",
+      "core/research/ml/stock_level/news_sources/providers.py",
+      "core/research/ml/stock_level/stock_alpha_news_pit_policy.py",
+      "core/research/ml/stock_level/stock_fundamentals.py",
+      "tests/test_stock_fundamentals.py"
+    ]
+  },
+  "baseline": {
+    "command": "python -m pytest tests/test_stock_alpha_news_contract.py -vv",
+    "result": "7 failed, 129 passed",
+    "output_path": "docs/audits/ticket_68b_baseline_pytest.txt"
+  },
+  "clean_historical_commit_check": {
+    "commit": "959b5dbd7345eea0fd542dde60aa5bc95b5647b3",
+    "command": "python -m pytest <seven failing node ids> -vv",
+    "result": "7 failed",
+    "output_path": "docs/audits/ticket_68b_historical_pytest.txt",
+    "interpretation": "The seven failures were pre-existing relative to the current local Ticket 68 authority changes."
+  },
+  "validation_commands": [
+    {
+      "name": "focused_repaired_failures_plus_literal_regression",
+      "command": "python -m pytest tests/test_stock_alpha_news_contract.py::<8 selected node ids> -vv",
+      "result": "8 passed"
+    },
+    {
+      "name": "complete_news_contract_suite",
+      "command": "python -m pytest tests/test_stock_alpha_news_contract.py -vv",
+      "result": "136 passed",
+      "output_path": "docs/audits/ticket_68b_news_contract_after_repair_pytest.txt"
+    },
+    {
+      "name": "ticket_68_market_information_authority",
+      "command": "python -m pytest tests/test_market_information_availability_authority.py -vv",
+      "result": "14 passed",
+      "output_path": "docs/audits/ticket_68b_market_information_authority_pytest.txt"
+    },
+    {
+      "name": "news_pit_policy_subset",
+      "command": "python -m pytest tests/test_stock_alpha_news_contract.py -k \"pit_policy or point_in_time or provider_available_policy or future_archive_rows\" -vv",
+      "result": "4 passed, 132 deselected",
+      "output_path": "docs/audits/ticket_68b_news_pit_policy_pytest.txt"
+    },
+    {
+      "name": "sec_fundamental_snapshot_and_date_only_news_timestamp",
+      "command": "python -m pytest tests/test_stock_fundamentals.py tests/test_stock_alpha_finbert_news.py::test_timestamp_precedence_and_date_only_publication_fails_closed -vv",
+      "result": "23 passed",
+      "output_path": "docs/audits/ticket_68b_sec_fundamentals_pytest.txt"
+    }
+  ],
+  "diagnostic_reason_codes_preserved_or_added": [
+    "enabled_provider_api_key_missing",
+    "key_like_literal_present_in_config",
+    "news_features_file_not_found",
+    "missing_required_news_feature_columns",
+    "pit_violation_detected",
+    "synthetic_news_features_detected",
+    "rejected_superseded_by_12mo_batch_artifact",
+    "rejected_superseded_by_36mo_batch_artifact",
+    "rejected_data_news_duplicate_artifact",
+    "rejected_sec_window_artifact_for_prefer_12mo",
+    "rejected_provider_timeout_artifact",
+    "rejected_not_selected_by_artifact_selection"
+  ],
+  "pit_authority_contract": {
+    "market_information_availability_rules_weakened": false,
+    "unknown_knowledge_time_explicit": true,
+    "sec_acceptance_timestamp_priority_changed": false,
+    "date_only_sec_fallback_changed": false,
+    "provider_lag_historical_mode_research_only": true
+  },
+  "remaining_failures": []
+}

@@ -60,7 +60,7 @@ def build_stock_alpha_news_source_setup_check(config: Mapping[str, Any]) -> dict
             "api_key_env": env_name,
             "environment_variable_present": env_present,
         }
-    literal_paths = _key_literal_paths(config)
+    literal_paths = _key_literal_paths({"providers": providers})
     dry_run = bool(collect.get("dry_run", True))
     overwrite_protected = not bool(collect.get("allow_overwrite", False))
     blocking = []

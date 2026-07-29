@@ -280,7 +280,7 @@ def _group_sec_event_row_paths(paths: Sequence[str | Path]) -> tuple[dict[str, l
     by_batch: dict[str, list[str | Path]] = defaultdict(list)
     other_paths: list[str | Path] = []
     for path in paths:
-        path_text = str(path)
+        path_text = _path_text(path)
         marker = "stock_alpha_news_collect_sec_company_filings_batch_"
         if marker not in path_text:
             other_paths.append(path)
@@ -297,7 +297,7 @@ def _prefer_12mo_sec_event_row_paths(
     selected: list[str | Path] = []
     for batch in sorted(by_batch):
         batch_paths = by_batch[batch]
-        preferred = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        preferred = [path for path in batch_paths if "_12mo_dry_run/" in _path_text(path)]
         selected.extend(preferred or batch_paths)
     selected.extend(
         path for path in other_paths
@@ -313,8 +313,8 @@ def _prefer_36mo_sec_event_row_paths(
     selected: list[str | Path] = []
     for batch in sorted(by_batch):
         batch_paths = [path for path in by_batch[batch] if not _is_data_news_path(path)]
-        preferred_36mo = [path for path in batch_paths if "_36mo" in str(path)]
-        preferred_12mo = [path for path in batch_paths if "_12mo_dry_run/" in str(path)]
+        preferred_36mo = [path for path in batch_paths if "_36mo" in _path_text(path)]
+        preferred_12mo = [path for path in batch_paths if "_12mo_dry_run/" in _path_text(path)]
         selected.extend(preferred_36mo or preferred_12mo or batch_paths)
     selected.extend(path for path in other_paths if not _is_data_news_path(path))
     return selected
@@ -335,11 +335,11 @@ def _merge_36mo_sec_event_row_paths(
     for batch in sorted(by_batch):
         overlay.extend(
             path for path in by_batch[batch]
-            if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+            if marker in _path_text(path) and not _is_data_news_path(path) and str(path) not in baseline_text
         )
     overlay.extend(
         path for path in sorted(other_paths, key=str)
-        if marker in str(path) and not _is_data_news_path(path) and str(path) not in baseline_text
+        if marker in _path_text(path) and not _is_data_news_path(path) and str(path) not in baseline_text
     )
     return [*baseline, *overlay]
 
@@ -355,7 +355,7 @@ def _merge_sec_window_event_row_paths(
     overlay = [
         path for path in sorted(other_paths, key=str)
         if (
-            any(marker in str(path) for marker in markers)
+            any(marker in _path_text(path) for marker in markers)
             and not _is_data_news_path(path)
             and not _is_provider_timeout_event_row_path(path)
             and str(path) not in baseline_text
@@ -365,17 +365,21 @@ def _merge_sec_window_event_row_paths(
 
 
 def _is_data_news_path(path: str | Path) -> bool:
-    path_text = str(path).replace("\\", "/")
+    path_text = _path_text(path)
     return path_text.startswith("data/news/") or "/data/news/" in path_text
 
 
 def _is_36mo_path(path: str | Path) -> bool:
-    return "_36mo" in str(path)
+    return "_36mo" in _path_text(path)
 
 
 def _is_sec_window_path(path: str | Path) -> bool:
-    path_text = str(path)
+    path_text = _path_text(path)
     return any(marker in path_text for marker in ("_36mo", "_60mo", "_120mo"))
+
+
+def _path_text(path: str | Path) -> str:
+    return str(path).replace("\\", "/")
 
 
 def _is_provider_timeout_event_row_path(path: str | Path) -> bool:
@@ -390,10 +394,17 @@ def _sec_artifact_selection_diagnostics(
     selection: str,
     window_months: int | None = None,
 ) -> dict[str, Any]:
+    candidate_diagnostics = _sec_artifact_candidate_diagnostics(
+        all_paths=all_paths,
+        selected_paths=selected_paths,
+        selection=selection,
+        window_months=window_months,
+    )
     if selection not in {"merge_36mo_pilots", "merge_36mo_parts", "merge_sec_window_parts"}:
         return {
             "sec_artifact_selection_mode": selection,
             "selected_sec_artifacts": [str(path) for path in selected_paths],
+            "sec_artifact_candidate_diagnostics": candidate_diagnostics,
         }
     by_batch, other_paths = _group_sec_event_row_paths(all_paths)
     if selection == "merge_sec_window_parts":
@@ -434,6 +445,7 @@ def _sec_artifact_selection_diagnostics(
         "selected_sec_artifacts": [str(path) for path in selected_paths],
         "baseline_sec_artifacts": [str(path) for path in baseline_paths],
         "added_sec_artifacts": added_artifacts,
+        "sec_artifact_candidate_diagnostics": candidate_diagnostics,
         "added_sec_window_part_artifacts": [
             path for path in added_artifacts
             if window_months is not None and f"_{window_months}mo_part_" in path
@@ -444,6 +456,84 @@ def _sec_artifact_selection_diagnostics(
         ],
         "excluded_timeout_artifacts": excluded_timeout_artifacts,
     }
+
+
+def _sec_artifact_candidate_diagnostics(
+    *,
+    all_paths: Sequence[str | Path],
+    selected_paths: Sequence[str | Path],
+    selection: str,
+    window_months: int | None = None,
+) -> list[dict[str, Any]]:
+    selected = {str(path) for path in selected_paths}
+    by_batch, _other_paths = _group_sec_event_row_paths(all_paths)
+    batch_has_12mo = {
+        batch: any("_12mo_dry_run/" in _path_text(path) and not _is_data_news_path(path) for path in paths)
+        for batch, paths in by_batch.items()
+    }
+    batch_has_36mo = {
+        batch: any("_36mo" in _path_text(path) and not _is_data_news_path(path) for path in paths)
+        for batch, paths in by_batch.items()
+    }
+    diagnostics: list[dict[str, Any]] = []
+    for path in all_paths:
+        path_string = str(path)
+        text = _path_text(path)
+        batch = _sec_batch_id(path)
+        is_selected = path_string in selected
+        reason_codes: list[str] = []
+        if is_selected:
+            reason_codes.append(_selected_sec_artifact_reason(selection, text, window_months))
+        else:
+            if _is_data_news_path(path):
+                reason_codes.append("rejected_data_news_duplicate_artifact")
+            if selection == "prefer_12mo":
+                if batch and batch_has_12mo.get(batch) and "_12mo_dry_run/" not in text:
+                    reason_codes.append("rejected_superseded_by_12mo_batch_artifact")
+                if _is_sec_window_path(path) and "_12mo_dry_run/" not in text:
+                    reason_codes.append("rejected_sec_window_artifact_for_prefer_12mo")
+            elif selection == "prefer_36mo":
+                if batch and batch_has_36mo.get(batch) and "_36mo" not in text:
+                    reason_codes.append("rejected_superseded_by_36mo_batch_artifact")
+                elif batch and batch_has_12mo.get(batch) and "_12mo_dry_run/" not in text:
+                    reason_codes.append("rejected_superseded_by_12mo_batch_artifact")
+            elif selection == "merge_36mo_pilots" and "_36mo_pilot" not in text and "_12mo_dry_run/" not in text:
+                reason_codes.append("rejected_not_12mo_baseline_or_36mo_pilot_artifact")
+            elif selection == "merge_36mo_parts" and "_36mo_part_" not in text and "_12mo_dry_run/" not in text:
+                reason_codes.append("rejected_not_12mo_baseline_or_36mo_part_artifact")
+            elif selection == "merge_sec_window_parts":
+                markers = (f"_{window_months}mo_part_", f"_{window_months}mo_retry_") if window_months is not None else ()
+                if _is_provider_timeout_event_row_path(path):
+                    reason_codes.append("rejected_provider_timeout_artifact")
+                elif not any(marker in text for marker in markers) and "_36mo_part_" not in text and "_12mo_dry_run/" not in text:
+                    reason_codes.append("rejected_not_baseline_or_requested_sec_window_artifact")
+            if not reason_codes:
+                reason_codes.append("rejected_not_selected_by_artifact_selection")
+        diagnostics.append({
+            "path": path_string,
+            "batch": batch or "",
+            "selected": is_selected,
+            "reason_codes": reason_codes,
+        })
+    return diagnostics
+
+
+def _selected_sec_artifact_reason(selection: str, path_text: str, window_months: int | None) -> str:
+    if "_12mo_dry_run/" in path_text:
+        return "selected_12mo_baseline_artifact" if selection.startswith("merge") else "selected_preferred_12mo_artifact"
+    if "_36mo" in path_text:
+        return "selected_36mo_overlay_artifact" if selection.startswith("merge") else "selected_preferred_36mo_artifact"
+    if window_months is not None and f"_{window_months}mo_" in path_text:
+        return "selected_requested_sec_window_artifact"
+    return "selected_by_artifact_selection"
+
+
+def _sec_batch_id(path: str | Path) -> str | None:
+    marker = "stock_alpha_news_collect_sec_company_filings_batch_"
+    text = _path_text(path)
+    if marker not in text:
+        return None
+    return text.split(marker, 1)[1][:2]
 
 
 def _row_counts_by_symbol(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:

@@ -1,0 +1,322 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Brandon\AppData\Local\Programs\Python\Python311\python.exe
+cachedir: .pytest_cache
+rootdir: C:\tmp\trading_system_ticket68b_origin
+plugins: anyio-4.14.1
+collecting ... collected 7 items
+
+tests/test_stock_alpha_news_contract.py::test_news_feature_diagnostics_tiny_report_is_read_only FAILED [ 14%]
+tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only FAILED [ 28%]
+tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_key_presence_without_value_disclosure FAILED [ 42%]
+tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts FAILED [ 57%]
+tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo FAILED [ 71%]
+tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts FAILED [ 85%]
+tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo FAILED [100%]
+
+================================== FAILURES ===================================
+___________ test_news_feature_diagnostics_tiny_report_is_read_only ____________
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_news_feature_diagnostics_0')
+
+    def test_news_feature_diagnostics_tiny_report_is_read_only(tmp_path):
+        config = load_config(
+            "config/config.stock_alpha_news_feature_diagnostics_tiny_fixture.yaml",
+            overlay_project_config=True,
+        )
+        config["ml"]["stock_alpha_news_feature_diagnostics_report_dir"] = str(tmp_path)
+        paths = write_stock_alpha_news_feature_diagnostics(config)
+        payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+>       assert payload["input_status"]["required_columns_present"] is True
+E       assert False is True
+
+tests\test_stock_alpha_news_contract.py:1617: AssertionError
+____ test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only ____
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_news_source_setup_check_g0')
+
+    def test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only(tmp_path):
+        config = load_config("config/config.stock_alpha_news_source_setup_check_free_sources.yaml", overlay_project_config=True)
+        config["ml"]["stock_alpha_news_source_setup_check_report_dir"] = str(tmp_path / "report")
+        config["ml"]["stock_alpha_news_collect_output_path"] = str(tmp_path / "raw.csv")
+        paths = write_stock_alpha_news_source_setup_check(config)
+        payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+        assert payload["providers_enabled"] == ["gdelt"]
+        assert payload["enabled_providers_missing_key"] == []
+>       assert payload["next_action"] == "run_free_source_dry_collection"
+E       AssertionError: assert 'remove_key_values_from_config' == 'run_free_source_dry_collection'
+E
+E         - run_free_source_dry_collection
+E         + remove_key_values_from_config
+
+tests\test_stock_alpha_news_contract.py:2548: AssertionError
+_____ test_news_source_setup_check_key_presence_without_value_disclosure ______
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_news_source_setup_check_k0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000235C4DB7910>
+
+    def test_news_source_setup_check_key_presence_without_value_disclosure(tmp_path, monkeypatch):
+        config = load_config("config/config.stock_alpha_news_collect_free_sources_keyed_dry_run.yaml", overlay_project_config=True)
+        config["ml"]["stock_alpha_news_source_setup_check_report_dir"] = str(tmp_path)
+        for name in ("ALPHA_VANTAGE_API_KEY", "FINNHUB_API_KEY", "FMP_API_KEY", "NEWSAPI_API_KEY"):
+            monkeypatch.delenv(name, raising=False)
+        paths = write_stock_alpha_news_source_setup_check(config)
+        payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
+>       assert payload["next_action"] == "set_alpha_vantage_api_key"
+E       AssertionError: assert 'remove_key_values_from_config' == 'set_alpha_vantage_api_key'
+E
+E         - set_alpha_vantage_api_key
+E         + remove_key_values_from_config
+
+tests\test_stock_alpha_news_contract.py:2563: AssertionError
+_____ test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts ______
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_stock_alpha_news_coverage0')
+
+    def test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts(tmp_path):
+        universe = tmp_path / "universe.yaml"
+        registry = tmp_path / "registry.yaml"
+        raw = tmp_path / "raw.csv"
+        short_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_dry_run" / "dev"
+        long_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+        short_dir.mkdir(parents=True)
+        long_dir.mkdir(parents=True)
+        short_events = short_dir / "sec_company_filings_event_rows.jsonl"
+        long_events = long_dir / "sec_company_filings_event_rows.jsonl"
+        universe.write_text("available_count: 1\nsymbols: [BBB]\n", encoding="utf-8")
+        registry.write_text(
+            """
+    _classifications:
+      verified_rss_feed: []
+      known_error_feed: []
+      no_verified_official_rss: []
+      sec_only_candidate: []
+      disabled_pending_review: [BBB]
+    """.strip(),
+            encoding="utf-8",
+        )
+        fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+        with raw.open("w", encoding="utf-8", newline="") as handle:
+            csv.DictWriter(handle, fieldnames=fieldnames).writeheader()
+        sec_row = {
+            "symbol": "BBB",
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "form_type": "8-K",
+            "cik": "0000000001",
+            "accession_number": "0000000001-26-000001",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }
+        short_events.write_text(json.dumps(sec_row) + "\n", encoding="utf-8")
+        long_events.write_text(json.dumps({**sec_row, "accession_number": "0000000001-26-000002"}) + "\n", encoding="utf-8")
+
+        audit = build_stock_alpha_news_coverage_audit(
+            universe_path=universe,
+            registry_path=registry,
+            raw_news_path=raw,
+            sec_event_row_paths=[short_events, long_events],
+            sec_artifact_selection="prefer_12mo",
+            reports_root=tmp_path / "missing_reports",
+        )
+
+>       assert audit["sec_dry_run_row_count"] == 1
+E       assert 2 == 1
+
+tests\test_stock_alpha_news_contract.py:3254: AssertionError
+_ test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo _
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_stock_alpha_news_coverage1')
+
+    def test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo(tmp_path):
+        universe = tmp_path / "universe.yaml"
+        registry = tmp_path / "registry.yaml"
+        raw = tmp_path / "raw.csv"
+        twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_04_12mo_dry_run" / "dev"
+        thirty_six_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run" / "dev"
+        raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_batch_04_36mo_pilot_dry_run" / "dev"
+        for directory in (twelve_dir, thirty_six_dir, raw_data_dir):
+            directory.mkdir(parents=True)
+        twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+        thirty_six_events = thirty_six_dir / "sec_company_filings_event_rows.jsonl"
+        raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+        universe.write_text("available_count: 2\nsymbols: [AAA, BBB]\n", encoding="utf-8")
+        registry.write_text(
+            """
+    _classifications:
+      verified_rss_feed: []
+      known_error_feed: []
+      no_verified_official_rss: []
+      sec_only_candidate: []
+      disabled_pending_review: [AAA, BBB]
+    """.strip(),
+            encoding="utf-8",
+        )
+        fieldnames = [*REQUIRED_NEWS_CONTRACT_COLUMNS, "provider", "provider_article_id", "provider_url"]
+        with raw.open("w", encoding="utf-8", newline="") as handle:
+            csv.DictWriter(handle, fieldnames=fieldnames).writeheader()
+        base_row = {
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "form_type": "8-K",
+            "cik": "0000000001",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }
+        baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+        baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+        pilot_aaa_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000002", "published_at_utc": "2025-01-03T09:00:00Z"}
+        raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000003"}
+        twelve_events.write_text(
+            json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n",
+            encoding="utf-8",
+        )
+        thirty_six_events.write_text(
+            json.dumps(baseline_aaa) + "\n" + json.dumps(pilot_aaa_extra) + "\n",
+            encoding="utf-8",
+        )
+        raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+
+        audit = build_stock_alpha_news_coverage_audit(
+            universe_path=universe,
+            registry_path=registry,
+            raw_news_path=raw,
+            sec_event_row_paths=[twelve_events, thirty_six_events, raw_data_events],
+            sec_artifact_selection="merge_36mo_pilots",
+            reports_root=tmp_path / "reports",
+        )
+
+        assert audit["sec_dry_run_row_count"] == 3
+        assert audit["rows_by_symbol_by_provider"]["sec_company_filings"] == {"AAA": 2, "BBB": 1}
+>       assert audit["baseline_12mo_sec_row_count"] == 2
+E       assert 3 == 2
+
+tests\test_stock_alpha_news_contract.py:3400: AssertionError
+________ test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts _________
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_contract_ingest_preflight0')
+
+    def test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts(tmp_path):
+        short_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_dry_run" / "dev"
+        long_dir = tmp_path / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+        short_dir.mkdir(parents=True)
+        long_dir.mkdir(parents=True)
+        short_events = short_dir / "sec_company_filings_event_rows.jsonl"
+        long_events = long_dir / "sec_company_filings_event_rows.jsonl"
+        row = {
+            "symbol": "BBB",
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "headline_or_title": "8-K filed by BBB",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "cik": "0000000001",
+            "form_type": "8-K",
+            "accession_number": "0000000001-26-000001",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }
+        short_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        long_events.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+        report = build_stock_alpha_news_contract_ingest_preflight(
+            sec_event_row_paths=[short_events, long_events],
+            sec_artifact_selection="prefer_12mo",
+            min_symbol_coverage=1,
+        )
+
+        assert report["rows_checked_by_provider"] == {"sec_company_filings": 1}
+        assert report["duplicate_event_key_count"] == 0
+>       assert report["sec_event_rows_included"] == [str(long_events)]
+E       AssertionError: assert ['C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl', 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'] == ['C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl']
+E
+E         At index 0 diff: 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl' != 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'
+E         Left contains one more item: 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'
+E
+E         Full diff:
+E           [
+E         +     'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl',
+E               'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl',
+E           ]
+
+tests\test_stock_alpha_news_contract.py:3611: AssertionError
+_ test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo _
+
+tmp_path = WindowsPath('C:/Users/Brandon/AppData/Local/Temp/pytest-of-Brandon/pytest-2062/test_contract_ingest_preflight1')
+
+    def test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo(tmp_path):
+        twelve_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run" / "dev"
+        thirty_six_dir = tmp_path / "reports" / "stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run" / "dev"
+        raw_data_dir = tmp_path / "data" / "news" / "stock_alpha_news_collect_sec_company_filings_batch_05_36mo_pilot_dry_run" / "dev"
+        for directory in (twelve_dir, thirty_six_dir, raw_data_dir):
+            directory.mkdir(parents=True)
+        twelve_events = twelve_dir / "sec_company_filings_event_rows.jsonl"
+        thirty_six_events = thirty_six_dir / "sec_company_filings_event_rows.jsonl"
+        raw_data_events = raw_data_dir / "sec_company_filings_event_rows.jsonl"
+        base_row = {
+            "provider": "sec_company_filings",
+            "source_type": "sec_filing",
+            "headline_or_title": "8-K filed",
+            "source_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "cik": "0000000001",
+            "form_type": "8-K",
+            "filing_date": "2026-01-03",
+            "published_at_utc": "2026-01-03T09:00:00Z",
+            "filing_url": "https://www.sec.gov/Archives/edgar/data/1/1/",
+            "collected_at_utc": "2026-01-03T10:00:00Z",
+        }
+        baseline_aaa = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000001"}
+        baseline_bbb = {**base_row, "symbol": "BBB", "accession_number": "0000000002-26-000001"}
+        pilot_aaa_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000002", "published_at_utc": "2025-01-03T09:00:00Z"}
+        raw_extra = {**base_row, "symbol": "AAA", "accession_number": "0000000001-26-000003"}
+        twelve_events.write_text(
+            json.dumps(baseline_aaa) + "\n" + json.dumps(baseline_bbb) + "\n",
+            encoding="utf-8",
+        )
+        thirty_six_events.write_text(
+            json.dumps(baseline_aaa) + "\n" + json.dumps(pilot_aaa_extra) + "\n",
+            encoding="utf-8",
+        )
+        raw_data_events.write_text(json.dumps(raw_extra) + "\n", encoding="utf-8")
+
+        report = build_stock_alpha_news_contract_ingest_preflight(
+            sec_event_row_paths=[twelve_events, thirty_six_events, raw_data_events],
+            sec_artifact_selection="merge_36mo_pilots",
+            min_symbol_coverage=2,
+        )
+
+        assert report["rows_checked_by_provider"] == {"sec_company_filings": 3}
+        assert report["valid_rows_by_provider"] == {"sec_company_filings": 3}
+        assert report["duplicate_event_key_count"] == 0
+>       assert report["baseline_12mo_sec_row_count"] == 2
+E       assert 3 == 2
+
+tests\test_stock_alpha_news_contract.py:3706: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_stock_alpha_news_contract.py::test_news_feature_diagnostics_tiny_report_is_read_only - assert False is True
+FAILED tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only - AssertionError: assert 'remove_key_values_from_config' == 'run_free_source_dry_collection'
+
+  - run_free_source_dry_collection
+  + remove_key_values_from_config
+FAILED tests/test_stock_alpha_news_contract.py::test_news_source_setup_check_key_presence_without_value_disclosure - AssertionError: assert 'remove_key_values_from_config' == 'set_alpha_vantage_api_key'
+
+  - set_alpha_vantage_api_key
+  + remove_key_values_from_config
+FAILED tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_prefer_12mo_sec_artifacts - assert 2 == 1
+FAILED tests/test_stock_alpha_news_contract.py::test_stock_alpha_news_coverage_audit_can_merge_36mo_pilots_without_replacing_12mo - assert 3 == 2
+FAILED tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts - AssertionError: assert ['C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl', 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'] == ['C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl']
+
+  At index 0 diff: 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl' != 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'
+  Left contains one more item: 'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl'
+
+  Full diff:
+    [
+  +     'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_dry_run\\dev\\sec_company_filings_event_rows.jsonl',
+        'C:\\Users\\Brandon\\AppData\\Local\\Temp\\pytest-of-Brandon\\pytest-2062\\test_contract_ingest_preflight0\\stock_alpha_news_collect_sec_company_filings_batch_05_12mo_dry_run\\dev\\sec_company_filings_event_rows.jsonl',
+    ]
+FAILED tests/test_stock_alpha_news_contract.py::test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo - assert 3 == 2
+============================== 7 failed in 3.16s ==============================

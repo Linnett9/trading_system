@@ -2546,6 +2546,7 @@ def test_news_source_setup_check_gdelt_only_needs_no_key_and_is_read_only(tmp_pa
     assert payload["providers_enabled"] == ["gdelt"]
     assert payload["enabled_providers_missing_key"] == []
     assert payload["next_action"] == "run_free_source_dry_collection"
+    assert payload["key_like_config_value_paths"] == []
     assert payload["collection_invoked"] is False
     assert payload["raw_export_written"] is False
     assert not Path(config["ml"]["stock_alpha_news_collect_output_path"]).exists()
@@ -2585,6 +2586,7 @@ def test_news_source_setup_check_disabled_keyed_provider_does_not_block_and_lite
     payload = json.loads(paths.json_path.read_text(encoding="utf-8"))
     assert payload["next_action"] == "remove_key_values_from_config"
     assert "key_like_literal_present_in_config" in payload["blocking_issues"]
+    assert payload["key_like_config_value_paths"] == ["providers.finnhub.api_key"]
     assert "literal-secret" not in paths.json_path.read_text(encoding="utf-8")
 
 
@@ -3254,6 +3256,9 @@ _classifications:
     assert audit["sec_dry_run_row_count"] == 1
     assert audit["sec_event_rows_included"] == [str(long_events)]
     assert audit["sec_artifact_selection"] == "prefer_12mo"
+    short_candidate = next(item for item in audit["sec_artifact_candidate_diagnostics"] if item["path"] == str(short_events))
+    assert short_candidate["selected"] is False
+    assert "rejected_superseded_by_12mo_batch_artifact" in short_candidate["reason_codes"]
 
 
 def test_stock_alpha_news_coverage_audit_can_prefer_36mo_sec_artifacts_without_raw_paths(tmp_path):
@@ -3408,6 +3413,9 @@ _classifications:
     assert audit["selected_sec_artifacts"] == [str(twelve_events), str(thirty_six_events)]
     assert all("data/news" not in path for path in audit["selected_sec_artifacts"])
     assert audit["sec_artifact_selection"] == "merge_36mo_pilots"
+    raw_data_candidate = next(item for item in audit["sec_artifact_candidate_diagnostics"] if item["path"] == str(raw_data_events))
+    assert raw_data_candidate["selected"] is False
+    assert "rejected_data_news_duplicate_artifact" in raw_data_candidate["reason_codes"]
 
 
 def test_stock_alpha_news_coverage_audit_can_merge_generated_36mo_parts(tmp_path):
@@ -3610,6 +3618,9 @@ def test_contract_ingest_preflight_can_prefer_12mo_sec_artifacts(tmp_path):
     assert report["duplicate_event_key_count"] == 0
     assert report["sec_event_rows_included"] == [str(long_events)]
     assert report["sec_artifact_selection"] == "prefer_12mo"
+    short_candidate = next(item for item in report["sec_artifact_candidate_diagnostics"] if item["path"] == str(short_events))
+    assert short_candidate["selected"] is False
+    assert "rejected_superseded_by_12mo_batch_artifact" in short_candidate["reason_codes"]
 
 
 def test_contract_ingest_preflight_can_prefer_36mo_sec_artifacts_without_raw_paths(tmp_path):
@@ -3714,6 +3725,9 @@ def test_contract_ingest_preflight_can_merge_36mo_pilots_without_replacing_12mo(
     assert report["selected_sec_artifacts"] == [str(twelve_events), str(thirty_six_events)]
     assert all("data/news" not in path for path in report["selected_sec_artifacts"])
     assert report["sec_artifact_selection"] == "merge_36mo_pilots"
+    raw_data_candidate = next(item for item in report["sec_artifact_candidate_diagnostics"] if item["path"] == str(raw_data_events))
+    assert raw_data_candidate["selected"] is False
+    assert "rejected_data_news_duplicate_artifact" in raw_data_candidate["reason_codes"]
 
 
 def test_contract_ingest_preflight_can_merge_generated_36mo_parts(tmp_path):

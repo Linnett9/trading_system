@@ -1,0 +1,8 @@
+{
+  "future_article_candidate_count": 14,
+  "future_article_excluded_count": 14,
+  "pit_violation_count": 0,
+  "synthetic_news_features_created": false,
+  "pit_policy": "strict_collected_at",
+  "availability_authority_version": "market_information_availability_authority.v1"
+}

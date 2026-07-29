@@ -1,0 +1,32 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\Brandon\AppData\Local\Programs\Python\Python311\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Brandon\trading_system
+plugins: anyio-4.14.1
+collecting ... collected 23 items
+
+tests/test_stock_fundamentals.py::test_sec_companyfacts_cache_is_deterministic_and_resumable PASSED [  4%]
+tests/test_stock_fundamentals.py::test_normalization_uses_filing_availability_not_period_end PASSED [  8%]
+tests/test_stock_fundamentals.py::test_snapshot_excludes_future_filing_and_does_not_leak_amendment PASSED [ 13%]
+tests/test_stock_fundamentals.py::test_pipeline_enriches_artifact_with_non_null_real_features_and_lineage PASSED [ 17%]
+tests/test_stock_fundamentals.py::test_fundamentals_families_resolve_only_non_null_present_columns PASSED [ 21%]
+tests/test_stock_fundamentals.py::test_stock_fundamentals_cli_modes_are_feedless_and_dispatch PASSED [ 26%]
+tests/test_stock_fundamentals.py::test_preflight_blocks_missing_live_user_agent_but_env_unblocks PASSED [ 30%]
+tests/test_stock_fundamentals.py::test_explicit_fundamentals_symbols_filter_before_bounded_symbol_cap PASSED [ 34%]
+tests/test_stock_fundamentals.py::test_full_universe_plan_classifies_etfs_and_reconciles_counts PASSED [ 39%]
+tests/test_stock_fundamentals.py::test_raw_cache_audit_requires_eligible_reconciliation PASSED [ 43%]
+tests/test_stock_fundamentals.py::test_stage_separation_collect_normalize_snapshots_enrich PASSED [ 47%]
+tests/test_stock_fundamentals.py::test_cache_validation_detects_corrupt_or_identity_mismatch PASSED [ 52%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_gate_rejects_missing_manifest_and_probe_or_identity_mismatch PASSED [ 56%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_gate_accepts_complete_identity_and_provenance PASSED [ 60%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_gate_allows_unrealized_tail_without_labels PASSED [ 65%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_gate_rejects_realized_row_missing_label_provenance PASSED [ 69%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_pit_partitions_prevent_amendment_leakage_and_resume PASSED [ 73%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_corrupt_partition_fails_closed PASSED [ 78%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_enrichment_preserves_rows_targets_benchmarks_missing_and_order PASSED [ 82%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_one_worker_and_multi_worker_outputs_are_equivalent PASSED [ 86%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_atomic_publication_does_not_create_partial_complete_artifact PASSED [ 91%]
+tests/test_stock_fundamentals.py::test_ticket_5b4_snapshot_and_enrich_do_not_access_network_training_or_trading PASSED [ 95%]
+tests/test_stock_alpha_finbert_news.py::test_timestamp_precedence_and_date_only_publication_fails_closed PASSED [100%]
+
+============================= 23 passed in 1.82s ==============================
