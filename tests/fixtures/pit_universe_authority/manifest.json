@@ -1,0 +1,18 @@
+{
+  "schema_version": "pit_universe_fixture_manifest.v1",
+  "fixture_id": "ticket37_synthetic_pit_universe",
+  "authority_versions": [
+    "synthetic_v1",
+    "synthetic_v2"
+  ],
+  "universe_ids": [
+    "synthetic_pit_v1",
+    "legacy_static"
+  ],
+  "classification": "synthetic_bounded_fixture_only",
+  "lineage": {
+    "ticket": "37",
+    "ticket36_audit_md": "reports/audits/historical_universe_authority_audit_20260728/historical_universe_authority_audit.md",
+    "ticket36_audit_json": "reports/audits/historical_universe_authority_audit_20260728/historical_universe_authority_audit_summary.json"
+  }
+}

@@ -1,0 +1,2 @@
+universe_id,asset_id,symbol,source,authority_version,recorded_at,lineage
+legacy_static,,STATC,legacy_current_static_registry,synthetic_v1,2020-01-01T00:00:00+00:00,case=static_uncertified

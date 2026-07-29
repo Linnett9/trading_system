@@ -1,0 +1,4 @@
+event_id,event_type,asset_id,related_asset_id,effective_date,post_event_state,authority_source,authority_type,authority_version,recorded_at,effective_from,effective_to,verification_status,confidence,reason_code,lineage
+event_merger_005,merger_predecessor_terminal,perm_merger_pred_005,perm_merger_succ_006,2020-09-01,ineligible,synthetic_fixture_corporate_action,corporate_action,synthetic_v1,2020-01-01T00:00:00+00:00,2020-09-01,,verified,high,MERGER_PREDECESSOR_TERMINAL,case=merger_terminal
+event_spinoff_008,spin_off,perm_spin_parent_007,perm_spin_child_008,2020-07-15,eligible,synthetic_fixture_corporate_action,corporate_action,synthetic_v1,2020-01-01T00:00:00+00:00,2020-07-15,,verified,high,SPINOFF_CHILD_CREATED,case=spin_off
+event_bankrupt_009,bankruptcy,perm_bankrupt_009,,2020-08-15,ineligible,synthetic_fixture_corporate_action,corporate_action,synthetic_v1,2020-01-01T00:00:00+00:00,2020-08-15,,verified,high,BANKRUPTCY_TERMINAL_EVENT,case=bankruptcy
