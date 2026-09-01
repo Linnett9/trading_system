@@ -1,0 +1,326 @@
+authority_id: DS24_R44B_TFT_CONFIGURATION_AUTHORITY_V1
+status: CONFIGURATION_AUTHORITY_RESOLVED
+run_id: DS24_VAST_TFT_R1
+trial_id: DS24_VAST_TFT_R1_TRIAL_0001
+family: temporal_fusion_transformer
+implementation_owner: core.research.ml.models.temporal_fusion_transformer_model:TemporalFusionTransformerMLModel
+model_type: temporal_fusion_transformer
+feature_contract:
+  view_id: DS24_CORE_RESEARCH_VIEW_V1
+  view_identity: a13c7f03bbf108388e76102dd86489c48f4560004734c35c684cd5879d17cc83
+  prepared_model_data_authority_id: CANONICAL_5M_MODEL_DATASET_V1
+  prepared_model_data_manifest_hash: 1043f691204195e0a118a8a021ea993ea71fa6663a4a4ba40b7664a35e787e89
+  feature_root: data/processed/ml_features/five_minute/version=canonical_5m_feature_authority_full_v1/run=ds24_p8_r2_local_20260821T000000Z
+  model_view_sidecar: docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/06_full_partition_manifest.csv
+  observed_feature_order:
+  - ret_5m
+  - ret_15m
+  - ret_30m
+  - ret_60m
+  - ret_120m
+  - reversal_15m_vs_60m
+  - momentum_accel_30m_60m
+  - momentum_persistence_60m
+  - distance_from_intraday_high
+  - distance_from_intraday_low
+  - realized_vol_15m
+  - realized_vol_30m
+  - realized_vol_60m
+  - realized_vol_120m
+  - downside_dev_60m
+  - rolling_drawdown_60m
+  - session_drawdown
+  - range_pct_60m
+  - vol_trend_30m_vs_120m
+  - relative_strength_spy_15m
+  - relative_strength_spy_60m
+  - relative_strength_qqq_60m
+  - relative_strength_spy_120m
+  - dollar_volume_5m
+  - dollar_volume_60m
+  - volume_ratio_60m
+  - volume_accel_15m_vs_60m
+  - relative_volume_tod_pit
+  - vwap_distance_session
+  - minutes_since_open
+  - minutes_until_close
+  - session_progress
+  - early_close_session_flag
+  - opening_period_flag
+  - overnight_gap
+  - session_return_to_date
+  - session_range_pct
+  - opening_range_position
+  - cumulative_volume_ratio_tod_pit
+  - log_ret_5m
+  - log_ret_15m
+  - log_ret_60m
+  - session_return_30m
+  - previous_session_return
+  - two_session_return
+  - sma_distance_30m
+  - sma_distance_60m
+  - ema_distance_60m
+  - rsi_14_5m
+  - macd_histogram_5m
+  - bollinger_zscore_60m
+  - high_low_position_60m
+  - realized_vol_240m
+  - downside_dev_120m
+  - rolling_drawdown_120m
+  - atr_pct_70m
+  - range_pct_15m
+  - range_expansion_15m_vs_60m
+  - vol_percentile_20d_tod_pit
+  - relative_strength_qqq_15m
+  - relative_strength_qqq_120m
+  - relative_strength_spy_30m
+  - relative_strength_rank_60m
+  - relative_strength_rank_120m
+  - trade_count_5m
+  - trade_count_60m
+  - volume_zscore_60m
+  - dollar_volume_zscore_60m
+  - cumulative_dollar_volume_session
+  - dollar_volume_accel_15m_vs_60m
+  - opening_return_30m
+  - range_expansion_session
+  - spy_ret_5m
+  - spy_ret_15m
+  - spy_ret_60m
+  - qqq_ret_15m
+  - qqq_ret_60m
+  - spy_realized_vol_60m
+  - spy_session_drawdown
+  - qqq_vs_spy_ret_60m
+  - breadth_fraction_positive_15m
+  - breadth_median_ret_15m
+  - breadth_return_dispersion_15m
+  - breadth_observed_symbol_count
+  - spy_ret_30m
+  - spy_ret_120m
+  - qqq_ret_5m
+  - qqq_ret_30m
+  - qqq_ret_120m
+  - qqq_realized_vol_60m
+  - qqq_session_drawdown
+  - spy_session_return_to_date
+  - qqq_session_return_to_date
+  - breadth_fraction_positive_60m
+  - breadth_median_ret_60m
+  - breadth_return_dispersion_60m
+  - breadth_eligible_symbol_count
+  - breadth_coverage_ratio
+  - gld_ret_60m
+  - tlt_ret_60m
+  - xlk_ret_60m
+  known_future_feature_order:
+  - day_of_week
+  - month
+  - is_month_end
+  - rebalance_frequency
+  - days_until_next_rebalance
+  all_model_feature_order:
+  - ret_5m
+  - ret_15m
+  - ret_30m
+  - ret_60m
+  - ret_120m
+  - reversal_15m_vs_60m
+  - momentum_accel_30m_60m
+  - momentum_persistence_60m
+  - distance_from_intraday_high
+  - distance_from_intraday_low
+  - realized_vol_15m
+  - realized_vol_30m
+  - realized_vol_60m
+  - realized_vol_120m
+  - downside_dev_60m
+  - rolling_drawdown_60m
+  - session_drawdown
+  - range_pct_60m
+  - vol_trend_30m_vs_120m
+  - relative_strength_spy_15m
+  - relative_strength_spy_60m
+  - relative_strength_qqq_60m
+  - relative_strength_spy_120m
+  - dollar_volume_5m
+  - dollar_volume_60m
+  - volume_ratio_60m
+  - volume_accel_15m_vs_60m
+  - relative_volume_tod_pit
+  - vwap_distance_session
+  - minutes_since_open
+  - minutes_until_close
+  - session_progress
+  - early_close_session_flag
+  - opening_period_flag
+  - overnight_gap
+  - session_return_to_date
+  - session_range_pct
+  - opening_range_position
+  - cumulative_volume_ratio_tod_pit
+  - log_ret_5m
+  - log_ret_15m
+  - log_ret_60m
+  - session_return_30m
+  - previous_session_return
+  - two_session_return
+  - sma_distance_30m
+  - sma_distance_60m
+  - ema_distance_60m
+  - rsi_14_5m
+  - macd_histogram_5m
+  - bollinger_zscore_60m
+  - high_low_position_60m
+  - realized_vol_240m
+  - downside_dev_120m
+  - rolling_drawdown_120m
+  - atr_pct_70m
+  - range_pct_15m
+  - range_expansion_15m_vs_60m
+  - vol_percentile_20d_tod_pit
+  - relative_strength_qqq_15m
+  - relative_strength_qqq_120m
+  - relative_strength_spy_30m
+  - relative_strength_rank_60m
+  - relative_strength_rank_120m
+  - trade_count_5m
+  - trade_count_60m
+  - volume_zscore_60m
+  - dollar_volume_zscore_60m
+  - cumulative_dollar_volume_session
+  - dollar_volume_accel_15m_vs_60m
+  - opening_return_30m
+  - range_expansion_session
+  - spy_ret_5m
+  - spy_ret_15m
+  - spy_ret_60m
+  - qqq_ret_15m
+  - qqq_ret_60m
+  - spy_realized_vol_60m
+  - spy_session_drawdown
+  - qqq_vs_spy_ret_60m
+  - breadth_fraction_positive_15m
+  - breadth_median_ret_15m
+  - breadth_return_dispersion_15m
+  - breadth_observed_symbol_count
+  - spy_ret_30m
+  - spy_ret_120m
+  - qqq_ret_5m
+  - qqq_ret_30m
+  - qqq_ret_120m
+  - qqq_realized_vol_60m
+  - qqq_session_drawdown
+  - spy_session_return_to_date
+  - qqq_session_return_to_date
+  - breadth_fraction_positive_60m
+  - breadth_median_ret_60m
+  - breadth_return_dispersion_60m
+  - breadth_eligible_symbol_count
+  - breadth_coverage_ratio
+  - gld_ret_60m
+  - tlt_ret_60m
+  - xlk_ret_60m
+  - day_of_week
+  - month
+  - is_month_end
+  - rebalance_frequency
+  - days_until_next_rebalance
+  predictor_count: 101
+  known_future_predictor_count: 5
+universe:
+  asset_count: 514
+  eligibility: prepared common feature-target estate; per-decision eligible cross-section
+    only
+  development_start: '2016-01-04T14:35:00Z'
+  development_end: '2024-12-31T21:00:00Z'
+  holdout_start: '2025-04-02'
+  locked_holdout_outcomes_read: false
+target:
+  target_id: forward_return_60m__decision_5m
+  target_root: data/processed/ml_targets/five_minute/version=five_minute_targets_v1/run=ticket_71b_60m_20260730T170751Z
+  prediction_horizon_minutes: 60
+  decision_cadence_minutes: 5
+  decoder_prediction_length: 12
+  maturity_rule: target_available_timestamp <= refit_or_resolution_timestamp
+  target_is_trainable_rule: target_is_trainable is true and decision_timestamp remains
+    before holdout
+training_and_scoring:
+  training_window_policy: expanding_prequential_development_only
+  scoring_window_policy: decision_timestamp spine from prepared sidecar; no outer
+    holdout
+  refit_cadence: daily_session_v1
+  fit_rows: all matured trainable rows before scoring session
+  score_rows: eligible cross-section at each five-minute decision timestamp
+architecture:
+  encoder_length: 64
+  decoder_prediction_length: 12
+  hidden_size: 64
+  attention_heads: 4
+  recurrent_layer_count: 1
+  dropout: 0.15
+  continuous_variable_processing: training-only standardization with variable-selection
+    gate
+optimization:
+  loss: BCEWithLogitsLoss for reduce-exposure classifier head
+  optimizer: AdamW
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  scheduler: none
+  gradient_clipping_max_norm: 1.0
+  batch_size: 64
+  epoch_cap: 30
+  early_stopping_rule: disabled; bounded hard epoch cap only
+determinism:
+  seeds:
+  - 42
+  torch_manual_seed: true
+  numpy_seed: true
+  python_random_seed: true
+  torch_deterministic_algorithms: true
+  cudnn_benchmark: false
+  amp: disabled
+  precision: float32
+device_selection:
+  default_device: cpu
+  remote_device: cuda
+  cuda_allowed_only_after_preflight: true
+  minimum_vram_gb: 24
+missing_value_policy:
+  required_columns: fail closed if any configured feature, key, or target column is
+    absent
+  natural_lookback_nulls: excluded until sufficient history is available
+  nonfinite_values: converted to zero only after training-only standardizer state
+    is computed
+score_policy:
+  training_label: target_value < 0.0 mapped to reduce-exposure class
+  raw_model_output: probability_should_reduce_exposure
+  comparable_long_selection_score: 1.0 - probability_should_reduce_exposure
+  rank_conversion: within-decision_timestamp cross-sectional percentile rank
+  top_n: 20
+  portfolio_weighting: equal weight inside Top-N sleeve
+  transaction_cost_bps_per_unit_turnover: 0.0
+evaluation:
+  contract_id: DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT
+  contract_version: V3
+  contract_hash: c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc
+  headline_metrics:
+  - Rank IC
+  - daily Rank IC
+  - HAC/Newey-West interval
+  - positive IC fraction
+  - portfolio returns
+  - Sharpe
+  - drawdown
+  - turnover
+  - win rate
+  - cost sensitivity
+  - resolved/pending coverage
+checkpointing:
+  cadence: after every epoch and after every committed decision batch
+  retention: latest plus previous plus terminal final inference checkpoint only
+  resume_requires_hash_match: true
+terminal_completion_rule: all development decisions through 2024-12-31T21:00:00Z processed,
+  with pending outcomes resolved or terminally censored by the V3 contract
+configuration_hash: 529058a37fa3731390e4631e9dd97696622e670d699e98411fbc89bfe5a00227

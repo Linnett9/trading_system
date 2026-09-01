@@ -1,0 +1,38 @@
+{
+  "contract_hash": "c82116e4f8bfc1d38dd2ee0cbcfd394f7626d99df90f8c2c2e84a1430f5fde74",
+  "contract_id": "DS24_R44B_REMOTE_RUNTIME_CONTRACT_V1",
+  "family": "temporal_fusion_transformer",
+  "forbidden_local_namespaces": [
+    "r7_r14_policy_workers/rff_ridge",
+    "r7_r14_policy_workers/huber",
+    "r7_r14_policy_workers/mlp"
+  ],
+  "hash_requirements": {
+    "configuration_hash": "529058a37fa3731390e4631e9dd97696622e670d699e98411fbc89bfe5a00227",
+    "data_manifest_hash": "7b5756303ec6b6777e94642015f90bdd0b9a871ae7b0c575c3d7c9460d76bfe6",
+    "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc"
+  },
+  "namespace": "remote_vast_runs/run=DS24_VAST_TFT_R1/family=temporal_fusion_transformer",
+  "no_credentials_on_remote": true,
+  "no_paper_or_live_orders": true,
+  "required_roots": {
+    "DATA_ROOT": "/workspace/ds24/data",
+    "OUTPUT_ROOT": "/workspace/ds24/output",
+    "SOURCE_ROOT": "/workspace/ds24/source"
+  },
+  "run_id": "DS24_VAST_TFT_R1",
+  "subdirectories": [
+    "authority",
+    "checkpoints",
+    "logs",
+    "metrics_only_v3",
+    "transfer"
+  ],
+  "supervision": {
+    "local_supervisor_manages_remote_pid": false,
+    "remote_process_manager": "tmux",
+    "resume_requires_explicit_flag": true,
+    "tmux_session": "ds24_vast_tft_r1"
+  },
+  "trial_id": "DS24_VAST_TFT_R1_TRIAL_0001"
+}
