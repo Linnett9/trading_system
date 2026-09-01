@@ -1,0 +1,4 @@
+param([Parameter(Mandatory=$true)][string]$SshHost, [Parameter(Mandatory=$true)][int]$SshPort, [string]$SshUser = "root", [switch]$Execute)
+$ErrorActionPreference = "Stop"
+if (-not $Execute) { Write-Host "[DRY RUN] Would verify remote source bundle, full manifest hash/schema, 101 predictors and zero holdout rows."; exit 0 }
+ssh -p $SshPort "$SshUser@$SshHost" "cd /workspace/ds24/source && python -m core.research.ml.ds24.vast_soft_review_transition validate-full-data --repo-root /workspace/ds24/source --manifest-path docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/06_full_partition_manifest.csv --expected-manifest-sha256 6bcefad7f7bc98fb929a8f49f0b02de8add348cc5d661a84b9d3fd004ae66555 --expected-schema-hash f7162068d0d4e06a27395c6923dc7298335d955e401ad26a2ac39bbcdeda69cb --required-predictor-count 101"

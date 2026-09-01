@@ -1,0 +1,46 @@
+{
+  "api_keys_accessed_or_printed": false,
+  "artifact_id": "DS24_R44F_REMOTE_ENVIRONMENT_FREEZE_V1",
+  "container_image": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime",
+  "cpu_thread_controls": {
+    "LIGHTGBM_NUM_THREADS": "8",
+    "MKL_NUM_THREADS": "8",
+    "NUMEXPR_NUM_THREADS": "8",
+    "OMP_NUM_THREADS": "8",
+    "OPENBLAS_NUM_THREADS": "8"
+  },
+  "created_at_utc": "2026-08-31T21:04:29.069392+00:00",
+  "cuda_runtime_required": "12.1",
+  "dependency_manifest_hash": "fa49910164e53a26c20418ebb81339aeaaa495eb504791ee8dd0e8082e4cd2f0",
+  "idempotent_bootstrap": true,
+  "instance_scoped_credentials_only": true,
+  "lightgbm_validation_command": "python - <<'PY'\nimport lightgbm\nprint(lightgbm.__version__)\nPY",
+  "minimum_hardware": {
+    "cpu_min": 16,
+    "cpu_preferred": 24,
+    "disk_gb": 250,
+    "gpu": "RTX 4090",
+    "ram_gb_min": 64,
+    "ram_gb_preferred": 96,
+    "vram_gb": 24
+  },
+  "paid_vast_operation_performed": false,
+  "python_version_required": "3.11.x",
+  "pytorch_cuda_validation_command": "python - <<'PY'\nimport torch\nassert torch.cuda.is_available()\nassert torch.cuda.get_device_properties(0).total_memory >= 24 * 1024**3\nPY",
+  "remote_layout": {
+    "data_root": "/workspace/ds24/source/data",
+    "output_root": "/workspace/ds24/output",
+    "queue_root": "/workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REMOTE_NINE_FAMILY_R1",
+    "source_root": "/workspace/ds24/source",
+    "workspace_root": "/workspace/ds24"
+  },
+  "requirements_file": "requirements.txt",
+  "requirements_sha256": "34b2ef68a9eee48db1f1ed2e275825549cb3dfebaed9c21d497e3bfc43e0cbd2",
+  "seeds": {
+    "DS24_RANDOM_SEED": "1729",
+    "PYTHONHASHSEED": "0",
+    "TORCH_SEED": "1729"
+  },
+  "status": "PASS",
+  "watchdog_armed_before_dependency_install_or_upload_or_model_work": true
+}

@@ -12,9 +12,9 @@ from core.research.ml.models.torch_checkpointing import (
     checkpoint_validation_fraction,
     validation_split_tensors,
 )
-from core.research.ml.data.sequence_dataset import (
-    build_sequence_indices,
-    sequence_group_ids_from_metadata,
+from core.research.ml.data.sequence_window_authority import (
+    build_sequence_indices_from_context,
+    sequence_context_rows_from_metadata,
 )
 
 
@@ -51,6 +51,7 @@ class TransformerSequenceMLModel(IMLModel):
         weight_decay: float = 1e-4,
         random_seed: int = 42,
         device: str = "cpu",
+        strict_context_required: bool = False,
     ):
         if sequence_length < 2:
             raise ValueError("sequence_length must be at least 2")
@@ -71,6 +72,7 @@ class TransformerSequenceMLModel(IMLModel):
         self.weight_decay = float(weight_decay)
         self.random_seed = int(random_seed)
         self.device = str(device)
+        self.strict_context_required = bool(strict_context_required)
 
         self.feature_names: list[str] = []
         self.means: dict[str, float] = {}
@@ -79,16 +81,23 @@ class TransformerSequenceMLModel(IMLModel):
         self.model: Any = None
         self.training_summary = TransformerTrainingSummary(False, 0, 0, 0.5)
         self._sequence_group_ids: list[str] = []
+        self._sequence_context_rows: list[dict[str, Any]] = []
 
     def set_sequence_context(
         self,
         metadata: list[dict[str, str]] | None = None,
         feature_dates: list[str] | None = None,
+        feature_ids: list[str] | None = None,
+        label_start_dates: list[str] | None = None,
+        label_end_dates: list[str] | None = None,
     ) -> None:
-        del feature_dates
-        self._sequence_group_ids = sequence_group_ids_from_metadata(
+        self._sequence_context_rows = sequence_context_rows_from_metadata(
             metadata,
-            len(metadata or []),
+            len(feature_dates or metadata or []),
+            feature_dates=feature_dates,
+            feature_ids=feature_ids,
+            label_start_dates=label_start_dates,
+            label_end_dates=label_end_dates,
         )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
@@ -253,6 +262,7 @@ class TransformerSequenceMLModel(IMLModel):
             "weight_decay": self.weight_decay,
             "random_seed": self.random_seed,
             "device": self.device,
+            "strict_context_required": self.strict_context_required,
             "feature_names": self.feature_names,
             "means": self.means,
             "stds": self.stds,
@@ -282,6 +292,9 @@ class TransformerSequenceMLModel(IMLModel):
             weight_decay=float(payload["weight_decay"]),
             random_seed=int(payload["random_seed"]),
             device=str(payload.get("device", "cpu")),
+            strict_context_required=bool(
+                payload.get("strict_context_required", False)
+            ),
         )
         model.feature_names = list(payload.get("feature_names", []))
         model.means = {key: float(value) for key, value in payload.get("means", {}).items()}
@@ -334,10 +347,14 @@ class TransformerSequenceMLModel(IMLModel):
         labels: list[int],
     ) -> tuple[list[list[list[float]]], list[int]]:
         matrix = [self._row_vector(row) for row in rows]
-        group_ids = self._context_group_ids(len(matrix))
         sequences: list[list[list[float]]] = []
         targets: list[int] = []
-        for indices in build_sequence_indices(group_ids, self.sequence_length):
+        for indices in build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        ):
             end_index = indices[-1]
             sequences.append([matrix[index] for index in indices])
             targets.append(int(labels[end_index]))
@@ -348,10 +365,14 @@ class TransformerSequenceMLModel(IMLModel):
         rows: list[dict[str, float]],
     ) -> tuple[list[list[list[float]]], list[int]]:
         matrix = [self._row_vector(row) for row in rows]
-        group_ids = self._context_group_ids(len(matrix))
         sequences: list[list[list[float]]] = []
         end_indices: list[int] = []
-        for indices in build_sequence_indices(group_ids, self.sequence_length):
+        for indices in build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        ):
             sequences.append([matrix[index] for index in indices])
             end_indices.append(indices[-1])
         return sequences, end_indices
@@ -395,9 +416,9 @@ def _make_tiny_transformer_classifier() -> type:
                 nn.Linear(d_model, 1),
             )
 
-        def forward(self, x):
+        def forward(self, x, padding_mask=None):
             encoded = self.input_projection(x) + self.position_embedding[:, : x.shape[1], :]
-            encoded = self.encoder(encoded)
+            encoded = self.encoder(encoded, src_key_padding_mask=padding_mask)
             return self.classifier(encoded[:, -1, :]).squeeze(-1)
 
     return TinyTransformerClassifier

@@ -1,0 +1,20 @@
+{
+  "adapter_contract": "ticket63_common_trainable_model_interface.v1",
+  "authority_version": "ticket63_wave2_model_family_foundation.v1",
+  "default_off": true,
+  "development_endpoint": "2025-04-01",
+  "device": "cpu",
+  "enabled": false,
+  "execution_timeframe": "policy_replay_daily_close",
+  "frozen_pit_population_identity": "022bd1625dcd776055877b68535281c7f7f9611851c29daff07c17066c2f1b80",
+  "launch_genuine_training": false,
+  "locked_holdout_start": "2025-04-02",
+  "model_id": "dlinear_daily_v1",
+  "resource_classification": "MEDIUM",
+  "selector_decision_timeframe": "1Day",
+  "sequence_length": 32,
+  "sequence_sampling_timeframe": "1Day",
+  "target_horizon": "10_sessions",
+  "target_identity": "forward_return_10_sessions__decision_1Day",
+  "thread_limit": 1
+}

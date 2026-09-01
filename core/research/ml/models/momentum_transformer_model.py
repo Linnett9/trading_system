@@ -4,6 +4,10 @@ import math
 from pathlib import Path
 from typing import Any
 
+from core.research.ml.data.sequence_window_authority import (
+    build_sequence_indices_from_context,
+    sequence_context_rows_from_metadata,
+)
 from core.research.ml.models.torch_checkpointing import (
     TorchCheckpointSession,
     binary_validation_loss,
@@ -53,6 +57,7 @@ class MomentumTransformerSequenceMLModel:
         pos_weight: str | float | None = "auto",
         size_multiplier_floor: float = 0.25,
         size_multiplier_ceiling: float = 1.25,
+        strict_context_required: bool = False,
     ):
         if sequence_length < 2:
             raise ValueError("sequence_length must be at least 2")
@@ -82,12 +87,32 @@ class MomentumTransformerSequenceMLModel:
         self.pos_weight = pos_weight
         self.size_multiplier_floor = float(size_multiplier_floor)
         self.size_multiplier_ceiling = float(size_multiplier_ceiling)
+        self.strict_context_required = bool(strict_context_required)
 
         self.feature_names: list[str] = []
         self.feature_means: list[float] = []
         self.feature_stds: list[float] = []
         self.training_prior: float = 0.5
         self.model: Any = None
+        self._sequence_context_rows: list[dict[str, Any]] = []
+
+    def set_sequence_context(
+        self,
+        metadata: list[dict[str, str]] | None = None,
+        feature_dates: list[str] | None = None,
+        feature_ids: list[str] | None = None,
+        label_start_dates: list[str] | None = None,
+        label_end_dates: list[str] | None = None,
+    ) -> None:
+        sample_count = len(feature_dates or metadata or [])
+        self._sequence_context_rows = sequence_context_rows_from_metadata(
+            metadata,
+            sample_count,
+            feature_dates=feature_dates,
+            feature_ids=feature_ids,
+            label_start_dates=label_start_dates,
+            label_end_dates=label_end_dates,
+        )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
         if len(x_train) != len(y_train):
@@ -253,6 +278,7 @@ class MomentumTransformerSequenceMLModel:
                     "pos_weight": self.pos_weight,
                     "size_multiplier_floor": self.size_multiplier_floor,
                     "size_multiplier_ceiling": self.size_multiplier_ceiling,
+                    "strict_context_required": self.strict_context_required,
                 },
                 "feature_names": self.feature_names,
                 "feature_means": self.feature_means,
@@ -315,25 +341,35 @@ class MomentumTransformerSequenceMLModel:
         ]
 
     def _build_training_tensors(self, torch: Any, matrix: list[list[float]], labels: list[int]) -> tuple[Any | None, Any | None]:
-        if len(matrix) < self.sequence_length:
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
+        if not indices:
             return None, None
         sequences = []
         sequence_labels = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
-            sequence_labels.append(float(labels[end_index]))
+        for row in indices:
+            sequences.append([matrix[index] for index in row])
+            sequence_labels.append(float(labels[row[-1]]))
         return torch.tensor(sequences, dtype=torch.float32), torch.tensor(sequence_labels, dtype=torch.float32)
 
     def _build_prediction_tensor(self, torch: Any, matrix: list[list[float]]) -> tuple[Any | None, list[int]]:
-        if len(matrix) < self.sequence_length:
+        sequence_indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
+        if not sequence_indices:
             return None, []
         sequences = []
         indices = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
-            indices.append(end_index)
+        for row in sequence_indices:
+            sequences.append([matrix[index] for index in row])
+            indices.append(row[-1])
         return torch.tensor(sequences, dtype=torch.float32), indices
 
     def _pos_weight_tensor(self, torch: Any, labels: list[int]) -> Any | None:
@@ -385,12 +421,24 @@ def _build_momentum_transformer_module(
             self.trend_head = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_model, 1))
             self.regime_head = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_model, 1))
 
-        def forward(self, x: Any) -> tuple[Any, Any, Any]:
+        def forward(self, x: Any, padding_mask: Any | None = None) -> tuple[Any, Any, Any]:
             deltas = x[:, -1, :] - x[:, 0, :]
             tokens = self.input_projection(x) + self.position[:, : x.shape[1], :]
             tokens = tokens + self.delta_projection(deltas).unsqueeze(1)
-            encoded = self.encoder(tokens)
-            pooled = self.norm(encoded[:, -1, :])
+            causal_mask = torch.triu(
+                torch.ones(x.shape[1], x.shape[1], device=tokens.device, dtype=torch.bool),
+                diagonal=1,
+            )
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(device=tokens.device, dtype=torch.bool)
+            encoded = self.encoder(tokens, mask=causal_mask, src_key_padding_mask=padding_mask)
+            encoded = torch.nan_to_num(encoded, nan=0.0, posinf=0.0, neginf=0.0)
+            if padding_mask is None:
+                pooled = encoded[:, -1, :]
+            else:
+                valid_lengths = (~padding_mask).sum(dim=1).clamp(min=1) - 1
+                pooled = encoded[torch.arange(encoded.shape[0], device=encoded.device), valid_lengths]
+            pooled = self.norm(pooled)
             return (
                 self.classification_head(pooled).squeeze(-1),
                 self.trend_head(pooled).squeeze(-1),

@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from core.research.ml.models.market_context_encoder_model import _torch_dependencies
-from core.research.ml.data.sequence_dataset import (
-    build_sequence_indices,
-    sequence_group_ids_from_metadata,
+from core.research.ml.data.sequence_window_authority import (
+    build_sequence_indices_from_context,
+    sequence_context_rows_from_metadata,
 )
 from core.research.ml.models.torch_checkpointing import (
     TorchCheckpointSession,
@@ -62,6 +62,7 @@ class TemporalFusionTransformerMLModel:
         random_seed: int = 42,
         device: str = "cpu",
         known_future_features: list[str] | None = None,
+        strict_context_required: bool = False,
     ):
         if sequence_length < 2:
             raise ValueError("sequence_length must be at least 2")
@@ -84,6 +85,7 @@ class TemporalFusionTransformerMLModel:
         self.random_seed = int(random_seed)
         self.device = str(device)
         self.known_future_features = list(known_future_features or DEFAULT_KNOWN_FUTURE_FEATURES)
+        self.strict_context_required = bool(strict_context_required)
 
         self.observed_feature_names: list[str] = []
         self.known_feature_names: list[str] = []
@@ -92,16 +94,23 @@ class TemporalFusionTransformerMLModel:
         self.training_prior = 0.5
         self.model: Any = None
         self._sequence_group_ids: list[str] = []
+        self._sequence_context_rows: list[dict[str, Any]] = []
 
     def set_sequence_context(
         self,
         metadata: list[dict[str, str]] | None = None,
         feature_dates: list[str] | None = None,
+        feature_ids: list[str] | None = None,
+        label_start_dates: list[str] | None = None,
+        label_end_dates: list[str] | None = None,
     ) -> None:
-        del feature_dates
-        self._sequence_group_ids = sequence_group_ids_from_metadata(
+        self._sequence_context_rows = sequence_context_rows_from_metadata(
             metadata,
-            len(metadata or []),
+            len(feature_dates or metadata or []),
+            feature_dates=feature_dates,
+            feature_ids=feature_ids,
+            label_start_dates=label_start_dates,
+            label_end_dates=label_end_dates,
         )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
@@ -274,6 +283,7 @@ class TemporalFusionTransformerMLModel:
                     "random_seed": self.random_seed,
                     "device": self.device,
                     "known_future_features": self.known_future_features,
+                    "strict_context_required": self.strict_context_required,
                 },
                 "observed_feature_names": self.observed_feature_names,
                 "known_feature_names": self.known_feature_names,
@@ -340,7 +350,12 @@ class TemporalFusionTransformerMLModel:
         ) / self.feature_stds.get(name, 1.0)
 
     def _build_training_tensors(self, torch: Any, observed: list[list[float]], known: list[list[float]], labels: list[int]) -> tuple[Any | None, Any | None, Any | None]:
-        indices = build_sequence_indices(self._context_group_ids(len(observed)), self.sequence_length)
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(observed),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
         if not indices:
             return None, None, None
         sequences = [[observed[index] for index in row] for row in indices]
@@ -353,7 +368,12 @@ class TemporalFusionTransformerMLModel:
         )
 
     def _build_prediction_tensors(self, torch: Any, observed: list[list[float]], known: list[list[float]]) -> tuple[Any | None, Any | None, list[int]]:
-        indices = build_sequence_indices(self._context_group_ids(len(observed)), self.sequence_length)
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(observed),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
         if not indices:
             return None, None, []
         return (
@@ -417,11 +437,23 @@ def _build_tft_module(
             self.classifier = nn.Linear(hidden_size, 1)
             self.auxiliary = nn.Linear(hidden_size, 4)
 
-        def forward(self, observed, known):
+        def forward(self, observed, known, padding_mask=None):
             variable_weights = torch.sigmoid(self.variable_gate(observed))
             selected = observed * variable_weights
             encoded = self.observed_projection(selected) + self.position_embedding[:, : observed.shape[1], :]
-            temporal = self.encoder(encoded)[:, -1, :]
+            causal_mask = torch.triu(
+                torch.ones(observed.shape[1], observed.shape[1], device=encoded.device, dtype=torch.bool),
+                diagonal=1,
+            )
+            if padding_mask is not None:
+                padding_mask = padding_mask.to(device=encoded.device, dtype=torch.bool)
+            encoded = self.encoder(encoded, mask=causal_mask, src_key_padding_mask=padding_mask)
+            encoded = torch.nan_to_num(encoded, nan=0.0, posinf=0.0, neginf=0.0)
+            if padding_mask is None:
+                temporal = encoded[:, -1, :]
+            else:
+                valid_lengths = (~padding_mask).sum(dim=1).clamp(min=1) - 1
+                temporal = encoded[torch.arange(encoded.shape[0], device=encoded.device), valid_lengths]
             known_encoded = self.known_projection(known)
             gate_values = torch.sigmoid(self.gate(torch.cat([temporal, known_encoded], dim=1)))
             fused = temporal * gate_values + known_encoded * (1.0 - gate_values)

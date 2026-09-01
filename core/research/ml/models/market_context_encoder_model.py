@@ -4,9 +4,9 @@ import math
 from pathlib import Path
 from typing import Any
 
-from core.research.ml.data.sequence_dataset import (
-    build_sequence_indices,
-    sequence_group_ids_from_metadata,
+from core.research.ml.data.sequence_window_authority import (
+    build_sequence_indices_from_context,
+    sequence_context_rows_from_metadata,
 )
 from core.research.ml.models.torch_checkpointing import (
     TorchCheckpointSession,
@@ -55,6 +55,7 @@ class MarketContextEncoderMLModel:
         device: str = "cpu",
         risk_multiplier_floor: float = 0.25,
         risk_multiplier_ceiling: float = 1.25,
+        strict_context_required: bool = False,
     ):
         if sequence_length < 2:
             raise ValueError("sequence_length must be at least 2")
@@ -76,6 +77,7 @@ class MarketContextEncoderMLModel:
         self.device = str(device)
         self.risk_multiplier_floor = float(risk_multiplier_floor)
         self.risk_multiplier_ceiling = float(risk_multiplier_ceiling)
+        self.strict_context_required = bool(strict_context_required)
 
         self.feature_names: list[str] = []
         self.feature_means: list[float] = []
@@ -83,16 +85,23 @@ class MarketContextEncoderMLModel:
         self.training_prior = 0.5
         self.model: Any = None
         self._sequence_group_ids: list[str] = []
+        self._sequence_context_rows: list[dict[str, Any]] = []
 
     def set_sequence_context(
         self,
         metadata: list[dict[str, str]] | None = None,
         feature_dates: list[str] | None = None,
+        feature_ids: list[str] | None = None,
+        label_start_dates: list[str] | None = None,
+        label_end_dates: list[str] | None = None,
     ) -> None:
-        del feature_dates
-        self._sequence_group_ids = sequence_group_ids_from_metadata(
+        self._sequence_context_rows = sequence_context_rows_from_metadata(
             metadata,
-            len(metadata or []),
+            len(feature_dates or metadata or []),
+            feature_dates=feature_dates,
+            feature_ids=feature_ids,
+            label_start_dates=label_start_dates,
+            label_end_dates=label_end_dates,
         )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
@@ -244,6 +253,7 @@ class MarketContextEncoderMLModel:
                     "device": self.device,
                     "risk_multiplier_floor": self.risk_multiplier_floor,
                     "risk_multiplier_ceiling": self.risk_multiplier_ceiling,
+                    "strict_context_required": self.strict_context_required,
                 },
                 "feature_names": self.feature_names,
                 "feature_means": self.feature_means,
@@ -300,7 +310,12 @@ class MarketContextEncoderMLModel:
         ]
 
     def _build_training_tensors(self, torch: Any, matrix: list[list[float]], labels: list[int]) -> tuple[Any | None, Any | None]:
-        indices = build_sequence_indices(self._context_group_ids(len(matrix)), self.sequence_length)
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
         if not indices:
             return None, None
         sequences = [[matrix[index] for index in row] for row in indices]
@@ -308,7 +323,12 @@ class MarketContextEncoderMLModel:
         return torch.tensor(sequences, dtype=torch.float32), torch.tensor(sequence_labels, dtype=torch.float32)
 
     def _build_prediction_tensor(self, torch: Any, matrix: list[list[float]]) -> tuple[Any | None, list[int]]:
-        indices = build_sequence_indices(self._context_group_ids(len(matrix)), self.sequence_length)
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
         if not indices:
             return None, []
         sequences = [[matrix[index] for index in row] for row in indices]
@@ -366,8 +386,13 @@ def _build_market_context_module(torch: Any, nn: Any, feature_count: int, hidden
             )
             self.classifier = nn.Linear(hidden_size, 1)
 
-        def forward(self, x):
-            pooled = x.mean(dim=1)
+        def forward(self, x, padding_mask=None):
+            if padding_mask is None:
+                pooled = x.mean(dim=1)
+            else:
+                padding_mask = padding_mask.to(device=x.device, dtype=torch.bool)
+                valid = (~padding_mask).unsqueeze(-1).to(dtype=x.dtype)
+                pooled = (x * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
             embedding = self.encoder(pooled)
             return self.classifier(embedding).squeeze(-1), embedding
 

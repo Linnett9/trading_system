@@ -4,6 +4,10 @@ import math
 from pathlib import Path
 from typing import Any
 
+from core.research.ml.data.sequence_window_authority import (
+    build_sequence_indices_from_context,
+    sequence_context_rows_from_metadata,
+)
 from core.research.ml.models.torch_checkpointing import (
     TorchCheckpointSession,
     binary_validation_loss,
@@ -50,6 +54,7 @@ class ITransformerSequenceMLModel:
         random_seed: int = 42,
         device: str = "cpu",
         pos_weight: str | float | None = "auto",
+        strict_context_required: bool = False,
     ):
         if sequence_length < 2:
             raise ValueError("sequence_length must be at least 2")
@@ -73,12 +78,32 @@ class ITransformerSequenceMLModel:
         self.random_seed = int(random_seed)
         self.device = str(device)
         self.pos_weight = pos_weight
+        self.strict_context_required = bool(strict_context_required)
 
         self.feature_names: list[str] = []
         self.feature_means: list[float] = []
         self.feature_stds: list[float] = []
         self.training_prior: float = 0.5
         self.model: Any = None
+        self._sequence_context_rows: list[dict[str, Any]] = []
+
+    def set_sequence_context(
+        self,
+        metadata: list[dict[str, str]] | None = None,
+        feature_dates: list[str] | None = None,
+        feature_ids: list[str] | None = None,
+        label_start_dates: list[str] | None = None,
+        label_end_dates: list[str] | None = None,
+    ) -> None:
+        sample_count = len(feature_dates or metadata or [])
+        self._sequence_context_rows = sequence_context_rows_from_metadata(
+            metadata,
+            sample_count,
+            feature_dates=feature_dates,
+            feature_ids=feature_ids,
+            label_start_dates=label_start_dates,
+            label_end_dates=label_end_dates,
+        )
 
     def fit(self, x_train: list[dict[str, float]], y_train: list[int]) -> None:
         if len(x_train) != len(y_train):
@@ -214,6 +239,7 @@ class ITransformerSequenceMLModel:
                     "random_seed": self.random_seed,
                     "device": self.device,
                     "pos_weight": self.pos_weight,
+                    "strict_context_required": self.strict_context_required,
                 },
                 "feature_names": self.feature_names,
                 "feature_means": self.feature_means,
@@ -276,25 +302,35 @@ class ITransformerSequenceMLModel:
         ]
 
     def _build_training_tensors(self, torch: Any, matrix: list[list[float]], labels: list[int]) -> tuple[Any | None, Any | None]:
-        if len(matrix) < self.sequence_length:
+        indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
+        if not indices:
             return None, None
         sequences = []
         sequence_labels = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
-            sequence_labels.append(float(labels[end_index]))
+        for row in indices:
+            sequences.append([matrix[index] for index in row])
+            sequence_labels.append(float(labels[row[-1]]))
         return torch.tensor(sequences, dtype=torch.float32), torch.tensor(sequence_labels, dtype=torch.float32)
 
     def _build_prediction_tensor(self, torch: Any, matrix: list[list[float]]) -> tuple[Any | None, list[int]]:
-        if len(matrix) < self.sequence_length:
+        sequence_indices = build_sequence_indices_from_context(
+            self._sequence_context_rows,
+            len(matrix),
+            self.sequence_length,
+            strict_context_required=self.strict_context_required,
+        )
+        if not sequence_indices:
             return None, []
         sequences = []
         indices = []
-        for end_index in range(self.sequence_length - 1, len(matrix)):
-            start_index = end_index - self.sequence_length + 1
-            sequences.append(matrix[start_index : end_index + 1])
-            indices.append(end_index)
+        for row in sequence_indices:
+            sequences.append([matrix[index] for index in row])
+            indices.append(row[-1])
         return torch.tensor(sequences, dtype=torch.float32), indices
 
     def _pos_weight_tensor(self, torch: Any, labels: list[int]) -> Any | None:
@@ -337,12 +373,15 @@ def _build_itransformer_module(
             self.norm = nn.LayerNorm(d_model)
             self.head = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_model, 1))
 
-        def forward(self, x: Any) -> Any:
+        def forward(self, x: Any, time_padding_mask: Any | None = None, variable_padding_mask: Any | None = None) -> Any:
             # x: [batch, sequence_length, feature_count]. Invert dimensions so
             # each feature/asset column becomes a token with temporal context.
+            if time_padding_mask is not None:
+                valid_time = (~time_padding_mask).to(dtype=x.dtype, device=x.device).unsqueeze(-1)
+                x = x * valid_time
             tokens = x.transpose(1, 2)
             encoded = self.temporal_projection(tokens) + self.variable_embedding[:, : tokens.shape[1], :]
-            encoded = self.encoder(encoded)
+            encoded = self.encoder(encoded, src_key_padding_mask=variable_padding_mask)
             pooled = self.norm(encoded.mean(dim=1))
             return self.head(pooled).squeeze(-1)
 
