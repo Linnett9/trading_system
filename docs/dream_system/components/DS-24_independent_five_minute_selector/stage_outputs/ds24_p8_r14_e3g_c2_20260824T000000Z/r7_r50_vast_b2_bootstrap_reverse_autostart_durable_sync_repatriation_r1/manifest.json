@@ -1,0 +1,124 @@
+{
+  "artifact_inventory": [
+    {
+      "path": "artifact_inventory.json",
+      "sha256": "a91761dc31e4412b8feb0e1cca11a12b384dd86e6b50114b1cc0b5e565707a7c",
+      "size_bytes": 2869
+    },
+    {
+      "path": "input_dataset_authority.schema.json",
+      "sha256": "5e0289f0280c5422d6116324d65cdbfd5fa7a7e65b138f35c110625e1f9562c7",
+      "size_bytes": 1741
+    },
+    {
+      "path": "vast_bootstrap_config.schema.json",
+      "sha256": "b54d5ba5942a3615f282ab60f479f77487a20a221d9681471e2c1082fc0c8fba",
+      "size_bytes": 2166
+    },
+    {
+      "path": "ownership_plan.schema.json",
+      "sha256": "e54c666acdadde3433518b02da01aad99cbd6c5ec55500e3ebf41124113baa33",
+      "size_bytes": 2110
+    },
+    {
+      "path": "artifact_retention_policy.json",
+      "sha256": "8efa8bba5e68ef752b1acbd0b3fbd36469b8b13adb4cb0288f6d7bf4f207d145",
+      "size_bytes": 5147
+    },
+    {
+      "path": "vast_output_manifest.schema.json",
+      "sha256": "95cef4f061b3376afec41a36b2d9a92aa6dfb5d5b3bd1fddae1bd846a486433c",
+      "size_bytes": 1560
+    },
+    {
+      "path": "dell_import_receipt.schema.json",
+      "sha256": "1130752d4fdc8977b3cec59ec9470ba2f1dba62545f0b15e77fd3faa52e8b520",
+      "size_bytes": 2594
+    },
+    {
+      "path": "synthetic_end_to_end_evidence.json",
+      "sha256": "025a1392b4b5f506e5e103facbe37fb39374e270f924c0e81048d1e28613fd9d",
+      "size_bytes": 2782
+    },
+    {
+      "path": "failure_recovery_matrix.json",
+      "sha256": "8e9c596e1bb9869a39d27f0fab14f5266f1b2b2775a755502691229956807a33",
+      "size_bytes": 3787
+    },
+    {
+      "path": "operational_commands.json",
+      "sha256": "ac700a56e0adb34535a2a03f7e93c603aabc660103462b4909b71343ec8374ad",
+      "size_bytes": 3933
+    },
+    {
+      "path": "repository_deployment_authority.json",
+      "sha256": "73fd373e48b67888ea636d7fbced072db21d4c5d80558115d42e2fd3d8a1532f",
+      "size_bytes": 2649
+    },
+    {
+      "path": "queue_prerequisite_validation.json",
+      "sha256": "711be39d6487c8284391d748a35152ca3c76a9fede1079525409ce2bec85e9e1",
+      "size_bytes": 1472
+    },
+    {
+      "path": "test_evidence.json",
+      "sha256": "6a38b2d5bc5de8a2dd9e764a366b865ba876c6dae033c597d2b14b295510357d",
+      "size_bytes": 1748
+    },
+    {
+      "path": "limitations.json",
+      "sha256": "e6e90e37af82b4bb491a8b8e551ce7497810b43d58a44096b96492143ba72181",
+      "size_bytes": 489
+    },
+    {
+      "path": "RUNBOOK.md",
+      "sha256": "563b8460ce67542f105c46addd5004a05af8672b01ce10ea6c66bfcb7b05ff26",
+      "size_bytes": 4964
+    },
+    {
+      "path": "process_snapshot_before.json",
+      "sha256": "86cd2311b9ab97c5c097fd7cf020cd7f0d6dd1e836af3e940dc905fb65997001",
+      "size_bytes": 1123
+    },
+    {
+      "path": "process_snapshot_after.json",
+      "sha256": "22946a909ec7b868d152fcd01d530808d07c1167961a459d76c91394df669e2e",
+      "size_bytes": 1123
+    }
+  ],
+  "authority_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r50_vast_b2_bootstrap_reverse_autostart_durable_sync_repatriation_r1",
+  "b2_bucket": "TradingSystemDataset44",
+  "b2_prefix": "ds24/full_data_r1",
+  "bootstrap_entry_point": "scripts/local/ds24_vast_b2_bootstrap_r1.py bootstrap",
+  "completion_marker_key": "ds24/full_data_r1/DATASET_COMPLETE.json",
+  "created_at_utc": "2026-09-03T13:17:54Z",
+  "dell_repatriation_entry_point": "scripts/local/ds24_vast_b2_bootstrap_r1.py repatriate",
+  "expected_dataset_bytes": 47323707293,
+  "expected_dataset_object_count": 18505,
+  "manifest_hash": "77524b78555b924d88126a38b3d9420d8e72d94ed46a3c96c05eea94b74707ba",
+  "output_publisher_entry_point": "scripts/local/ds24_vast_b2_bootstrap_r1.py publisher",
+  "ownership_coordination": "B2-carried static generation ownership plan with Dell ack and Mac ack or explicit unavailable reason",
+  "prerequisite_queue_authority_hash": "344ca54be44d31daa5e1c722a54058d011fdc07ecb798555b314f5b126088335",
+  "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "repository_deployment_authority_method": "git clone exact commit plus integrity-checked small deployment bundle for required untracked authorities",
+  "reverse_autostart_entry_point": "scripts/local/ds24_vast_b2_bootstrap_r1.py bootstrap --start-after-verify",
+  "safety": {
+    "credentials_read_or_stored": false,
+    "current_upload_touched": false,
+    "current_worker_touched": false,
+    "holdout_accessed": false,
+    "live_model_launched": false,
+    "live_orders": 0,
+    "paper_orders": 0,
+    "process_signature_unchanged": true,
+    "protected_process_count_after": 5,
+    "protected_process_count_before": 5,
+    "vast_instance_rented": false
+  },
+  "synthetic_evidence_status": "PASS",
+  "terminal_classification": "DS24_VAST_B2_BOOTSTRAP_REVERSE_AUTOSTART_AND_DELL_REPATRIATION_READY_NOT_EXECUTED",
+  "test_evidence_hash": "94afd5c3b29a268552d3c8136ba2ebafd6a3378ada837e314fb025b196425e9a",
+  "test_evidence_status": "PASS",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_B2_BOOTSTRAP_REVERSE_AUTOSTART_DURABLE_OUTPUT_SYNC_AND_DELL_REPATRIATION_R1"
+}

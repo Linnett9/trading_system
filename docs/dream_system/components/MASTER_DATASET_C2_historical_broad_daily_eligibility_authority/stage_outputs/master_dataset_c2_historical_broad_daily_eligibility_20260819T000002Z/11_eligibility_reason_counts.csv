@@ -1,0 +1,7 @@
+count,field,value,authority
+7452,exclusion_reason,missing_rate_gt_0.1,DS03_U2A_REFERENCE_ONLY
+1037,exclusion_reason,prior_price_lt_5,DS03_U2A_REFERENCE_ONLY
+3648,exclusion_reason,tdv20_lt_5e+06,DS03_U2A_REFERENCE_ONLY
+3575,exclusion_reason,tdv60_lt_5e+06,DS03_U2A_REFERENCE_ONLY
+25159,inclusion_reason,balanced_prior_liquidity_profile_passed,DS03_U2A_REFERENCE_ONLY
+514,C2_terminal_reason,BROAD_RESEARCH_BLOCKED_IDENTITY_AUTHORITY,C2

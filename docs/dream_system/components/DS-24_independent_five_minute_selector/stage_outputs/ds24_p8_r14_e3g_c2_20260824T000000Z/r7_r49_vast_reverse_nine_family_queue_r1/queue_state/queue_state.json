@@ -1,0 +1,111 @@
+{
+  "blocked_families": [],
+  "current_cursor": "",
+  "external_ownership_evidence": [],
+  "generation": 0,
+  "guards": {
+    "backblaze_or_cloud_transport_performed": false,
+    "full_prediction_output_written": false,
+    "holdout_accessed": false,
+    "live_dell_mac_queue_state_mutated": false,
+    "live_orders": 0,
+    "model_execution_started": false,
+    "paper_orders": 0,
+    "queue_only": true,
+    "vast_cloud_operation_performed": false
+  },
+  "last_heartbeat_utc": "2026-09-03T12:08:05Z",
+  "ledger": [
+    {
+      "block_reason": "",
+      "canonical_family_id": "temporal_fusion_transformer",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 1,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "market_context_encoder",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 2,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "momentum_transformer",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 3,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "itransformer",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 4,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "transformer",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 5,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "patchtst",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 6,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "dlinear",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 7,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "lightgbm_lambdarank",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 8,
+      "skip_reason": "",
+      "status": "PENDING"
+    },
+    {
+      "block_reason": "",
+      "canonical_family_id": "lightgbm_rank_xendcg",
+      "claim_id": "",
+      "last_update_utc": "",
+      "ordinal": 9,
+      "skip_reason": "",
+      "status": "PENDING"
+    }
+  ],
+  "model_executor_invoked": false,
+  "previous_state_hash": "",
+  "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "retryable_failure_state": [],
+  "schema_version": "ds24_vast_reverse_queue_state.v1",
+  "skipped_families": [],
+  "state_hash": "b88d8c29df92c16a47eb2380714a80ccef655660434c990cad15845d0f818b9f",
+  "terminal_entries": [],
+  "vast_claims": []
+}

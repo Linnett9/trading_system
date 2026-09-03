@@ -1,0 +1,9 @@
+{
+  "active_process_safety": {
+    "healthy_workers_stopped": 0,
+    "processes": []
+  },
+  "capacity_status": "PASS",
+  "estimated_final_authority_size": "zero accepted rows; metadata-only blocked package",
+  "free_disk_gib": 43.043
+}

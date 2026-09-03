@@ -1,0 +1,7 @@
+{
+  "C2_broad_rows_admitted": 0,
+  "C2_future_leakage": false,
+  "DS03_future_observation_used": false,
+  "DS03_locked_holdout_accessed": false,
+  "status": "PASS_FOR_REFERENCE_AUTHORITIES_FAIL_CLOSED_FOR_C2_ADMISSION"
+}

@@ -1,0 +1,21 @@
+{
+  "authority_version": "string",
+  "canonical_symbol": "string",
+  "data_available": "bool",
+  "decision_date": "date32",
+  "decision_timestamp": "timestamp[us, tz=UTC]",
+  "eligibility_status": "string",
+  "f01_ready": "bool",
+  "f03_ready": "bool",
+  "final_research_eligible": "bool",
+  "history_sufficient": "bool",
+  "identity_resolved": "bool",
+  "liquidity_eligible": "bool",
+  "observed": "bool",
+  "reason_code": "string",
+  "security_active": "bool",
+  "security_id": "string",
+  "source_authority_id": "string",
+  "source_available_timestamp": "timestamp[us, tz=UTC]",
+  "universe_eligible": "bool"
+}

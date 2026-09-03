@@ -1,0 +1,51 @@
+{
+  "autostart_classification": "VAST_REVERSE_QUEUE_AUTOSTARTED_STUB",
+  "bootstrap_preflight_classification": "VAST_BOOTSTRAP_PREFLIGHT_PASS",
+  "checks": {
+    "autostart_stub_after_verify": true,
+    "dataset_finalizer_passed": true,
+    "dell_compact_repatriation_passed": true,
+    "forbidden_prediction_not_transferred": true,
+    "live_model_not_started": true,
+    "marker_valid": true,
+    "preflight_blocks_nothing_when_gates_pass": true,
+    "prerequisite_queue_valid": true,
+    "publisher_commits_marker_last": true,
+    "publisher_interruption_retryable": true
+  },
+  "cloud_operation_performed": false,
+  "dataset_authority_hash": "eb0b19c9a9f3a6599c16fe9f89c9f98aa7ea02fcab55de15080817ca5cc4656d",
+  "dell_repatriation_classification": "DELL_REPATRIATION_VERIFIED",
+  "model_execution": {
+    "live_model_started": false,
+    "stub_executor_started": true
+  },
+  "ownership_plan_hash": "6b5fa70d63e13f05525479a89b3dcc9600fe233fb12b66c9967d9d0474d375c5",
+  "prerequisite": {
+    "authority_id": "DS24_VAST_R49_QUEUE_PREREQUISITE_VALIDATION_V1",
+    "checks": {
+      "classification_matches": true,
+      "definition_hash_matches_manifest": true,
+      "definition_present": true,
+      "definition_valid": true,
+      "manifest_present": true,
+      "queue_id_matches": true,
+      "test_evidence_pass": true
+    },
+    "manifest_hash": "344ca54be44d31daa5e1c722a54058d011fdc07ecb798555b314f5b126088335",
+    "manifest_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1/manifest.json",
+    "queue_authority_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1",
+    "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+    "queue_definition_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1/vast_reverse_queue_definition.json",
+    "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+    "status": "PASS",
+    "terminal_classification": "DS24_VAST_REVERSE_NINE_FAMILY_QUEUE_READY_NOT_LAUNCHED_EXTERNAL_COORDINATION_TRANSPORT_PENDING",
+    "terminal_if_failed": "BLOCKED_VAST_REVERSE_QUEUE_AUTHORITY_MISSING",
+    "validation_hash": "6fe30a5ce6009c5543848ccf9942bfdae737b71919129a67a23e8d7a047ff9ea"
+  },
+  "publisher_final_classification": "VAST_OUTPUTS_DURABLY_PUBLISHED",
+  "publisher_retry_classification": "VAST_OUTPUT_PUBLICATION_INTERRUPTED_RETRYABLE",
+  "schema_version": "ds24_vast_r50_synthetic_end_to_end_evidence.v1",
+  "status": "PASS",
+  "vast_instance_rented": false
+}

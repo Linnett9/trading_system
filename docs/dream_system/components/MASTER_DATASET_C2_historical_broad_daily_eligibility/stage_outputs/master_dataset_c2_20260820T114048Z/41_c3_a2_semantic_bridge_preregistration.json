@@ -1,0 +1,9 @@
+{
+  "common_379_date_population_required": true,
+  "compare": [
+    "A2 original F01/F03",
+    "C1/C2 new canonical F01/F03"
+  ],
+  "required": true,
+  "semantic_equivalence_assumed": false
+}

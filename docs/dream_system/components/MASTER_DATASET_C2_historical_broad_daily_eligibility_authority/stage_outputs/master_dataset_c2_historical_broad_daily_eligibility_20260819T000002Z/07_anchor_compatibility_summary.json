@@ -1,0 +1,16 @@
+{
+  "C1_anchor_remains_valid": true,
+  "C1_anchor_repair_required": false,
+  "c1_anchor_eligible_rows": 663967,
+  "c1_anchor_rows": 836074,
+  "c1_anchor_symbols": 379,
+  "ds03_static_anchor_overlap_symbols": 299,
+  "eligible_agreement": 0,
+  "ineligible_agreement": 0,
+  "mismatch_count": 836074,
+  "missing_anchor_symbols": 80,
+  "reason_rows_not_compared": "DS03_U2A does not cover the full C1 anchor history or symbol set; row-level C2 eligibility not admitted",
+  "rows_compared": 0,
+  "status": "FAIL_CLOSED",
+  "unknown_state": 836074
+}

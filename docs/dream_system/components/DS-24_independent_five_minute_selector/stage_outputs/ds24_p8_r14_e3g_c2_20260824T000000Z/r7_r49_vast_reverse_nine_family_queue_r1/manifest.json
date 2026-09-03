@@ -1,0 +1,103 @@
+{
+  "artifact_inventory": [
+    {
+      "path": "vast_reverse_queue_definition.json",
+      "sha256": "826d9d35e708f2aa5ce2d2d54b0ae04797d2e9b533721ad47120d7320557a4b8",
+      "size_bytes": 10347
+    },
+    {
+      "path": "external_family_status.schema.json",
+      "sha256": "652c7ba66b522ecd5a725daf4fe6135ca880b26ed0e9db74b0ce52fe1a1464f2",
+      "size_bytes": 4189
+    },
+    {
+      "path": "synthetic_external_status_fixture.json",
+      "sha256": "8e009f97a84e16708d2feefe7ba76ed3d3c6a25c15a8aee0249e66b21e956c4b",
+      "size_bytes": 17430
+    },
+    {
+      "path": "vast_family_claim.schema.json",
+      "sha256": "f4cf9caf89bb359a669e02a6c4e9c9d75cc8fa826ec339829b26473849451460",
+      "size_bytes": 2362
+    },
+    {
+      "path": "dry_run_plan.json",
+      "sha256": "2385f61d640051dc68a69e04a38905a34457a2eb7eeb5e31af83a362591abe2b",
+      "size_bytes": 12627
+    },
+    {
+      "path": "queue_validation.json",
+      "sha256": "4e5574e94eddc80f05f4812e46097975091d32e1984797e2a9761be0927ff64f",
+      "size_bytes": 1441
+    },
+    {
+      "path": "test_evidence.json",
+      "sha256": "2dd0492a116bf8ab88de8faa2368ef3fc40578ce249d67b56a1efc5e01bc742b",
+      "size_bytes": 1152
+    },
+    {
+      "path": "README.md",
+      "sha256": "e9f27c6c278b4197ef48b480436a8e5c43265eba498347e68046f01ba598c6f6",
+      "size_bytes": 2061
+    },
+    {
+      "path": "limitations.json",
+      "sha256": "a52ad157a89adcb3726e74e5ae87ee7d4641dee3e254e5206c2eb7df10f54b7b",
+      "size_bytes": 660
+    },
+    {
+      "path": "process_snapshot_before.json",
+      "sha256": "8a6b32f6cd5ffeaf1a3f09b0cf5786eb3db6be49c2b264adea76d78230b99d71",
+      "size_bytes": 1123
+    },
+    {
+      "path": "process_snapshot_after.json",
+      "sha256": "d75e06f8c87dc97b18d099c1c4ed305957c00c711ce34ee2ccde9412aaff4394",
+      "size_bytes": 1123
+    },
+    {
+      "path": "queue_state/queue_state.json",
+      "sha256": "3d243dc49243294a9eea65b1f412325762e4f07f3128bf889d326f4780a6134a",
+      "size_bytes": 2869
+    }
+  ],
+  "authority_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1",
+  "canonical_family_order": [
+    "temporal_fusion_transformer",
+    "market_context_encoder",
+    "momentum_transformer",
+    "itransformer",
+    "transformer",
+    "patchtst",
+    "dlinear",
+    "lightgbm_lambdarank",
+    "lightgbm_rank_xendcg"
+  ],
+  "claim_schema_version": "ds24_vast_family_claim.v1",
+  "cloud_or_vast_operation_occurred": false,
+  "created_at_utc": "2026-09-03T12:13:25Z",
+  "dry_run_next_family": "temporal_fusion_transformer",
+  "external_status_schema_version": "ds24_external_family_status_snapshot.v1",
+  "manifest_hash": "344ca54be44d31daa5e1c722a54058d011fdc07ecb798555b314f5b126088335",
+  "model_process_started_or_stopped": false,
+  "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "safety": {
+    "after_protected_process_count": 5,
+    "backblaze_or_cloud_transport_performed": false,
+    "before_protected_process_count": 5,
+    "full_prediction_output_written": false,
+    "holdout_accessed": false,
+    "live_dell_mac_queue_state_mutated": false,
+    "live_orders": 0,
+    "model_execution_started": false,
+    "paper_orders": 0,
+    "process_signature_unchanged": true,
+    "queue_only": true,
+    "vast_cloud_operation_performed": false
+  },
+  "terminal_classification": "DS24_VAST_REVERSE_NINE_FAMILY_QUEUE_READY_NOT_LAUNCHED_EXTERNAL_COORDINATION_TRANSPORT_PENDING",
+  "test_evidence_hash": "fb3f6be06658640fedddfe8e52427d4868edfa1f4c7fa38e39a3be754065f0af",
+  "test_evidence_status": "PASS",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_REVERSE_ORDER_NON_OVERLAPPING_FAMILY_QUEUE_R1"
+}

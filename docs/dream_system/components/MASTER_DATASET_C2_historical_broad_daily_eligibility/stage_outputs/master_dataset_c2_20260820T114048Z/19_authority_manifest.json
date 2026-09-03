@@ -1,0 +1,8 @@
+{
+  "accepted": false,
+  "authority_id": null,
+  "candidate_authority_id": "CANONICAL_HISTORICAL_BROAD_DAILY_ELIGIBILITY_AUTHORITY_V1",
+  "classification": "MASTER_DATASET_C2_BLOCKED_NO_DEFENSIBLE_HISTORICAL_ELIGIBILITY_SOURCE",
+  "reason": "No defensible historical broad eligibility source.",
+  "row_count": 0
+}

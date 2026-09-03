@@ -1,0 +1,58 @@
+{
+  "A2": {
+    "exists": true,
+    "path": "docs/dream_system/components/MASTER_DATASET_A2_canonical_daily_research_authority/stage_outputs/master_dataset_a2_20260815T111945Z/34_authority_manifest.json",
+    "permitted_use": "PARENT_READ_ONLY",
+    "sha256": "253a33e98c4ef832e5cc0f98e014d84c87cc16abeb77b46eaf115ebf4d3cbe19",
+    "size": 18042
+  },
+  "B2": {
+    "exists": true,
+    "path": "docs/dream_system/components/MASTER_DATASET_B2_broad_canonical_daily_feature_authority/stage_outputs/master_dataset_b2_20260816T000000Z/47_authority_manifest.json",
+    "permitted_use": "PARENT_READ_ONLY",
+    "sha256": "9942c48aa6178776b5b3fdb2901cb633bf1904d54dd2645ae42bbbcc23fd9a7e",
+    "size": 1461
+  },
+  "B3": {
+    "exists": true,
+    "path": "docs/dream_system/components/MASTER_DATASET_B3_daily_research_views_and_generalisation/stage_outputs/master_dataset_b3_20260817T000000Z/33_terminal_validation.json",
+    "permitted_use": "PARENT_READ_ONLY",
+    "sha256": "23a5dd0cca9b3dfb176bb488dde64a021a236ebad11a9e20a97efda39d89011e",
+    "size": 392
+  },
+  "B4_R1": {
+    "exists": true,
+    "path": "docs/dream_system/components/MASTER_DATASET_B4_f01_f03_broad_feature_extension/stage_outputs/master_dataset_b4_r1_20260820T105955Z/27_terminal_validation.json",
+    "permitted_use": "CONTEXT_READ_ONLY",
+    "sha256": "a9e09ffa3c3aac29e5c89a79d958b3958b57e5ff36a9d763202903f084b33bbc",
+    "size": 1853
+  },
+  "C1": {
+    "exists": true,
+    "path": "docs/dream_system/components/MASTER_DATASET_C1_new_canonical_daily_research_generation/stage_outputs/master_dataset_c1_20260819T000001Z/26_terminal_decision.json",
+    "permitted_use": "PARENT_READ_ONLY",
+    "sha256": "08783d2d0f45cfbf42772990f80e7740dddacc3f5d8f0c886acad31c790ad95f",
+    "size": 703
+  },
+  "DS03": {
+    "exists": true,
+    "path": "docs/dream_system/components/DS-03_pit_asset_identity_and_universe_spine/stage_c6_results.json",
+    "permitted_use": "EVIDENCE_READ_ONLY",
+    "sha256": "b7347b4505e19c9dad7121e030fdea4a2788a0d2c785c1b5436a43040554df72",
+    "size": 1186
+  },
+  "DS04": {
+    "exists": true,
+    "path": "docs/dream_system/components/DS-04_information_availability_and_data_estate_authority/c2_validation_results.json",
+    "permitted_use": "EVIDENCE_READ_ONLY",
+    "sha256": "ad5010751b83e57016a376be87414d57aeef2161f157c09f805d272905cb9282",
+    "size": 1504
+  },
+  "PIT_ticket62": {
+    "exists": true,
+    "path": "data/reference/pit_authority/version=ticket62_research_grade_partial_authority_v1/pit_authority_validation.json",
+    "permitted_use": "EVIDENCE_READ_ONLY",
+    "sha256": "99c0a9928d5a5b43e5371e6de4a53e735d7652f78c74b0b18cd484d727b9c547",
+    "size": 18667
+  }
+}

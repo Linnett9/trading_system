@@ -1,0 +1,8 @@
+{
+  "current_membership_not_backfilled": true,
+  "delisted_not_erased": "DS03 survivor_pool_limitation prevents full inactive/delisted coverage claim",
+  "future_listed_not_backfilled": "No C2 broad rows admitted; DS03 U2A effective_from/available_at retained as reference only",
+  "prominent_limitation": "The local 514-security candidate pool is reconstructed and incomplete for inactive or delisted securities.",
+  "status": "PASS_FAIL_CLOSED",
+  "symbol_replacements_not_continuously_filled": true
+}

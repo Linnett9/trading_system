@@ -1,0 +1,11 @@
+{
+  "accepted_rules_available": false,
+  "no_invented_thresholds": true,
+  "ticket62_rules_referenced_not_promoted": {
+    "exists": true,
+    "path": "data/reference/pit_authority/version=ticket62_research_grade_partial_authority_v1/eligibility_rules.json",
+    "permitted_use": "EVIDENCE_ONLY",
+    "sha256": "d4fe91a1e3cf05471a5d6f2b149d6ffbcc9ea2f71fa2a61d19656c6c3be45a33",
+    "size": 1546
+  }
+}

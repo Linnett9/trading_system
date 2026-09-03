@@ -1,0 +1,362 @@
+{
+  "admission_status": "CLAIMABLE",
+  "blocked_by_live_external": [],
+  "blocked_families": [],
+  "candidate_decisions": [
+    {
+      "decision": "CLAIMABLE",
+      "family_id": "temporal_fusion_transformer",
+      "ordinal": 1
+    }
+  ],
+  "external_snapshot_hashes": {
+    "dell": "35f2bf51e44f68e71b01f6470916a33da3769b0a03efc65a25d34d0b5d76acbf",
+    "mac": "256e0cce790d523f86647fb9688d0fca7620706bd5c51b00164e238bc0b24a6f"
+  },
+  "external_validation": {
+    "classification": "EXTERNAL_COORDINATION_ACCEPTED",
+    "contradictions": [],
+    "external_snapshot_hashes": {
+      "dell": "35f2bf51e44f68e71b01f6470916a33da3769b0a03efc65a25d34d0b5d76acbf",
+      "mac": "256e0cce790d523f86647fb9688d0fca7620706bd5c51b00164e238bc0b24a6f"
+    },
+    "failures": [],
+    "family_evidence": {
+      "dlinear": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "dlinear",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "dlinear",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "itransformer": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "itransformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "itransformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "lightgbm_lambdarank": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "lightgbm_lambdarank",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "lightgbm_lambdarank",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "lightgbm_rank_xendcg": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "lightgbm_rank_xendcg",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "lightgbm_rank_xendcg",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "market_context_encoder": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "market_context_encoder",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "market_context_encoder",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "momentum_transformer": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "momentum_transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "momentum_transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "patchtst": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "patchtst",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "patchtst",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "temporal_fusion_transformer": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "temporal_fusion_transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "temporal_fusion_transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ],
+      "transformer": [
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "dell",
+          "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40"
+        },
+        {
+          "active_owner": "",
+          "checkpoint_cursor": "",
+          "classification": "QUEUE_MEMBER_IDLE_NOT_OWNED",
+          "family_id": "transformer",
+          "family_state": "PENDING",
+          "hashes_compatible": true,
+          "ownership_state": "QUEUE_MEMBER_IDLE",
+          "pid": 0,
+          "pid_alive": false,
+          "result_artifact_manifest_hash": "",
+          "run_trial_identity": "",
+          "source_machine": "mac",
+          "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1"
+        }
+      ]
+    },
+    "missing_sources": [],
+    "status": "PASS",
+    "validations": [
+      {
+        "age_seconds": 0.0,
+        "classification": "SNAPSHOT_VALID",
+        "errors": [],
+        "row_errors": [],
+        "snapshot_hash": "35f2bf51e44f68e71b01f6470916a33da3769b0a03efc65a25d34d0b5d76acbf",
+        "source_machine": "dell",
+        "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40",
+        "status": "PASS"
+      },
+      {
+        "age_seconds": 0.0,
+        "classification": "SNAPSHOT_VALID",
+        "errors": [],
+        "row_errors": [],
+        "snapshot_hash": "256e0cce790d523f86647fb9688d0fca7620706bd5c51b00164e238bc0b24a6f",
+        "source_machine": "mac",
+        "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1",
+        "status": "PASS"
+      }
+    ]
+  },
+  "guards": {
+    "backblaze_or_cloud_transport_performed": false,
+    "full_prediction_output_written": false,
+    "holdout_accessed": false,
+    "live_dell_mac_queue_state_mutated": false,
+    "live_orders": 0,
+    "model_execution_started": false,
+    "paper_orders": 0,
+    "queue_only": true,
+    "vast_cloud_operation_performed": false
+  },
+  "model_executor_invoked": false,
+  "nearest_externally_owned_boundary": "",
+  "nearest_externally_owned_boundary_ordinal": null,
+  "next_vast_eligible_family": "temporal_fusion_transformer",
+  "next_vast_eligible_ordinal": 1,
+  "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "queues_met": false,
+  "reserved_for_vast": [],
+  "skipped_external_verified": [],
+  "status": "READY",
+  "useful_non_overlapping_work_remains": true
+}

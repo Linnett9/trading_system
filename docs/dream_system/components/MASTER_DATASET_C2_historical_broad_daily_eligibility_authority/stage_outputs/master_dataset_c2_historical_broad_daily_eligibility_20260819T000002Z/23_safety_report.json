@@ -1,0 +1,13 @@
+{
+  "B2_mutated": false,
+  "C1A_mutated": false,
+  "C1_mutated": false,
+  "broker_or_orders_accessed": false,
+  "five_minute_work_performed": false,
+  "healthy_workers_stopped": 0,
+  "holdout_accessed": false,
+  "models_scored": 0,
+  "models_trained": 0,
+  "parents_mutated": false,
+  "target_outcomes_accessed": false
+}

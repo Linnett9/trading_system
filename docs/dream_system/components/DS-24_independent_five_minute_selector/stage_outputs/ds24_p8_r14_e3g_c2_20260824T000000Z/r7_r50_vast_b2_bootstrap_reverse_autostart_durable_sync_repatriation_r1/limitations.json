@@ -1,0 +1,14 @@
+{
+  "credentials_read_or_stored": false,
+  "cross_host_atomicity_claimed": false,
+  "current_upload_touched": false,
+  "current_worker_touched": false,
+  "holdout_accessed": false,
+  "live_model_launched": false,
+  "live_orders": 0,
+  "live_validation_requires_instance": true,
+  "paper_orders": 0,
+  "scientific_acceptance_claimed": false,
+  "terminal_classification": "DS24_VAST_B2_BOOTSTRAP_REVERSE_AUTOSTART_AND_DELL_REPATRIATION_READY_NOT_EXECUTED",
+  "vast_instance_rented": false
+}

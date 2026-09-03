@@ -1,0 +1,2 @@
+mismatch_type,reason,affected_anchor_rows,missing_anchor_symbols
+ANCHOR_RECONSTRUCTION_BLOCKED,DS03_U2A does not cover the full C1 anchor history or symbol set; row-level C2 eligibility not admitted,836074,80

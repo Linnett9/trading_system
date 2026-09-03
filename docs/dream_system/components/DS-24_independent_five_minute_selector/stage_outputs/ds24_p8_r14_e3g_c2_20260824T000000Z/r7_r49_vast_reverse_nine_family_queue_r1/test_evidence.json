@@ -1,0 +1,22 @@
+{
+  "adjacent_ds24_tests": "PASS tests/test_ds24_p8_r14_e3g_c2_r7_r44d_vast_queue.py tests/test_ds24_p8_r14_e3g_c2_r7_r17_policy_queue_supervisor.py -q: 30 passed in 24.85s",
+  "architecture_conformance": "PASS scripts/check_architecture_conformance.py: modules=1682 edges=10967 cycles=0",
+  "diff_whitespace": "PASS rg trailing whitespace on touched source/tests/artifacts/docs and git diff --check on touched source returned clean",
+  "focused_tests": "PASS tests/test_ds24_vast_reverse_queue_r1.py -q: 20 passed in 2.91s",
+  "guards": {
+    "backblaze_or_cloud_transport_performed": false,
+    "full_prediction_output_written": false,
+    "holdout_accessed": false,
+    "live_dell_mac_queue_state_mutated": false,
+    "live_orders": 0,
+    "model_execution_started": false,
+    "paper_orders": 0,
+    "queue_only": true,
+    "vast_cloud_operation_performed": false
+  },
+  "model_executor_invoked": false,
+  "status": "PASS",
+  "test_evidence_hash": "fb3f6be06658640fedddfe8e52427d4868edfa1f4c7fa38e39a3be754065f0af",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_REVERSE_ORDER_NON_OVERLAPPING_FAMILY_QUEUE_R1",
+  "updated_at_utc": "2026-09-03T12:13:35Z"
+}

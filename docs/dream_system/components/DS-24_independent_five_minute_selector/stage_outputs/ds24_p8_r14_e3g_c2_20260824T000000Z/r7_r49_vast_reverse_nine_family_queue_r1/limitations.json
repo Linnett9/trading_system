@@ -1,0 +1,12 @@
+{
+  "cloud_transfer_complete": false,
+  "cross_host_atomic_ownership": false,
+  "environment_ready": false,
+  "mac_aux_module_note": "Named mac_aux_queue_r44f2 module was not present; canonical nine-family IDs were derived from remote_family_queue authority.",
+  "mac_aux_module_observed": false,
+  "model_certification_claimed": false,
+  "no_backblaze_upload_inspection": true,
+  "terminal_classification": "DS24_VAST_REVERSE_NINE_FAMILY_QUEUE_READY_NOT_LAUNCHED_EXTERNAL_COORDINATION_TRANSPORT_PENDING",
+  "transport_limitation": "Dell/Mac/Vast snapshot and claim transport is a file/schema interface only in this ticket.",
+  "vast_execution_ready": false
+}

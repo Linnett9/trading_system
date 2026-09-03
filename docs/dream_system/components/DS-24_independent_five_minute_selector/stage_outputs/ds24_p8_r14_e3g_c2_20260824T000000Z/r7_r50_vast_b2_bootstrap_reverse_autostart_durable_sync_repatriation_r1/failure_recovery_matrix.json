@@ -1,0 +1,112 @@
+{
+  "every_failure_leaves_resume_evidence": true,
+  "matrix_hash": "d06366130515b39597406dc3cda725226ad28c8afa883b570867ca62edb2103d",
+  "matrix_id": "DS24_VAST_R50_FAILURE_RECOVERY_MATRIX_V1",
+  "rows": [
+    {
+      "classification": "NO_MODEL_START_UNTIL_VERIFY",
+      "failure": "interrupted B2 download",
+      "recovery": "resume copy, verify hash, keep partial isolated"
+    },
+    {
+      "classification": "REMOTE_READER_IGNORES_UNCOMMITTED",
+      "failure": "interrupted B2 upload",
+      "recovery": "retry copy, publish manifest and committed marker last"
+    },
+    {
+      "classification": "CREDENTIAL_REFERENCES_MISSING",
+      "failure": "expired credentials",
+      "recovery": "fail secret preflight without printing values"
+    },
+    {
+      "classification": "RETRYABLE_REMOTE_BACKLOG",
+      "failure": "storage or transaction caps",
+      "recovery": "fail remote command contract and keep local outputs"
+    },
+    {
+      "classification": "DATASET_MARKER_INVALID",
+      "failure": "missing completion marker",
+      "recovery": "bootstrap preflight fails closed"
+    },
+    {
+      "classification": "DATASET_UPLOAD_INCOMPLETE_OR_UNVERIFIED",
+      "failure": "count mismatch",
+      "recovery": "dataset finalizer refuses authority"
+    },
+    {
+      "classification": "SHA256_MISMATCH",
+      "failure": "hash mismatch",
+      "recovery": "download/finalizer fails closed"
+    },
+    {
+      "classification": "INSUFFICIENT_CAPACITY_FAIL_CLOSED",
+      "failure": "insufficient Vast disk",
+      "recovery": "capacity gate fails"
+    },
+    {
+      "classification": "DEFERRED_LOCAL_CAPACITY_REMOTE_COPY_DURABLE",
+      "failure": "insufficient Dell disk",
+      "recovery": "defer local retrieval"
+    },
+    {
+      "classification": "INCOMPATIBLE_CODE_OR_QUEUE_HASH",
+      "failure": "incompatible repository revision",
+      "recovery": "deployment authority mismatch blocks"
+    },
+    {
+      "classification": "BLOCKED_VAST_REVERSE_QUEUE_AUTHORITY_MISSING",
+      "failure": "missing queue authority",
+      "recovery": "terminal blocker"
+    },
+    {
+      "classification": "OWNERSHIP_PLAN_STALE",
+      "failure": "stale ownership plan",
+      "recovery": "validate plan fails"
+    },
+    {
+      "classification": "EXTERNAL_COORDINATION_FAIL_CLOSED",
+      "failure": "conflicting family owner",
+      "recovery": "external coordination fails closed"
+    },
+    {
+      "classification": "BOOTSTRAP_LEASE_ALREADY_ACTIVE",
+      "failure": "dead supervisor with live lease",
+      "recovery": "require explicit recovery"
+    },
+    {
+      "classification": "SUPERVISOR_LEASE_INACTIVE",
+      "failure": "live supervisor with stale heartbeat",
+      "recovery": "status reports stale, no duplicate launch"
+    },
+    {
+      "classification": "QUEUE_STATE_CORRUPT_OR_INCOMPATIBLE",
+      "failure": "corrupt queue state",
+      "recovery": "R49 queue state validator refuses"
+    },
+    {
+      "classification": "SHA256_MISMATCH",
+      "failure": "corrupt checkpoint",
+      "recovery": "publisher/repatriation hash validation fails"
+    },
+    {
+      "classification": "VAST_OUTPUT_PUBLICATION_INTERRUPTED_RETRYABLE",
+      "failure": "B2 outage",
+      "recovery": "preserve local work and backlog"
+    },
+    {
+      "classification": "RESUME_WITH_EXISTING_STATE",
+      "failure": "Vast restart",
+      "recovery": "resume mode preserves queue cursor and lease"
+    },
+    {
+      "classification": "DELL_REPATRIATION_VERIFIED",
+      "failure": "Dell restart",
+      "recovery": "receipt plus committed manifest allow idempotent re-run"
+    },
+    {
+      "classification": "BOOTSTRAP_LEASE_ALREADY_ACTIVE",
+      "failure": "duplicate command invocation",
+      "recovery": "lease and supervisor guards prevent duplicate"
+    }
+  ]
+}

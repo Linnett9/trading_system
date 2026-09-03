@@ -1,0 +1,62 @@
+{
+  "C1_anchor_policy": "A2 selector_eligible/canonical price eligibility columns only; A2 feature values not used",
+  "C2_decision": "fail closed because DS03 U2A cannot reconstruct C1 379 anchor and B2 identity is current-symbol fallback",
+  "DS03_U2A_policy": {
+    "development_end": "2025-04-01",
+    "development_start": "2019-08-08",
+    "membership_cadence": "monthly; calculated using the last completed trading session of the previous month; effective first eligible session of the new month",
+    "pit_boundary_valid": true,
+    "profile": "balanced",
+    "profiles": [
+      {
+        "default_profile": false,
+        "max_missing_rate": 0.15,
+        "min_price": 2.0,
+        "min_sessions": 60,
+        "min_tdv20": 1000000.0,
+        "min_tdv60": 1000000.0,
+        "profile_id": "broad",
+        "security_type_policy": "RESEARCH_COMMON_EQUITY_LIKE_WITH_UNCERTAINTY"
+      },
+      {
+        "default_profile": true,
+        "max_missing_rate": 0.1,
+        "min_price": 5.0,
+        "min_sessions": 126,
+        "min_tdv20": 5000000.0,
+        "min_tdv60": 5000000.0,
+        "profile_id": "balanced",
+        "security_type_policy": "RESEARCH_COMMON_EQUITY_LIKE_WITH_UNCERTAINTY"
+      },
+      {
+        "default_profile": false,
+        "max_missing_rate": 0.05,
+        "min_price": 10.0,
+        "min_sessions": 252,
+        "min_tdv20": 25000000.0,
+        "min_tdv60": 25000000.0,
+        "profile_id": "strict",
+        "security_type_policy": "STRICT_KNOWN_COMMON_EQUITY"
+      },
+      {
+        "default_profile": false,
+        "max_missing_rate": 1.0,
+        "min_price": 0.0,
+        "min_sessions": 1,
+        "min_tdv20": 0.0,
+        "min_tdv60": 0.0,
+        "profile_id": "legacy_all_local_assets_control",
+        "security_type_policy": "LEGACY_ALL_LOCAL_ASSETS_CONTROL"
+      }
+    ]
+  },
+  "eligibility_layers_preserved": [
+    "identity",
+    "canonical_price_eligibility",
+    "liquidity",
+    "data_quality",
+    "universe_membership",
+    "research_admission"
+  ],
+  "policy_status": "RECOVERED_BUT_INSUFFICIENT_FOR_C2_BROAD_HISTORY"
+}

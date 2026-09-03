@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "canonical_family_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "claim_expiry_utc": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "claim_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "claim_status": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "claim_timestamp_utc": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "external_snapshot_hashes": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "lease_duration_seconds": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "previous_state_hash": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "queue_definition_hash": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "queue_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "schema_version": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "scientific_contract_hashes": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "state_generation": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    },
+    "vast_host_identity": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "queue_id",
+    "vast_host_identity",
+    "canonical_family_id",
+    "claim_timestamp_utc",
+    "claim_expiry_utc",
+    "lease_duration_seconds",
+    "scientific_contract_hashes",
+    "queue_definition_hash",
+    "external_snapshot_hashes",
+    "state_generation",
+    "previous_state_hash",
+    "claim_status",
+    "claim_id"
+  ],
+  "schema_version": "ds24_vast_family_claim.v1",
+  "title": "DS24 Vast family claim",
+  "type": "object"
+}

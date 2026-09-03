@@ -1,0 +1,87 @@
+{
+  "file_count": 16,
+  "files": [
+    {
+      "path": "input_dataset_authority.schema.json",
+      "sha256": "5e0289f0280c5422d6116324d65cdbfd5fa7a7e65b138f35c110625e1f9562c7",
+      "size_bytes": 1741
+    },
+    {
+      "path": "vast_bootstrap_config.schema.json",
+      "sha256": "b54d5ba5942a3615f282ab60f479f77487a20a221d9681471e2c1082fc0c8fba",
+      "size_bytes": 2166
+    },
+    {
+      "path": "ownership_plan.schema.json",
+      "sha256": "e54c666acdadde3433518b02da01aad99cbd6c5ec55500e3ebf41124113baa33",
+      "size_bytes": 2110
+    },
+    {
+      "path": "artifact_retention_policy.json",
+      "sha256": "8efa8bba5e68ef752b1acbd0b3fbd36469b8b13adb4cb0288f6d7bf4f207d145",
+      "size_bytes": 5147
+    },
+    {
+      "path": "vast_output_manifest.schema.json",
+      "sha256": "95cef4f061b3376afec41a36b2d9a92aa6dfb5d5b3bd1fddae1bd846a486433c",
+      "size_bytes": 1560
+    },
+    {
+      "path": "dell_import_receipt.schema.json",
+      "sha256": "1130752d4fdc8977b3cec59ec9470ba2f1dba62545f0b15e77fd3faa52e8b520",
+      "size_bytes": 2594
+    },
+    {
+      "path": "synthetic_end_to_end_evidence.json",
+      "sha256": "025a1392b4b5f506e5e103facbe37fb39374e270f924c0e81048d1e28613fd9d",
+      "size_bytes": 2782
+    },
+    {
+      "path": "failure_recovery_matrix.json",
+      "sha256": "8e9c596e1bb9869a39d27f0fab14f5266f1b2b2775a755502691229956807a33",
+      "size_bytes": 3787
+    },
+    {
+      "path": "operational_commands.json",
+      "sha256": "ac700a56e0adb34535a2a03f7e93c603aabc660103462b4909b71343ec8374ad",
+      "size_bytes": 3933
+    },
+    {
+      "path": "repository_deployment_authority.json",
+      "sha256": "73fd373e48b67888ea636d7fbced072db21d4c5d80558115d42e2fd3d8a1532f",
+      "size_bytes": 2649
+    },
+    {
+      "path": "queue_prerequisite_validation.json",
+      "sha256": "711be39d6487c8284391d748a35152ca3c76a9fede1079525409ce2bec85e9e1",
+      "size_bytes": 1472
+    },
+    {
+      "path": "test_evidence.json",
+      "sha256": "6a38b2d5bc5de8a2dd9e764a366b865ba876c6dae033c597d2b14b295510357d",
+      "size_bytes": 1748
+    },
+    {
+      "path": "limitations.json",
+      "sha256": "e6e90e37af82b4bb491a8b8e551ce7497810b43d58a44096b96492143ba72181",
+      "size_bytes": 489
+    },
+    {
+      "path": "RUNBOOK.md",
+      "sha256": "563b8460ce67542f105c46addd5004a05af8672b01ce10ea6c66bfcb7b05ff26",
+      "size_bytes": 4964
+    },
+    {
+      "path": "process_snapshot_before.json",
+      "sha256": "86cd2311b9ab97c5c097fd7cf020cd7f0d6dd1e836af3e940dc905fb65997001",
+      "size_bytes": 1123
+    },
+    {
+      "path": "process_snapshot_after.json",
+      "sha256": "22946a909ec7b868d152fcd01d530808d07c1167961a459d76c91394df669e2e",
+      "size_bytes": 1123
+    }
+  ],
+  "inventory_hash": "07afba15b2914ed068bc20b960ef79f146bdd367dcc85f5ed675e01afc66c0ff",
+  "schema_version": "ds24_vast_r50_artifact_inventory.v1"
+}

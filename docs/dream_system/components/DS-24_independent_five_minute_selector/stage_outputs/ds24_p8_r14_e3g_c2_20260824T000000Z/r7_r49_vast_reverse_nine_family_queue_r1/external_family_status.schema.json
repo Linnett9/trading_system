@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "families": {
+      "items": {
+        "properties": {
+          "active_owner": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "checkpoint_cursor": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "data_partition_authority_hash": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "evaluator_version": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "family_id": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "family_state": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "model_configuration_hash": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "ownership_state": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "pid": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "pid_alive": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "predictor_contract_hash": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "queue_membership": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "result_artifact_manifest_hash": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "run_trial_identity": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          },
+          "target_contract_hash": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "family_id",
+          "queue_membership",
+          "family_state",
+          "ownership_state",
+          "active_owner",
+          "pid",
+          "pid_alive",
+          "run_trial_identity",
+          "checkpoint_cursor",
+          "evaluator_version",
+          "predictor_contract_hash",
+          "target_contract_hash",
+          "data_partition_authority_hash",
+          "model_configuration_hash",
+          "result_artifact_manifest_hash"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "generated_at_utc": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "ds24_external_family_status_snapshot.v1"
+    },
+    "source_machine": {
+      "type": "string"
+    },
+    "source_queue_identity": {
+      "type": "string"
+    },
+    "source_state": {
+      "properties": {
+        "content_hash": {
+          "type": "string"
+        },
+        "path_or_command": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path_or_command",
+        "content_hash"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_machine",
+    "source_queue_identity",
+    "generated_at_utc",
+    "source_state",
+    "families"
+  ],
+  "schema_version": "ds24_external_family_status_snapshot.v1",
+  "title": "DS24 external family status snapshot",
+  "type": "object"
+}

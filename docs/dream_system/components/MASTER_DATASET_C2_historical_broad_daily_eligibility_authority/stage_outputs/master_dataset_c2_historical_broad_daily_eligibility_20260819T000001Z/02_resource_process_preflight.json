@@ -1,0 +1,36 @@
+{
+  "active_workers": [
+    {
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" scripts\\local\\model_universe_05f_r1_challenger_repair.py",
+      "creation_date": "2026-08-19T16:45:26+01:00",
+      "executable_path": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "legacy_mu05f_worker": true,
+      "name": "python.exe",
+      "observation_source": "subprocess process inventory returned no rows",
+      "parent_pid": 1804,
+      "pid": 14600,
+      "preservation_decision": "PRESERVE_DO_NOT_TERMINATE"
+    },
+    {
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" scripts\\local\\model_universe_05f_r2_challenger_extraction.py",
+      "creation_date": "2026-08-19T17:16:57+01:00",
+      "executable_path": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "legacy_mu05f_worker": true,
+      "name": "python.exe",
+      "observation_source": "subprocess process inventory returned no rows",
+      "parent_pid": 18000,
+      "pid": 3880,
+      "preservation_decision": "PRESERVE_DO_NOT_TERMINATE"
+    }
+  ],
+  "captured_at_utc": "2026-08-21T08:36:57+00:00",
+  "completed_c2_authorities_found": [],
+  "disk_free_GiB": 44.208664,
+  "disk_total_GiB": 237.574215,
+  "duplicates_feature_estate": false,
+  "estimated_output_size_MiB": 1.0,
+  "healthy_workers_preserved": true,
+  "legacy_mu05f_workers_alive": true,
+  "ram_available_GiB": null,
+  "ram_total_GiB": null
+}

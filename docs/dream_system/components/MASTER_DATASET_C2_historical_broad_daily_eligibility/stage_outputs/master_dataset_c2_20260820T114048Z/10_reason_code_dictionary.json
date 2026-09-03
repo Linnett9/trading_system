@@ -1,0 +1,6 @@
+{
+  "OBSERVED_NOT_ELIGIBLE": "Observed bars do not prove eligibility.",
+  "RESEARCH_RECONSTRUCTION_ONLY_NOT_C2_AUTHORITY": "Ticket62/DS-03 is bounded research reconstruction and not final C2 eligibility.",
+  "UNKNOWN_AUTHORITY": "No defensible accepted historical broad eligibility authority exists.",
+  "UNKNOWN_IDENTITY": "Historical security identity unresolved."
+}

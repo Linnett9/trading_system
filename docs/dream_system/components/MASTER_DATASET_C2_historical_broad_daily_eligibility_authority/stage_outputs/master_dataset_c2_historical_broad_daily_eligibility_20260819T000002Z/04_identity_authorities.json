@@ -1,0 +1,32 @@
+{
+  "accepted_identity_authorities": [
+    {
+      "classification": "DS03_RESEARCH_COMPLETE_DYNAMIC_PIT_UNIVERSE_RECOMMENDED",
+      "name": "DS-03 PIT asset identity and universe spine",
+      "path": "docs/dream_system/components/DS-03_pit_asset_identity_and_universe_spine/manifest.json",
+      "sha256": "cd06596bb565aee0b623c224a72f6bd1fa3315bb0d970f090eddd88e7c68e991"
+    },
+    {
+      "classification": "DS03_BOUNDED_DYNAMIC_ELIGIBILITY_AUTHORITY_READY_NO_WORKERS",
+      "name": "DS-03 C6 U2A dynamic eligibility",
+      "path": "docs/dream_system/components/DS-03_pit_asset_identity_and_universe_spine/stage_c6_results.json",
+      "sha256": "b7347b4505e19c9dad7121e030fdea4a2788a0d2c785c1b5436a43040554df72"
+    },
+    {
+      "classification": "FEATURE_INFORMATION_AUTHORITY_ONLY",
+      "name": "B2 broad daily feature authority",
+      "path": "data/processed/ml_datasets/canonical_daily_feature_authority_full/version=v1/run=master_dataset_b2_20260816T000000Z/authority_manifest.json",
+      "sha256": "9942c48aa6178776b5b3fdb2901cb633bf1904d54dd2645ae42bbbcc23fd9a7e"
+    }
+  ],
+  "file_hashes": {
+    "identity_source_comparison.csv": "fad678bf17176ce193a2b0e379ed95ff3f3552c468d942e38edc5a3a5dd4a858",
+    "manifest.json": "cd06596bb565aee0b623c224a72f6bd1fa3315bb0d970f090eddd88e7c68e991",
+    "membership_source_comparison.csv": "a88f26ec8a844dbec8f7ad9b882c85249fd3645c8a8a8a7e4e5b085599ff06e2",
+    "stage_c6_results.json": "b7347b4505e19c9dad7121e030fdea4a2788a0d2c785c1b5436a43040554df72",
+    "stage_c6_u2a_manifest.json": "44da97132e518e8161ec75a526f08b9a09806cc5229ca2d6b0d3d5eb15f9d1ab",
+    "stage_c6_u2a_membership_intervals.parquet": "f1f4b1c0245ab000881f068856445f41f57abf885cd5d1eba034dbe774f905aa",
+    "stage_c6_u2a_static_379_overlap.csv": "80ebaeca9c5a65071df12b7481956987895a9280c3b4fa945c900728887303f3"
+  },
+  "limitation": "No accepted row-level historical identity authority covers the full 1962-2026 B2 estate or all 379 C1 anchor symbols."
+}

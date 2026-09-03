@@ -1,0 +1,35 @@
+{
+  "B2": {
+    "assets": 514,
+    "authority_id": "CANONICAL_DAILY_FEATURE_AUTHORITY_FULL_V1",
+    "dates": 16239,
+    "first_date": "1962-01-02",
+    "identity_status": "IDENTITY_CURRENT_SYMBOL_FALLBACK",
+    "last_date": "2026-07-10",
+    "manifest_sha256": "9942c48aa6178776b5b3fdb2901cb633bf1904d54dd2645ae42bbbcc23fd9a7e",
+    "rows": 4132023,
+    "run_id": "master_dataset_b2_20260816T000000Z"
+  },
+  "C1": {
+    "classification": "MASTER_DATASET_C1_G1_379_RESEARCH_READY_BROAD_514_ELIGIBILITY_BLOCKED",
+    "information_authority_id": "CANONICAL_DAILY_RESEARCH_INFORMATION_AUTHORITY_G1_V1",
+    "run_id": "master_dataset_c1_20260819T000001Z",
+    "terminal_sha256": "08783d2d0f45cfbf42772990f80e7740dddacc3f5d8f0c886acad31c790ad95f"
+  },
+  "C1A": {
+    "authority_id": "CANONICAL_DAILY_G1_SUCCESSOR_FEATURE_EXTENSION_V1",
+    "classification": "MASTER_DATASET_C1A_G1_SUCCESSOR_FEATURES_MATERIALISED_ALL_FAMILIES_EXECUTABLE",
+    "run_id": "master_dataset_c1a_g1_successor_features_20260819T000001Z",
+    "terminal_sha256": "29c22d70685368a0730d0bd52b745ba8146dc29927ac3c8adbfe9ce6f4b1fd00"
+  },
+  "DS03_U2A": {
+    "authority_version": "ds03_c6_u2a_dynamic_eligibility_v1",
+    "classification": "DS03_BOUNDED_DYNAMIC_ELIGIBILITY_AUTHORITY_READY_NO_WORKERS",
+    "development_end": "2025-04-01",
+    "development_start": "2019-08-08",
+    "membership_interval_count": 1500,
+    "parquet_sha256": "F1F4B1C0245AB000881F068856445F41F57ABF885CD5D1EBA034DBE774F905AA",
+    "survivor_pool_limitation": "The local 514-security candidate pool is reconstructed and incomplete for inactive or delisted securities.",
+    "universe_id": "U2A_DYNAMIC_ELIGIBILITY_OVER_LOCAL_CANDIDATE_POOL"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "dry_run_plan_status": "READY",
+  "external_snapshot_fixture": [
+    {
+      "age_seconds": 0.0,
+      "classification": "SNAPSHOT_VALID",
+      "errors": [],
+      "row_errors": [],
+      "snapshot_hash": "35f2bf51e44f68e71b01f6470916a33da3769b0a03efc65a25d34d0b5d76acbf",
+      "source_machine": "dell",
+      "source_queue_identity": "DS24_DELL_FULL_TOURNAMENT_R40",
+      "status": "PASS"
+    },
+    {
+      "age_seconds": 0.0,
+      "classification": "SNAPSHOT_VALID",
+      "errors": [],
+      "row_errors": [],
+      "snapshot_hash": "256e0cce790d523f86647fb9688d0fca7620706bd5c51b00164e238bc0b24a6f",
+      "source_machine": "mac",
+      "source_queue_identity": "DS24_MAC_AUX_NINE_FAMILY_R1",
+      "status": "PASS"
+    }
+  ],
+  "queue_definition": {
+    "canonical_family_order": [
+      "temporal_fusion_transformer",
+      "market_context_encoder",
+      "momentum_transformer",
+      "itransformer",
+      "transformer",
+      "patchtst",
+      "dlinear",
+      "lightgbm_lambdarank",
+      "lightgbm_rank_xendcg"
+    ],
+    "classification": "QUEUE_DEFINITION_VALID",
+    "errors": [],
+    "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+    "status": "PASS"
+  },
+  "queue_state": {
+    "classification": "QUEUE_STATE_VALID",
+    "errors": [],
+    "status": "PASS"
+  },
+  "status": "PASS",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_REVERSE_ORDER_NON_OVERLAPPING_FAMILY_QUEUE_R1"
+}

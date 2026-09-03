@@ -1,0 +1,19 @@
+{
+  "C1_anchor_remains_valid": true,
+  "C1_anchor_repair_required": false,
+  "additional_symbols_admitted_beyond_anchor": 0,
+  "broad_research_readiness": "BROAD_RESEARCH_BLOCKED_IDENTITY_AUTHORITY",
+  "bytes_written": 78886,
+  "classification": "MASTER_DATASET_C2_BLOCKED_IDENTITY_AUTHORITY",
+  "dates": 0,
+  "disk_free_after_GiB": 44.207993,
+  "do_not_execute_next_ticket": true,
+  "elapsed_seconds": 1.346,
+  "eligible_rows": 0,
+  "exact_next_authorised_actions": [
+    "MASTER_DATASET_MACRO_A1_PIT_FRED_ALFRED_AUTHORITY"
+  ],
+  "historically_admitted_symbols": 0,
+  "observed_symbols": 514,
+  "threshold_2021_50000_cleared": false
+}

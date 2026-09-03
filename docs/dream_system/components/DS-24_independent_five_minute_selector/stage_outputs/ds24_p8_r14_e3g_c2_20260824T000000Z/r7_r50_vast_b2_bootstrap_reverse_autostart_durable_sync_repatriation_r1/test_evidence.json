@@ -1,0 +1,25 @@
+{
+  "adjacent_tests": "PASS tests/test_ds24_p8_r14_e3g_c2_r7_r44d_vast_queue.py tests/test_ticket63_artifact_retention.py tests/test_compute_artifact_storage.py -q: 25 passed in 9.86s; PASS tests/test_torch_checkpointing.py -q -k not changed_feature_order: 5 passed, 1 deselected in 4.64s; NOTE full torch checkpoint file attempted and existing test_changed_feature_order failed before checkpoint assertion because its builtins.sorted monkeypatch does not accept key=",
+  "architecture_conformance": "PASS scripts/check_architecture_conformance.py: modules=1684 edges=10970 cycles=0",
+  "compile_static": "PASS py_compile new R50/R49 modules, wrappers, and tests",
+  "diff_whitespace": "PASS rg trailing whitespace on touched source/tests/artifacts/docs and git diff --check on touched source/docs returned clean",
+  "focused_tests": "PASS tests/test_ds24_vast_b2_bootstrap_r1.py tests/test_ds24_vast_reverse_queue_r1.py -q: 65 passed in 5.98s",
+  "guards": {
+    "credentials_read_or_stored": false,
+    "cross_host_atomicity_claimed": false,
+    "current_upload_touched": false,
+    "current_worker_touched": false,
+    "holdout_accessed": false,
+    "live_model_launched": false,
+    "live_orders": 0,
+    "live_validation_requires_instance": true,
+    "paper_orders": 0,
+    "scientific_acceptance_claimed": false,
+    "terminal_classification": "DS24_VAST_B2_BOOTSTRAP_REVERSE_AUTOSTART_AND_DELL_REPATRIATION_READY_NOT_EXECUTED",
+    "vast_instance_rented": false
+  },
+  "status": "PASS",
+  "test_evidence_hash": "94afd5c3b29a268552d3c8136ba2ebafd6a3378ada837e314fb025b196425e9a",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_B2_BOOTSTRAP_REVERSE_AUTOSTART_DURABLE_OUTPUT_SYNC_AND_DELL_REPATRIATION_R1",
+  "updated_at_utc": "2026-09-03T13:18:05Z"
+}

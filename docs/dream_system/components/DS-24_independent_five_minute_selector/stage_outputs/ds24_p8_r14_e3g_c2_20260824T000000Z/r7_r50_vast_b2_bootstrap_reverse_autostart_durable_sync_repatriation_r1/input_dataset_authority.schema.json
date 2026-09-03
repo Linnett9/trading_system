@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bucket": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "completion_marker": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "dataset_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "expected_bytes": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "expected_object_count": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "prefix": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "remote_verification": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "schema_version": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "source_manifest_hash": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "dataset_id",
+    "bucket",
+    "prefix",
+    "expected_object_count",
+    "expected_bytes",
+    "source_manifest_hash",
+    "remote_verification",
+    "completion_marker"
+  ],
+  "schema_version": "ds24_vast_input_dataset_authority.v1",
+  "title": "DS24 Vast input dataset completion authority",
+  "type": "object"
+}

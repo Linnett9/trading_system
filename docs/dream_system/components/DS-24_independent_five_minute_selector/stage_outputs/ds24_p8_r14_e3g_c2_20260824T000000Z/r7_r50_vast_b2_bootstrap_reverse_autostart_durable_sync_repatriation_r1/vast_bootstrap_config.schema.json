@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bucket": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "dataset_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "dataset_marker_key": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "dataset_root": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "output_root": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "ownership_plan_path": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "prefix": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "queue_definition_hash": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "queue_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "schema_version": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    },
+    "workspace_root": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "queue_id",
+    "queue_definition_hash",
+    "dataset_id",
+    "bucket",
+    "prefix",
+    "dataset_marker_key",
+    "run_id",
+    "workspace_root",
+    "dataset_root",
+    "output_root",
+    "ownership_plan_path"
+  ],
+  "schema_version": "ds24_vast_bootstrap_config.v1",
+  "title": "DS24 Vast bootstrap config",
+  "type": "object"
+}

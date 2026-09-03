@@ -1,0 +1,38 @@
+{
+  "process_count": 15,
+  "protected_process_count": 5,
+  "protected_processes": [
+    {
+      "command_hash": "dca03a8279098d7f62dd468397c06928a87d551ae25f0aad4ec48e2a31425371",
+      "name": "python.exe",
+      "pid": 14592,
+      "role": "DS26_PROSPECTIVE_CAPTURE"
+    },
+    {
+      "command_hash": "7062f3da8a098d1d59c3b737312ed2370e0d29b9f95e32f977f2619c56465811",
+      "name": "python.exe",
+      "pid": 15572,
+      "role": "DS24_DELL_POLICY_WORKER"
+    },
+    {
+      "command_hash": "f9140e7fea3215bab9eeaa4d5a70e3303fa500f89edeee07055de9bded5e3094",
+      "name": "python.exe",
+      "pid": 11136,
+      "role": "DS24_DELL_SUPERVISOR"
+    },
+    {
+      "command_hash": "050da21c8ecaff2ef7309e0d2a3fb4cbf6b35776b0b0841d0a5485977fd27f17",
+      "name": "python.exe",
+      "pid": 4128,
+      "role": "DS24_DELL_POLICY_WORKER"
+    },
+    {
+      "command_hash": "8716a739238df80153e31fb87436f4f12f795b2f43309bba4fb8f9e6cd62c203",
+      "name": "rclone.exe",
+      "pid": 18356,
+      "role": "UNRELATED_BACKBLAZE_UPLOAD_LEFT_UNINSPECTED"
+    }
+  ],
+  "status": "PASS",
+  "taken_at_utc": "2026-09-03T12:13:24Z"
+}

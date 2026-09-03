@@ -1,0 +1,10 @@
+{
+  "authority_id": "CANONICAL_DAILY_G1_HISTORICAL_ELIGIBILITY_AUTHORITY_V1",
+  "broad_readiness": "BROAD_RESEARCH_BLOCKED_IDENTITY_AUTHORITY",
+  "dates_by_C2": 0,
+  "ds03_reference_included_symbols_not_admitted_by_C2": 395,
+  "eligible_rows_by_C2": 0,
+  "historically_admitted_symbols_by_C2": 0,
+  "observed_symbols": 514,
+  "status": "NO_BROAD_ROW_ADMISSION_PUBLISHED"
+}

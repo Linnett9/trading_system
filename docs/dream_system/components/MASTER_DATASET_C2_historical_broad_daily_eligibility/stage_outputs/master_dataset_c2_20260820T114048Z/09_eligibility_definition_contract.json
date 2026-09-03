@@ -1,0 +1,19 @@
+{
+  "concepts": [
+    "OBSERVED",
+    "IDENTITY_RESOLVED",
+    "SECURITY_ACTIVE",
+    "DATA_AVAILABLE",
+    "HISTORY_SUFFICIENT",
+    "LIQUIDITY_ELIGIBLE",
+    "UNIVERSE_ELIGIBLE",
+    "MODEL_RESEARCH_ELIGIBLE"
+  ],
+  "final_research_eligible_definition": "not published because accepted historical eligibility source is missing",
+  "observed_is_not_eligibility": {
+    "current_symbol_presence_creates_historical_identity": false,
+    "observed_data_presence_creates_eligibility": false,
+    "unknown_authority_preserved": true,
+    "unknown_authority_treated_as_ineligible": false
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "c2_final_eligibility_used": false,
+  "classification": "DS04_C2_BOUNDED_VALIDATION_COMPLETE_WITH_BLOCKERS_DS03_PENDING_NO_WORKERS",
+  "implemented_partial": true,
+  "strict_promotion_blocker": "DS-03 permanent asset identity and historical listing contracts not frozen"
+}

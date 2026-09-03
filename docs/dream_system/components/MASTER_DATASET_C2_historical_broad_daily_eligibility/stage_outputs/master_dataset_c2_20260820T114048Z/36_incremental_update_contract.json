@@ -1,0 +1,5 @@
+{
+  "future_append_requires_accepted_source": true,
+  "historical_corrections_require_new_version": true,
+  "past_rows_immutable": true
+}

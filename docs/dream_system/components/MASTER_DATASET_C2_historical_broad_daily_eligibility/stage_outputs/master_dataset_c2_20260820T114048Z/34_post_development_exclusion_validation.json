@@ -1,0 +1,6 @@
+{
+  "development_endpoint": "2025-04-01",
+  "holdout_start": "2025-04-02",
+  "post_development_rows_in_mu_panel": 0,
+  "status": "PASS"
+}

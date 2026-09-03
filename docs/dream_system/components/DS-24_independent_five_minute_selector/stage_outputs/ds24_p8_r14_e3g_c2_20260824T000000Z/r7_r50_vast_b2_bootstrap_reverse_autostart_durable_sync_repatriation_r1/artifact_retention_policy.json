@@ -1,0 +1,130 @@
+{
+  "allowed_roots": [
+    "queue_state",
+    "ownership",
+    "metrics_only_v3",
+    "ensemble_oof_scores_v2",
+    "checkpoints",
+    "logs",
+    "telemetry",
+    "manifests",
+    "config"
+  ],
+  "family_weight_retention": [
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "temporal_fusion_transformer",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "market_context_encoder",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "momentum_transformer",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "itransformer",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "transformer",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "patchtst",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "GPU_SEQUENCE",
+      "family_id": "dlinear",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "latest valid resume checkpoint and best accepted serializable state only; rolling per-window weights are not retained en masse",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "CPU_RANKING",
+      "family_id": "lightgbm_lambdarank",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "ranking model state retained only when the family checkpoint contract declares it resumable; final deployable acceptance is separate",
+      "weights_required_for_resume": true
+    },
+    {
+      "family_class": "CPU_RANKING",
+      "family_id": "lightgbm_rank_xendcg",
+      "final_deployable_weight_acceptance": "not claimed by transport ticket",
+      "per_window_weights_retained": false,
+      "policy": "ranking model state retained only when the family checkpoint contract declares it resumable; final deployable acceptance is separate",
+      "weights_required_for_resume": true
+    }
+  ],
+  "forbidden_or_disposable": [
+    "full_prediction",
+    "full-prediction",
+    "prediction_partitions",
+    "holdout",
+    "paper_order",
+    "live_order",
+    ".env",
+    "credential",
+    "secret",
+    "rclone.conf",
+    "deterministically_rebuildable_caches",
+    "temporary_downloads",
+    "duplicate_nonrecoverable_checkpoints"
+  ],
+  "policy_hash": "07dc1f165d0302b0555824c9f4e34112c413228605da84263c3dafce7a0d76bc",
+  "policy_id": "DS24_VAST_R50_ARTIFACT_RETENTION_POLICY_V1",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "scientific_acceptance_claimed": false,
+  "tier_1_critical_compact_authority": [
+    "queue_state",
+    "ownership_ledger",
+    "heartbeat",
+    "configuration",
+    "manifest_hashes",
+    "performance_metrics",
+    "ic_time_series",
+    "permitted_compact_oof",
+    "contract_top_n_outputs",
+    "completion_state",
+    "stdout_stderr_logs",
+    "resource_telemetry",
+    "failure_diagnostics"
+  ],
+  "tier_2_resumability_and_model_state": [
+    "latest_valid_queue_checkpoint",
+    "latest_valid_family_checkpoint",
+    "optimizer_scheduler_state_when_required",
+    "model_weights_required_for_resume",
+    "best_accepted_serializable_weights_when_available",
+    "preprocessing_normalization_state",
+    "feature_ordering_and_configuration_hashes"
+  ]
+}

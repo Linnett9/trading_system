@@ -1,0 +1,1 @@
+C2 master_dataset_c2_historical_broad_daily_eligibility_20260819T000002Z blocked broad eligibility on identity authority. C1 anchor remains valid; no broad research view was published. Next action: MASTER_DATASET_MACRO_A1_PIT_FRED_ALFRED_AUTHORITY.

@@ -1,0 +1,9 @@
+{
+  "B2_reused_without_copy": true,
+  "C1A_reused_without_copy": true,
+  "authority_required": "CANONICAL_DAILY_G1_HISTORICAL_ELIGIBILITY_AUTHORITY_V1",
+  "fail_closed_on_non_admitted_rows": true,
+  "status": "NOT_PUBLISHED_BLOCKED_IDENTITY_AUTHORITY",
+  "view_hash": "432745c650ca9c82651683e17a72114c3e39fb1cf3699aead7ae765c66220e8f",
+  "view_id": "G1_BROAD_RESEARCH_VIEW_V1"
+}
