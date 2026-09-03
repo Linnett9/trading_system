@@ -465,6 +465,76 @@ def test_export_external_snapshot_mac_completed_validates_from_real_queue_state(
     assert row["predictor_contract_hash"] == queue.queue_entry(queue_definition, family)["predictor_contract_hash"]
 
 
+def test_export_external_snapshot_translates_mac_aux_queue_and_blocks_running_claim(tmp_path: Path) -> None:
+    queue_definition = definition()
+    mac_root = tmp_path / "mac_aux_runs" / "queue=DS24_MAC_AUX_NINE_FAMILY_R1"
+    family = "temporal_fusion_transformer"
+    rows = []
+    for entry in queue_definition["entries"]:
+        row = {
+            "family": entry["canonical_family_id"],
+            "state": "pending",
+            "updated_at_utc": NOW,
+        }
+        if entry["canonical_family_id"] == family:
+            row.update(
+                {
+                    "state": "running",
+                    "pid": 8765,
+                    "checkpoint_cursor": "mac-checkpoint-7",
+                    "run_id": "mac-aux-live-run",
+                }
+            )
+        rows.append(row)
+    queue.write_json_atomic(
+        mac_root / "status.json",
+        {
+            "queue_id": queue.MAC_QUEUE_ID,
+            "generation": 7,
+            "current_cursor": family,
+            "families": rows,
+            "updated_at_utc": NOW,
+        },
+    )
+    process_snapshot = tmp_path / "processes.json"
+    queue.write_json_atomic(
+        process_snapshot,
+        {
+            "status": "PASS",
+            "processes": [
+                {
+                    "pid": 8765,
+                    "name": "python",
+                    "command_line": "python -m core.research.ml.ds24.mac_aux_queue_r44f2 worker --family temporal_fusion_transformer",
+                }
+            ],
+        },
+    )
+
+    snapshot = queue.export_external_snapshot(
+        ROOT,
+        mac_root,
+        machine="mac",
+        output=tmp_path / "mac.json",
+        process_snapshot=process_snapshot,
+        now_utc=NOW,
+    )
+    validation = queue.validate_external_status_snapshot(snapshot, queue_definition, now_utc=NOW)
+    dell, _ = neutral_snapshots(queue_definition)
+    plan = queue.dry_run_plan(tmp_path / "vast_queue", queue_definition, [dell, snapshot], now_utc=NOW)
+
+    assert validation["status"] == "PASS"
+    assert snapshot["source_queue_identity"] == queue.MAC_QUEUE_ID
+    assert "translated_from_mac_aux_queue" in snapshot["source_state"]["path_or_command"]
+    row = next(row for row in snapshot["families"] if row["family_id"] == family)
+    assert row["ownership_state"] == "RUNNING"
+    assert row["pid"] == 8765
+    assert row["checkpoint_cursor"] == "mac-checkpoint-7"
+    assert plan["status"] == "PAUSED"
+    assert plan["admission_status"] == "BOUNDARY_REACHED_EXTERNAL_OWNER"
+    assert plan["next_vast_eligible_family"] == ""
+
+
 def test_export_external_snapshot_fails_closed_on_missing_or_ambiguous_state(tmp_path: Path) -> None:
     queue_definition = definition()
     process_snapshot = tmp_path / "processes.json"

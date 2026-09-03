@@ -22,6 +22,7 @@ export DS24_RUN_ID="${DS24_RUN_ID:-vast_r51_$(date -u +%Y%m%dT%H%M%SZ)}"
 export DS24_RUN_ROOT="${DS24_RUN_ROOT:-$DS24_WORKSPACE/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=$DS24_RUN_ID}"
 export DS24_CONTROL_ROOT="${DS24_CONTROL_ROOT:-$DS24_WORKSPACE/control}"
 export DS24_EXPECTED_GPU_REGEX="${DS24_EXPECTED_GPU_REGEX:-RTX}"
+export DS24_RCLONE_REMOTE="${DS24_RCLONE_REMOTE:-ds24b2}"
 export DS24_MAX_RUNTIME_HOURS="${DS24_MAX_RUNTIME_HOURS:-20}"
 export DS24_MAX_ESTIMATED_COST_USD="${DS24_MAX_ESTIMATED_COST_USD:-8.40}"
 export DS24_HOURLY_PRICE_USD="${DS24_HOURLY_PRICE_USD:-0}"
@@ -35,10 +36,14 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export TOKENIZERS_PARALLELISM=false
-export RCLONE_CONFIG_B2_TYPE=b2
-export RCLONE_CONFIG_B2_ACCOUNT="$B2_APPLICATION_KEY_ID"
-export RCLONE_CONFIG_B2_KEY="$B2_APPLICATION_KEY"
-export RCLONE_CONFIG_B2_HARD_DELETE=false
+if [ "$DS24_RCLONE_REMOTE" != "ds24b2" ]; then
+  echo "R51B fail-closed: DS24_RCLONE_REMOTE must be ds24b2" >&2
+  exit 2
+fi
+export RCLONE_CONFIG_DS24B2_TYPE=b2
+export RCLONE_CONFIG_DS24B2_ACCOUNT="$B2_APPLICATION_KEY_ID"
+export RCLONE_CONFIG_DS24B2_KEY="$B2_APPLICATION_KEY"
+export RCLONE_CONFIG_DS24B2_HARD_DELETE=false
 
 mkdir -p "$DS24_WORKSPACE" "$DS24_CONTROL_ROOT" "$DS24_RUN_ROOT"/{logs,queue_state,publisher,telemetry,checkpoints,manifests,config}
 date -u +%FT%TZ > "$DS24_RUN_ROOT/INSTANCE_START_TIMESTAMP"
@@ -66,7 +71,7 @@ cat > "$DS24_CONTROL_ROOT/VAST_BOOTSTRAP_CONFIG_JSON" <<'JSON'
   "bootstrap_commit": "<FINAL_R51_COMMIT>",
   "branch": "ds24-mac-tournament-sync-20260901",
   "bucket": "TradingSystemDataset44",
-  "config_hash": "3f35e260b59a9f1f2571c58f4aaf8d19a74ea2908995fc74fb808b403abac7b1",
+  "config_hash": "e80ef7e889d983a93fcb39f937de9226a1158c8d8b06b7ecea2e8681169924cb",
   "credential_environment": {
     "B2_APPLICATION_KEY": "<set in Vast terminal; never stored>",
     "B2_APPLICATION_KEY_ID": "<set in Vast terminal; never stored>"
@@ -110,6 +115,7 @@ cat > "$DS24_CONTROL_ROOT/VAST_BOOTSTRAP_CONFIG_JSON" <<'JSON'
     "lightgbm_rank_xendcg"
   ],
   "r49_r50_commit": "7ce81161711b8519ada39995f8018d959f3d468e",
+  "rclone_remote": "ds24b2",
   "repo_url": "https://github.com/Linnett9/trading_system.git",
   "run_root": "/workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
   "schema_version": "ds24_vast_full_node_live_launch_config.v1",
@@ -131,7 +137,7 @@ cat > "$DS24_CONTROL_ROOT/PUBLISHER_CONFIG_JSON" <<'JSON'
     "config"
   ],
   "bucket": "TradingSystemDataset44",
-  "config_hash": "03b74cea5f6f76a852371d38ff2a8ba656bdc11f277369030103eaef7141c0cb",
+  "config_hash": "6f8306220db0eedaf0f3ce63e9fb97d4f21e7ea678a57536240b35fb04fd9bd0",
   "copy_mode": "rclone copy; never destructive sync",
   "credentials_included": false,
   "forbidden_markers": [
@@ -148,6 +154,7 @@ cat > "$DS24_CONTROL_ROOT/PUBLISHER_CONFIG_JSON" <<'JSON'
   ],
   "local_run_root": "/workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
   "max_backup_age_seconds": 1200,
+  "rclone_remote": "ds24b2",
   "remote_prefix": "ds24/vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
   "resource_overlap_gates": {
     "max_cpu_total_percent": 65,
@@ -190,7 +197,7 @@ fi
 
 echo "Downloading TradingSystemDataset44/ds24/full_data_r1 to $DS24_DATASET_ROOT"
 mkdir -p "$DS24_DATASET_ROOT"
-rclone copy "b2:TradingSystemDataset44/ds24/full_data_r1" "$DS24_DATASET_ROOT" \
+rclone copy "${DS24_RCLONE_REMOTE}:TradingSystemDataset44/ds24/full_data_r1" "$DS24_DATASET_ROOT" \
   --transfers 16 --checkers 32 --retries 20 --low-level-retries 50 --stats 30s \
   --exclude ".env" --exclude "rclone.conf"
 
@@ -219,6 +226,7 @@ while true; do
   python -m core.research.ml.ds24.vast_gpu_live_launch_r1 publisher-once \
     --run-root "$DS24_RUN_ROOT" \
     --bucket "TradingSystemDataset44" \
+    --rclone-remote "$DS24_RCLONE_REMOTE" \
     --remote-prefix "ds24/vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=$DS24_RUN_ID" || true
   sleep 300
 done

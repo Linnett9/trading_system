@@ -32,6 +32,7 @@ DEFAULT_REPO_URL = "https://github.com/Linnett9/trading_system.git"
 EXPECTED_GPU_REGEX = r"RTX"
 LIVE_CONFIRM_TOKEN = "AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1"
 B2_MARKER_CONFIRM_TOKEN = "AUTHORIZE_DS24_B2_DATASET_COMPLETE_MARKER_R51A"
+DEFAULT_RCLONE_REMOTE = "ds24b2"
 
 QUEUE_ID = b2.QUEUE_ID
 DATASET_ID = b2.DATASET_ID
@@ -591,6 +592,7 @@ def dataset_complete_example() -> dict[str, Any]:
 def b2_remote_inventory_example() -> dict[str, Any]:
     payload = {
         "schema_version": "ds24_b2_remote_inventory.v1",
+        "rclone_remote": DEFAULT_RCLONE_REMOTE,
         "bucket": B2_BUCKET,
         "prefix": B2_PREFIX,
         "object_count": EXPECTED_DATASET_OBJECT_COUNT,
@@ -601,7 +603,7 @@ def b2_remote_inventory_example() -> dict[str, Any]:
             {"key": f"{B2_PREFIX}/data/processed/example-part-000.parquet", "size_bytes": 1048576},
             {"key": f"{B2_PREFIX}/docs/dream_system/example-authority.json", "size_bytes": 8192},
         ],
-        "inventory_command": f"rclone size b2:{B2_BUCKET}/{B2_PREFIX} --json",
+        "inventory_command": f"rclone size {DEFAULT_RCLONE_REMOTE}:{B2_BUCKET}/{B2_PREFIX} --json",
         "credentials_included": False,
     }
     payload["inventory_hash"] = stable_hash(payload)
@@ -624,6 +626,35 @@ def _run_text_command(command: Sequence[str], *, runner: Any | None = None) -> s
     if returncode != 0:
         raise VastGpuLiveLaunchError("DS24_R51A_COMMAND_FAILED:" + " ".join(command) + ":" + stderr)
     return stdout
+
+
+def _normalise_rclone_remote(rclone_remote: str | None) -> str:
+    remote = str(rclone_remote or DEFAULT_RCLONE_REMOTE).strip().rstrip(":")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", remote):
+        raise VastGpuLiveLaunchError("DS24_R51A_RCLONE_REMOTE_INVALID")
+    return remote
+
+
+def _configure_b2_rclone_remote_from_environment(rclone_remote: str) -> dict[str, Any]:
+    env_prefix = re.sub(r"[^A-Za-z0-9]", "_", rclone_remote).upper()
+    type_key = f"RCLONE_CONFIG_{env_prefix}_TYPE"
+    account_key = f"RCLONE_CONFIG_{env_prefix}_ACCOUNT"
+    key_key = f"RCLONE_CONFIG_{env_prefix}_KEY"
+    hard_delete_key = f"RCLONE_CONFIG_{env_prefix}_HARD_DELETE"
+    os.environ.setdefault(type_key, "b2")
+    if os.environ.get("B2_APPLICATION_KEY_ID"):
+        os.environ.setdefault(account_key, os.environ["B2_APPLICATION_KEY_ID"])
+    if os.environ.get("B2_APPLICATION_KEY"):
+        os.environ.setdefault(key_key, os.environ["B2_APPLICATION_KEY"])
+    os.environ.setdefault(hard_delete_key, "false")
+    return {
+        "rclone_remote": rclone_remote,
+        "env_prefix": env_prefix,
+        "type_env": type_key,
+        "account_env_present": bool(os.environ.get(account_key)),
+        "key_env_present": bool(os.environ.get(key_key)),
+        "hard_delete": os.environ.get(hard_delete_key),
+    }
 
 
 def _parse_rclone_lsjson_inventory(raw: str) -> list[dict[str, Any]]:
@@ -654,6 +685,7 @@ def finalize_b2_dataset_completion_marker(
     work_root: Path,
     bucket: str = B2_BUCKET,
     prefix: str = B2_PREFIX,
+    rclone_remote: str = DEFAULT_RCLONE_REMOTE,
     expected_count: int = EXPECTED_DATASET_OBJECT_COUNT,
     expected_bytes: int = EXPECTED_DATASET_BYTES,
     confirm_token: str = "",
@@ -662,9 +694,11 @@ def finalize_b2_dataset_completion_marker(
 ) -> dict[str, Any]:
     if confirm_token != B2_MARKER_CONFIRM_TOKEN:
         raise VastGpuLiveLaunchError("DS24_R51A_B2_MARKER_CONFIRM_TOKEN_REQUIRED")
+    rclone_remote = _normalise_rclone_remote(rclone_remote)
+    rclone_remote_config = _configure_b2_rclone_remote_from_environment(rclone_remote)
     work_root = Path(work_root)
     work_root.mkdir(parents=True, exist_ok=True)
-    remote = f"b2:{bucket}/{prefix.strip('/')}"
+    remote = f"{rclone_remote}:{bucket}/{prefix.strip('/')}"
     marker_remote = f"{remote}/DATASET_COMPLETE.json"
     inventory_raw = _run_text_command(
         ["rclone", "lsjson", "--recursive", "--files-only", remote],
@@ -685,6 +719,8 @@ def finalize_b2_dataset_completion_marker(
         "dataset_id": DATASET_ID,
         "bucket": bucket,
         "prefix": prefix.strip("/"),
+        "rclone_remote": rclone_remote,
+        "rclone_remote_config": rclone_remote_config,
         "expected_object_count": int(expected_count),
         "expected_bytes": int(expected_bytes),
         "source_manifest_hash": stable_hash(data_rows),
@@ -720,6 +756,7 @@ def finalize_b2_dataset_completion_marker(
         else "DATASET_COMPLETE_MARKER_RETRIEVAL_VALIDATION_FAILED",
         "bucket": bucket,
         "prefix": prefix.strip("/"),
+        "rclone_remote": rclone_remote,
         "expected_object_count": int(expected_count),
         "expected_bytes": int(expected_bytes),
         "observed_object_count": object_count,
@@ -751,6 +788,7 @@ def build_bootstrap_config_example(*, bootstrap_commit: str = "<FINAL_R51_COMMIT
         "run_root": f"/workspace/ds24/output/remote_vast_runs/queue={QUEUE_ID}/run=<RUN_ID>",
         "bucket": B2_BUCKET,
         "prefix": B2_PREFIX,
+        "rclone_remote": DEFAULT_RCLONE_REMOTE,
         "dataset_marker_key": DATASET_COMPLETE_MARKER_KEY,
         "expected_object_count": EXPECTED_DATASET_OBJECT_COUNT,
         "expected_bytes": EXPECTED_DATASET_BYTES,
@@ -779,6 +817,7 @@ def publisher_config_example() -> dict[str, Any]:
     payload = {
         "schema_version": PUBLISHER_CONFIG_SCHEMA_VERSION,
         "bucket": B2_BUCKET,
+        "rclone_remote": DEFAULT_RCLONE_REMOTE,
         "remote_prefix": f"ds24/vast_runs/queue={QUEUE_ID}/run=<RUN_ID>",
         "local_run_root": f"/workspace/ds24/output/remote_vast_runs/queue={QUEUE_ID}/run=<RUN_ID>",
         "copy_mode": "rclone copy; never destructive sync",
@@ -802,6 +841,7 @@ def dell_repatriation_config_example() -> dict[str, Any]:
     payload = {
         "schema_version": REPARTIATION_CONFIG_SCHEMA_VERSION,
         "bucket": B2_BUCKET,
+        "rclone_remote": DEFAULT_RCLONE_REMOTE,
         "remote_run_prefix": f"ds24/vast_runs/queue={QUEUE_ID}/run=<RUN_ID>",
         "local_import_root": str((DEFAULT_AUTHORITY_ROOT_REL / "dell_imports").as_posix()),
         "artifact_tiers": [
@@ -873,12 +913,6 @@ def r51a_exact_launch_commands(*, bootstrap_commit: str = "<FINAL_R51A_COMMIT>")
         "ds24_p8_r14_e3g_c2_20260824T000000Z\\"
         "r7_r49_vast_reverse_nine_family_queue_r1\\queue_state"
     )
-    r49_queue_root_posix = (
-        "$MAC_REPO_ROOT/docs/dream_system/components/"
-        "DS-24_independent_five_minute_selector/stage_outputs/"
-        "ds24_p8_r14_e3g_c2_20260824T000000Z/"
-        "r7_r49_vast_reverse_nine_family_queue_r1/queue_state"
-    )
     raw_bootstrap = (
         "https://raw.githubusercontent.com/Linnett9/trading_system/"
         "${DS24_BOOTSTRAP_COMMIT}/"
@@ -888,6 +922,7 @@ def r51a_exact_launch_commands(*, bootstrap_commit: str = "<FINAL_R51A_COMMIT>")
         [
             "export B2_APPLICATION_KEY_ID='<Backblaze key id>'",
             "export B2_APPLICATION_KEY='<Backblaze application key>'",
+            f"export DS24_RCLONE_REMOTE='{DEFAULT_RCLONE_REMOTE}'",
             f"export DS24_BOOTSTRAP_COMMIT='{bootstrap_commit}'",
             f"export DS24_VAST_LIVE_CONFIRM_TOKEN='{LIVE_CONFIRM_TOKEN}'",
             "export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='<paste Dell base64 snapshot>'",
@@ -902,6 +937,7 @@ def r51a_exact_launch_commands(*, bootstrap_commit: str = "<FINAL_R51A_COMMIT>")
             "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 "
             "finalize-b2-completion-marker "
             "--work-root C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_r51a_b2_marker "
+            f"--rclone-remote {DEFAULT_RCLONE_REMOTE} "
             f"--confirm-token {B2_MARKER_CONFIRM_TOKEN}"
         ),
         "dell_snapshot_export": (
@@ -912,12 +948,14 @@ def r51a_exact_launch_commands(*, bootstrap_commit: str = "<FINAL_R51A_COMMIT>")
             "--output C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_dell_status_snapshot.json"
         ),
         "mac_snapshot_export": (
-            "MAC_REPO_ROOT=${MAC_REPO_ROOT:-$HOME/trading_system}; "
-            "python -m core.research.ml.ds24.vast_reverse_queue_r1 export-external-snapshot "
-            "--repo-root \"$MAC_REPO_ROOT\" "
-            f"--queue-root \"{r49_queue_root_posix}\" "
+            "python -m core.research.ml.ds24.vast_reverse_queue_r1 "
+            "export-external-snapshot "
+            "--repo-root /Users/brandonlinnett/Desktop/trading_system "
+            "--queue-root /Users/brandonlinnett/Desktop/trading_system/"
+            "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1 "
             "--machine mac "
-            "--output \"$HOME/ds24_mac_status_snapshot.json\""
+            "--output /Users/brandonlinnett/Desktop/trading_system/"
+            "data/tmp/ds24_mac_status_snapshot.json"
         ),
         "powershell_base64_conversion": "\n".join(
             [
@@ -975,6 +1013,7 @@ export DS24_RUN_ID="${{DS24_RUN_ID:-vast_r51_$(date -u +%Y%m%dT%H%M%SZ)}}"
 export DS24_RUN_ROOT="${{DS24_RUN_ROOT:-$DS24_WORKSPACE/output/remote_vast_runs/queue={QUEUE_ID}/run=$DS24_RUN_ID}}"
 export DS24_CONTROL_ROOT="${{DS24_CONTROL_ROOT:-$DS24_WORKSPACE/control}}"
 export DS24_EXPECTED_GPU_REGEX="${{DS24_EXPECTED_GPU_REGEX:-{EXPECTED_GPU_REGEX}}}"
+export DS24_RCLONE_REMOTE="${{DS24_RCLONE_REMOTE:-{DEFAULT_RCLONE_REMOTE}}}"
 export DS24_MAX_RUNTIME_HOURS="${{DS24_MAX_RUNTIME_HOURS:-20}}"
 export DS24_MAX_ESTIMATED_COST_USD="${{DS24_MAX_ESTIMATED_COST_USD:-8.40}}"
 export DS24_HOURLY_PRICE_USD="${{DS24_HOURLY_PRICE_USD:-0}}"
@@ -988,10 +1027,14 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export TOKENIZERS_PARALLELISM=false
-export RCLONE_CONFIG_B2_TYPE=b2
-export RCLONE_CONFIG_B2_ACCOUNT="$B2_APPLICATION_KEY_ID"
-export RCLONE_CONFIG_B2_KEY="$B2_APPLICATION_KEY"
-export RCLONE_CONFIG_B2_HARD_DELETE=false
+if [ "$DS24_RCLONE_REMOTE" != "{DEFAULT_RCLONE_REMOTE}" ]; then
+  echo "R51B fail-closed: DS24_RCLONE_REMOTE must be {DEFAULT_RCLONE_REMOTE}" >&2
+  exit 2
+fi
+export RCLONE_CONFIG_DS24B2_TYPE=b2
+export RCLONE_CONFIG_DS24B2_ACCOUNT="$B2_APPLICATION_KEY_ID"
+export RCLONE_CONFIG_DS24B2_KEY="$B2_APPLICATION_KEY"
+export RCLONE_CONFIG_DS24B2_HARD_DELETE=false
 
 mkdir -p "$DS24_WORKSPACE" "$DS24_CONTROL_ROOT" "$DS24_RUN_ROOT"/{{logs,queue_state,publisher,telemetry,checkpoints,manifests,config}}
 date -u +%FT%TZ > "$DS24_RUN_ROOT/INSTANCE_START_TIMESTAMP"
@@ -1051,7 +1094,7 @@ fi
 
 echo "Downloading {B2_BUCKET}/{B2_PREFIX} to $DS24_DATASET_ROOT"
 mkdir -p "$DS24_DATASET_ROOT"
-rclone copy "b2:{B2_BUCKET}/{B2_PREFIX}" "$DS24_DATASET_ROOT" \\
+rclone copy "${{DS24_RCLONE_REMOTE}}:{B2_BUCKET}/{B2_PREFIX}" "$DS24_DATASET_ROOT" \\
   --transfers 16 --checkers 32 --retries 20 --low-level-retries 50 --stats 30s \\
   --exclude ".env" --exclude "rclone.conf"
 
@@ -1080,6 +1123,7 @@ while true; do
   python -m core.research.ml.ds24.vast_gpu_live_launch_r1 publisher-once \\
     --run-root "$DS24_RUN_ROOT" \\
     --bucket "{B2_BUCKET}" \\
+    --rclone-remote "$DS24_RCLONE_REMOTE" \\
     --remote-prefix "ds24/vast_runs/queue={QUEUE_ID}/run=$DS24_RUN_ID" || true
   sleep 300
 done
@@ -1101,6 +1145,7 @@ def render_dell_repatriation_launcher() -> str:
     return f"""param(
   [string]$RunId = "<RUN_ID>",
   [string]$Bucket = "{B2_BUCKET}",
+  [string]$RcloneRemote = "{DEFAULT_RCLONE_REMOTE}",
   [string]$RemotePrefix = "ds24/vast_runs/queue={QUEUE_ID}/run=<RUN_ID>",
   [string]$Destination = "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r51_vast_full_node_gpu_utilisation_live_launch_r1\\dell_imports",
   [int]$PollSeconds = 300,
@@ -1109,7 +1154,8 @@ def render_dell_repatriation_launcher() -> str:
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 if (-not $RunId -or $RunId -eq "<RUN_ID>") {{ throw "Set -RunId to the Vast DS24_RUN_ID." }}
-$remote = "b2:$Bucket/$($RemotePrefix -replace '<RUN_ID>', $RunId)"
+if ($RcloneRemote -ne "{DEFAULT_RCLONE_REMOTE}") {{ throw "R51B fail-closed: RcloneRemote must be {DEFAULT_RCLONE_REMOTE}." }}
+$remote = "$RcloneRemote`:$Bucket/$($RemotePrefix -replace '<RUN_ID>', $RunId)"
 $dest = Join-Path $Destination "run=$RunId"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 $include = @(
@@ -1466,7 +1512,15 @@ def current_resource_snapshot(run_root: Path) -> dict[str, Any]:
     }
 
 
-def publisher_once(run_root: Path, *, bucket: str, remote_prefix: str) -> dict[str, Any]:
+def publisher_once(
+    run_root: Path,
+    *,
+    bucket: str,
+    remote_prefix: str,
+    rclone_remote: str = DEFAULT_RCLONE_REMOTE,
+) -> dict[str, Any]:
+    rclone_remote = _normalise_rclone_remote(rclone_remote)
+    _configure_b2_rclone_remote_from_environment(rclone_remote)
     run_root = Path(run_root)
     forbidden = []
     for path in run_root.rglob("*"):
@@ -1491,7 +1545,7 @@ def publisher_once(run_root: Path, *, bucket: str, remote_prefix: str) -> dict[s
         "rclone",
         "copy",
         str(run_root),
-        f"b2:{bucket}/{remote_prefix}",
+        f"{rclone_remote}:{bucket}/{remote_prefix}",
         "--include",
         "metrics_only_v3/**",
         "--include",
@@ -1520,7 +1574,8 @@ def publisher_once(run_root: Path, *, bucket: str, remote_prefix: str) -> dict[s
     completed = subprocess.run(command, text=True, capture_output=True, timeout=60 * 60, check=False)
     payload = {
         "status": "PASS" if completed.returncode == 0 else "FAIL",
-        "command": ["rclone", "copy", "<run_root>", f"b2:{bucket}/{remote_prefix}", "..."],
+        "command": ["rclone", "copy", "<run_root>", f"{rclone_remote}:{bucket}/{remote_prefix}", "..."],
+        "rclone_remote": rclone_remote,
         "returncode": completed.returncode,
         "published_at_utc": utc_now(),
         "forbidden_artifacts": [],
@@ -2991,6 +3046,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finalize_marker.add_argument("--work-root", required=True)
     finalize_marker.add_argument("--bucket", default=B2_BUCKET)
     finalize_marker.add_argument("--prefix", default=B2_PREFIX)
+    finalize_marker.add_argument("--rclone-remote", default=DEFAULT_RCLONE_REMOTE)
     finalize_marker.add_argument("--expected-count", type=int, default=EXPECTED_DATASET_OBJECT_COUNT)
     finalize_marker.add_argument("--expected-bytes", type=int, default=EXPECTED_DATASET_BYTES)
     finalize_marker.add_argument("--confirm-token", required=True)
@@ -3024,6 +3080,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     publisher.add_argument("--run-root", required=True)
     publisher.add_argument("--bucket", default=B2_BUCKET)
     publisher.add_argument("--remote-prefix", required=True)
+    publisher.add_argument("--rclone-remote", default=DEFAULT_RCLONE_REMOTE)
     repatriation = sub.add_parser("verify-repatriation")
     repatriation.add_argument("--root", required=True)
     monitor = sub.add_parser("render-monitoring")
@@ -3093,6 +3150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             work_root=Path(args.work_root),
             bucket=args.bucket,
             prefix=args.prefix,
+            rclone_remote=args.rclone_remote,
             expected_count=args.expected_count,
             expected_bytes=args.expected_bytes,
             confirm_token=args.confirm_token,
@@ -3138,7 +3196,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     if args.command == "publisher-once":
-        result = publisher_once(Path(args.run_root), bucket=args.bucket, remote_prefix=args.remote_prefix)
+        result = publisher_once(
+            Path(args.run_root),
+            bucket=args.bucket,
+            remote_prefix=args.remote_prefix,
+            rclone_remote=args.rclone_remote,
+        )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
     if args.command == "verify-repatriation":

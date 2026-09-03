@@ -111,6 +111,10 @@ def test_bootstrap_script_is_jupyter_proxy_safe_and_resumable() -> None:
     assert "DS24_DELL_STATUS_SNAPSHOT_JSON_B64" in script
     assert "DS24_MAC_STATUS_SNAPSHOT_JSON_B64" in script
     assert "DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP" not in script
+    assert "DS24_RCLONE_REMOTE" in script
+    assert "RCLONE_CONFIG_DS24B2_TYPE=b2" in script
+    assert "RCLONE_CONFIG_B2_TYPE" not in script
+    assert "rclone copy \"${DS24_RCLONE_REMOTE}:TradingSystemDataset44/ds24/full_data_r1\"" in script
     assert script.index("validate-snapshot") < script.index("Downloading TradingSystemDataset44/ds24/full_data_r1")
     assert "rclone copy" in script
     assert script.index("run-gpu-admission") < script.index("run-vast-reverse-queue")
@@ -269,6 +273,7 @@ def test_budget_and_single_gpu_gates() -> None:
 def test_materialized_configs_and_launchers_are_safe(tmp_path: Path) -> None:
     manifest = r51.write_materialized_live_configs(ROOT, tmp_path, bootstrap_commit="abc123")
     assert manifest["status"] == "PASS"
+
     for name in [
         "VAST_BOOTSTRAP_CONFIG_JSON.example.json",
         "PUBLISHER_CONFIG_JSON.example.json",
@@ -283,11 +288,32 @@ def test_materialized_configs_and_launchers_are_safe(tmp_path: Path) -> None:
         "vast_show_status.sh",
     ]:
         assert (tmp_path / name).exists()
-    bootstrap = (tmp_path / "VAST_BOOTSTRAP_CONFIG_JSON.example.json").read_text(encoding="utf-8")
-    assert r51.B2_BUCKET in bootstrap
-    assert str(r51.EXPECTED_DATASET_OBJECT_COUNT) in bootstrap
-    assert "<Backblaze application key>" not in bootstrap
-    repatriation = (tmp_path / "dell_repatriate_vast_outputs.ps1").read_text(encoding="utf-8")
+
+    bootstrap_config = (
+        tmp_path / "VAST_BOOTSTRAP_CONFIG_JSON.example.json"
+    ).read_text(encoding="utf-8")
+    assert r51.B2_BUCKET in bootstrap_config
+    assert str(r51.EXPECTED_DATASET_OBJECT_COUNT) in bootstrap_config
+    assert "<Backblaze application key>" not in bootstrap_config
+
+    commands = (
+        tmp_path / "r51a_exact_launch_commands.json"
+    ).read_text(encoding="utf-8")
+    assert "ds24b2" in commands
+    assert (
+        "/Users/brandonlinnett/Desktop/trading_system/"
+        "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1"
+    ) in commands
+
+    bootstrap = (
+        tmp_path / "vast_jupyter_proxy_bootstrap.sh"
+    ).read_text(encoding="utf-8")
+    assert "ds24b2" in bootstrap
+    assert 'rclone copy "b2:TradingSystemDataset44' not in bootstrap
+
+    repatriation = (
+        tmp_path / "dell_repatriate_vast_outputs.ps1"
+    ).read_text(encoding="utf-8")
     assert "metrics_only_v3/**" in repatriation
     assert "ensemble_oof_scores_v2/**" in repatriation
     assert "*full_prediction*" in repatriation
@@ -325,6 +351,7 @@ def test_b2_completion_marker_finalizer_uploads_marker_only_with_fake_rclone(tmp
     fake = FakeRclone()
     result = r51.finalize_b2_dataset_completion_marker(
         work_root=tmp_path,
+        rclone_remote="ds24b2",
         expected_count=2,
         expected_bytes=12,
         confirm_token=r51.B2_MARKER_CONFIRM_TOKEN,
@@ -333,10 +360,13 @@ def test_b2_completion_marker_finalizer_uploads_marker_only_with_fake_rclone(tmp
     )
 
     assert result["status"] == "PASS"
+    assert result["rclone_remote"] == "ds24b2"
     assert result["marker_uploaded_last"] is True
     assert result["dataset_reupload_performed"] is False
     verbs = [command[1] for command in fake.commands]
     assert verbs == ["lsjson", "version", "copyto", "cat"]
+    assert fake.commands[0][-1] == "ds24b2:TradingSystemDataset44/ds24/full_data_r1"
+    assert fake.commands[2][-1] == "ds24b2:TradingSystemDataset44/ds24/full_data_r1/DATASET_COMPLETE.json"
     assert "copy" not in verbs
     assert r51.read_json(tmp_path / "retrieved_DATASET_COMPLETE.json")["verification_result"] == "PASS"
 

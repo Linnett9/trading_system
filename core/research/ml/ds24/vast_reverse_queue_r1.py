@@ -1466,6 +1466,186 @@ def _ledger_rows_by_family(state: Mapping[str, Any], queue_definition: Mapping[s
     return by_family
 
 
+def _mac_aux_state_candidates(queue_root: Path) -> list[Path]:
+    preferred = [
+        queue_root / "queue_state.json",
+        queue_root / "status.json",
+        queue_root / "state.json",
+        queue_root / "mac_aux_queue_state.json",
+    ]
+    existing = [path for path in preferred if path.exists()]
+    if existing:
+        return existing
+    return sorted(path for path in queue_root.glob("*.json") if path.is_file())
+
+
+def _mac_aux_family_rows(payload: Mapping[str, Any], queue_definition: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    for key in ("ledger", "families", "family_status", "statuses", "queue", "entries", "rows"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, Mapping)]
+    expected = set(queue_definition.get("canonical_family_order", []))
+    keyed_rows = []
+    for key, value in payload.items():
+        if key in expected and isinstance(value, Mapping):
+            row = dict(value)
+            row.setdefault("canonical_family_id", key)
+            keyed_rows.append(row)
+    return keyed_rows
+
+
+def _row_family_id(row: Mapping[str, Any]) -> str:
+    for key in ("canonical_family_id", "family_id", "family", "model_family", "name"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _mac_aux_status(row: Mapping[str, Any]) -> str:
+    raw = ""
+    for key in ("status", "family_state", "state", "ownership_state", "lifecycle_state", "run_state"):
+        raw = str(row.get(key) or "").strip()
+        if raw:
+            break
+    status = raw.upper().replace("-", "_").replace(" ", "_")
+    if not status:
+        if row.get("completed") is True:
+            return "COMPLETE"
+        if row.get("running") is True or row.get("pid"):
+            return "RUNNING"
+        return "PENDING"
+    if status in COMPLETE_STATES or status in {"DONE", "COMPLETED", "FINISHED"}:
+        return "COMPLETE"
+    if status in {"RUNNING", "ACTIVE", "IN_PROGRESS", "TRAINING", "STARTED"}:
+        return "RUNNING"
+    if status in {"RESERVED", "CLAIMED", "LIVE_CLAIMED", "LEASED", "OWNED"}:
+        return "CLAIMED"
+    if status in IDLE_STATES or status in {"QUEUED", "WAITING"}:
+        return "PENDING"
+    if status in CONFIGURATION_BLOCKING_STATES or status == "BLOCKED_CONFIGURATION_SKIPPED":
+        return status
+    raise VastReverseQueueError(f"DS24_MAC_AUX_QUEUE_STATUS_INCOMPATIBLE:{_row_family_id(row)}:{status}")
+
+
+def _row_first_string(row: Mapping[str, Any], keys: Sequence[str]) -> str:
+    for key in keys:
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _translate_mac_aux_state(
+    queue_root: Path,
+    queue_definition: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    candidates = _mac_aux_state_candidates(queue_root)
+    if not candidates:
+        raise VastReverseQueueError(f"DS24_MAC_AUX_QUEUE_STATE_MISSING:{queue_root}")
+    if len(candidates) != 1:
+        raise VastReverseQueueError(
+            "DS24_MAC_AUX_QUEUE_STATE_AMBIGUOUS:" + ",".join(path.name for path in candidates)
+        )
+    source = candidates[0]
+    payload = read_json(source)
+    if not isinstance(payload, Mapping):
+        raise VastReverseQueueError("DS24_MAC_AUX_QUEUE_STATE_NOT_OBJECT")
+    identity = str(
+        payload.get("queue_id")
+        or payload.get("source_queue_identity")
+        or queue_root.name.replace("queue=", "")
+        or ""
+    )
+    if identity != MAC_QUEUE_ID:
+        raise VastReverseQueueError(f"DS24_MAC_AUX_QUEUE_ID_INCOMPATIBLE:{identity}")
+    by_family: dict[str, Mapping[str, Any]] = {}
+    for row in _mac_aux_family_rows(payload, queue_definition):
+        family_id = _row_family_id(row)
+        if family_id in by_family:
+            raise VastReverseQueueError(f"DS24_MAC_AUX_QUEUE_DUPLICATE_FAMILY:{family_id}")
+        if family_id:
+            by_family[family_id] = row
+    expected = list(queue_definition.get("canonical_family_order", []))
+    missing = [family_id for family_id in expected if family_id not in by_family]
+    extra = sorted(family_id for family_id in by_family if family_id not in expected)
+    if missing or extra:
+        raise VastReverseQueueError(
+            "DS24_MAC_AUX_QUEUE_FAMILY_SET_INCOMPATIBLE:"
+            f"missing={','.join(missing)}:extra={','.join(extra)}"
+        )
+    ledger = []
+    for entry in queue_definition.get("entries", []):
+        family_id = str(entry["canonical_family_id"])
+        row = by_family[family_id]
+        ledger.append(
+            {
+                "ordinal": entry["ordinal"],
+                "canonical_family_id": family_id,
+                "status": _mac_aux_status(row),
+                "claim_id": _row_first_string(row, ("claim_id", "lease_id", "run_id", "worker_id")),
+                "checkpoint_cursor": _row_first_string(row, ("checkpoint_cursor", "cursor", "latest_checkpoint", "checkpoint_path")),
+                "result_artifact_manifest_hash": _row_first_string(
+                    row,
+                    (
+                        "result_artifact_manifest_hash",
+                        "manifest_hash",
+                        "output_manifest_hash",
+                        "artifact_manifest_hash",
+                        "result_hash",
+                        "completion_hash",
+                    ),
+                ),
+                "last_update_utc": _row_first_string(row, ("last_update_utc", "updated_at_utc", "timestamp_utc")),
+            }
+        )
+    state = {
+        "schema_version": QUEUE_STATE_SCHEMA_VERSION,
+        "queue_id": QUEUE_ID,
+        "queue_definition_hash": queue_definition["queue_definition_hash"],
+        "generation": safe_int(payload.get("generation") or payload.get("state_generation")),
+        "previous_state_hash": str(payload.get("previous_state_hash") or ""),
+        "current_cursor": _row_first_string(
+            payload,
+            ("current_cursor", "cursor", "active_family", "running_family", "current_family", "next_family"),
+        ),
+        "ledger": ledger,
+        "skipped_families": [],
+        "blocked_families": [],
+        "external_ownership_evidence": [],
+        "vast_claims": [],
+        "terminal_entries": [],
+        "retryable_failure_state": [],
+        "last_heartbeat_utc": str(payload.get("last_heartbeat_utc") or payload.get("updated_at_utc") or ""),
+        "model_executor_invoked": False,
+        "guards": safety_guards(),
+    }
+    state["state_hash"] = queue_state_hash(state)
+    validation = validate_queue_state_payload(state, queue_definition)
+    if validation["status"] != "PASS":
+        raise VastReverseQueueError("DS24_MAC_AUX_QUEUE_TRANSLATION_INVALID:" + ",".join(validation["errors"]))
+    return state, f"{source} translated_from_mac_aux_queue"
+
+
+def _load_export_queue_state(
+    queue_root: Path,
+    queue_definition: Mapping[str, Any],
+    *,
+    machine: str,
+) -> tuple[dict[str, Any], str]:
+    try:
+        return load_queue_state(queue_root, queue_definition, initialise=False), str(queue_state_path(queue_root))
+    except VastReverseQueueError as exc:
+        if machine != "mac":
+            raise
+        try:
+            return _translate_mac_aux_state(queue_root, queue_definition)
+        except VastReverseQueueError as translate_exc:
+            raise VastReverseQueueError(
+                f"DS24_MAC_AUX_QUEUE_INCOMPATIBLE:{queue_root}:{translate_exc}"
+            ) from translate_exc
+
+
 def _terminal_result_hash(state: Mapping[str, Any], ledger_row: Mapping[str, Any], family_id: str) -> str:
     for key in ("result_artifact_manifest_hash", "manifest_hash", "output_manifest_hash"):
         value = str(ledger_row.get(key) or "")
@@ -1570,7 +1750,7 @@ def export_external_snapshot(
     if not queue_root.is_absolute():
         queue_root = repo_root / queue_root
     queue_definition = build_queue_definition(repo_root)
-    state = load_queue_state(queue_root, queue_definition, initialise=False)
+    state, queue_state_source = _load_export_queue_state(queue_root, queue_definition, machine=machine)
     process_rows, process_source = load_process_rows(repo_root, process_snapshot)
     process_by_family = process_rows_by_family(process_rows, queue_definition)
     ledger_by_family = _ledger_rows_by_family(state, queue_definition)
@@ -1602,7 +1782,7 @@ def export_external_snapshot(
             for entry in queue_definition.get("entries", [])
         },
         "source_state": {
-            "path_or_command": f"{queue_state_path(queue_root)} + {process_source}",
+            "path_or_command": f"{queue_state_source} + {process_source}",
             "content_hash": stable_hash(
                 {
                     "queue_state_hash": state.get("state_hash", ""),
