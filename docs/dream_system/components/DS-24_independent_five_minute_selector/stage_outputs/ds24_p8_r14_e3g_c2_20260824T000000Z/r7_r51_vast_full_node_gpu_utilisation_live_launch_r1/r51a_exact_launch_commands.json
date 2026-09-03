@@ -1,0 +1,15 @@
+{
+  "b2_marker_finalize_after_upload": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 finalize-b2-completion-marker --work-root C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_r51a_b2_marker --confirm-token AUTHORIZE_DS24_B2_DATASET_COMPLETE_MARKER_R51A",
+  "classification": "DS24_VAST_FULL_NODE_GPU_UTILISATION_LIVE_LAUNCH_IMPLEMENTED_SYNTHETICALLY_VALIDATED_READY_NOT_EXECUTED",
+  "commands_hash": "1106ef040fa516eb6e868139a84931ba7bf863556b27d7859b2f86d1bd509806",
+  "dell_snapshot_export": "python scripts/local/ds24_vast_reverse_queue_r1.py export-external-snapshot --repo-root C:\\Users\\Brandon\\trading_system --queue-root C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r49_vast_reverse_nine_family_queue_r1\\queue_state --machine dell --output C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_dell_status_snapshot.json",
+  "final_one_paste_vast_bootstrap": "export B2_APPLICATION_KEY_ID='<Backblaze key id>'\nexport B2_APPLICATION_KEY='<Backblaze application key>'\nexport DS24_BOOTSTRAP_COMMIT='<FINAL_R51_COMMIT>'\nexport DS24_VAST_LIVE_CONFIRM_TOKEN='AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1'\nexport DS24_DELL_STATUS_SNAPSHOT_JSON_B64='<paste Dell base64 snapshot>'\nexport DS24_MAC_STATUS_SNAPSHOT_JSON_B64='<paste Mac base64 snapshot>'\ncurl -fsSL \"https://raw.githubusercontent.com/Linnett9/trading_system/${DS24_BOOTSTRAP_COMMIT}/docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/vast_jupyter_proxy_bootstrap.sh\" | bash",
+  "fresh_vast_search": "vastai search offers \"num_gpus=1 gpu_name=RTX_4090 rented=false verified=true reliability>=0.98 disk_space>=180 inet_down>=200\"",
+  "jupyter_proxy_instance_creation": "vastai create instance <OFFER_ID> --image pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel --disk 180 --jupyter",
+  "mac_snapshot_export": "MAC_REPO_ROOT=${MAC_REPO_ROOT:-$HOME/trading_system}; python -m core.research.ml.ds24.vast_reverse_queue_r1 export-external-snapshot --repo-root \"$MAC_REPO_ROOT\" --queue-root \"$MAC_REPO_ROOT/docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1/queue_state\" --machine mac --output \"$HOME/ds24_mac_status_snapshot.json\"",
+  "neutral_synthetic_override_suggested": false,
+  "no_dataset_reupload": true,
+  "powershell_base64_conversion": "$DellSnapshot = 'C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_dell_status_snapshot.json'\n$MacSnapshot = 'C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_mac_status_snapshot.json'\n\"export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='\" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($DellSnapshot)) + \"'\"\n\"export DS24_MAC_STATUS_SNAPSHOT_JSON_B64='\" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($MacSnapshot)) + \"'\"",
+  "requires_real_snapshots": true,
+  "schema_version": "ds24_r51a_exact_launch_commands.v1"
+}

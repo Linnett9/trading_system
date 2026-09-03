@@ -25,7 +25,6 @@ export DS24_EXPECTED_GPU_REGEX="${DS24_EXPECTED_GPU_REGEX:-RTX}"
 export DS24_MAX_RUNTIME_HOURS="${DS24_MAX_RUNTIME_HOURS:-20}"
 export DS24_MAX_ESTIMATED_COST_USD="${DS24_MAX_ESTIMATED_COST_USD:-8.40}"
 export DS24_HOURLY_PRICE_USD="${DS24_HOURLY_PRICE_USD:-0}"
-export DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP="${DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP:-0}"
 export DS24_VAST_FORCE_CUDA=1
 export DS24_VAST_SEQUENCE_DEVICE=cuda
 export DS24_VAST_DATALOADER_WORKERS="${DS24_VAST_DATALOADER_WORKERS:-4}"
@@ -67,13 +66,14 @@ cat > "$DS24_CONTROL_ROOT/VAST_BOOTSTRAP_CONFIG_JSON" <<'JSON'
   "bootstrap_commit": "<FINAL_R51_COMMIT>",
   "branch": "ds24-mac-tournament-sync-20260901",
   "bucket": "TradingSystemDataset44",
-  "config_hash": "0bbed924659f648020cd9cebfed7f13acd8d481ee12369db7b8480d7d08c0a0a",
+  "config_hash": "3f35e260b59a9f1f2571c58f4aaf8d19a74ea2908995fc74fb808b403abac7b1",
   "credential_environment": {
     "B2_APPLICATION_KEY": "<set in Vast terminal; never stored>",
     "B2_APPLICATION_KEY_ID": "<set in Vast terminal; never stored>"
   },
   "dataset_marker_key": "ds24/full_data_r1/DATASET_COMPLETE.json",
   "dataset_root": "/workspace/ds24/data/full_data_r1",
+  "dell_status_snapshot_base64_env": "DS24_DELL_STATUS_SNAPSHOT_JSON_B64",
   "dell_status_snapshot_path_env": "DS24_DELL_STATUS_SNAPSHOT_PATH",
   "expected_bytes": 47323707293,
   "expected_gpu_regex": "RTX",
@@ -92,8 +92,8 @@ cat > "$DS24_CONTROL_ROOT/VAST_BOOTSTRAP_CONFIG_JSON" <<'JSON'
   ],
   "gpu_admission_required": true,
   "live_confirm_token": "AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1",
+  "mac_status_snapshot_base64_env": "DS24_MAC_STATUS_SNAPSHOT_JSON_B64",
   "mac_status_snapshot_path_env": "DS24_MAC_STATUS_SNAPSHOT_PATH",
-  "neutral_synthetic_ownership_override_env": "DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP",
   "ownership_plan_path": "/workspace/ds24/control/ownership_plan.json",
   "prefix": "ds24/full_data_r1",
   "publisher_config_path": "/workspace/ds24/control/PUBLISHER_CONFIG_JSON",
@@ -173,10 +173,8 @@ if [ -n "${DS24_MAC_STATUS_SNAPSHOT_JSON_B64:-}" ]; then
   printf '%s' "$DS24_MAC_STATUS_SNAPSHOT_JSON_B64" | base64 -d > "$DS24_RUN_ROOT/config/mac_status_snapshot.live.json"
   export DS24_MAC_STATUS_SNAPSHOT_PATH="$DS24_RUN_ROOT/config/mac_status_snapshot.live.json"
 fi
-if [ "$DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP" != "1" ]; then
-  : "${DS24_DELL_STATUS_SNAPSHOT_PATH:?Set DS24_DELL_STATUS_SNAPSHOT_PATH or DS24_DELL_STATUS_SNAPSHOT_JSON_B64}"
-  : "${DS24_MAC_STATUS_SNAPSHOT_PATH:?Set DS24_MAC_STATUS_SNAPSHOT_PATH or DS24_MAC_STATUS_SNAPSHOT_JSON_B64}"
-fi
+: "${DS24_DELL_STATUS_SNAPSHOT_PATH:?Set DS24_DELL_STATUS_SNAPSHOT_PATH or DS24_DELL_STATUS_SNAPSHOT_JSON_B64}"
+: "${DS24_MAC_STATUS_SNAPSHOT_PATH:?Set DS24_MAC_STATUS_SNAPSHOT_PATH or DS24_MAC_STATUS_SNAPSHOT_JSON_B64}"
 if [ -n "${DS24_DELL_STATUS_SNAPSHOT_PATH:-}" ]; then
   python -m core.research.ml.ds24.vast_reverse_queue_r1 validate-snapshot \
     --repo-root "$DS24_SOURCE_ROOT" \

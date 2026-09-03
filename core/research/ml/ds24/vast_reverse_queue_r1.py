@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -1359,6 +1360,268 @@ def process_signature(snapshot: Mapping[str, Any]) -> list[tuple[int, str, str]]
     )
 
 
+def collect_process_table(repo_root: Path) -> dict[str, Any]:
+    if os.name == "nt":
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "$rows=Get-CimInstance Win32_Process | "
+                "Where-Object { $_.Name -match 'python|powershell' -or ($_.CommandLine -match 'ds24|ds26') } | "
+                "Select-Object ProcessId,Name,CommandLine; "
+                "$rows | ConvertTo-Json -Depth 3"
+            ),
+        ]
+    else:
+        command = ["ps", "-eo", "pid=,comm=,args="]
+    try:
+        completed = subprocess.run(command, cwd=repo_root, text=True, capture_output=True, timeout=20, check=False)
+    except Exception as exc:
+        raise VastReverseQueueError(f"DS24_EXTERNAL_SNAPSHOT_PROCESS_TABLE_FAILED:{type(exc).__name__}:{exc}") from exc
+    if completed.returncode != 0:
+        raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_PROCESS_TABLE_FAILED:" + completed.stderr.strip())
+    return {
+        "status": "PASS",
+        "captured_at_utc": utc_now(),
+        "path_or_command": " ".join(command),
+        "processes": _parse_process_rows(completed.stdout, windows=os.name == "nt"),
+    }
+
+
+def process_rows_from_snapshot(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, Mapping):
+        if payload.get("status") not in ("PASS", None, ""):
+            raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_PROCESS_STATE_FAILED")
+        source = payload.get("processes") or payload.get("rows") or []
+    elif isinstance(payload, list):
+        source = payload
+    else:
+        raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_PROCESS_STATE_NOT_ARRAY")
+    rows = []
+    for row in source:
+        if not isinstance(row, Mapping):
+            continue
+        rows.append(
+            {
+                "pid": safe_int(row.get("pid") or row.get("ProcessId")),
+                "name": str(row.get("name") or row.get("Name") or ""),
+                "command_line": str(row.get("command_line") or row.get("CommandLine") or row.get("command") or ""),
+                "pid_alive": bool(row.get("pid_alive", True)),
+            }
+        )
+    return rows
+
+
+def load_process_rows(repo_root: Path, process_snapshot: str | Path | None = None) -> tuple[list[dict[str, Any]], str]:
+    if process_snapshot:
+        path = Path(process_snapshot)
+        payload = read_json(path)
+        rows = process_rows_from_snapshot(payload)
+        return rows, str(path)
+    payload = collect_process_table(repo_root)
+    return process_rows_from_snapshot(payload), str(payload.get("path_or_command") or "process-table")
+
+
+def _command_mentions_family(command_line: str, family_id: str) -> bool:
+    text = re.sub(r"['\"`]", " ", command_line.lower())
+    family = family_id.lower()
+    return any(
+        marker in text
+        for marker in (
+            f"--family {family}",
+            f"--family={family}",
+            f"family={family}",
+            f"family {family}",
+        )
+    )
+
+
+def process_rows_by_family(process_rows: Sequence[Mapping[str, Any]], queue_definition: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    by_family: dict[str, list[dict[str, Any]]] = {family: [] for family in queue_definition["canonical_family_order"]}
+    for row in process_rows:
+        if not isinstance(row, Mapping):
+            continue
+        command_line = str(row.get("command_line") or "")
+        if "ds24" not in command_line.lower():
+            continue
+        for family_id in by_family:
+            if _command_mentions_family(command_line, family_id):
+                by_family[family_id].append(dict(row))
+    ambiguous = {family: rows for family, rows in by_family.items() if len(rows) > 1}
+    if ambiguous:
+        raise VastReverseQueueError(
+            "DS24_EXTERNAL_SNAPSHOT_AMBIGUOUS_MULTIPLE_PROCESSES:"
+            + ",".join(sorted(ambiguous))
+        )
+    return {family: rows[0] for family, rows in by_family.items() if rows}
+
+
+def _ledger_rows_by_family(state: Mapping[str, Any], queue_definition: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    rows = [row for row in state.get("ledger", []) if isinstance(row, Mapping)]
+    by_family = {str(row.get("canonical_family_id") or ""): row for row in rows}
+    expected = list(queue_definition.get("canonical_family_order", []))
+    if [str(row.get("canonical_family_id") or "") for row in rows] != expected:
+        raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_LEDGER_FAMILY_ORDER_MISMATCH")
+    return by_family
+
+
+def _terminal_result_hash(state: Mapping[str, Any], ledger_row: Mapping[str, Any], family_id: str) -> str:
+    for key in ("result_artifact_manifest_hash", "manifest_hash", "output_manifest_hash"):
+        value = str(ledger_row.get(key) or "")
+        if value:
+            return value
+    for row in state.get("terminal_entries", []):
+        if isinstance(row, Mapping) and row.get("canonical_family_id") == family_id:
+            for key in ("result_artifact_manifest_hash", "manifest_hash", "output_manifest_hash"):
+                value = str(row.get(key) or "")
+                if value:
+                    return value
+    return ""
+
+
+def _row_cursor(state: Mapping[str, Any], ledger_row: Mapping[str, Any], family_id: str) -> str:
+    for key in ("checkpoint_cursor", "cursor", "latest_checkpoint", "checkpoint_path"):
+        value = str(ledger_row.get(key) or "")
+        if value:
+            return value
+    if state.get("current_cursor") == family_id:
+        return str(state.get("current_cursor") or "")
+    return ""
+
+
+def _export_family_row(
+    *,
+    entry: Mapping[str, Any],
+    ledger_row: Mapping[str, Any],
+    state: Mapping[str, Any],
+    machine: str,
+    process_row: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    family_id = str(entry["canonical_family_id"])
+    ledger_status = str(ledger_row.get("status") or "PENDING").upper()
+    pid = safe_int(process_row.get("pid")) if isinstance(process_row, Mapping) else 0
+    pid_alive = bool(process_row.get("pid_alive", True)) if isinstance(process_row, Mapping) else False
+    hashes = family_contract_hashes(entry)
+    result_hash = _terminal_result_hash(state, ledger_row, family_id)
+    active_without_process_states = {"RESERVED", "CLAIMED", "LIVE_CLAIMED", "RESERVED_FOR_VAST"}
+    running_states = ACTIVE_OWNERSHIP_STATES - active_without_process_states
+    complete_states = COMPLETE_STATES | {"SKIPPED_EXTERNAL_VERIFIED"}
+    if process_row is not None:
+        family_state = "RUNNING"
+        ownership_state = "RUNNING"
+        active_owner = machine
+    elif ledger_status in running_states:
+        raise VastReverseQueueError(f"DS24_EXTERNAL_SNAPSHOT_ACTIVE_STATE_WITHOUT_LIVE_PROCESS:{family_id}:{ledger_status}")
+    elif ledger_status in active_without_process_states:
+        family_state = ledger_status
+        ownership_state = "CLAIMED"
+        active_owner = machine
+    elif ledger_status in complete_states:
+        if not result_hash:
+            raise VastReverseQueueError(f"DS24_EXTERNAL_SNAPSHOT_COMPLETE_WITHOUT_RESULT_MANIFEST:{family_id}")
+        family_state = "COMPLETE"
+        ownership_state = "COMPLETE"
+        active_owner = machine
+    elif ledger_status in IDLE_STATES:
+        family_state = "PENDING"
+        ownership_state = "QUEUE_MEMBER_IDLE"
+        active_owner = ""
+    elif ledger_status in CONFIGURATION_BLOCKING_STATES or ledger_status == "BLOCKED_CONFIGURATION_SKIPPED":
+        family_state = ledger_status
+        ownership_state = ledger_status
+        active_owner = machine
+    else:
+        raise VastReverseQueueError(f"DS24_EXTERNAL_SNAPSHOT_AMBIGUOUS_FAMILY_STATE:{family_id}:{ledger_status}")
+    return {
+        "family_id": family_id,
+        "queue_membership": True,
+        "family_state": family_state,
+        "ownership_state": ownership_state,
+        "active_owner": active_owner,
+        "pid": pid,
+        "pid_alive": pid_alive,
+        "liveness_evidence": "process_table_match" if process_row is not None else "queue_state_no_live_process",
+        "run_trial_identity": str(ledger_row.get("run_trial_identity") or ledger_row.get("claim_id") or ""),
+        "checkpoint_cursor": _row_cursor(state, ledger_row, family_id),
+        "evaluator_version": hashes["evaluator_version"],
+        "predictor_contract_hash": hashes["predictor_contract_hash"],
+        "target_contract_hash": hashes["target_contract_hash"],
+        "data_partition_authority_hash": hashes["data_partition_authority_hash"],
+        "model_configuration_hash": hashes["model_configuration_hash"],
+        "result_artifact_manifest_hash": result_hash,
+    }
+
+
+def export_external_snapshot(
+    repo_root: Path,
+    queue_root: Path,
+    *,
+    machine: str,
+    output: str | Path | None = None,
+    process_snapshot: str | Path | None = None,
+    now_utc: str | None = None,
+) -> dict[str, Any]:
+    machine = str(machine or "").lower()
+    if machine not in {"dell", "mac"}:
+        raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_MACHINE_MUST_BE_DELL_OR_MAC")
+    repo_root = Path(repo_root).resolve()
+    queue_root = Path(queue_root)
+    if not queue_root.is_absolute():
+        queue_root = repo_root / queue_root
+    queue_definition = build_queue_definition(repo_root)
+    state = load_queue_state(queue_root, queue_definition, initialise=False)
+    process_rows, process_source = load_process_rows(repo_root, process_snapshot)
+    process_by_family = process_rows_by_family(process_rows, queue_definition)
+    ledger_by_family = _ledger_rows_by_family(state, queue_definition)
+    rows = [
+        _export_family_row(
+            entry=entry,
+            ledger_row=ledger_by_family[str(entry["canonical_family_id"])],
+            state=state,
+            machine=machine,
+            process_row=process_by_family.get(str(entry["canonical_family_id"])),
+        )
+        for entry in queue_definition.get("entries", [])
+    ]
+    process_hashes = [
+        {"pid": safe_int(row.get("pid")), "command_hash": stable_hash(str(row.get("command_line") or ""))}
+        for row in process_rows
+        if isinstance(row, Mapping) and str(row.get("command_line") or "")
+    ]
+    snapshot = {
+        "schema_version": EXTERNAL_STATUS_SCHEMA_VERSION,
+        "source_machine": machine,
+        "source_queue_identity": DELL_QUEUE_ID if machine == "dell" else MAC_QUEUE_ID,
+        "generated_at_utc": now_utc or utc_now(),
+        "current_cursor": str(state.get("current_cursor") or ""),
+        "state_generation": int(state.get("generation") or 0),
+        "queue_state_hash": str(state.get("state_hash") or ""),
+        "scientific_contract_hashes": {
+            str(entry["canonical_family_id"]): family_contract_hashes(entry)
+            for entry in queue_definition.get("entries", [])
+        },
+        "source_state": {
+            "path_or_command": f"{queue_state_path(queue_root)} + {process_source}",
+            "content_hash": stable_hash(
+                {
+                    "queue_state_hash": state.get("state_hash", ""),
+                    "process_hashes": process_hashes,
+                    "families": rows,
+                }
+            ),
+        },
+        "families": rows,
+    }
+    snapshot["snapshot_hash"] = snapshot_hash(snapshot)
+    validation = validate_external_status_snapshot(snapshot, queue_definition, now_utc=snapshot["generated_at_utc"])
+    if validation["status"] != "PASS":
+        raise VastReverseQueueError("DS24_EXTERNAL_SNAPSHOT_EXPORT_INVALID:" + ",".join(validation["errors"]))
+    if output:
+        write_json_atomic(Path(output), snapshot)
+    return snapshot
+
+
 def validate_queue_definition(queue_definition: Mapping[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     order = [str(row.get("canonical_family_id") or "") for row in queue_definition.get("entries", []) if isinstance(row, Mapping)]
@@ -1659,6 +1922,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     validate_snapshot.add_argument("--now-utc", default="")
     validate_snapshot.add_argument("--allow-stale", action="store_true")
 
+    export_snapshot = sub.add_parser("export-external-snapshot")
+    export_snapshot.add_argument("--repo-root", default=".")
+    export_snapshot.add_argument("--queue-root", required=True)
+    export_snapshot.add_argument("--machine", required=True, choices=["dell", "mac"])
+    export_snapshot.add_argument("--output", required=True)
+    export_snapshot.add_argument("--process-snapshot", default="")
+    export_snapshot.add_argument("--now-utc", default="")
+
     for name in ("dry-run-plan", "next", "boundary"):
         command = sub.add_parser(name)
         command.add_argument("--repo-root", default=".")
@@ -1727,6 +1998,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 now_utc=args.now_utc or None,
                 allow_stale=args.allow_stale,
             )
+        )
+        return 0
+    if args.command == "export-external-snapshot":
+        snapshot = export_external_snapshot(
+            repo_root,
+            Path(args.queue_root),
+            machine=args.machine,
+            output=Path(args.output),
+            process_snapshot=args.process_snapshot or None,
+            now_utc=args.now_utc or None,
+        )
+        print_json(
+            {
+                "status": "PASS",
+                "classification": "EXTERNAL_SNAPSHOT_EXPORTED",
+                "source_machine": snapshot["source_machine"],
+                "source_queue_identity": snapshot["source_queue_identity"],
+                "output": str(Path(args.output)),
+                "snapshot_hash": snapshot["snapshot_hash"],
+                "family_count": len(snapshot["families"]),
+            }
         )
         return 0
     queue_root = Path(getattr(args, "queue_root", "") or (repo_root / DEFAULT_AUTHORITY_ROOT_REL / "queue_state"))

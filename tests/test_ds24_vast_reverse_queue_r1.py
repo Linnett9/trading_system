@@ -366,6 +366,141 @@ def test_status_payload_exposes_reserved_family_and_queue_only_guards(tmp_path: 
     assert status["guards"]["live_dell_mac_queue_state_mutated"] is False
 
 
+def test_export_external_snapshot_dell_running_validates_from_real_queue_and_process_state(tmp_path: Path) -> None:
+    queue_definition = definition()
+    queue_root = tmp_path / "queue_state"
+    state = queue.load_queue_state(queue_root, queue_definition)
+    family = "temporal_fusion_transformer"
+    ledger = []
+    for row in state["ledger"]:
+        row = dict(row)
+        if row["canonical_family_id"] == family:
+            row.update(
+                {
+                    "status": "RUNNING",
+                    "claim_id": "dell-live-claim",
+                    "checkpoint_cursor": "checkpoint-42",
+                    "last_update_utc": NOW,
+                }
+            )
+        ledger.append(row)
+    state["ledger"] = ledger
+    state["current_cursor"] = family
+    queue.write_queue_state(queue_root, state)
+    process_snapshot = tmp_path / "processes.json"
+    queue.write_json_atomic(
+        process_snapshot,
+        {
+            "status": "PASS",
+            "processes": [
+                {
+                    "pid": 4321,
+                    "name": "python",
+                    "command_line": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family --family temporal_fusion_transformer",
+                }
+            ],
+        },
+    )
+
+    snapshot = queue.export_external_snapshot(
+        ROOT,
+        queue_root,
+        machine="dell",
+        output=tmp_path / "dell.json",
+        process_snapshot=process_snapshot,
+        now_utc=NOW,
+    )
+    validation = queue.validate_external_status_snapshot(snapshot, queue_definition, now_utc=NOW)
+
+    assert validation["status"] == "PASS"
+    assert snapshot["source_machine"] == "dell"
+    assert snapshot["current_cursor"] == family
+    assert len(snapshot["families"]) == 9
+    row = next(row for row in snapshot["families"] if row["family_id"] == family)
+    assert row["ownership_state"] == "RUNNING"
+    assert row["pid"] == 4321
+    assert row["pid_alive"] is True
+    assert row["checkpoint_cursor"] == "checkpoint-42"
+    assert "synthetic" not in json.dumps(snapshot).lower()
+
+
+def test_export_external_snapshot_mac_completed_validates_from_real_queue_state(tmp_path: Path) -> None:
+    queue_definition = definition()
+    queue_root = tmp_path / "queue_state"
+    state = queue.load_queue_state(queue_root, queue_definition)
+    family = "lightgbm_rank_xendcg"
+    ledger = []
+    for row in state["ledger"]:
+        row = dict(row)
+        if row["canonical_family_id"] == family:
+            row.update(
+                {
+                    "status": "COMPLETE",
+                    "result_artifact_manifest_hash": "mac-result-manifest-hash",
+                    "last_update_utc": NOW,
+                }
+            )
+        ledger.append(row)
+    state["ledger"] = ledger
+    state["current_cursor"] = family
+    queue.write_queue_state(queue_root, state)
+    process_snapshot = tmp_path / "processes.json"
+    queue.write_json_atomic(process_snapshot, {"status": "PASS", "processes": []})
+
+    snapshot = queue.export_external_snapshot(
+        ROOT,
+        queue_root,
+        machine="mac",
+        output=tmp_path / "mac.json",
+        process_snapshot=process_snapshot,
+        now_utc=NOW,
+    )
+    validation = queue.validate_external_status_snapshot(snapshot, queue_definition, now_utc=NOW)
+
+    assert validation["status"] == "PASS"
+    assert snapshot["source_machine"] == "mac"
+    row = next(row for row in snapshot["families"] if row["family_id"] == family)
+    assert row["ownership_state"] == "COMPLETE"
+    assert row["result_artifact_manifest_hash"] == "mac-result-manifest-hash"
+    assert row["predictor_contract_hash"] == queue.queue_entry(queue_definition, family)["predictor_contract_hash"]
+
+
+def test_export_external_snapshot_fails_closed_on_missing_or_ambiguous_state(tmp_path: Path) -> None:
+    queue_definition = definition()
+    process_snapshot = tmp_path / "processes.json"
+    queue.write_json_atomic(process_snapshot, {"status": "PASS", "processes": []})
+    with pytest.raises(queue.VastReverseQueueError, match="QUEUE_STATE_MISSING"):
+        queue.export_external_snapshot(
+            ROOT,
+            tmp_path / "missing",
+            machine="dell",
+            process_snapshot=process_snapshot,
+            now_utc=NOW,
+        )
+
+    queue_root = tmp_path / "queue_state"
+    queue.load_queue_state(queue_root, queue_definition)
+    ambiguous_processes = tmp_path / "ambiguous_processes.json"
+    queue.write_json_atomic(
+        ambiguous_processes,
+        {
+            "status": "PASS",
+            "processes": [
+                {"pid": 1, "command_line": "python ds24 --family dlinear"},
+                {"pid": 2, "command_line": "python ds24 --family dlinear"},
+            ],
+        },
+    )
+    with pytest.raises(queue.VastReverseQueueError, match="AMBIGUOUS_MULTIPLE_PROCESSES"):
+        queue.export_external_snapshot(
+            ROOT,
+            queue_root,
+            machine="mac",
+            process_snapshot=ambiguous_processes,
+            now_utc=NOW,
+        )
+
+
 def test_authority_package_writes_required_queue_only_artifacts(tmp_path: Path) -> None:
     manifest = queue.write_authority_package(ROOT, tmp_path / "authority")
     files = {row["path"] for row in manifest["artifact_inventory"]}

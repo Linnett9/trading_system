@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,7 @@ def test_bootstrap_script_is_jupyter_proxy_safe_and_resumable() -> None:
     assert "DS24_BOOTSTRAP_COMMIT:?" in script
     assert "DS24_DELL_STATUS_SNAPSHOT_JSON_B64" in script
     assert "DS24_MAC_STATUS_SNAPSHOT_JSON_B64" in script
+    assert "DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP" not in script
     assert script.index("validate-snapshot") < script.index("Downloading TradingSystemDataset44/ds24/full_data_r1")
     assert "rclone copy" in script
     assert script.index("run-gpu-admission") < script.index("run-vast-reverse-queue")
@@ -117,6 +119,41 @@ def test_bootstrap_script_is_jupyter_proxy_safe_and_resumable() -> None:
     assert "ssh " not in script
     assert "scp " not in script
     assert "rsync" not in script
+
+
+def test_r51_cli_exports_real_external_snapshot_via_r49_contract(tmp_path: Path) -> None:
+    queue_definition = _queue_definition()
+    queue_root = tmp_path / "queue_state"
+    reverse_queue.load_queue_state(queue_root, queue_definition)
+    process_snapshot = tmp_path / "processes.json"
+    r51.write_json_atomic(process_snapshot, {"status": "PASS", "processes": []})
+    output = tmp_path / "dell.json"
+
+    code = r51.main(
+        [
+            "export-external-snapshot",
+            "--repo-root",
+            str(ROOT),
+            "--queue-root",
+            str(queue_root),
+            "--machine",
+            "dell",
+            "--output",
+            str(output),
+            "--process-snapshot",
+            str(process_snapshot),
+            "--now-utc",
+            NOW,
+        ]
+    )
+    snapshot = r51.read_json(output)
+    validation = reverse_queue.validate_external_status_snapshot(snapshot, queue_definition, now_utc=NOW)
+
+    assert code == 0
+    assert validation["status"] == "PASS"
+    assert snapshot["source_machine"] == "dell"
+    assert len(snapshot["families"]) == 9
+    assert all(row["ownership_state"] == "QUEUE_MEMBER_IDLE" for row in snapshot["families"])
 
 
 def test_missing_dell_mac_snapshots_fail_closed(tmp_path: Path) -> None:
@@ -240,6 +277,7 @@ def test_materialized_configs_and_launchers_are_safe(tmp_path: Path) -> None:
         "DATASET_COMPLETE.example.json",
         "dell_status_snapshot.example.json",
         "mac_status_snapshot.example.json",
+        "r51a_exact_launch_commands.json",
         "vast_jupyter_proxy_bootstrap.sh",
         "dell_repatriate_vast_outputs.ps1",
         "vast_show_status.sh",
@@ -254,6 +292,64 @@ def test_materialized_configs_and_launchers_are_safe(tmp_path: Path) -> None:
     assert "ensemble_oof_scores_v2/**" in repatriation
     assert "*full_prediction*" in repatriation
     assert "rclone copy" in repatriation
+
+
+def test_b2_completion_marker_finalizer_uploads_marker_only_with_fake_rclone(tmp_path: Path) -> None:
+    class FakeRclone:
+        def __init__(self) -> None:
+            self.commands: list[list[str]] = []
+            self.marker = ""
+
+        def __call__(self, command: list[str]) -> dict[str, object]:
+            self.commands.append(command)
+            if command[:2] == ["rclone", "lsjson"]:
+                return {
+                    "returncode": 0,
+                    "stdout": json.dumps(
+                        [
+                            {"Path": "a.bin", "Size": 5, "IsDir": False},
+                            {"Path": "b.bin", "Size": 7, "IsDir": False},
+                            {"Path": "DATASET_COMPLETE.json", "Size": 1, "IsDir": False},
+                        ]
+                    ),
+                }
+            if command[:2] == ["rclone", "version"]:
+                return {"returncode": 0, "stdout": "rclone v1.66.0\n"}
+            if command[:2] == ["rclone", "copyto"]:
+                self.marker = Path(command[2]).read_text(encoding="utf-8")
+                return {"returncode": 0, "stdout": ""}
+            if command[:2] == ["rclone", "cat"]:
+                return {"returncode": 0, "stdout": self.marker}
+            return {"returncode": 1, "stderr": "unexpected command"}
+
+    fake = FakeRclone()
+    result = r51.finalize_b2_dataset_completion_marker(
+        work_root=tmp_path,
+        expected_count=2,
+        expected_bytes=12,
+        confirm_token=r51.B2_MARKER_CONFIRM_TOKEN,
+        runner=fake,
+        now_utc=NOW,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["marker_uploaded_last"] is True
+    assert result["dataset_reupload_performed"] is False
+    verbs = [command[1] for command in fake.commands]
+    assert verbs == ["lsjson", "version", "copyto", "cat"]
+    assert "copy" not in verbs
+    assert r51.read_json(tmp_path / "retrieved_DATASET_COMPLETE.json")["verification_result"] == "PASS"
+
+
+def test_b2_completion_marker_finalizer_requires_guard_token(tmp_path: Path) -> None:
+    with pytest.raises(r51.VastGpuLiveLaunchError, match="B2_MARKER_CONFIRM_TOKEN_REQUIRED"):
+        r51.finalize_b2_dataset_completion_marker(
+            work_root=tmp_path,
+            expected_count=0,
+            expected_bytes=0,
+            confirm_token="wrong",
+            runner=lambda _command: {"returncode": 0, "stdout": "[]"},
+        )
 
 
 def test_sequence_regressor_preprocess_fit_predict_cpu_smoke() -> None:

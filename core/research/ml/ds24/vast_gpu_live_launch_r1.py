@@ -31,6 +31,7 @@ DEFAULT_BRANCH = "ds24-mac-tournament-sync-20260901"
 DEFAULT_REPO_URL = "https://github.com/Linnett9/trading_system.git"
 EXPECTED_GPU_REGEX = r"RTX"
 LIVE_CONFIRM_TOKEN = "AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1"
+B2_MARKER_CONFIRM_TOKEN = "AUTHORIZE_DS24_B2_DATASET_COMPLETE_MARKER_R51A"
 
 QUEUE_ID = b2.QUEUE_ID
 DATASET_ID = b2.DATASET_ID
@@ -607,6 +608,136 @@ def b2_remote_inventory_example() -> dict[str, Any]:
     return payload
 
 
+def _run_text_command(command: Sequence[str], *, runner: Any | None = None) -> str:
+    if runner is None:
+        completed = subprocess.run(list(command), text=True, capture_output=True, timeout=300, check=False)
+    else:
+        completed = runner(list(command))
+    if isinstance(completed, Mapping):
+        returncode = int(completed.get("returncode", 0))
+        stdout = str(completed.get("stdout") or "")
+        stderr = str(completed.get("stderr") or "")
+    else:
+        returncode = int(getattr(completed, "returncode", 0))
+        stdout = str(getattr(completed, "stdout", "") or "")
+        stderr = str(getattr(completed, "stderr", "") or "")
+    if returncode != 0:
+        raise VastGpuLiveLaunchError("DS24_R51A_COMMAND_FAILED:" + " ".join(command) + ":" + stderr)
+    return stdout
+
+
+def _parse_rclone_lsjson_inventory(raw: str) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise VastGpuLiveLaunchError("DS24_R51A_B2_INVENTORY_JSON_INVALID") from exc
+    if not isinstance(payload, list):
+        raise VastGpuLiveLaunchError("DS24_R51A_B2_INVENTORY_NOT_ARRAY")
+    rows = []
+    for row in payload:
+        if not isinstance(row, Mapping) or row.get("IsDir"):
+            continue
+        path = str(row.get("Path") or row.get("path") or row.get("Name") or "").replace("\\", "/").strip()
+        if not path:
+            raise VastGpuLiveLaunchError("DS24_R51A_B2_INVENTORY_PATH_MISSING")
+        rows.append(
+            {
+                "path": path,
+                "size_bytes": int(float(row.get("Size") or row.get("size") or row.get("size_bytes") or 0)),
+            }
+        )
+    return rows
+
+
+def finalize_b2_dataset_completion_marker(
+    *,
+    work_root: Path,
+    bucket: str = B2_BUCKET,
+    prefix: str = B2_PREFIX,
+    expected_count: int = EXPECTED_DATASET_OBJECT_COUNT,
+    expected_bytes: int = EXPECTED_DATASET_BYTES,
+    confirm_token: str = "",
+    runner: Any | None = None,
+    now_utc: str | None = None,
+) -> dict[str, Any]:
+    if confirm_token != B2_MARKER_CONFIRM_TOKEN:
+        raise VastGpuLiveLaunchError("DS24_R51A_B2_MARKER_CONFIRM_TOKEN_REQUIRED")
+    work_root = Path(work_root)
+    work_root.mkdir(parents=True, exist_ok=True)
+    remote = f"b2:{bucket}/{prefix.strip('/')}"
+    marker_remote = f"{remote}/DATASET_COMPLETE.json"
+    inventory_raw = _run_text_command(
+        ["rclone", "lsjson", "--recursive", "--files-only", remote],
+        runner=runner,
+    )
+    inventory_rows = _parse_rclone_lsjson_inventory(inventory_raw)
+    data_rows = [row for row in inventory_rows if row["path"] != "DATASET_COMPLETE.json"]
+    object_count = len(data_rows)
+    total_bytes = sum(int(row["size_bytes"]) for row in data_rows)
+    if object_count != int(expected_count) or total_bytes != int(expected_bytes):
+        raise VastGpuLiveLaunchError(
+            "DS24_R51A_B2_DATASET_SIZE_MISMATCH:"
+            f"count={object_count}/{expected_count}:bytes={total_bytes}/{expected_bytes}"
+        )
+    rclone_version = _run_text_command(["rclone", "version"], runner=runner).splitlines()[0:1]
+    authority = {
+        "schema_version": b2.INPUT_DATASET_SCHEMA_VERSION,
+        "dataset_id": DATASET_ID,
+        "bucket": bucket,
+        "prefix": prefix.strip("/"),
+        "expected_object_count": int(expected_count),
+        "expected_bytes": int(expected_bytes),
+        "source_manifest_hash": stable_hash(data_rows),
+        "source_authority_hashes": {
+            "r49_r50_commit": EXPECTED_R49_R50_COMMIT,
+            "r51a_inventory_hash": stable_hash(inventory_rows),
+        },
+        "remote_verification": {
+            "status": "PASS",
+            "verified_object_count": object_count,
+            "verified_bytes": total_bytes,
+            "marker_preexisting": any(row["path"] == "DATASET_COMPLETE.json" for row in inventory_rows),
+        },
+        "verification_timestamp_utc": now_utc or utc_now(),
+        "status": "PASS",
+    }
+    authority["authority_hash"] = stable_hash(authority)
+    marker = b2.build_dataset_completion_marker(authority, rclone_version="; ".join(rclone_version) or "rclone version observed")
+    marker_path = work_root / "DATASET_COMPLETE.json"
+    write_json_atomic(marker_path, marker)
+    _run_text_command(["rclone", "copyto", str(marker_path), marker_remote], runner=runner)
+    retrieved_raw = _run_text_command(["rclone", "cat", marker_remote], runner=runner)
+    try:
+        retrieved_marker = json.loads(retrieved_raw)
+    except json.JSONDecodeError as exc:
+        raise VastGpuLiveLaunchError("DS24_R51A_RETRIEVED_DATASET_MARKER_JSON_INVALID") from exc
+    validation = b2.validate_dataset_marker(retrieved_marker)
+    write_json_atomic(work_root / "retrieved_DATASET_COMPLETE.json", retrieved_marker)
+    result = {
+        "status": "PASS" if validation["status"] == "PASS" else "FAIL",
+        "classification": "DATASET_COMPLETE_MARKER_UPLOADED_LAST_AND_VALIDATED"
+        if validation["status"] == "PASS"
+        else "DATASET_COMPLETE_MARKER_RETRIEVAL_VALIDATION_FAILED",
+        "bucket": bucket,
+        "prefix": prefix.strip("/"),
+        "expected_object_count": int(expected_count),
+        "expected_bytes": int(expected_bytes),
+        "observed_object_count": object_count,
+        "observed_bytes": total_bytes,
+        "marker_remote": marker_remote,
+        "marker_uploaded_last": True,
+        "dataset_reupload_performed": False,
+        "destructive_cloud_operation_performed": False,
+        "retrieved_marker_validation": validation,
+        "local_marker_path": str(marker_path),
+    }
+    result["result_hash"] = stable_hash(result)
+    write_json_atomic(work_root / "b2_dataset_completion_marker_result.json", result)
+    if result["status"] != "PASS":
+        raise VastGpuLiveLaunchError("DS24_R51A_B2_MARKER_VALIDATION_FAILED:" + ",".join(validation["errors"]))
+    return result
+
+
 def build_bootstrap_config_example(*, bootstrap_commit: str = "<FINAL_R51_COMMIT>") -> dict[str, Any]:
     payload = {
         "schema_version": LIVE_LAUNCH_CONFIG_SCHEMA_VERSION,
@@ -630,7 +761,8 @@ def build_bootstrap_config_example(*, bootstrap_commit: str = "<FINAL_R51_COMMIT
         "ownership_plan_path": "/workspace/ds24/control/ownership_plan.json",
         "dell_status_snapshot_path_env": "DS24_DELL_STATUS_SNAPSHOT_PATH",
         "mac_status_snapshot_path_env": "DS24_MAC_STATUS_SNAPSHOT_PATH",
-        "neutral_synthetic_ownership_override_env": "DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP",
+        "dell_status_snapshot_base64_env": "DS24_DELL_STATUS_SNAPSHOT_JSON_B64",
+        "mac_status_snapshot_base64_env": "DS24_MAC_STATUS_SNAPSHOT_JSON_B64",
         "publisher_config_path": "/workspace/ds24/control/PUBLISHER_CONFIG_JSON",
         "live_confirm_token": LIVE_CONFIRM_TOKEN,
         "credential_environment": {
@@ -734,6 +866,85 @@ def monitoring_commands() -> dict[str, Any]:
     return payload
 
 
+def r51a_exact_launch_commands(*, bootstrap_commit: str = "<FINAL_R51A_COMMIT>") -> dict[str, Any]:
+    r49_queue_root_win = (
+        "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\"
+        "DS-24_independent_five_minute_selector\\stage_outputs\\"
+        "ds24_p8_r14_e3g_c2_20260824T000000Z\\"
+        "r7_r49_vast_reverse_nine_family_queue_r1\\queue_state"
+    )
+    r49_queue_root_posix = (
+        "$MAC_REPO_ROOT/docs/dream_system/components/"
+        "DS-24_independent_five_minute_selector/stage_outputs/"
+        "ds24_p8_r14_e3g_c2_20260824T000000Z/"
+        "r7_r49_vast_reverse_nine_family_queue_r1/queue_state"
+    )
+    raw_bootstrap = (
+        "https://raw.githubusercontent.com/Linnett9/trading_system/"
+        "${DS24_BOOTSTRAP_COMMIT}/"
+        f"{DEFAULT_AUTHORITY_ROOT_REL.as_posix()}/vast_jupyter_proxy_bootstrap.sh"
+    )
+    paste = "\n".join(
+        [
+            "export B2_APPLICATION_KEY_ID='<Backblaze key id>'",
+            "export B2_APPLICATION_KEY='<Backblaze application key>'",
+            f"export DS24_BOOTSTRAP_COMMIT='{bootstrap_commit}'",
+            f"export DS24_VAST_LIVE_CONFIRM_TOKEN='{LIVE_CONFIRM_TOKEN}'",
+            "export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='<paste Dell base64 snapshot>'",
+            "export DS24_MAC_STATUS_SNAPSHOT_JSON_B64='<paste Mac base64 snapshot>'",
+            f"curl -fsSL \"{raw_bootstrap}\" | bash",
+        ]
+    )
+    payload = {
+        "schema_version": "ds24_r51a_exact_launch_commands.v1",
+        "classification": TERMINAL_CLASSIFICATION,
+        "b2_marker_finalize_after_upload": (
+            "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 "
+            "finalize-b2-completion-marker "
+            "--work-root C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_r51a_b2_marker "
+            f"--confirm-token {B2_MARKER_CONFIRM_TOKEN}"
+        ),
+        "dell_snapshot_export": (
+            "python scripts/local/ds24_vast_reverse_queue_r1.py export-external-snapshot "
+            "--repo-root C:\\Users\\Brandon\\trading_system "
+            f"--queue-root {r49_queue_root_win} "
+            "--machine dell "
+            "--output C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_dell_status_snapshot.json"
+        ),
+        "mac_snapshot_export": (
+            "MAC_REPO_ROOT=${MAC_REPO_ROOT:-$HOME/trading_system}; "
+            "python -m core.research.ml.ds24.vast_reverse_queue_r1 export-external-snapshot "
+            "--repo-root \"$MAC_REPO_ROOT\" "
+            f"--queue-root \"{r49_queue_root_posix}\" "
+            "--machine mac "
+            "--output \"$HOME/ds24_mac_status_snapshot.json\""
+        ),
+        "powershell_base64_conversion": "\n".join(
+            [
+                "$DellSnapshot = 'C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_dell_status_snapshot.json'",
+                "$MacSnapshot = 'C:\\Users\\Brandon\\trading_system\\data\\tmp\\ds24_mac_status_snapshot.json'",
+                "\"export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='\" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($DellSnapshot)) + \"'\"",
+                "\"export DS24_MAC_STATUS_SNAPSHOT_JSON_B64='\" + [Convert]::ToBase64String([IO.File]::ReadAllBytes($MacSnapshot)) + \"'\"",
+            ]
+        ),
+        "fresh_vast_search": (
+            "vastai search offers "
+            "\"num_gpus=1 gpu_name=RTX_4090 rented=false verified=true reliability>=0.98 disk_space>=180 inet_down>=200\""
+        ),
+        "jupyter_proxy_instance_creation": (
+            "vastai create instance <OFFER_ID> "
+            "--image pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel "
+            "--disk 180 --jupyter"
+        ),
+        "final_one_paste_vast_bootstrap": paste,
+        "requires_real_snapshots": True,
+        "neutral_synthetic_override_suggested": False,
+        "no_dataset_reupload": True,
+    }
+    payload["commands_hash"] = stable_hash(payload)
+    return payload
+
+
 def _bash_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
@@ -767,7 +978,6 @@ export DS24_EXPECTED_GPU_REGEX="${{DS24_EXPECTED_GPU_REGEX:-{EXPECTED_GPU_REGEX}
 export DS24_MAX_RUNTIME_HOURS="${{DS24_MAX_RUNTIME_HOURS:-20}}"
 export DS24_MAX_ESTIMATED_COST_USD="${{DS24_MAX_ESTIMATED_COST_USD:-8.40}}"
 export DS24_HOURLY_PRICE_USD="${{DS24_HOURLY_PRICE_USD:-0}}"
-export DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP="${{DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP:-0}}"
 export DS24_VAST_FORCE_CUDA=1
 export DS24_VAST_SEQUENCE_DEVICE=cuda
 export DS24_VAST_DATALOADER_WORKERS="${{DS24_VAST_DATALOADER_WORKERS:-4}}"
@@ -824,10 +1034,8 @@ if [ -n "${{DS24_MAC_STATUS_SNAPSHOT_JSON_B64:-}}" ]; then
   printf '%s' "$DS24_MAC_STATUS_SNAPSHOT_JSON_B64" | base64 -d > "$DS24_RUN_ROOT/config/mac_status_snapshot.live.json"
   export DS24_MAC_STATUS_SNAPSHOT_PATH="$DS24_RUN_ROOT/config/mac_status_snapshot.live.json"
 fi
-if [ "$DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP" != "1" ]; then
-  : "${{DS24_DELL_STATUS_SNAPSHOT_PATH:?Set DS24_DELL_STATUS_SNAPSHOT_PATH or DS24_DELL_STATUS_SNAPSHOT_JSON_B64}}"
-  : "${{DS24_MAC_STATUS_SNAPSHOT_PATH:?Set DS24_MAC_STATUS_SNAPSHOT_PATH or DS24_MAC_STATUS_SNAPSHOT_JSON_B64}}"
-fi
+: "${{DS24_DELL_STATUS_SNAPSHOT_PATH:?Set DS24_DELL_STATUS_SNAPSHOT_PATH or DS24_DELL_STATUS_SNAPSHOT_JSON_B64}}"
+: "${{DS24_MAC_STATUS_SNAPSHOT_PATH:?Set DS24_MAC_STATUS_SNAPSHOT_PATH or DS24_MAC_STATUS_SNAPSHOT_JSON_B64}}"
 if [ -n "${{DS24_DELL_STATUS_SNAPSHOT_PATH:-}}" ]; then
   python -m core.research.ml.ds24.vast_reverse_queue_r1 validate-snapshot \\
     --repo-root "$DS24_SOURCE_ROOT" \\
@@ -2680,6 +2888,7 @@ def write_materialized_live_configs(repo_root: Path, output_root: Path, *, boots
         "publisher_config.schema.json": publisher_config_schema(),
         "dell_repatriation_config.schema.json": dell_repatriation_config_schema(),
         "monitoring_commands.json": monitoring_commands(),
+        "r51a_exact_launch_commands.json": r51a_exact_launch_commands(bootstrap_commit=bootstrap_commit),
         "budget_self_stop_guard.json": budget_self_stop_guard(
             started_at_utc="2026-09-03T00:00:00Z",
             now_utc="2026-09-03T01:00:00Z",
@@ -2730,12 +2939,14 @@ export B2_APPLICATION_KEY_ID='<Backblaze key id>'
 export B2_APPLICATION_KEY='<Backblaze application key>'
 export DS24_BOOTSTRAP_COMMIT='{bootstrap_commit}'
 export DS24_VAST_LIVE_CONFIRM_TOKEN='{LIVE_CONFIRM_TOKEN}'
-export DS24_DELL_STATUS_SNAPSHOT_PATH='<fresh Dell snapshot JSON path, or omit only with DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP=1>'
-export DS24_MAC_STATUS_SNAPSHOT_PATH='<fresh Mac snapshot JSON path, or omit only with DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP=1>'
-# Optional single-paste alternative to paths:
+export DS24_DELL_STATUS_SNAPSHOT_PATH='<fresh Dell snapshot JSON path>'
+export DS24_MAC_STATUS_SNAPSHOT_PATH='<fresh Mac snapshot JSON path>'
+# Single-paste alternative to paths:
 # export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='<base64 -w0 dell_status_snapshot.json>'
 # export DS24_MAC_STATUS_SNAPSHOT_JSON_B64='<base64 -w0 mac_status_snapshot.json>'
 ```
+
+R51A exact commands are also materialised in `r51a_exact_launch_commands.json`. The bootstrap requires real Dell and Mac snapshots by path or base64 and stops before dataset download if either is absent.
 
 Then run:
 
@@ -2769,6 +2980,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify_dataset.add_argument("--expected-count", type=int, required=True)
     verify_dataset.add_argument("--expected-bytes", type=int, required=True)
     verify_dataset.add_argument("--marker", required=True)
+    export_snapshot = sub.add_parser("export-external-snapshot")
+    export_snapshot.add_argument("--repo-root", default=".")
+    export_snapshot.add_argument("--queue-root", required=True)
+    export_snapshot.add_argument("--machine", required=True, choices=["dell", "mac"])
+    export_snapshot.add_argument("--output", required=True)
+    export_snapshot.add_argument("--process-snapshot", default="")
+    export_snapshot.add_argument("--now-utc", default="")
+    finalize_marker = sub.add_parser("finalize-b2-completion-marker")
+    finalize_marker.add_argument("--work-root", required=True)
+    finalize_marker.add_argument("--bucket", default=B2_BUCKET)
+    finalize_marker.add_argument("--prefix", default=B2_PREFIX)
+    finalize_marker.add_argument("--expected-count", type=int, default=EXPECTED_DATASET_OBJECT_COUNT)
+    finalize_marker.add_argument("--expected-bytes", type=int, default=EXPECTED_DATASET_BYTES)
+    finalize_marker.add_argument("--confirm-token", required=True)
     queue = sub.add_parser("run-vast-reverse-queue")
     queue.add_argument("--repo-root", default=".")
     queue.add_argument("--dataset-root", required=True)
@@ -2835,6 +3060,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_count=args.expected_count,
             expected_bytes=args.expected_bytes,
             marker_path=Path(args.marker),
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if args.command == "export-external-snapshot":
+        snapshot = reverse_queue.export_external_snapshot(
+            Path(args.repo_root),
+            Path(args.queue_root),
+            machine=args.machine,
+            output=Path(args.output),
+            process_snapshot=args.process_snapshot or None,
+            now_utc=args.now_utc or None,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "PASS",
+                    "classification": "EXTERNAL_SNAPSHOT_EXPORTED",
+                    "source_machine": snapshot["source_machine"],
+                    "source_queue_identity": snapshot["source_queue_identity"],
+                    "output": str(Path(args.output)),
+                    "snapshot_hash": snapshot["snapshot_hash"],
+                    "family_count": len(snapshot["families"]),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "finalize-b2-completion-marker":
+        result = finalize_b2_dataset_completion_marker(
+            work_root=Path(args.work_root),
+            bucket=args.bucket,
+            prefix=args.prefix,
+            expected_count=args.expected_count,
+            expected_bytes=args.expected_bytes,
+            confirm_token=args.confirm_token,
         )
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0

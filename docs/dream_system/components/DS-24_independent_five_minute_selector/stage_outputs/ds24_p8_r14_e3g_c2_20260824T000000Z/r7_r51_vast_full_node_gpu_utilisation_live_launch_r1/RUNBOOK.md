@@ -13,12 +13,14 @@ export B2_APPLICATION_KEY_ID='<Backblaze key id>'
 export B2_APPLICATION_KEY='<Backblaze application key>'
 export DS24_BOOTSTRAP_COMMIT='<FINAL_R51_COMMIT>'
 export DS24_VAST_LIVE_CONFIRM_TOKEN='AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1'
-export DS24_DELL_STATUS_SNAPSHOT_PATH='<fresh Dell snapshot JSON path, or omit only with DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP=1>'
-export DS24_MAC_STATUS_SNAPSHOT_PATH='<fresh Mac snapshot JSON path, or omit only with DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP=1>'
-# Optional single-paste alternative to paths:
+export DS24_DELL_STATUS_SNAPSHOT_PATH='<fresh Dell snapshot JSON path>'
+export DS24_MAC_STATUS_SNAPSHOT_PATH='<fresh Mac snapshot JSON path>'
+# Single-paste alternative to paths:
 # export DS24_DELL_STATUS_SNAPSHOT_JSON_B64='<base64 -w0 dell_status_snapshot.json>'
 # export DS24_MAC_STATUS_SNAPSHOT_JSON_B64='<base64 -w0 mac_status_snapshot.json>'
 ```
+
+R51A exact commands are also materialised in `r51a_exact_launch_commands.json`. The bootstrap requires real Dell and Mac snapshots by path or base64 and stops before dataset download if either is absent.
 
 Then run:
 

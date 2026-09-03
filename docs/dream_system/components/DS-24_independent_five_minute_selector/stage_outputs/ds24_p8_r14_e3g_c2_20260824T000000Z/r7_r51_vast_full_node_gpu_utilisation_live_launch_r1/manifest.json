@@ -17,12 +17,12 @@
     "expected_object_count": 18505,
     "prefix": "ds24/full_data_r1"
   },
-  "file_count": 27,
+  "file_count": 28,
   "files": [
     {
-      "bytes": 2009,
+      "bytes": 2069,
       "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/VAST_BOOTSTRAP_CONFIG_JSON.example.json",
-      "sha256": "f8f795c90373d23658e409ecce34952ca8ac4b43b3f91bc883ade9a495ce267d"
+      "sha256": "9761e17ece798fb5c2f9e198ee05c21c77226cb952154a1007fef701ad48a445"
     },
     {
       "bytes": 1115,
@@ -120,6 +120,11 @@
       "sha256": "2771fd65984e66794e8cfc90ad00ec6361f8a32491c598158555ec9490fea335"
     },
     {
+      "bytes": 3115,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/r51a_exact_launch_commands.json",
+      "sha256": "9b2f823c5d6ea68feafeb836f0d899fa0c7b410c0e48a497f648fd253d4e8687"
+    },
+    {
       "bytes": 457,
       "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/budget_self_stop_guard.json",
       "sha256": "3a7e2536fc9634b39012d5d1f8cd84f16d6119d665733ee3af2f9fee387c4db2"
@@ -135,9 +140,9 @@
       "sha256": "91775634d657cfeba297558e825148bfb9f5156ef84fba2c95ec7969b9c0313f"
     },
     {
-      "bytes": 10434,
+      "bytes": 10332,
       "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/vast_jupyter_proxy_bootstrap.sh",
-      "sha256": "b25711b90ae9fab3f30de97438c2ed2114b635d379df24ed66c3c4ea8523af94"
+      "sha256": "a8c216eaed52e15f2e81b2701623ac4b1e4cd51e64446ec1acc7493c9e3e113e"
     },
     {
       "bytes": 1729,
@@ -150,9 +155,9 @@
       "sha256": "2a32767c3231e1217f95b3e605106aa5e2e5a29533057259fb8e335f70e8e435"
     },
     {
-      "bytes": 1921,
+      "bytes": 1997,
       "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/RUNBOOK.md",
-      "sha256": "f986a6495a67f5b3b998fef6ac77790442b79723cd7c3458b06490be6c24f18d"
+      "sha256": "78896939ebb373b32d498f22f6948a7ce4476ccb3aa0a97d61292d2a638b06e4"
     }
   ],
   "forbidden": {
@@ -162,7 +167,7 @@
     "paper_orders": 0
   },
   "live_model_work_started": false,
-  "manifest_hash": "63cfd5ad7b655ccc180146b0cd1dea6250e227f5489e6c594e6259f565d2bbac",
+  "manifest_hash": "b9874fa6d1bc4cfe510895d3836540ff4cc41bccfcf26a4b47b0483563a312f3",
   "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
   "r49_r50_commit": "7ce81161711b8519ada39995f8018d959f3d468e",
   "real_b2_transfer_performed": false,
