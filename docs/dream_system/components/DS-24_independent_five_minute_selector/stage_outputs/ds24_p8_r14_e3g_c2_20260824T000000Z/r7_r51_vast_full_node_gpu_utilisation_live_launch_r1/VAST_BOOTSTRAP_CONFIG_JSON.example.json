@@ -1,0 +1,53 @@
+{
+  "bootstrap_commit": "<FINAL_R51_COMMIT>",
+  "branch": "ds24-mac-tournament-sync-20260901",
+  "bucket": "TradingSystemDataset44",
+  "config_hash": "0bbed924659f648020cd9cebfed7f13acd8d481ee12369db7b8480d7d08c0a0a",
+  "credential_environment": {
+    "B2_APPLICATION_KEY": "<set in Vast terminal; never stored>",
+    "B2_APPLICATION_KEY_ID": "<set in Vast terminal; never stored>"
+  },
+  "dataset_marker_key": "ds24/full_data_r1/DATASET_COMPLETE.json",
+  "dataset_root": "/workspace/ds24/data/full_data_r1",
+  "dell_status_snapshot_path_env": "DS24_DELL_STATUS_SNAPSHOT_PATH",
+  "expected_bytes": 47323707293,
+  "expected_gpu_regex": "RTX",
+  "expected_object_count": 18505,
+  "forbidden": [
+    "full_prediction",
+    "full-prediction",
+    "prediction_partitions",
+    "holdout",
+    "paper_order",
+    "live_order",
+    ".env",
+    "credential",
+    "secret",
+    "rclone.conf"
+  ],
+  "gpu_admission_required": true,
+  "live_confirm_token": "AUTHORIZE_DS24_VAST_JUPYTER_PROXY_LIVE_LAUNCH_R1",
+  "mac_status_snapshot_path_env": "DS24_MAC_STATUS_SNAPSHOT_PATH",
+  "neutral_synthetic_ownership_override_env": "DS24_ALLOW_NEUTRAL_SYNTHETIC_OWNERSHIP",
+  "ownership_plan_path": "/workspace/ds24/control/ownership_plan.json",
+  "prefix": "ds24/full_data_r1",
+  "publisher_config_path": "/workspace/ds24/control/PUBLISHER_CONFIG_JSON",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "queue_order": [
+    "temporal_fusion_transformer",
+    "market_context_encoder",
+    "momentum_transformer",
+    "itransformer",
+    "transformer",
+    "patchtst",
+    "dlinear",
+    "lightgbm_lambdarank",
+    "lightgbm_rank_xendcg"
+  ],
+  "r49_r50_commit": "7ce81161711b8519ada39995f8018d959f3d468e",
+  "repo_url": "https://github.com/Linnett9/trading_system.git",
+  "run_root": "/workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
+  "schema_version": "ds24_vast_full_node_live_launch_config.v1",
+  "source_root": "/workspace/ds24/source",
+  "workspace_root": "/workspace/ds24"
+}

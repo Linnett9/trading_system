@@ -73,9 +73,15 @@ def fixed_lambdarank_configuration(
     *,
     label_contract: str,
     num_threads: int = 1,
+    device_type: str = "cpu",
 ) -> dict[str, Any]:
     gain = label_gain_policy(label_contract)
-    parameters = dict(fixed_rank_xendcg_configuration(num_threads=num_threads)["parameters"])
+    parameters = dict(
+        fixed_rank_xendcg_configuration(
+            num_threads=num_threads,
+            device_type=device_type,
+        )["parameters"]
+    )
     parameters["objective"] = "lambdarank"
     parameters["label_gain"] = gain["gain_values"]
     return {

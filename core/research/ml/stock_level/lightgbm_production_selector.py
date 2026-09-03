@@ -119,12 +119,16 @@ def fit_production_lightgbm_selector(
 
     cutoff = str(authoritative_context["outcome_maturity_cutoff"])
     label_contract = str(dataset.get("ranking_label_contract_identity") or "")
+    try:
+        device_type, runtime_policy = _lightgbm_runtime_policy(dependency_preflight)
+    except ValueError as exc:
+        return _blocked(str(exc))
     if model_id == "lightgbm_rank_xendcg":
         input_contract = validate_rank_xendcg_input(
             dataset, training_cutoff=cutoff,
             source_commit=str(authoritative_context["source_commit"]),
         )
-        configuration = fixed_rank_xendcg_configuration(num_threads=1)
+        configuration = fixed_rank_xendcg_configuration(num_threads=1, device_type=device_type)
         default_fitter = fit_rank_xendcg
         objective = "rank_xendcg"
     elif model_id == "lightgbm_lambdarank":
@@ -133,7 +137,7 @@ def fit_production_lightgbm_selector(
             source_commit=str(authoritative_context["source_commit"]),
         )
         configuration = fixed_lambdarank_configuration(
-            label_contract=label_contract, num_threads=1
+            label_contract=label_contract, num_threads=1, device_type=device_type
         )
         default_fitter = fit_lambdarank
         objective = "lambdarank"
@@ -260,6 +264,7 @@ def fit_production_lightgbm_selector(
             "lightgbm==" + str(dependency_preflight["lightgbm_version"])
         ),
         "configuration": configuration,
+        "lightgbm_runtime_policy": runtime_policy,
         "authoritative_context": dict(authoritative_context),
         "input_contract": input_contract,
         "prediction_contract": {
@@ -306,6 +311,43 @@ def _prediction_rows(rows, scores, context, input_contract):
                 ],
             })
     return output
+
+
+def _lightgbm_runtime_policy(dependency_preflight: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    prefer_gpu = bool(
+        dependency_preflight.get("lightgbm_prefer_gpu")
+        or dependency_preflight.get("prefer_gpu")
+    )
+    gpu_supported = bool(
+        dependency_preflight.get("lightgbm_gpu_supported")
+        or dependency_preflight.get("gpu_supported")
+    )
+    fallback_allowed = bool(dependency_preflight.get("lightgbm_safe_cpu_fallback", True))
+    if prefer_gpu and gpu_supported:
+        return "gpu", {
+            "preference": "GPU",
+            "selected_device_type": "gpu",
+            "safe_cpu_fallback_used": False,
+            "fallback_reason": "",
+        }
+    if prefer_gpu and not gpu_supported:
+        if not fallback_allowed:
+            raise ValueError("LIGHTGBM_GPU_REQUESTED_WITHOUT_SAFE_CPU_FALLBACK")
+        return "cpu", {
+            "preference": "GPU",
+            "selected_device_type": "cpu",
+            "safe_cpu_fallback_used": True,
+            "fallback_reason": str(
+                dependency_preflight.get("lightgbm_gpu_fallback_reason")
+                or "LIGHTGBM_GPU_NOT_SUPPORTED_BY_CURRENT_BUILD_OR_DRIVER"
+            ),
+        }
+    return "cpu", {
+        "preference": "CPU",
+        "selected_device_type": "cpu",
+        "safe_cpu_fallback_used": False,
+        "fallback_reason": "",
+    }
 
 
 def _blocked(reason: str, *, status: str = "INVALID_INPUT") -> dict[str, Any]:

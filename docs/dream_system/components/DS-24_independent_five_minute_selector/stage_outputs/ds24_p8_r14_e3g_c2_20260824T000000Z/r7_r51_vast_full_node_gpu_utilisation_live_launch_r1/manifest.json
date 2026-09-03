@@ -1,0 +1,174 @@
+{
+  "accepted_reverse_order": [
+    "temporal_fusion_transformer",
+    "market_context_encoder",
+    "momentum_transformer",
+    "itransformer",
+    "transformer",
+    "patchtst",
+    "dlinear",
+    "lightgbm_lambdarank",
+    "lightgbm_rank_xendcg"
+  ],
+  "bootstrap_commit": "<FINAL_R51_COMMIT>",
+  "dataset": {
+    "bucket": "TradingSystemDataset44",
+    "expected_bytes": 47323707293,
+    "expected_object_count": 18505,
+    "prefix": "ds24/full_data_r1"
+  },
+  "file_count": 27,
+  "files": [
+    {
+      "bytes": 2009,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/VAST_BOOTSTRAP_CONFIG_JSON.example.json",
+      "sha256": "f8f795c90373d23658e409ecce34952ca8ac4b43b3f91bc883ade9a495ce267d"
+    },
+    {
+      "bytes": 1115,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/PUBLISHER_CONFIG_JSON.example.json",
+      "sha256": "e7939976fe8a6c7b2473847b6bc0443eb8ec7ee6742cb021d0748b9c50cf5eef"
+    },
+    {
+      "bytes": 875,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/DELL_REPATRIATION_CONFIG_JSON.example.json",
+      "sha256": "2edb244a46c0b2ef9a10cb69394916045a559619a662cda1b7d69983afc85d23"
+    },
+    {
+      "bytes": 748,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/b2_remote_inventory.example.json",
+      "sha256": "a0836700b2d6a947e4b2ba91a7e7828cd69571d78736748ca45cb1b0a8e0cb81"
+    },
+    {
+      "bytes": 925,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/DATASET_COMPLETE.example.json",
+      "sha256": "af9d4f7b03baf9a7be9e5abb97b9c749ffa3d7036b3fbd930b21c4fd7d921f3f"
+    },
+    {
+      "bytes": 7870,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/dell_status_snapshot.example.json",
+      "sha256": "9fb591190deec2e3f286ac4453ab61d1e6eb7f6728ed0d36c85a424e96b2c899"
+    },
+    {
+      "bytes": 7866,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/mac_status_snapshot.example.json",
+      "sha256": "b2b28292d55b0e542f02944b978f1f475729b12eb1e45880866179e968bf70ca"
+    },
+    {
+      "bytes": 349,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/dell_ack.example.json",
+      "sha256": "3258c5110290d6d12d315902667dd07e4c252d36048a18d37cfed63d20c8cdf7"
+    },
+    {
+      "bytes": 348,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/mac_ack.example.json",
+      "sha256": "6965ca9a06e82049f390cb7e1f91cbf37cea1dfe7d8d2326eecb52ea0f2cedd9"
+    },
+    {
+      "bytes": 19510,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/ownership_plan.example.json",
+      "sha256": "5e4e91d4089b1e7b3df9366eabd9651d23af8876b4c30584adddd734d658341d"
+    },
+    {
+      "bytes": 11361,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/gpu_family_adapter_audit.json",
+      "sha256": "5fecf082f61344f2bb912f17e227bac80cc87c494c4a48db7049093601fef0da"
+    },
+    {
+      "bytes": 1165,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/single_gpu_thread_authority.json",
+      "sha256": "5df8aa26db072324c5bac7fdb7645ffb2e456c0774bacfd73adc7c918fa7aa04"
+    },
+    {
+      "bytes": 1793,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/lightgbm_gpu_fallback_policy.gpu_supported.json",
+      "sha256": "3fc4f0eb1348cb26c62e561bf2b901ee801bf42533af0c2ad4d8e2513b2b0464"
+    },
+    {
+      "bytes": 1738,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/lightgbm_gpu_fallback_policy.cpu_fallback.json",
+      "sha256": "234abb49fffc011ed7d27ecce3de753d3bfbd85f468eb291b4c0a8af3cb5f908"
+    },
+    {
+      "bytes": 1721,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/gpu_admission_benchmark.schema.json",
+      "sha256": "45c4568843538554ef2461e5ebe27e2cead34d62c3d075ed98339f6b8fc33068"
+    },
+    {
+      "bytes": 3003,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/gpu_admission_benchmark.example.json",
+      "sha256": "a6230d8aa7b47bac6f2c8363a7a25fac29c8de5c8235d05bc1d9016e71c32ece"
+    },
+    {
+      "bytes": 2410,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/vast_bootstrap_config.schema.json",
+      "sha256": "ab92fe374d00970427dad145c1026c6f6be158ef18ecfee4d327952170a7d7cb"
+    },
+    {
+      "bytes": 1882,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/publisher_config.schema.json",
+      "sha256": "8a27e2145937b3067a45d5173a7373da43b95e514f5e665955933f4ca3b76162"
+    },
+    {
+      "bytes": 1708,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/dell_repatriation_config.schema.json",
+      "sha256": "bbaf087caeb443c79ddf409c5666347b1be66efe8a091fb831d90aad17452ab9"
+    },
+    {
+      "bytes": 1305,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/monitoring_commands.json",
+      "sha256": "2771fd65984e66794e8cfc90ad00ec6361f8a32491c598158555ec9490fea335"
+    },
+    {
+      "bytes": 457,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/budget_self_stop_guard.json",
+      "sha256": "3a7e2536fc9634b39012d5d1f8cd84f16d6119d665733ee3af2f9fee387c4db2"
+    },
+    {
+      "bytes": 1955,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/validation_suite.synthetic.json",
+      "sha256": "50706b7d95cab2e263bfb3253c7fbc91ea49da45cdab3416037819496dc0d3b4"
+    },
+    {
+      "bytes": 273,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/limitations.json",
+      "sha256": "91775634d657cfeba297558e825148bfb9f5156ef84fba2c95ec7969b9c0313f"
+    },
+    {
+      "bytes": 10434,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/vast_jupyter_proxy_bootstrap.sh",
+      "sha256": "b25711b90ae9fab3f30de97438c2ed2114b635d379df24ed66c3c4ea8523af94"
+    },
+    {
+      "bytes": 1729,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/dell_repatriate_vast_outputs.ps1",
+      "sha256": "511ae089aa5d22ddcc1c9900e4079a66da4feacf0c1a4d6d0bd1271dc12c080f"
+    },
+    {
+      "bytes": 843,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/vast_show_status.sh",
+      "sha256": "2a32767c3231e1217f95b3e605106aa5e2e5a29533057259fb8e335f70e8e435"
+    },
+    {
+      "bytes": 1921,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/RUNBOOK.md",
+      "sha256": "f986a6495a67f5b3b998fef6ac77790442b79723cd7c3458b06490be6c24f18d"
+    }
+  ],
+  "forbidden": {
+    "forbidden_full_prediction_artifacts": false,
+    "live_orders": 0,
+    "outer_holdout_access": false,
+    "paper_orders": 0
+  },
+  "live_model_work_started": false,
+  "manifest_hash": "63cfd5ad7b655ccc180146b0cd1dea6250e227f5489e6c594e6259f565d2bbac",
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "r49_r50_commit": "7ce81161711b8519ada39995f8018d959f3d468e",
+  "real_b2_transfer_performed": false,
+  "status": "PASS",
+  "synthetic_only_during_implementation": true,
+  "terminal_classification": "DS24_VAST_FULL_NODE_GPU_UTILISATION_LIVE_LAUNCH_IMPLEMENTED_SYNTHETICALLY_VALIDATED_READY_NOT_EXECUTED",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_FULL_NODE_GPU_UTILISATION_LIVE_LAUNCH_R1",
+  "vast_instance_rented": false
+}

@@ -1,0 +1,22 @@
+{
+  "bucket": "TradingSystemDataset44",
+  "credentials_included": false,
+  "dataset_complete_marker_key": "ds24/full_data_r1/DATASET_COMPLETE.json",
+  "inventory_command": "rclone size b2:TradingSystemDataset44/ds24/full_data_r1 --json",
+  "inventory_hash": "bfafc53d52009333cd83c97dd41d44c183f1d257889349cf22c54d417134435b",
+  "object_count": 18505,
+  "prefix": "ds24/full_data_r1",
+  "sample_objects": [
+    {
+      "key": "ds24/full_data_r1/data/processed/example-part-000.parquet",
+      "size_bytes": 1048576
+    },
+    {
+      "key": "ds24/full_data_r1/docs/dream_system/example-authority.json",
+      "size_bytes": 8192
+    }
+  ],
+  "schema_version": "ds24_b2_remote_inventory.v1",
+  "total_bytes": 47323707293,
+  "zero_differences": true
+}

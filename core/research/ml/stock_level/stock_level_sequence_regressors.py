@@ -22,6 +22,11 @@ class SequenceRegressorConfig:
     patch_length: int = 4
     patch_stride: int = 2
     torch_num_threads: int | None = None
+    dataloader_num_workers: int = 0
+    dataloader_pin_memory: bool = False
+    dataloader_prefetch_factor: int | None = None
+    dataloader_persistent_workers: bool = False
+    cuda_required: bool = False
 
 
 class TorchSequenceReturnRegressor:
@@ -57,6 +62,7 @@ class TorchSequenceReturnRegressor:
         torch, nn = _torch_dependencies()
         if self.config.torch_num_threads is not None:
             torch.set_num_threads(max(1, self.config.torch_num_threads))
+        device = self._fit_device(torch)
         torch.manual_seed(self.config.random_seed)
         x = torch.tensor(sequences, dtype=torch.float32)
         y = torch.tensor(targets, dtype=torch.float32)
@@ -90,9 +96,7 @@ class TorchSequenceReturnRegressor:
             self.auxiliary_stds = auxiliary.std(dim=0, keepdim=True).clamp_min(1e-6)
             auxiliary = (auxiliary - self.auxiliary_means) / self.auxiliary_stds
 
-        model = self._build_model(torch, nn, feature_count=x.shape[2]).to(
-            self.config.device
-        )
+        model = self._build_model(torch, nn, feature_count=x.shape[2]).to(device)
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=self.config.learning_rate,
@@ -105,6 +109,7 @@ class TorchSequenceReturnRegressor:
             batch_size=max(1, self.config.batch_size),
             shuffle=True,
             generator=torch.Generator().manual_seed(self.config.random_seed),
+            **self._dataloader_kwargs(device),
         )
         loss_fn = nn.SmoothL1Loss()
         model.train()
@@ -113,7 +118,7 @@ class TorchSequenceReturnRegressor:
         for _ in range(max(1, self.config.epochs)):
             batch_losses: list[float] = []
             for batch in loader:
-                batch = tuple(value.to(self.config.device) for value in batch)
+                batch = tuple(value.to(device, non_blocking=self._non_blocking_transfer(device)) for value in batch)
                 optimizer.zero_grad(set_to_none=True)
                 primary, model_auxiliary = self._forward(model, batch[0])
                 loss = loss_fn(primary, batch[1])
@@ -146,10 +151,12 @@ class TorchSequenceReturnRegressor:
         if self.model is None:
             return [self.target_mean for _ in sequences]
         torch, _ = _torch_dependencies()
-        x = torch.tensor(sequences, dtype=torch.float32)
+        device = self._fit_device(torch)
+        x = torch.tensor(sequences, dtype=torch.float32, device=device)
         prediction_quality = _tensor_quality(torch, x, None, prefix="test")
         x = self._preprocess_predict_features(torch, x)
         prediction_quality.update(_post_preprocess_quality(torch, x, prefix="test"))
+        self.model = self.model.to(device)
         self.model.eval()
         with torch.no_grad():
             normalized, _ = self._forward(self.model, x)
@@ -191,11 +198,40 @@ class TorchSequenceReturnRegressor:
         self.feature_stds = imputed.std(dim=(0, 1), keepdim=True).clamp_min(1e-6)
         return (imputed - self.feature_means) / self.feature_stds
 
+    def _fit_device(self, torch: Any) -> Any:
+        requested = str(self.config.device)
+        device = torch.device(requested)
+        if self.config.cuda_required:
+            if device.type != "cuda":
+                raise RuntimeError("CUDA_REQUIRED_BUT_SEQUENCE_DEVICE_IS_NOT_CUDA")
+            if not bool(torch.cuda.is_available()):
+                raise RuntimeError("CUDA_REQUIRED_BUT_TORCH_CUDA_IS_UNAVAILABLE")
+        return device
+
+    def _dataloader_kwargs(self, device: Any) -> dict[str, Any]:
+        workers = max(0, int(self.config.dataloader_num_workers or 0))
+        pin_memory = bool(self.config.dataloader_pin_memory and getattr(device, "type", str(device)) == "cuda")
+        kwargs: dict[str, Any] = {
+            "num_workers": workers,
+            "pin_memory": pin_memory,
+        }
+        if workers > 0:
+            prefetch = self.config.dataloader_prefetch_factor
+            if prefetch is not None:
+                kwargs["prefetch_factor"] = max(1, int(prefetch))
+            kwargs["persistent_workers"] = bool(self.config.dataloader_persistent_workers)
+        return kwargs
+
+    def _non_blocking_transfer(self, device: Any) -> bool:
+        return bool(self.config.dataloader_pin_memory and getattr(device, "type", str(device)) == "cuda")
+
     def _preprocess_predict_features(self, torch: Any, x: Any) -> Any:
         finite = torch.isfinite(x)
         impute_values = self.feature_impute_values
         if impute_values is None:
-            impute_values = torch.zeros((1, 1, x.shape[2]), dtype=x.dtype)
+            impute_values = torch.zeros((1, 1, x.shape[2]), dtype=x.dtype, device=x.device)
+        else:
+            impute_values = impute_values.to(device=x.device, dtype=x.dtype)
         imputed = torch.where(finite, x, impute_values)
         self.diagnostics.update(
             {
@@ -203,7 +239,17 @@ class TorchSequenceReturnRegressor:
                 "test_feature_nan_count_after_imputation": int((~torch.isfinite(imputed)).sum().item()),
             }
         )
-        return (imputed - self.feature_means) / self.feature_stds
+        feature_means = self.feature_means
+        if feature_means is None:
+            feature_means = torch.zeros((1, 1, x.shape[2]), dtype=x.dtype, device=x.device)
+        else:
+            feature_means = feature_means.to(device=x.device, dtype=x.dtype)
+        feature_stds = self.feature_stds
+        if feature_stds is None:
+            feature_stds = torch.ones((1, 1, x.shape[2]), dtype=x.dtype, device=x.device)
+        else:
+            feature_stds = feature_stds.to(device=x.device, dtype=x.dtype)
+        return (imputed - feature_means) / feature_stds
 
     def _build_model(self, torch: Any, nn: Any, *, feature_count: int) -> Any:
         config = self.config

@@ -1,0 +1,103 @@
+{
+  "checkpoint_resume": {
+    "resume_verified": true,
+    "status": "PASS",
+    "valid_checkpoint": true
+  },
+  "compact_artifacts": {
+    "compact_oof_present": true,
+    "forbidden_artifact_count": 0,
+    "metrics_present": true,
+    "status": "PASS"
+  },
+  "cuda_oom_observed": false,
+  "evidence_hash": "25487d9c4fb68923f8272fea4d918f42e7624d3137f78c0be7feb1ad957fbf36",
+  "expected_gpu_regex": "RTX",
+  "model_process": {
+    "command_marker": "python",
+    "pid": 4242
+  },
+  "nvidia_smi_samples": [
+    {
+      "memory_used_mib": 2064,
+      "processes": [
+        {
+          "command": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 run-gpu-admission",
+          "pid": 4242,
+          "process_name": "python",
+          "used_memory_mib": 1552
+        }
+      ],
+      "timestamp_utc": "2026-09-03T12:00:01Z",
+      "utilization_gpu_percent": 19
+    },
+    {
+      "memory_used_mib": 2080,
+      "processes": [
+        {
+          "command": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 run-gpu-admission",
+          "pid": 4242,
+          "process_name": "python",
+          "used_memory_mib": 1568
+        }
+      ],
+      "timestamp_utc": "2026-09-03T12:00:02Z",
+      "utilization_gpu_percent": 27
+    },
+    {
+      "memory_used_mib": 2096,
+      "processes": [
+        {
+          "command": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 run-gpu-admission",
+          "pid": 4242,
+          "process_name": "python",
+          "used_memory_mib": 1584
+        }
+      ],
+      "timestamp_utc": "2026-09-03T12:00:03Z",
+      "utilization_gpu_percent": 31
+    },
+    {
+      "memory_used_mib": 2112,
+      "processes": [
+        {
+          "command": "python -m core.research.ml.ds24.vast_gpu_live_launch_r1 run-gpu-admission",
+          "pid": 4242,
+          "process_name": "python",
+          "used_memory_mib": 1600
+        }
+      ],
+      "timestamp_utc": "2026-09-03T12:00:04Z",
+      "utilization_gpu_percent": 24
+    }
+  ],
+  "schema_version": "ds24_vast_gpu_admission_benchmark.v1",
+  "torch_probe": {
+    "cuda_available": true,
+    "device_name": "NVIDIA GeForce RTX 4090",
+    "device_total_memory_mib": 24564,
+    "memory_allocated_mib": 1536,
+    "process_pid": 4242
+  },
+  "validation": {
+    "admission_hash": "96e88ba35430c048740c1d111cdcc400c97d8885396de8222aab90e933a656cc",
+    "checks": {
+      "correct_compact_artifacts": true,
+      "expected_rtx_gpu_identity": true,
+      "meaningful_gpu_memory_allocation": true,
+      "model_process_in_nvidia_smi": true,
+      "no_cuda_oom": true,
+      "repeated_nonzero_gpu_utilisation": true,
+      "torch_cuda_available": true,
+      "valid_checkpoint_resume": true
+    },
+    "classification": "GPU_ADMISSION_PASS_RELEASE_ALLOWED",
+    "expected_gpu_regex": "RTX",
+    "gpu_name": "NVIDIA GeForce RTX 4090",
+    "memory_mib": 2112,
+    "nonzero_util_samples": 4,
+    "observed_sample_count": 4,
+    "schema_version": "ds24_vast_gpu_admission_benchmark.v1",
+    "status": "PASS"
+  }
+}

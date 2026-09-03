@@ -1,0 +1,9 @@
+{
+  "ack_hash": "bfd7279f037f5a6f7a84d7b81ccadbadf8ae6c4565c1dcde553b2975d5fa20fa",
+  "acknowledged_at_utc": "2026-09-03T12:00:40Z",
+  "credentials_included": false,
+  "machine": "mac",
+  "plan_hash": "6b5fa70d63e13f05525479a89b3dcc9600fe233fb12b66c9967d9d0474d375c5",
+  "schema_version": "ds24_vast_ownership_ack.v1",
+  "unavailable_reason": ""
+}

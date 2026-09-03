@@ -1,0 +1,14 @@
+{
+  "commands": {
+    "active_family": "cat /workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=${DS24_RUN_ID}/queue_state/current_family.json 2>/dev/null || true",
+    "checkpoint_age": "find /workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=${DS24_RUN_ID}/checkpoints -type f -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -20",
+    "cpu_ram_disk": "printf 'CPU/RAM/DISK\\n'; uptime; free -h; df -h /workspace",
+    "gpu_processes": "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv",
+    "gpu_utilisation_vram": "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv",
+    "latest_successful_b2_publication": "cat /workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=${DS24_RUN_ID}/publisher/latest_successful_publication.json 2>/dev/null || true",
+    "queue_cursor": "cat /workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=${DS24_RUN_ID}/queue_state/queue_state.json 2>/dev/null || true",
+    "tmux_sessions": "tmux ls || true"
+  },
+  "commands_hash": "114750612e55cd051abe11dbbce5552966ed460e0317ccfebb0b89940de30dbd",
+  "jupyter_proxy_note": "Run inside the Vast browser terminal; no direct SSH path is required."
+}

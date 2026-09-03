@@ -44,8 +44,12 @@ class SelectorError(ValueError):
         self.reason = reason
 
 
-def fixed_rank_xendcg_configuration(*, num_threads: int = 1) -> dict[str, Any]:
-    base = deterministic_ranker_configuration(objective="rank_xendcg", num_threads=num_threads)
+def fixed_rank_xendcg_configuration(*, num_threads: int = 1, device_type: str = "cpu") -> dict[str, Any]:
+    base = deterministic_ranker_configuration(
+        objective="rank_xendcg",
+        num_threads=num_threads,
+        device_type=device_type,
+    )
     base.update({
         "metric": "ndcg",
         "eval_at": [1, 3, 5],

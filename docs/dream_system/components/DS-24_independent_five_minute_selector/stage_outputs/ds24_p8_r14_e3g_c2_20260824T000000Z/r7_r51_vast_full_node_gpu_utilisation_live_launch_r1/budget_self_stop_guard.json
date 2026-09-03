@@ -1,0 +1,13 @@
+{
+  "automatic_destroy_forbidden": true,
+  "elapsed_hours": 1.0,
+  "estimated_cost_usd": 0.42,
+  "guard_hash": "52eb9f4af1dd756769512404b62cff9d4aa59975d98a74104c0a51942c9ffd3d",
+  "guard_id": "DS24_R51_VAST_BUDGET_SELF_STOP_GUARD_V1",
+  "hourly_price_usd": 0.42,
+  "manual_intervention_if_stop_fails": true,
+  "max_estimated_cost_usd": 8.4,
+  "max_runtime_hours": 20.0,
+  "self_stop_command": "vastai stop instance \"$CONTAINER_ID\"",
+  "status": "PASS"
+}

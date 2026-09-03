@@ -1,0 +1,65 @@
+{
+  "fallback_allowed": true,
+  "families": [
+    {
+      "family": "lightgbm_lambdarank",
+      "objective": "lambdarank",
+      "parameters": {
+        "bagging_seed": 1729,
+        "colsample_bytree": 1.0,
+        "data_random_seed": 1729,
+        "deterministic": false,
+        "device_type": "gpu",
+        "feature_fraction_seed": 1729,
+        "force_col_wise": false,
+        "gpu_device_id": 0,
+        "gpu_platform_id": 0,
+        "learning_rate": 0.1,
+        "max_bin": 31,
+        "max_depth": 3,
+        "min_child_samples": 1,
+        "n_estimators": 12,
+        "n_jobs": 1,
+        "num_leaves": 4,
+        "objective": "lambdarank",
+        "random_state": 1729,
+        "subsample": 1.0,
+        "verbosity": -1
+      },
+      "runtime_policy": "GPU",
+      "safe_cpu_fallback_reason": ""
+    },
+    {
+      "family": "lightgbm_rank_xendcg",
+      "objective": "rank_xendcg",
+      "parameters": {
+        "bagging_seed": 1729,
+        "colsample_bytree": 1.0,
+        "data_random_seed": 1729,
+        "deterministic": false,
+        "device_type": "gpu",
+        "feature_fraction_seed": 1729,
+        "force_col_wise": false,
+        "gpu_device_id": 0,
+        "gpu_platform_id": 0,
+        "learning_rate": 0.1,
+        "max_bin": 31,
+        "max_depth": 3,
+        "min_child_samples": 1,
+        "n_estimators": 12,
+        "n_jobs": 1,
+        "num_leaves": 4,
+        "objective": "rank_xendcg",
+        "random_state": 1729,
+        "subsample": 1.0,
+        "verbosity": -1
+      },
+      "runtime_policy": "GPU",
+      "safe_cpu_fallback_reason": ""
+    }
+  ],
+  "gpu_supported": true,
+  "policy_hash": "1f96a5154560ea181911ea7a693b95330e6bcc5aab97b71860412356e8b32025",
+  "policy_id": "DS24_R51_LIGHTGBM_GPU_PREFERRED_SAFE_FALLBACK_V1",
+  "status": "PASS"
+}

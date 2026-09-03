@@ -1,0 +1,20 @@
+{
+  "bucket": "TradingSystemDataset44",
+  "completion_marker_content_hash": "42e888af4bd324d05c5a43b937a81375287309da6fd0a5342ddb345f98792da2",
+  "completion_marker_predecessor_hash": "EXAMPLE_DATASET_AUTHORITY_HASH",
+  "credentials_included": false,
+  "dataset_id": "DS24_FULL_DATA_R1",
+  "expected_bytes": 47323707293,
+  "expected_object_count": 18505,
+  "marker_key": "ds24/full_data_r1/DATASET_COMPLETE.json",
+  "prefix": "ds24/full_data_r1",
+  "rclone_version": "EXAMPLE_CAPTURE_FROM_VAST_NODE",
+  "schema_version": "ds24_vast_input_dataset_authority.v1",
+  "source_authority_hashes": {
+    "r49_queue_commit": "7ce81161711b8519ada39995f8018d959f3d468e",
+    "r50_dataset_authority": "TradingSystemDataset44/ds24/full_data_r1 verified zero-diff"
+  },
+  "source_manifest_hash": "EXAMPLE_REMOTE_INVENTORY_HASH_REPLACE_WITH_ACTUAL",
+  "verification_result": "PASS",
+  "verification_timestamp_utc": "2026-09-03T00:00:00Z"
+}

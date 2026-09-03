@@ -1,0 +1,39 @@
+{
+  "authority_hash": "579c908221143088336229623fecd0ac4eb5cc6ad69ef4fe4be02c3ca449e309",
+  "dataloader": {
+    "bounded_for_single_gpu_node": true,
+    "non_blocking_device_transfer": true,
+    "num_workers": 4,
+    "persistent_workers": true,
+    "pin_memory": true,
+    "prefetch_factor": 2
+  },
+  "lightgbm": {
+    "fallback_num_threads": 1,
+    "gpu_num_threads": 1,
+    "prefer_gpu_when_supported": true,
+    "safe_cpu_fallback": true
+  },
+  "overlap_policy": {
+    "cpu_oversubscription": "forbidden",
+    "gpu_family_training": "exclusive_singleton",
+    "preprocessing_and_publisher_overlap": "allowed_only_when_resource_overlap_gate_passes"
+  },
+  "process_environment": {
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "TOKENIZERS_PARALLELISM": "false"
+  },
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "schema_version": "ds24_vast_single_gpu_thread_authority.v1",
+  "single_gpu_training_family_limit": 1,
+  "torch": {
+    "cuda_required": true,
+    "device": "cuda",
+    "matmul_precision": "high",
+    "torch_num_interop_threads": 1,
+    "torch_num_threads": 1
+  }
+}

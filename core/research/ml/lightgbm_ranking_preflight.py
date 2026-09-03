@@ -37,12 +37,20 @@ def canonical_hash(value: Any) -> str:
     return sha256(canonical_json(value).encode("utf-8")).hexdigest().upper()
 
 
-def deterministic_ranker_configuration(*, objective: str, num_threads: int = 1) -> dict[str, Any]:
+def deterministic_ranker_configuration(
+    *,
+    objective: str,
+    num_threads: int = 1,
+    device_type: str = "cpu",
+) -> dict[str, Any]:
     if objective not in SUPPORTED_OBJECTIVES:
         raise PreflightError("OBJECTIVE_UNAVAILABLE", f"OBJECTIVE_UNSUPPORTED:{objective}")
     if isinstance(num_threads, bool) or not isinstance(num_threads, int) or not 1 <= num_threads <= 2:
         raise PreflightError("NONDETERMINISTIC_CONFIGURATION", "THREAD_COUNT_MUST_BE_ONE_OR_TWO")
-    return {
+    device = str(device_type or "cpu").lower()
+    if device not in {"cpu", "gpu"}:
+        raise PreflightError("INVALID_ENVIRONMENT", f"LIGHTGBM_DEVICE_UNSUPPORTED:{device_type}")
+    configuration = {
         "objective": objective,
         "n_estimators": 12,
         "learning_rate": 0.1,
@@ -60,6 +68,50 @@ def deterministic_ranker_configuration(*, objective: str, num_threads: int = 1) 
         "feature_fraction_seed": 1729,
         "data_random_seed": 1729,
         "verbosity": -1,
+    }
+    if device == "gpu":
+        configuration.update(
+            {
+                "device_type": "gpu",
+                "gpu_platform_id": 0,
+                "gpu_device_id": 0,
+                "force_col_wise": False,
+                "deterministic": False,
+            }
+        )
+    return configuration
+
+
+def gpu_preferred_ranker_configuration(
+    *,
+    objective: str,
+    num_threads: int = 1,
+    gpu_supported: bool,
+    safe_cpu_fallback: bool = True,
+    fallback_reason: str = "",
+) -> dict[str, Any]:
+    if gpu_supported:
+        parameters = deterministic_ranker_configuration(
+            objective=objective,
+            num_threads=num_threads,
+            device_type="gpu",
+        )
+        policy = "GPU"
+        fallback = ""
+    elif safe_cpu_fallback:
+        parameters = deterministic_ranker_configuration(
+            objective=objective,
+            num_threads=num_threads,
+            device_type="cpu",
+        )
+        policy = "CPU_FALLBACK"
+        fallback = fallback_reason or "LIGHTGBM_GPU_NOT_SUPPORTED_BY_CURRENT_BUILD_OR_DRIVER"
+    else:
+        raise PreflightError("INVALID_ENVIRONMENT", "LIGHTGBM_GPU_REQUIRED_BUT_UNSUPPORTED")
+    return {
+        "runtime_policy": policy,
+        "safe_cpu_fallback_reason": fallback,
+        "parameters": parameters,
     }
 
 

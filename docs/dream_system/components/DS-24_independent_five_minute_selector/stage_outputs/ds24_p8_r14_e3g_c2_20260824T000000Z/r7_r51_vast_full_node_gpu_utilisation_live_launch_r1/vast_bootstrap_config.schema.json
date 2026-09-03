@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bootstrap_commit": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "branch": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "bucket": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "expected_bytes": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "expected_object_count": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "gpu_admission_required": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "live_confirm_token": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "prefix": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "queue_order": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "r49_r50_commit": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "repo_url": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "repo_url",
+    "branch",
+    "bootstrap_commit",
+    "r49_r50_commit",
+    "bucket",
+    "prefix",
+    "expected_object_count",
+    "expected_bytes",
+    "queue_order",
+    "gpu_admission_required",
+    "live_confirm_token"
+  ],
+  "schema_version": "ds24_vast_full_node_live_launch_config.v1",
+  "title": "DS24 Vast full-node Jupyter bootstrap config",
+  "type": "object"
+}

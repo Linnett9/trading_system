@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "artifact_tiers": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "bucket": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "continuous": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "local_import_root": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "quarantine_conflicts": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "remote_run_prefix": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    },
+    "verify_hashes": {
+      "type": [
+        "string",
+        "number",
+        "object",
+        "array",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "bucket",
+    "remote_run_prefix",
+    "local_import_root",
+    "artifact_tiers",
+    "continuous",
+    "verify_hashes",
+    "quarantine_conflicts"
+  ],
+  "schema_version": "ds24_vast_dell_repatriation_config.v1",
+  "title": "DS24 Dell continuous Vast output repatriation config",
+  "type": "object"
+}

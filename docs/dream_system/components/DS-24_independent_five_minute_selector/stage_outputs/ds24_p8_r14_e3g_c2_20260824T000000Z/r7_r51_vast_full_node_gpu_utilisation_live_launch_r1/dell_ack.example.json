@@ -1,0 +1,9 @@
+{
+  "ack_hash": "e0e77e99f4187110ae512362fe8b33c02c3ebe736ab46b82d679b0f249403620",
+  "acknowledged_at_utc": "2026-09-03T12:00:30Z",
+  "credentials_included": false,
+  "machine": "dell",
+  "plan_hash": "6b5fa70d63e13f05525479a89b3dcc9600fe233fb12b66c9967d9d0474d375c5",
+  "schema_version": "ds24_vast_ownership_ack.v1",
+  "unavailable_reason": ""
+}

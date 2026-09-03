@@ -1,0 +1,33 @@
+{
+  "family_gpu_audit_status": "PASS",
+  "live_model_work_started": false,
+  "r49_prerequisite": {
+    "authority_id": "DS24_VAST_R49_QUEUE_PREREQUISITE_VALIDATION_V1",
+    "checks": {
+      "classification_matches": true,
+      "definition_hash_matches_manifest": true,
+      "definition_present": true,
+      "definition_valid": true,
+      "manifest_present": true,
+      "queue_id_matches": true,
+      "test_evidence_pass": true
+    },
+    "manifest_hash": "344ca54be44d31daa5e1c722a54058d011fdc07ecb798555b314f5b126088335",
+    "manifest_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1/manifest.json",
+    "queue_authority_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1",
+    "queue_definition_hash": "a5f37f2958ef280a6a4e0dbdebd711ce75b28cfc337a4a4ee4c2f2a27f7b85f3",
+    "queue_definition_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r49_vast_reverse_nine_family_queue_r1/vast_reverse_queue_definition.json",
+    "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+    "status": "PASS",
+    "terminal_classification": "DS24_VAST_REVERSE_NINE_FAMILY_QUEUE_READY_NOT_LAUNCHED_EXTERNAL_COORDINATION_TRANSPORT_PENDING",
+    "terminal_if_failed": "BLOCKED_VAST_REVERSE_QUEUE_AUTHORITY_MISSING",
+    "validation_hash": "6fe30a5ce6009c5543848ccf9942bfdae737b71919129a67a23e8d7a047ff9ea"
+  },
+  "r50_manifest_hash": "77524b78555b924d88126a38b3d9420d8e72d94ed46a3c96c05eea94b74707ba",
+  "real_b2_transfer_performed": false,
+  "status": "FAIL",
+  "synthetic_gpu_admission_status": "PASS",
+  "synthetic_only": true,
+  "validation_hash": "2b722ee75e45c04caba09ca874080daa8e98f9c0bab923ae8d7df993611aeb93",
+  "vast_instance_rented": false
+}

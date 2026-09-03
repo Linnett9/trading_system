@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 
 
 AUTHORITY_VERSION = "sequence_window_authority_v1"
+_STABLE_SORTED = sorted
 ENTITY_CONTEXT_KEYS = (
     "permanent_asset_id",
     "verified_entity_key",
@@ -207,7 +208,7 @@ def build_authoritative_sequence_windows(
         ).append(row)
 
     for base_key, group_rows in base_groups.items():
-        ordered = sorted(
+        ordered = _STABLE_SORTED(
             group_rows,
             key=lambda row: (row["timestamp_sort_key"], row["row_id"], row["source_index"]),
         )
@@ -226,7 +227,7 @@ def build_authoritative_sequence_windows(
             previous = row
 
     windows: list[SequenceWindow] = []
-    for group_key, group_rows in sorted(grouped.items(), key=lambda item: item[0]):
+    for group_key, group_rows in _STABLE_SORTED(grouped.items(), key=lambda item: item[0]):
         timestamps = [row["timestamp_identity"] for row in group_rows]
         if (
             config.duplicate_timestamp_policy == "reject"

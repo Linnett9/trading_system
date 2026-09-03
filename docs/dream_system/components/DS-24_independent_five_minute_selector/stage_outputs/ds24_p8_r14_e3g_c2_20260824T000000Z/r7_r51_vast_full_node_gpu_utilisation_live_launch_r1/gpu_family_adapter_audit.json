@@ -1,0 +1,277 @@
+{
+  "accepted_reverse_order": [
+    "temporal_fusion_transformer",
+    "market_context_encoder",
+    "momentum_transformer",
+    "itransformer",
+    "transformer",
+    "patchtst",
+    "dlinear",
+    "lightgbm_lambdarank",
+    "lightgbm_rank_xendcg"
+  ],
+  "audit_hash": "0950dfb1cdf1c1a2e7e4c9b574a30cf88362bd8fd2b6ac2f77218d66205ca59c",
+  "audit_id": "DS24_R51_R49_FAMILY_ADAPTER_GPU_BEHAVIOUR_AUDIT_V1",
+  "checks": {
+    "every_r49_family_audited": true,
+    "seven_sequence_families_cuda_required": true,
+    "two_lightgbm_families_gpu_preferred_cpu_fallback": true
+  },
+  "families": [
+    {
+      "accepted_reverse_queue_ordinal": 1,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "temporal_fusion_transformer",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.temporal_fusion_transformer_model:TemporalFusionTransformerMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 2,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "market_context_encoder",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.market_context_encoder_model:MarketContextEncoderMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 3,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "momentum_transformer",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.momentum_transformer_model:MomentumTransformerSequenceMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 4,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "itransformer",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.itransformer_model:ITransformerSequenceMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 5,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "transformer",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.transformer_model:TransformerSequenceMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 6,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "patchtst",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.patchtst_model:PatchTSTSequenceMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 7,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": true,
+        "cuda_required_before_queue_release": true,
+        "lightgbm_cpu_fallback_explicit": false,
+        "lightgbm_gpu_preferred": false,
+        "network_moved_to_runtime_device": true,
+        "pin_memory_and_prefetch_available": true,
+        "torch_cuda_unavailable_fails_closed": true
+      },
+      "family": "dlinear",
+      "family_class": "GPU_SEQUENCE",
+      "model_class": "core.research.ml.models.dlinear_model:DLinearSequenceMLModel",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-sequence-family -> TorchSequenceReturnRegressor",
+      "source_files_present": {
+        "common_regressor": true,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+        "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "cuda"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 8,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": false,
+        "cuda_required_before_queue_release": false,
+        "lightgbm_cpu_fallback_explicit": true,
+        "lightgbm_gpu_preferred": true,
+        "network_moved_to_runtime_device": false,
+        "pin_memory_and_prefetch_available": false,
+        "torch_cuda_unavailable_fails_closed": false
+      },
+      "family": "lightgbm_lambdarank",
+      "family_class": "LIGHTGBM_RANKING",
+      "model_class": "core.research.ml.stock_level.lightgbm_production_selector:FittedLightGBMRanker",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-lightgbm-family -> LGBMRanker",
+      "source_files_present": {
+        "common_regressor": null,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/lightgbm_production_selector.py",
+        "core/research/ml/lightgbm_ranking_preflight.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "gpu_preferred_lightgbm"
+    },
+    {
+      "accepted_reverse_queue_ordinal": 9,
+      "default_device_in_legacy_adapters": "cpu",
+      "device_behavior": {
+        "batches_moved_to_runtime_device": false,
+        "cuda_required_before_queue_release": false,
+        "lightgbm_cpu_fallback_explicit": true,
+        "lightgbm_gpu_preferred": true,
+        "network_moved_to_runtime_device": false,
+        "pin_memory_and_prefetch_available": false,
+        "torch_cuda_unavailable_fails_closed": false
+      },
+      "family": "lightgbm_rank_xendcg",
+      "family_class": "LIGHTGBM_RANKING",
+      "model_class": "core.research.ml.stock_level.lightgbm_production_selector:FittedLightGBMRanker",
+      "real_training_path": "core.research.ml.ds24.vast_gpu_live_launch_r1 run-live-lightgbm-family -> LGBMRanker",
+      "source_files_present": {
+        "common_regressor": null,
+        "r51_adapter": true
+      },
+      "source_paths": [
+        "core/research/ml/ds24/remote_family_queue.py",
+        "core/research/ml/stock_level/lightgbm_production_selector.py",
+        "core/research/ml/lightgbm_ranking_preflight.py"
+      ],
+      "status": "PASS",
+      "vast_runtime_device": "gpu_preferred_lightgbm"
+    }
+  ],
+  "queue_id": "DS24_VAST_REVERSE_NINE_FAMILY_R1",
+  "status": "PASS",
+  "ticket_id": "DREAM_SYSTEM_DS24_VAST_FULL_NODE_GPU_UTILISATION_LIVE_LAUNCH_R1"
+}

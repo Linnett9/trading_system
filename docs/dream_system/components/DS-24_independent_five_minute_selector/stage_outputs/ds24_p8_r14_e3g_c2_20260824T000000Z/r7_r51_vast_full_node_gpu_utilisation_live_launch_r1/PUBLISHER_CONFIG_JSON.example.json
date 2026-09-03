@@ -1,0 +1,40 @@
+{
+  "allowed_roots": [
+    "queue_state",
+    "ownership",
+    "metrics_only_v3",
+    "ensemble_oof_scores_v2",
+    "checkpoints",
+    "logs",
+    "telemetry",
+    "manifests",
+    "config"
+  ],
+  "bucket": "TradingSystemDataset44",
+  "config_hash": "03b74cea5f6f76a852371d38ff2a8ba656bdc11f277369030103eaef7141c0cb",
+  "copy_mode": "rclone copy; never destructive sync",
+  "credentials_included": false,
+  "forbidden_markers": [
+    "full_prediction",
+    "full-prediction",
+    "prediction_partitions",
+    "holdout",
+    "paper_order",
+    "live_order",
+    ".env",
+    "credential",
+    "secret",
+    "rclone.conf"
+  ],
+  "local_run_root": "/workspace/ds24/output/remote_vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
+  "max_backup_age_seconds": 1200,
+  "remote_prefix": "ds24/vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
+  "resource_overlap_gates": {
+    "max_cpu_total_percent": 65,
+    "max_disk_busy_percent": 70,
+    "max_publisher_backlog_gb": 12,
+    "min_disk_free_gb": 80,
+    "min_ram_free_gb": 16
+  },
+  "schema_version": "ds24_vast_durable_publisher_config.v1"
+}

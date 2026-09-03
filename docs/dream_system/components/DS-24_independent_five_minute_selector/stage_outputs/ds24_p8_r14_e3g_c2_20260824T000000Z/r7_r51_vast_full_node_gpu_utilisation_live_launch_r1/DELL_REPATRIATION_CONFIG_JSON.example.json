@@ -1,0 +1,23 @@
+{
+  "artifact_tiers": [
+    "metrics",
+    "ic_series",
+    "compact_oof_artifacts",
+    "checkpoints",
+    "model_weights",
+    "manifests",
+    "completion_markers"
+  ],
+  "bucket": "TradingSystemDataset44",
+  "config_hash": "8d593b669e831e80e36cf2c3ff7c4db1bd0b54262da17c5c6b72c8d527066f68",
+  "continuous": true,
+  "copy_mode": "rclone copy with include filters",
+  "credentials_included": false,
+  "destructive_sync": false,
+  "local_import_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r51_vast_full_node_gpu_utilisation_live_launch_r1/dell_imports",
+  "poll_seconds": 300,
+  "quarantine_conflicts": true,
+  "remote_run_prefix": "ds24/vast_runs/queue=DS24_VAST_REVERSE_NINE_FAMILY_R1/run=<RUN_ID>",
+  "schema_version": "ds24_vast_dell_repatriation_config.v1",
+  "verify_hashes": true
+}

@@ -1,0 +1,59 @@
+{
+  "fallback_allowed": true,
+  "families": [
+    {
+      "family": "lightgbm_lambdarank",
+      "objective": "lambdarank",
+      "parameters": {
+        "bagging_seed": 1729,
+        "colsample_bytree": 1.0,
+        "data_random_seed": 1729,
+        "deterministic": true,
+        "feature_fraction_seed": 1729,
+        "force_col_wise": true,
+        "learning_rate": 0.1,
+        "max_bin": 31,
+        "max_depth": 3,
+        "min_child_samples": 1,
+        "n_estimators": 12,
+        "n_jobs": 1,
+        "num_leaves": 4,
+        "objective": "lambdarank",
+        "random_state": 1729,
+        "subsample": 1.0,
+        "verbosity": -1
+      },
+      "runtime_policy": "CPU_FALLBACK",
+      "safe_cpu_fallback_reason": "LIGHTGBM_GPU_NOT_SUPPORTED_BY_CURRENT_BUILD_OR_DRIVER"
+    },
+    {
+      "family": "lightgbm_rank_xendcg",
+      "objective": "rank_xendcg",
+      "parameters": {
+        "bagging_seed": 1729,
+        "colsample_bytree": 1.0,
+        "data_random_seed": 1729,
+        "deterministic": true,
+        "feature_fraction_seed": 1729,
+        "force_col_wise": true,
+        "learning_rate": 0.1,
+        "max_bin": 31,
+        "max_depth": 3,
+        "min_child_samples": 1,
+        "n_estimators": 12,
+        "n_jobs": 1,
+        "num_leaves": 4,
+        "objective": "rank_xendcg",
+        "random_state": 1729,
+        "subsample": 1.0,
+        "verbosity": -1
+      },
+      "runtime_policy": "CPU_FALLBACK",
+      "safe_cpu_fallback_reason": "LIGHTGBM_GPU_NOT_SUPPORTED_BY_CURRENT_BUILD_OR_DRIVER"
+    }
+  ],
+  "gpu_supported": false,
+  "policy_hash": "a594b3a735a94e7f08ba1b685d6b983362c2cd809969c39d3564bad0d3cc66c0",
+  "policy_id": "DS24_R51_LIGHTGBM_GPU_PREFERRED_SAFE_FALLBACK_V1",
+  "status": "PASS"
+}

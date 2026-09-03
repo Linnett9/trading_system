@@ -1,0 +1,7 @@
+{
+  "live_model_work_started": false,
+  "real_b2_transfer_performed": false,
+  "remaining_user_action": "Create one Jupyter-proxy Vast instance, open browser terminal, paste the guarded bootstrap command.",
+  "synthetic_tests_only": true,
+  "vast_instance_rented": false
+}
