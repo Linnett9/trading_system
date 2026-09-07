@@ -1,0 +1,79 @@
+{
+  "release_id": "DS24_HUBER_R36_QUARANTINE_SCIENTIFIC_RELEASE_V1",
+  "run_id": "DS24_V3_HUBER_R36_QUARANTINE_FORENSIC_ADJUDICATION_R1",
+  "family": "huber",
+  "status": "ACTIVE",
+  "decision": "HUBER_R36_QUARANTINE_RELEASE_SCIENTIFICALLY_JUSTIFIED",
+  "created_at_utc": "2026-09-07T11:52:00+00:00",
+  "released_metrics_root_name": "metrics_only_v3_r37_huber_replay",
+  "quarantine_marker_preserved": true,
+  "quarantine_marker_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/r36_namespace_quarantine.json",
+  "quarantine_root_cause": {
+    "classification": "DS24_R36_DUPLICATE_HUBER_CONTAINED_REPAIR_REQUIRED",
+    "source_namespace": "metrics_only_v3",
+    "first_fatal_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/stderr_r34_v3_gen5.log",
+    "first_fatal_resume_generation": 5,
+    "first_fatal_text": "RuntimeError: RESOLVED_PERFORMANCE_V2_PENDING_HORIZON_LIMIT_EXCEEDED:timestamps=24>18;rows=11973>9252",
+    "source_namespace_pid": 19716,
+    "source_namespace_timestamp_min": "2019-05-07T13:35:00+00:00",
+    "source_namespace_timestamp_max": "2019-06-06T20:00:00+00:00"
+  },
+  "final_namespace_evidence": {
+    "metrics_root_name": "metrics_only_v3_r37_huber_replay",
+    "terminal_pid": 22440,
+    "terminal_resume_generation": 95,
+    "namespace_lease_released_at_utc": "2026-09-06T19:40:42.306201+00:00",
+    "resolved_performance_rows": 203271,
+    "rank_ic_valid_rows": 171863,
+    "daily_return_rows": 1874,
+    "terminal_censored_rows": 12,
+    "duplicate_count": 0,
+    "pending_score_rows": 0,
+    "pending_timestamp_count": 0,
+    "pending_horizon_within_contract": true,
+    "permanent_full_prediction_files_written": 0,
+    "quarantined_source_pid_present_in_final_manifests": false,
+    "final_terminal_censored_pid": 22440
+  },
+  "overlap_adjudication": {
+    "old_source_rank_rows": 1704,
+    "final_rank_rows": 203271,
+    "overlap_decision_timestamps": 1704,
+    "overlap_row_hash_matches": 1704,
+    "overlap_rank_ic_max_abs_diff": 0.0,
+    "interpretation": "The old quarantined timestamp interval is deterministically reproducible in the final R37 namespace, but final R37 manifest parts are not byte-originated from the quarantined source PID or namespace."
+  },
+  "common_population_huber_vs_rff": {
+    "common_all": {
+      "common_rank_timestamps": 203271,
+      "common_daily_dates": 1859,
+      "huber_rank_ic_mean": 0.5023150228928017,
+      "rff_rank_ic_mean": 0.03431086029850828,
+      "huber_daily_sharpe": 9.190401428469558,
+      "rff_daily_sharpe": 1.8237917180571928,
+      "huber_cumulative_net_return": 1522.6630863261696,
+      "rff_cumulative_net_return": 0.5719295054600226
+    },
+    "excluding_quarantined_source_window": {
+      "excluded_quarantine_timestamps": 1704,
+      "excluded_quarantine_dates": 16,
+      "common_rank_timestamps": 201567,
+      "common_daily_dates": 1843,
+      "huber_rank_ic_mean": 0.502207847983164,
+      "rff_rank_ic_mean": 0.034362613049543266,
+      "huber_daily_sharpe": 9.180975622500535,
+      "rff_daily_sharpe": 1.8064289885144784,
+      "huber_cumulative_net_return": 1457.9167078072508,
+      "rff_cumulative_net_return": 0.5605463310909324
+    }
+  },
+  "safety_guards": {
+    "holdout_accessed": false,
+    "paper_orders": 0,
+    "live_orders": 0,
+    "model_fitting_or_replay_performed": false,
+    "resource_gates_modified": false,
+    "full_prediction_persistence_enabled": false
+  },
+  "scientific_conclusion": "R36 quarantine is confined to an older superseded metrics_only_v3 namespace and gen5 pending-horizon failure. The final metrics_only_v3_r37_huber_replay namespace is independently auditable, terminal, duplicate-free, pending-clean, and not byte-originated from the quarantined source namespace. Huber's extraordinary performance remains unusual but survives the requested R36/common-population falsification checks."
+}
