@@ -1,0 +1,34 @@
+{
+  "authority_hash": "1c9107084800b716be16c53eb222c68821f3b42e99ffad54ff8679209d31475a",
+  "classification": "DS24_R47A_XENDCG_CROSS_HOST_IMPORT_COMPLETE",
+  "dell_effective_ready_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "derived_from": {
+    "r42_ready_queue_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+    "r47a_ownership_state_hash": "80a3ed2752203a330feeeb58483a78fe588aec621a0229e3a20adc1f5da07e01"
+  },
+  "excluded_families": [
+    {
+      "family": "lightgbm_rank_xendcg",
+      "reason": "SKIP_COMPLETE_IMPORTED"
+    },
+    {
+      "family": "lightgbm_lambdarank",
+      "reason": "SKIP_MAC_OWNED"
+    },
+    {
+      "family": "DLinear",
+      "reason": "SKIP_MAC_RESERVED"
+    }
+  ],
+  "generated_at_utc": "2026-09-09T15:10:05+00:00",
+  "ticket": "DS24_R47A_DELL_EFFECTIVE_READY_QUEUE",
+  "worker_launches": 0
+}

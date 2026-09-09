@@ -1,0 +1,140 @@
+{
+  "artifact_validation_hash": "dcbb10fca4973b127c1f533333bbf48b351d6fd867a4b05835f0cfbb13e02915",
+  "classification": "PASS",
+  "fixture_hash_validation": {
+    "000002": {
+      "actual_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+      "actual_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+      "expected_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+      "expected_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+      "model_hash_match": true,
+      "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=000002.pkl",
+      "oof_hash_match": true,
+      "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2016-01-05/part-refit=000002.parquet"
+    },
+    "001132": {
+      "actual_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+      "actual_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+      "expected_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+      "expected_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+      "model_hash_match": true,
+      "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=001132.pkl",
+      "oof_hash_match": true,
+      "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2020-07-01/part-refit=001132.parquet"
+    },
+    "002263": {
+      "actual_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+      "actual_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+      "expected_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+      "expected_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+      "model_hash_match": true,
+      "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=002263.pkl",
+      "oof_hash_match": true,
+      "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2024-12-31/part-refit=002263.parquet"
+    }
+  },
+  "generated_at_utc": "2026-09-09T15:10:05+00:00",
+  "missing_requirements": [],
+  "model_inventory": {
+    "apple_double_sidecar_count": 8,
+    "duplicate_ordinal_count": 0,
+    "duplicate_ordinals": [],
+    "expected_first_ordinal": "000002",
+    "expected_genuine_pkl_count": 2262,
+    "expected_last_ordinal": "002263",
+    "first_ordinal": "000002",
+    "genuine_pkl_count": 2262,
+    "last_ordinal": "002263",
+    "missing_ordinal_count": 0,
+    "missing_ordinals": [],
+    "model_artifact_count": 2262,
+    "model_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+    "root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+    "unexpected_filenames": []
+  },
+  "no_model_fits": true,
+  "no_new_predictions": true,
+  "parity_fixture_validation": {
+    "000002": {
+      "fresh_top20_membership_match": true,
+      "fresh_top20_order_match": true,
+      "fresh_vs_oof_max_abs_diff": 1.5830112443104838e-08,
+      "fresh_vs_saved_model_max_abs_diff": 0.0,
+      "saved_model_top20_membership_match": true,
+      "saved_model_top20_order_match": true,
+      "saved_model_vs_oof_max_abs_diff": 1.5830112443104838e-08
+    },
+    "001132": {
+      "fresh_top20_membership_match": true,
+      "fresh_top20_order_match": true,
+      "fresh_vs_oof_max_abs_diff": 2.7001733959863827e-08,
+      "fresh_vs_saved_model_max_abs_diff": 0.0,
+      "saved_model_top20_membership_match": true,
+      "saved_model_top20_order_match": true,
+      "saved_model_vs_oof_max_abs_diff": 2.7001733959863827e-08
+    },
+    "002263": {
+      "fresh_top20_membership_match": true,
+      "fresh_top20_order_match": true,
+      "fresh_vs_oof_max_abs_diff": 2.150730260552791e-08,
+      "fresh_vs_saved_model_max_abs_diff": 0.0,
+      "saved_model_top20_membership_match": true,
+      "saved_model_top20_order_match": true,
+      "saved_model_vs_oof_max_abs_diff": 2.150730260552791e-08
+    }
+  },
+  "producer_authority": {
+    "authority_root": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1",
+    "estimator_params": {
+      "learning_rate": 0.05,
+      "min_child_samples": 10,
+      "n_estimators": 25,
+      "n_jobs": 4,
+      "num_leaves": 15,
+      "num_threads": 4,
+      "objective": "rank_xendcg",
+      "random_state": 1729,
+      "verbose": -1
+    },
+    "feature_order_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+    "fixture_hashes": {
+      "000002": {
+        "model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+        "model_size_bytes": 57996,
+        "oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+        "oof_size_bytes": 14527
+      },
+      "001132": {
+        "model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+        "model_size_bytes": 58379,
+        "oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+        "oof_size_bytes": 14371
+      },
+      "002263": {
+        "model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+        "model_size_bytes": 58639,
+        "oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+        "oof_size_bytes": 14593
+      }
+    },
+    "mac_head": "b2ffdf0966c0424c82632ea21f83cefb29905cc1",
+    "parity_classification": "XENDCG_PRODUCTION_PARITY_PASS",
+    "predictor_count": 101,
+    "producer_sha": "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d",
+    "producer_source_classification": "MAC_WORKTREE_UNCOMMITTED_SOURCE_OVER_ADVERTISED_HEAD",
+    "runtime_arguments": {
+      "family": "lightgbm_rank_xendcg",
+      "lookback_sessions": 20,
+      "max_assets": null,
+      "max_refits": null,
+      "max_training_rows": 24000,
+      "repo_root": "/Users/brandonlinnett/Desktop/trading_system"
+    },
+    "source_manifest_sha256": "5cb30e9629d681e86b44bf301af50b328b8d0f9e71929f1f9d00d9f98d0d4d7c",
+    "three_refit_parity_sha256": "c2f8df6db8c491135e72d4a71a983fe33ead8d538b510af73506626573f88e39"
+  },
+  "source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg",
+  "source_root_type": "MAC_AUX_FAMILY_ROOT",
+  "stable_artifact_hash": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+  "ticket": "DS24_R47A_XENDCG_ARTIFACT_VALIDATION"
+}

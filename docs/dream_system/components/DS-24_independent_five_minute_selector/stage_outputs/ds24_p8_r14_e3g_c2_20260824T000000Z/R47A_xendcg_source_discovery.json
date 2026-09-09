@@ -1,0 +1,36 @@
+{
+  "authority_hash": "da2133b1bfd9f3b5df2196580af107c8ad2f3a7f80acd67fbfdcd06c3cfd668a",
+  "checkpoint_cursor": "family_complete",
+  "classification": "PASS",
+  "decision_date_range": {
+    "end": "2024-12-31",
+    "start": "2016-01-05"
+  },
+  "family": "lightgbm_rank_xendcg",
+  "feature_order_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+  "generated_at_utc": "2026-09-09T15:10:05+00:00",
+  "metrics_authority": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/resolved_performance_summary_v3.json",
+  "oof_manifest_sha256": "65a49db5d67c0e6b165a00c432e5f75c68a47f6fccfbbeb90d6bdfa1a82514f6",
+  "queue_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+  "refit_count": 2262,
+  "retained_oof_row_count": 1150792,
+  "root_exists": true,
+  "run_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+  "score_row_count": 1150792,
+  "source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg",
+  "source_root_type": "MAC_AUX_FAMILY_ROOT",
+  "target": "forward_return_60m__decision_5m",
+  "terminal_family_status": "PASS",
+  "ticket": "DS24_R47A_XENDCG_SOURCE_DISCOVERY",
+  "top_level_entries": [
+    "checkpoints",
+    "ensemble_oof_partition_ledger_v2.csv",
+    "ensemble_oof_scores_manifest_v2.json",
+    "ensemble_oof_scores_manifest_v2.sha256",
+    "ensemble_oof_scores_v2",
+    "family_execution_summary.json",
+    "metrics_only_v3",
+    "model_artifacts"
+  ],
+  "top_n_contract": "Top-20 retained membership/order authority from three_refit_parity.json"
+}

@@ -321,6 +321,10 @@ def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str
 
 
 def ownership_monitor_rows() -> dict[str, Any]:
+    r47a = read_json(STAGE / "R47A_cross_host_ownership_state.json")
+    by_family = r47a.get("by_family")
+    if isinstance(by_family, dict) and by_family:
+        return by_family
     r47 = read_json(STAGE / "R47_cross_host_ownership_state.json")
     by_family = r47.get("by_family")
     if isinstance(by_family, dict) and by_family:

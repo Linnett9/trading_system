@@ -1,0 +1,22 @@
+{
+  "artifact_hash": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+  "classification": "ALREADY_IMPORTED_IDENTICAL",
+  "duplicate_import_result": "ALREADY_IMPORTED_IDENTICAL",
+  "effective_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "family": "lightgbm_rank_xendcg",
+  "generated_at_utc": "2026-09-09T15:10:05+00:00",
+  "import_result": "COMPLETE_IMPORTED",
+  "ledger_appended": false,
+  "ownership_state": "COMPLETE_IMPORTED",
+  "source_run_id": "MAC_LIGHTGBM_RANK_XENDCG_COMPLETE_TRANSFERRED_AUTHORITY",
+  "terminal_classification": "DS24_R47A_XENDCG_CROSS_HOST_IMPORT_COMPLETE",
+  "ticket": "DS24_R47A_XENDCG_IMPORT_RESULT"
+}

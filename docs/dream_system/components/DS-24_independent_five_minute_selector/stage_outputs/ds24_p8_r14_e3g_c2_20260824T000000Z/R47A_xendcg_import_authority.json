@@ -1,0 +1,219 @@
+{
+  "authority_hash": "09610dfdae3bee537f73240618db05ba7736aaca9a87e258eb5ee1371c0e6f61",
+  "classification": "DS24_R47A_XENDCG_CROSS_HOST_IMPORT_COMPLETE",
+  "contract": {
+    "artifact_hashes": {
+      "fixture_hashes": {
+        "000002": {
+          "actual_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+          "actual_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+          "expected_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+          "expected_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=000002.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2016-01-05/part-refit=000002.parquet"
+        },
+        "001132": {
+          "actual_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+          "actual_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+          "expected_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+          "expected_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=001132.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2020-07-01/part-refit=001132.parquet"
+        },
+        "002263": {
+          "actual_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+          "actual_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+          "expected_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+          "expected_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=002263.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2024-12-31/part-refit=002263.parquet"
+        }
+      },
+      "manifest_sha256": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+      "model_artifact_manifest_sha256": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85"
+    },
+    "artifact_manifest": {
+      "apple_double_sidecar_count": 8,
+      "duplicate_ordinal_count": 0,
+      "duplicate_ordinals": [],
+      "expected_first_ordinal": "000002",
+      "expected_genuine_pkl_count": 2262,
+      "expected_last_ordinal": "002263",
+      "first_ordinal": "000002",
+      "genuine_pkl_count": 2262,
+      "last_ordinal": "002263",
+      "missing_ordinal_count": 0,
+      "missing_ordinals": [],
+      "model_artifact_count": 2262,
+      "model_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+      "root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+      "unexpected_filenames": []
+    },
+    "date_range": {
+      "end": "2024-12-31",
+      "start": "2016-01-05"
+    },
+    "family": "lightgbm_rank_xendcg",
+    "feature_count": 101,
+    "feature_hash": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "mac_producing_host": "MAC",
+    "mac_run_id": "MAC_LIGHTGBM_RANK_XENDCG_COMPLETE_TRANSFERRED_AUTHORITY",
+    "metrics_hashes": {
+      "decision_trace": "ca3fcff04efd2876f992e13d07ed39805da996a936f169cc7b26bfb9d65c5d58",
+      "per_t_metrics": "2d80b33a3e95f9ed626c4c4b82dbb34507aa37e86568f7f1214313d421efcf00",
+      "resolved_performance_summary_v3": "95d86023e1c50fe8b2599668d7d8f3313eff8ce178e16e2c425601296c8c1a7c"
+    },
+    "metrics_manifest": {
+      "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/resolved_performance_summary_v3.json",
+      "rows": 2262,
+      "sha256": "95d86023e1c50fe8b2599668d7d8f3313eff8ce178e16e2c425601296c8c1a7c"
+    },
+    "model_config_authority_hash": "1ca718aebd461365b59c1503acdff5c8f0899aabfd699fe59995bdceccd435d3",
+    "original_metrics": {
+      "annual_volatility": 0.134117984278,
+      "annualised_arithmetic_return": 1.774883897978,
+      "caution": "Extraordinary Mac-origin result; import is provenance acceptance, not independent prospective confirmation.",
+      "daily_sharpe": 13.233750175466,
+      "directional_accuracy": 0.580621053511,
+      "max_drawdown": -0.029690054964,
+      "mean_daily_net_return": 0.007043190071,
+      "mean_hit_rate": 0.70376272687,
+      "mean_rank_ic": 0.250646544554,
+      "mean_spearman_rank_ic": 0.250646544554,
+      "ndcg_at_20": 0.228239431375,
+      "pearson_ic": 0.247020330954
+    },
+    "paper_orders": 0,
+    "previous_ownership": {
+      "authority_hash": "b720ebedfa0e32a9d9c1dcb02a996adb16b8edeb12033581bc0d13ba47a7026e",
+      "authority_source": "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY",
+      "dell_eligible": false,
+      "execution_owner": "MAC",
+      "family": "lightgbm_rank_xendcg",
+      "mac_eligible": true,
+      "owner_state": "MAC_COMPLETE",
+      "ownership_reason": "Completed on Mac lane; Dell recomputation forbidden unless ownership is reassigned.",
+      "ownership_state": "MAC_OWNED",
+      "readiness_state": "READY_TO_LAUNCH",
+      "updated_at_utc": "2026-09-09T13:46:04+00:00"
+    },
+    "producer_source_hash": "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d",
+    "queue_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+    "refit_count": 2262,
+    "retained_metrics": {
+      "decision_rows": 45240,
+      "family": "lightgbm_rank_xendcg",
+      "fit_wall_seconds_last_refit": 0.25136929197469726,
+      "holdout_rows": 0,
+      "live_orders": 0,
+      "mean_spearman_rank_ic": 0.2506464517395151,
+      "paper_orders": 0,
+      "rank_ic_rows": 2262,
+      "status": "PASS",
+      "target_contract": "forward_return_60m__decision_5m"
+    },
+    "score_oof_population": {
+      "distinct_assets": 514,
+      "distinct_decision_timestamps": 2262,
+      "manifest_sha256": "65a49db5d67c0e6b165a00c432e5f75c68a47f6fccfbbeb90d6bdfa1a82514f6",
+      "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_manifest_v2.json",
+      "row_count": 1150792
+    },
+    "source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg",
+    "source_root_type": "MAC_AUX_FAMILY_ROOT",
+    "source_terminal_manifest": {
+      "authority_hash": "da2133b1bfd9f3b5df2196580af107c8ad2f3a7f80acd67fbfdcd06c3cfd668a",
+      "checkpoint_cursor": "family_complete",
+      "classification": "PASS",
+      "decision_date_range": {
+        "end": "2024-12-31",
+        "start": "2016-01-05"
+      },
+      "family": "lightgbm_rank_xendcg",
+      "feature_order_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+      "generated_at_utc": "2026-09-09T15:10:05+00:00",
+      "metrics_authority": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/resolved_performance_summary_v3.json",
+      "oof_manifest_sha256": "65a49db5d67c0e6b165a00c432e5f75c68a47f6fccfbbeb90d6bdfa1a82514f6",
+      "queue_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+      "refit_count": 2262,
+      "retained_oof_row_count": 1150792,
+      "root_exists": true,
+      "run_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+      "score_row_count": 1150792,
+      "source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg",
+      "source_root_type": "MAC_AUX_FAMILY_ROOT",
+      "target": "forward_return_60m__decision_5m",
+      "terminal_family_status": "PASS",
+      "ticket": "DS24_R47A_XENDCG_SOURCE_DISCOVERY",
+      "top_level_entries": [
+        "checkpoints",
+        "ensemble_oof_partition_ledger_v2.csv",
+        "ensemble_oof_scores_manifest_v2.json",
+        "ensemble_oof_scores_manifest_v2.sha256",
+        "ensemble_oof_scores_v2",
+        "family_execution_summary.json",
+        "metrics_only_v3",
+        "model_artifacts"
+      ],
+      "top_n_contract": "Top-20 retained membership/order authority from three_refit_parity.json"
+    },
+    "target": "forward_return_60m__decision_5m",
+    "target_contract_hash": "295656c825cb70986359c2b6457c44224ad45ede3aff97bdb97dbb85e02a2fda",
+    "terminal_status": "PASS",
+    "tournament_comparable_metrics_status": "DERIVED_FROM_RETAINED_MAC_OOF"
+  },
+  "corrected_source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg",
+  "generated_at_utc": "2026-09-09T15:10:05+00:00",
+  "no_model_fits": true,
+  "no_new_predictions": true,
+  "no_worker_launches": true,
+  "old_r47_incorrect_search_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/model_artifacts",
+  "ticket": "DS24_R47A_XENDCG_IMPORT_AUTHORITY",
+  "verification": {
+    "apple_double_sidecar_count": 8,
+    "artifact_hash": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+    "artifact_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+    "classification": "COMPLETE_IMPORTED",
+    "family": "lightgbm_rank_xendcg",
+    "missing_requirements": [],
+    "model_artifact_count": 2262,
+    "original_metrics": {
+      "annual_volatility": 0.134117984278,
+      "annualised_arithmetic_return": 1.774883897978,
+      "caution": "Extraordinary Mac-origin result; import is provenance acceptance, not independent prospective confirmation.",
+      "daily_sharpe": 13.233750175466,
+      "directional_accuracy": 0.580621053511,
+      "max_drawdown": -0.029690054964,
+      "mean_daily_net_return": 0.007043190071,
+      "mean_hit_rate": 0.70376272687,
+      "mean_rank_ic": 0.250646544554,
+      "mean_spearman_rank_ic": 0.250646544554,
+      "ndcg_at_20": 0.228239431375,
+      "pearson_ic": 0.247020330954
+    },
+    "previous_ownership": {
+      "authority_hash": "b720ebedfa0e32a9d9c1dcb02a996adb16b8edeb12033581bc0d13ba47a7026e",
+      "authority_source": "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY",
+      "dell_eligible": false,
+      "execution_owner": "MAC",
+      "family": "lightgbm_rank_xendcg",
+      "mac_eligible": true,
+      "owner_state": "MAC_COMPLETE",
+      "ownership_reason": "Completed on Mac lane; Dell recomputation forbidden unless ownership is reassigned.",
+      "ownership_state": "MAC_OWNED",
+      "readiness_state": "READY_TO_LAUNCH",
+      "updated_at_utc": "2026-09-09T13:46:04+00:00"
+    },
+    "source_host": "MAC",
+    "source_run_id": "MAC_LIGHTGBM_RANK_XENDCG_COMPLETE_TRANSFERRED_AUTHORITY",
+    "tournament_comparable_metrics_status": "DERIVED_FROM_RETAINED_MAC_OOF"
+  }
+}
