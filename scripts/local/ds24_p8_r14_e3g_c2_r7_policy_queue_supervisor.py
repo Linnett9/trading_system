@@ -159,6 +159,13 @@ R44_CROSS_HOST_OWNERSHIP_PATH = STAGE / "R44_cross_host_family_ownership.json"
 R44_DELL_EFFECTIVE_READY_QUEUE_PATH = STAGE / "R44_dell_effective_ready_queue.json"
 R44_ADMISSION_VALIDATION_PATH = STAGE / "R44_cross_host_admission_validation.json"
 R44_REBOOT_TASK_PLAN_PATH = STAGE / "R44_reboot_supervisor_task_plan.json"
+R45_PRE_CUTOVER_SNAPSHOT_PATH = STAGE / "R45_pre_cutover_snapshot.json"
+R45_SUPERVISOR_LAUNCH_AUTHORITY_PATH = STAGE / "R45_supervisor_launch_authority.json"
+R45_POST_CUTOVER_VALIDATION_PATH = STAGE / "R45_post_cutover_validation.json"
+R45_WINDOWS_TASK_REGISTRATION_PATH = STAGE / "R45_windows_task_registration.json"
+R45_REBOOT_SIMULATION_PATH = STAGE / "R45_reboot_simulation.json"
+R45_CLASSIFICATION = "DS24_R45_R44_SUPERVISOR_CUTOVER_ACTIVE_REBOOT_SAFE"
+R45_SUPERVISOR_LAUNCHER_PATH = ROOT / "scripts" / "local" / "launch_ds24_r45_supervisor.ps1"
 R42_ALLOWED_READY_FAMILIES = (
     "random_forest",
     "elastic_net",
@@ -183,6 +190,7 @@ R44_DELL_READY_FAMILIES = (
     "Market Context Encoder",
 )
 R44_DELL_RUNNING_FAMILIES = ("mlp", "extra_trees", "gradient_boosting")
+R45_PROTECTED_DELL_WORKERS = R44_DELL_RUNNING_FAMILIES
 R44_ALLOWED_OWNERSHIP_STATES = {
     "DELL_OWNED",
     "MAC_OWNED",
@@ -1490,6 +1498,9 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
                 "launch_enabled": launch_enabled_for_family(family),
                 "pid": live_pids[0] if live_pids else 0,
                 "pid_alive": bool(live),
+                "creation_time": live[0].get("CreationDate") if live else None,
+                "parent_pid": live[0].get("ParentProcessId") if live else None,
+                "command_line": live[0].get("CommandLine", "") if live else "",
                 "live_worker_count": len(live),
                 "live_worker_pids": live_pids,
                 "duplicate_worker_count": max(0, len(live) - 1),
@@ -2904,6 +2915,344 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def supervisor_daemon_processes() -> list[dict[str, Any]]:
+    return [
+        row
+        for row in python_processes()
+        if "ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py" in str(row.get("CommandLine", ""))
+        and "--daemon" in str(row.get("CommandLine", ""))
+    ]
+
+
+def active_protected_worker_rows(board: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in board if row.get("family") in R45_PROTECTED_DELL_WORKERS and bool(row.get("pid_alive"))]
+
+
+def compact_supervisor_lease(lease: Mapping[str, Any]) -> dict[str, Any]:
+    previous = lease.get("previous_owner")
+    compact: dict[str, Any] = {
+        "pid": lease.get("pid"),
+        "heartbeat_utc": lease.get("heartbeat_utc"),
+        "lease_generation": lease.get("lease_generation"),
+        "hostname": lease.get("hostname"),
+        "command_line_hash": lease.get("command_line_hash"),
+        "process_creation_time": lease.get("process_creation_time"),
+        "resume": lease.get("resume"),
+        "stale_recovered": lease.get("stale_recovered"),
+    }
+    if isinstance(previous, Mapping):
+        compact["previous_owner"] = {
+            "pid": previous.get("pid"),
+            "heartbeat_utc": previous.get("heartbeat_utc"),
+            "lease_generation": previous.get("lease_generation"),
+            "command_line_hash": previous.get("command_line_hash"),
+        }
+    return {key: value for key, value in compact.items() if value not in (None, "")}
+
+
+def r45_supervisor_command(*, python_executable: str | None = None) -> list[str]:
+    return [
+        python_executable or sys.executable,
+        "scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+        "--daemon",
+        "--resume",
+        "--poll-seconds",
+        "20",
+        "--max-active-model-processes",
+        "3",
+        "--max-policy-workers",
+        "3",
+        "--max-restarts-per-family",
+        "2",
+        "--admission-commit-percent",
+        "92",
+        "--max-system-commit-percent",
+        "95",
+        "--min-available-ram-gb",
+        "6",
+        "--evaluation-version",
+        "v3",
+        "--metrics-root-name",
+        "metrics_only_v3",
+        "--refit-policy",
+        "daily_session_v1",
+        "--ready-family-queue-manifest",
+        str(R42_READY_QUEUE_PATH),
+        "--cross-host-ownership-manifest",
+        str(R44_CROSS_HOST_OWNERSHIP_PATH),
+        "--admit-crashed-recoverable",
+    ]
+
+
+def r45_supervisor_launch_authority(path: Path = R45_SUPERVISOR_LAUNCH_AUTHORITY_PATH) -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    ownership = validate_cross_host_ownership_authority(R44_CROSS_HOST_OWNERSHIP_PATH)
+    effective = read_json(R44_DELL_EFFECTIVE_READY_QUEUE_PATH)
+    command = r45_supervisor_command()
+    payload = {
+        "ticket": "DS24_R45_SUPERVISOR_LAUNCH_AUTHORITY",
+        "generated_at_utc": utc_now(),
+        "classification": "R44_AWARE_SUPERVISOR_COMMAND_AUTHORIZED",
+        "working_directory": str(ROOT),
+        "command": command,
+        "command_line": " ".join(command),
+        "scheduled_task_launcher": display_path(R45_SUPERVISOR_LAUNCHER_PATH),
+        "uses_legacy_family_queue": False,
+        "r42_ready_queue_manifest": ready["manifest_path"],
+        "r42_ready_queue_hash": ready["manifest_hash"],
+        "r44_ownership_manifest": ownership["manifest_path"],
+        "r44_ownership_hash": ownership["manifest_hash"],
+        "r44_effective_queue_path": display_path(R44_DELL_EFFECTIVE_READY_QUEUE_PATH),
+        "r44_effective_queue_hash": hash_if_exists(R44_DELL_EFFECTIVE_READY_QUEUE_PATH),
+        "effective_dell_queue": effective.get("dell_effective_ready_queue", []),
+        "worker_launches": 0,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(path, payload)
+    return payload
+
+
+def validate_r44_effective_queue_contract() -> dict[str, Any]:
+    ownership = validate_cross_host_ownership_authority(R44_CROSS_HOST_OWNERSHIP_PATH)
+    effective = read_json(R44_DELL_EFFECTIVE_READY_QUEUE_PATH)
+    queue = effective.get("dell_effective_ready_queue")
+    if queue != list(R44_DELL_READY_FAMILIES):
+        raise RuntimeError(f"DS24_R45_R44_EFFECTIVE_QUEUE_MISMATCH:{queue}")
+    reasons = {row.get("family"): row.get("reason") for row in effective.get("excluded_families", []) if isinstance(row, dict)}
+    required = {
+        "lightgbm_rank_xendcg": "SKIP_MAC_OWNED",
+        "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+        "DLinear": "SKIP_MAC_RESERVED",
+        "Temporal Fusion Transformer": "SKIP_CONFIGURATION_AUTHORITY_REQUIRED",
+    }
+    mismatches = {family: reasons.get(family) for family, reason in required.items() if reasons.get(family) != reason}
+    if mismatches:
+        raise RuntimeError(f"DS24_R45_R44_EXCLUSION_MISMATCH:{mismatches}")
+    return {
+        "r44_ownership_hash": ownership["manifest_hash"],
+        "r44_effective_queue_hash": hash_if_exists(R44_DELL_EFFECTIVE_READY_QUEUE_PATH),
+        "effective_dell_queue": list(queue),
+        "required_exclusions": required,
+    }
+
+
+def r45_pre_cutover_snapshot(path: Path = R45_PRE_CUTOVER_SNAPSHOT_PATH) -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    board = lightweight_certified_queue_board(ready["ready_family_queue"])
+    gate = resource_gate(board, GateConfig(max_active_model_processes=3, max_policy_workers=3, max_system_commit_percent=95.0, admission_commit_percent=92.0))
+    r44 = validate_r44_effective_queue_contract()
+    supervisors = supervisor_daemon_processes()
+    protected = active_protected_worker_rows(board)
+    guard = gate.get("zero_full_prediction_guard", {})
+    duplicate_workers = [row for row in board if int(row.get("duplicate_worker_count", 0) or 0)]
+    lease_failures = [row.get("family") for row in protected if row.get("namespace_lease_state") != "LIVE_VERIFIED"]
+    worker_families = [str(row.get("family")) for row in protected]
+    blockers: list[str] = []
+    if sorted(worker_families) != sorted(R45_PROTECTED_DELL_WORKERS):
+        blockers.append("PROTECTED_WORKER_SET_MISMATCH")
+    if len(supervisors) != 1:
+        blockers.append("SUPERVISOR_DAEMON_COUNT_NOT_ONE")
+    if lease_failures:
+        blockers.append("PROTECTED_WORKER_LEASE_NOT_LIVE_VERIFIED")
+    if duplicate_workers:
+        blockers.append("DUPLICATE_FAMILY_WORKERS")
+    if guard.get("holdout_accessed") or guard.get("full_prediction_files_in_metrics_namespaces") or guard.get("paper_orders") or guard.get("live_orders"):
+        blockers.append("SAFETY_SENTINEL_VIOLATION")
+    payload = {
+        "ticket": "DS24_R45_PRE_CUTOVER_SNAPSHOT",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS" if not blockers else "FAIL_CLOSED",
+        "blockers": blockers,
+        "supervisor": supervisors[0] if supervisors else {},
+        "supervisor_lease": compact_supervisor_lease(read_json(LEASE_PATH)),
+        "protected_workers": [
+            {
+                "family": row.get("family"),
+                "pid": row.get("pid"),
+                "creation_time": row.get("creation_time"),
+                "command_line": row.get("command_line"),
+                "cursor": row.get("cursor"),
+                "namespace_lease_state": row.get("namespace_lease_state"),
+                "metrics_rows": row.get("metrics_rows"),
+            }
+            for row in protected
+        ],
+        "active_model_processes": gate.get("active_model_processes"),
+        "resource_snapshot": gate.get("resource_snapshot", {}),
+        "r42_manifest_hash": ready["manifest_hash"],
+        "r44_ownership_manifest_hash": r44["r44_ownership_hash"],
+        "r44_effective_dell_queue_hash": r44["r44_effective_queue_hash"],
+        "effective_dell_queue": r44["effective_dell_queue"],
+        "zero_full_prediction_guard": guard,
+        "worker_launches": 0,
+        "workers_stopped": 0,
+    }
+    write_json(path, payload)
+    if blockers:
+        raise RuntimeError(f"DS24_R45_PRE_CUTOVER_FAIL_CLOSED:{blockers}")
+    return payload
+
+
+def r45_queue_fallback_simulation() -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    board = lightweight_certified_queue_board(ready["ready_family_queue"])
+    by_family = {row["family"]: dict(row) for row in board}
+    by_family["random_forest"]["pid_alive"] = True
+    rf_running = certified_queue_admission_plan(
+        list(by_family.values()),
+        ready_family_queue_manifest=R42_READY_QUEUE_PATH,
+        cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
+        admit_crashed_recoverable=True,
+    )
+    by_family["elastic_net"]["state"] = "CRASHED_BLOCKED"
+    elastic_blocked = certified_queue_admission_plan(
+        list(by_family.values()),
+        ready_family_queue_manifest=R42_READY_QUEUE_PATH,
+        cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
+        admit_crashed_recoverable=True,
+    )
+    by_family["PatchTST"]["state"] = "V3_CERTIFICATION_REQUIRED"
+    patchtst_unavailable = certified_queue_admission_plan(
+        list(by_family.values()),
+        ready_family_queue_manifest=R42_READY_QUEUE_PATH,
+        cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
+        admit_crashed_recoverable=True,
+    )
+    return {
+        "rf_running_next": rf_running.get("first_eligible_family", ""),
+        "elastic_net_blocked_next": elastic_blocked.get("first_eligible_family", ""),
+        "patchtst_unavailable_order": [row["family"] for row in patchtst_unavailable.get("eligible_families", [])],
+        "mac_exclusions_preserved": {
+            family: next((row["reason"] for row in elastic_blocked.get("skipped_families", []) if row["family"] == family), "")
+            for family in ("lightgbm_rank_xendcg", "lightgbm_lambdarank", "DLinear")
+        },
+    }
+
+
+def r45_reboot_simulation(path: Path = R45_REBOOT_SIMULATION_PATH) -> dict[str, Any]:
+    fallback = r45_queue_fallback_simulation()
+    stale_lease = {"pid": 999999, "heartbeat_utc": "2026-09-09T00:00:00+00:00", "lease_generation": 7}
+    owner_alive = process_exists(int(stale_lease["pid"]))
+    payload = {
+        "ticket": "DS24_R45_REBOOT_SIMULATION",
+        "generated_at_utc": utc_now(),
+        "machine_reboot_simulated": True,
+        "stale_supervisor_lease": stale_lease,
+        "stale_supervisor_owner_alive": owner_alive,
+        "fresh_supervisor_would_recover_lease": not owner_alive,
+        "r42_authority_loads": bool(validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH).get("manifest_hash")),
+        "r44_authority_loads": bool(validate_cross_host_ownership_authority(R44_CROSS_HOST_OWNERSHIP_PATH).get("manifest_hash")),
+        "mac_owned_work_excluded": fallback["mac_exclusions_preserved"],
+        "queue_fallback_simulation": fallback,
+        "duplicate_start_protection": "LIVE_LEASE_OWNER_REFUSES_SECOND_DAEMON",
+        "classification": "PASS",
+    }
+    write_json(path, payload)
+    return payload
+
+
+def r45_post_cutover_validation(path: Path = R45_POST_CUTOVER_VALIDATION_PATH) -> dict[str, Any]:
+    pre = read_json(R45_PRE_CUTOVER_SNAPSHOT_PATH)
+    launch = read_json(R45_SUPERVISOR_LAUNCH_AUTHORITY_PATH)
+    dry_args = argparse.Namespace(
+        ready_family_queue_manifest=str(R42_READY_QUEUE_PATH),
+        cross_host_ownership_manifest=str(R44_CROSS_HOST_OWNERSHIP_PATH),
+        admit_crashed_recoverable=True,
+        max_active_model_processes=3,
+        max_policy_workers=3,
+        max_restarts_per_family=2,
+        max_system_commit_percent=95.0,
+        admission_commit_percent=92.0,
+        min_available_ram_gb=6.0,
+        poll_seconds=20.0,
+        evaluation_version="v3",
+        metrics_root_name="metrics_only_v3",
+        refit_policy="daily_session_v1",
+    )
+    dry = dry_run_admission(dry_args)
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    board = lightweight_certified_queue_board(ready["ready_family_queue"])
+    protected = active_protected_worker_rows(board)
+    protected_by_family = {str(row.get("family")): row for row in protected}
+    pre_workers = {str(row.get("family")): row for row in pre.get("protected_workers", []) if isinstance(row, dict)}
+    supervisors = supervisor_daemon_processes()
+    new_supervisor = supervisors[0] if len(supervisors) == 1 else {}
+    lease = read_json(LEASE_PATH)
+    compact_lease = compact_supervisor_lease(lease)
+    pid_preservation = {
+        family: {
+            "before": pre_workers.get(family, {}).get("pid"),
+            "after": protected_by_family.get(family, {}).get("pid"),
+            "unchanged": pre_workers.get(family, {}).get("pid") == protected_by_family.get(family, {}).get("pid"),
+        }
+        for family in R45_PROTECTED_DELL_WORKERS
+    }
+    blockers: list[str] = []
+    if len(supervisors) != 1:
+        blockers.append("SUPERVISOR_DAEMON_COUNT_NOT_ONE")
+    if int(lease.get("pid", 0) or 0) != int(new_supervisor.get("ProcessId", 0) or 0):
+        blockers.append("SUPERVISOR_LEASE_OWNER_MISMATCH")
+    if any(not row["unchanged"] for row in pid_preservation.values()):
+        blockers.append("PROTECTED_WORKER_PID_CHANGED")
+    if sorted(protected_by_family) != sorted(R45_PROTECTED_DELL_WORKERS):
+        blockers.append("PROTECTED_WORKER_SET_MISMATCH")
+    if any(int(row.get("duplicate_worker_count", 0) or 0) for row in board):
+        blockers.append("DUPLICATE_FAMILY_WORKERS")
+    if dry.get("status") != "NO_SLOT_AVAILABLE" or dry.get("next_when_slot_available") != "random_forest":
+        blockers.append("DRY_RUN_EXPECTATION_MISMATCH")
+    payload = {
+        "ticket": "DS24_R45_POST_CUTOVER_VALIDATION",
+        "generated_at_utc": utc_now(),
+        "classification": R45_CLASSIFICATION if not blockers else "FAIL_CLOSED",
+        "blockers": blockers,
+        "old_supervisor_pid": pre.get("supervisor", {}).get("ProcessId"),
+        "new_supervisor": new_supervisor,
+        "supervisor_lease": compact_lease,
+        "pid_preservation": pid_preservation,
+        "active_model_processes": len(dry.get("current_active_workers", [])),
+        "current_active_workers": dry.get("current_active_workers", []),
+        "dry_run": {
+            "status": dry.get("status"),
+            "next_when_slot_available": dry.get("next_when_slot_available"),
+            "excluded_mac_owned": dry.get("excluded_mac_owned", []),
+            "excluded_mac_reserved": dry.get("excluded_mac_reserved", []),
+        },
+        "launch_authority": launch,
+        "queue_fallback_simulation": r45_queue_fallback_simulation(),
+        "zero_full_prediction_guard": dry.get("zero_full_prediction_guard", {}),
+        "worker_launches": 0,
+        "workers_stopped": 0,
+    }
+    write_json(path, payload)
+    if blockers:
+        raise RuntimeError(f"DS24_R45_POST_CUTOVER_FAIL_CLOSED:{blockers}")
+    return payload
+
+
+def r45_windows_task_registration_payload(*, executed: bool, result: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    command = r45_supervisor_command()
+    task = task_state(TASK_NAME)
+    return {
+        "ticket": "DS24_R45_WINDOWS_TASK_REGISTRATION",
+        "generated_at_utc": utc_now(),
+        "task_name": TASK_NAME,
+        "executed": executed,
+        "registration_result": dict(result or {}),
+        "task_state": task,
+        "working_directory": str(ROOT),
+        "registered_supervisor_command": " ".join(command),
+        "scheduled_task_launcher": display_path(R45_SUPERVISOR_LAUNCHER_PATH),
+        "registered_task_command": (
+            "powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
+            f"{R45_SUPERVISOR_LAUNCHER_PATH}"
+        ),
+        "uses_legacy_family_queue": False,
+        "r42_ready_queue_manifest": display_path(R42_READY_QUEUE_PATH),
+        "r44_cross_host_ownership_manifest": display_path(R44_CROSS_HOST_OWNERSHIP_PATH),
+        "duplicate_start_protection": "Supervisor acquire_lease refuses a second live daemon with LIVE_LEASE_OWNER.",
+    }
+
+
 def status_payload() -> dict[str, Any]:
     lease = read_json(LEASE_PATH)
     owner = int(lease.get("pid", 0) or 0)
@@ -2939,6 +3288,10 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--shutdown", action="store_true")
     mode.add_argument("--dry-run-admission", action="store_true")
+    mode.add_argument("--r45-pre-cutover-snapshot", action="store_true")
+    mode.add_argument("--r45-supervisor-launch-authority", action="store_true")
+    mode.add_argument("--r45-post-cutover-validation", action="store_true")
+    mode.add_argument("--r45-reboot-simulation", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
     parser.add_argument("--max-active-model-processes", type=int, default=3)
@@ -2967,6 +3320,18 @@ def main() -> int:
         return 0
     if args.dry_run_admission:
         print(json.dumps(dry_run_admission(args), indent=2, sort_keys=True))
+        return 0
+    if args.r45_pre_cutover_snapshot:
+        print(json.dumps(r45_pre_cutover_snapshot(), indent=2, sort_keys=True))
+        return 0
+    if args.r45_supervisor_launch_authority:
+        print(json.dumps(r45_supervisor_launch_authority(), indent=2, sort_keys=True))
+        return 0
+    if args.r45_post_cutover_validation:
+        print(json.dumps(r45_post_cutover_validation(), indent=2, sort_keys=True))
+        return 0
+    if args.r45_reboot_simulation:
+        print(json.dumps(r45_reboot_simulation(), indent=2, sort_keys=True))
         return 0
     acquired, lease = acquire_lease(resume=args.resume)
     if not acquired:

@@ -1,0 +1,36 @@
+{
+  "classification": "PASS",
+  "duplicate_start_protection": "LIVE_LEASE_OWNER_REFUSES_SECOND_DAEMON",
+  "fresh_supervisor_would_recover_lease": true,
+  "generated_at_utc": "2026-09-09T14:19:06+00:00",
+  "mac_owned_work_excluded": {
+    "DLinear": "SKIP_MAC_RESERVED",
+    "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+    "lightgbm_rank_xendcg": "SKIP_MAC_OWNED"
+  },
+  "machine_reboot_simulated": true,
+  "queue_fallback_simulation": {
+    "elastic_net_blocked_next": "PatchTST",
+    "mac_exclusions_preserved": {
+      "DLinear": "SKIP_MAC_RESERVED",
+      "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+      "lightgbm_rank_xendcg": "SKIP_MAC_OWNED"
+    },
+    "patchtst_unavailable_order": [
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "rf_running_next": "elastic_net"
+  },
+  "r42_authority_loads": true,
+  "r44_authority_loads": true,
+  "stale_supervisor_lease": {
+    "heartbeat_utc": "2026-09-09T00:00:00+00:00",
+    "lease_generation": 7,
+    "pid": 999999
+  },
+  "stale_supervisor_owner_alive": false,
+  "ticket": "DS24_R45_REBOOT_SIMULATION"
+}

@@ -1,0 +1,149 @@
+{
+  "active_model_processes": 3,
+  "blockers": [],
+  "classification": "DS24_R45_R44_SUPERVISOR_CUTOVER_ACTIVE_REBOOT_SAFE",
+  "current_active_workers": [
+    "mlp",
+    "extra_trees",
+    "gradient_boosting"
+  ],
+  "dry_run": {
+    "excluded_mac_owned": [
+      "lightgbm_rank_xendcg",
+      "lightgbm_lambdarank"
+    ],
+    "excluded_mac_reserved": [
+      "DLinear"
+    ],
+    "next_when_slot_available": "random_forest",
+    "status": "NO_SLOT_AVAILABLE"
+  },
+  "generated_at_utc": "2026-09-09T14:19:20+00:00",
+  "launch_authority": {
+    "authority_hash": "fa456793786b80a3d4f1173eaba6901588950adee5d1f6d9cfee11e50c6a4049",
+    "classification": "R44_AWARE_SUPERVISOR_COMMAND_AUTHORIZED",
+    "command": [
+      "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "--daemon",
+      "--resume",
+      "--poll-seconds",
+      "20",
+      "--max-active-model-processes",
+      "3",
+      "--max-policy-workers",
+      "3",
+      "--max-restarts-per-family",
+      "2",
+      "--admission-commit-percent",
+      "92",
+      "--max-system-commit-percent",
+      "95",
+      "--min-available-ram-gb",
+      "6",
+      "--evaluation-version",
+      "v3",
+      "--metrics-root-name",
+      "metrics_only_v3",
+      "--refit-policy",
+      "daily_session_v1",
+      "--ready-family-queue-manifest",
+      "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json",
+      "--cross-host-ownership-manifest",
+      "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json",
+      "--admit-crashed-recoverable"
+    ],
+    "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --cross-host-ownership-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json --admit-crashed-recoverable",
+    "effective_dell_queue": [
+      "random_forest",
+      "elastic_net",
+      "PatchTST",
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "generated_at_utc": "2026-09-09T14:19:04+00:00",
+    "r42_ready_queue_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+    "r42_ready_queue_manifest": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_ready_family_queue.json",
+    "r44_effective_queue_hash": "13c39f38637155f53f47e870719f239ff33c504880f66655b4a03560728fef8d",
+    "r44_effective_queue_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R44_dell_effective_ready_queue.json",
+    "r44_ownership_hash": "d399618ca4a63f21a958d7e2bb38416a874715f04751a40c2093544fd5e43798",
+    "r44_ownership_manifest": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R44_cross_host_family_ownership.json",
+    "scheduled_task_launcher": "scripts/local/launch_ds24_r45_supervisor.ps1",
+    "ticket": "DS24_R45_SUPERVISOR_LAUNCH_AUTHORITY",
+    "uses_legacy_family_queue": false,
+    "worker_launches": 0,
+    "working_directory": "C:\\Users\\Brandon\\trading_system"
+  },
+  "new_supervisor": {
+    "CommandLine": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --cross-host-ownership-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json --admit-crashed-recoverable",
+    "CreationDate": "2026-09-09T13:58:30+00:00",
+    "KernelModeTime": 6025468750,
+    "Name": "python.exe",
+    "PageFileUsage": 936558592,
+    "ParentProcessId": 8264,
+    "Priority": 32,
+    "ProcessId": 16656,
+    "UserModeTime": 3181250000,
+    "WorkingSetSize": 235614208
+  },
+  "old_supervisor_pid": 20432,
+  "pid_preservation": {
+    "extra_trees": {
+      "after": 8256,
+      "before": 8256,
+      "unchanged": true
+    },
+    "gradient_boosting": {
+      "after": 8800,
+      "before": 8800,
+      "unchanged": true
+    },
+    "mlp": {
+      "after": 13504,
+      "before": 13504,
+      "unchanged": true
+    }
+  },
+  "queue_fallback_simulation": {
+    "elastic_net_blocked_next": "PatchTST",
+    "mac_exclusions_preserved": {
+      "DLinear": "SKIP_MAC_RESERVED",
+      "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+      "lightgbm_rank_xendcg": "SKIP_MAC_OWNED"
+    },
+    "patchtst_unavailable_order": [
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "rf_running_next": "elastic_net"
+  },
+  "supervisor_lease": {
+    "command_line_hash": "64ec94831e813555396f5cfde35eea5b0b4e52c96067f0943792a3f5aba111de",
+    "heartbeat_utc": "2026-09-09T14:18:11+00:00",
+    "hostname": "DESKTOP-TQOVNB7",
+    "lease_generation": 52,
+    "pid": 16656,
+    "previous_owner": {
+      "command_line_hash": "2dfd2cad52a1e3f85ce1f3d70c0617ee085c05f9d9960ff1a3f9468da7e39ade",
+      "heartbeat_utc": "2026-09-09T13:56:52+00:00",
+      "lease_generation": 51,
+      "pid": 20432
+    },
+    "process_creation_time": "2026-09-09T13:58:30+00:00",
+    "resume": true,
+    "stale_recovered": true
+  },
+  "ticket": "DS24_R45_POST_CUTOVER_VALIDATION",
+  "worker_launches": 0,
+  "workers_stopped": 0,
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "paper_orders": 0
+  }
+}
