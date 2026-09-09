@@ -1,0 +1,117 @@
+{
+  "generated_at_utc": "2026-09-09T12:53:22.166974+00:00",
+  "repair_queue": [
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/progress.json#8b79a724718795cc",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/stderr_r27_elastic_substitution_gen28.log.gz#0714f07837d5d14c",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_ELASTIC_NET_READINESS.json"
+      ],
+      "family": "elastic_net",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "DLinear",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "PatchTST",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Transformer",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "iTransformer",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Momentum Transformer",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "writer_initialised_before_first_prediction,base_evaluation_contract_hash,extended_contract_hash,benchmark_return,convergence_state,decision_timestamp,directional_accuracy,duplicate_prediction_count,eligible_asset_count,evaluation_contract_hash,excess_return,family,gross_return,mae,missing_prediction_count,mse,ndcg_at_top_n,net_return,pearson_ic,policy_hash,prediction_coverage,refit_id,resolved_asset_count,rmse,spearman_rank_ic,target_id,target_maturity_timestamp,top20_identifiers,top20_ranks,top20_scores,top20_weights,train_end_timestamp,train_start_timestamp,training_assets,training_history_days,training_rows,transaction_cost_drag,turnover,artifact:coverage_and_maturity_counts,artifact:directional_accuracy,artifact:economic_performance,artifact:evaluation_contract_identity,artifact:ic_confidence_intervals,artifact:mae_mse_rmse,artifact:ndcg_or_family_ranking_metric,artifact:pearson_ic,artifact:rank_ic_v3,artifact:refit_training_history_metadata,artifact:rolling_ic,artifact:time_bucketed_ic,artifact:transaction_cost_sensitivity,artifact:turnover,atomic_retention_gate_available",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Market Context Encoder",
+      "next_action": "publish extended forward-metrics capability sidecar",
+      "priority": 20,
+      "state": "FORWARD_METRICS_CONTRACT_REQUIRED"
+    },
+    {
+      "blocker": "worker route missing",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_rank_xendcg",
+      "next_action": "build or bind production worker route",
+      "priority": 40,
+      "state": "IMPLEMENTATION_BLOCKED"
+    },
+    {
+      "blocker": "worker route missing",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_lambdarank",
+      "next_action": "build or bind production worker route",
+      "priority": 40,
+      "state": "IMPLEMENTATION_BLOCKED"
+    },
+    {
+      "blocker": "R40 records missing accepted full TFT static/recurrent tournament authority",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b"
+      ],
+      "family": "Temporal Fusion Transformer",
+      "next_action": "bind accepted TFT tournament authority or repair TFT family adapter",
+      "priority": 50,
+      "state": "CONFIGURATION_AUTHORITY_REQUIRED"
+    }
+  ],
+  "ticket": "DS24_R41_FULL_FAMILY_PRE_LAUNCH_READINESS_AUDIT"
+}

@@ -1,0 +1,11 @@
+{
+  "generated_at_utc": "2026-09-09T12:53:22.166974+00:00",
+  "not_applied_to_live_supervisor": true,
+  "ready_family_queue": [
+    "random_forest"
+  ],
+  "recommended_supervisor_queue_when_slot_opens": [
+    "random_forest"
+  ],
+  "ticket": "DS24_R41_FULL_FAMILY_PRE_LAUNCH_READINESS_AUDIT"
+}
