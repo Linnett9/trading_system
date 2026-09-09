@@ -1,0 +1,26 @@
+{
+  "blockers": [],
+  "classification": "SUPERVISOR_ALREADY_RUNNING",
+  "generated_at_utc": "2026-09-09T14:35:46+00:00",
+  "launcher_exit_code": 0,
+  "launcher_stderr": "",
+  "launcher_stdout": "SUPERVISOR_ALREADY_RUNNING",
+  "protected_worker_pids_after": {
+    "extra_trees": 8256,
+    "gradient_boosting": 8800,
+    "mlp": 13504
+  },
+  "protected_worker_pids_before": {
+    "extra_trees": 8256,
+    "gradient_boosting": 8800,
+    "mlp": 13504
+  },
+  "supervisor_count_after": 1,
+  "supervisor_count_before": 1,
+  "supervisor_pid_after": 16656,
+  "supervisor_pid_before": 16656,
+  "supervisor_stopped": 0,
+  "ticket": "DS24_R46_SINGLETON_LIVE_VALIDATION",
+  "worker_launches": 0,
+  "workers_stopped": 0
+}

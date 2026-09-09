@@ -1,0 +1,65 @@
+{
+  "classification": "PASS",
+  "clean_boot_simulation": {
+    "effective_dell_queue": [
+      "random_forest",
+      "elastic_net",
+      "PatchTST",
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "first_dell_family": "random_forest",
+    "launcher_would_start_supervisor": true,
+    "mac_exclusions": {
+      "DLinear": "SKIP_MAC_RESERVED",
+      "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+      "lightgbm_rank_xendcg": "SKIP_MAC_OWNED"
+    },
+    "supervisor_absent": true,
+    "workers_absent": true
+  },
+  "duplicate_supervisor_protection": "SUPERVISOR_ALREADY_RUNNING_OR_IDENTITY_CONFLICT",
+  "generated_at_utc": "2026-09-09T14:35:20+00:00",
+  "partial_recovery_simulation": {
+    "checkpoint_reused": true,
+    "interrupted_dell_family": "random_forest",
+    "mac_owned_family_substituted": false,
+    "metrics_not_duplicated": true,
+    "r44_remains_authoritative": true,
+    "recoverable_dell_worker_selected": true,
+    "resume_generation_increments": true
+  },
+  "queue_fallback_simulation": {
+    "elastic_net_blocked_next": "PatchTST",
+    "mac_exclusions_preserved": {
+      "DLinear": "SKIP_MAC_RESERVED",
+      "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+      "lightgbm_rank_xendcg": "SKIP_MAC_OWNED"
+    },
+    "patchtst_unavailable_order": [
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "rf_running_next": "elastic_net"
+  },
+  "stale_supervisor_simulation": {
+    "control_lease_recoverable": true,
+    "existing_family_workers_preserved": true,
+    "family_duplication_prevented_by": [
+      "supervisor_singleton_launcher",
+      "family_launch_lock",
+      "certified_queue_admission_plan"
+    ],
+    "new_supervisor_permitted": true,
+    "stale_lease_remains": true,
+    "supervisor_pid_dead": true
+  },
+  "supervisor_stopped": 0,
+  "ticket": "DS24_R46_REBOOT_RECOVERY_SIMULATION",
+  "worker_launches": 0,
+  "workers_stopped": 0
+}

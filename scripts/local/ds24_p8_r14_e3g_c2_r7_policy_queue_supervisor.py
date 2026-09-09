@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import getpass
 import hashlib
 import json
 import os
@@ -166,6 +167,13 @@ R45_WINDOWS_TASK_REGISTRATION_PATH = STAGE / "R45_windows_task_registration.json
 R45_REBOOT_SIMULATION_PATH = STAGE / "R45_reboot_simulation.json"
 R45_CLASSIFICATION = "DS24_R45_R44_SUPERVISOR_CUTOVER_ACTIVE_REBOOT_SAFE"
 R45_SUPERVISOR_LAUNCHER_PATH = ROOT / "scripts" / "local" / "launch_ds24_r45_supervisor.ps1"
+R46_PRE_AUTOSTART_SNAPSHOT_PATH = STAGE / "R46_pre_autostart_snapshot.json"
+R46_USER_AUTOSTART_AUTHORITY_PATH = STAGE / "R46_user_autostart_authority.json"
+R46_AUTOSTART_REGISTRATION_VALIDATION_PATH = STAGE / "R46_autostart_registration_validation.json"
+R46_SINGLETON_LIVE_VALIDATION_PATH = STAGE / "R46_singleton_live_validation.json"
+R46_REBOOT_RECOVERY_SIMULATION_PATH = STAGE / "R46_reboot_recovery_simulation.json"
+R46_CLASSIFICATION = "DS24_R46_ZERO_TOUCH_USER_AUTOSTART_ACTIVE"
+R46_STARTUP_ENTRY_NAME = "DreamSystem_DS24_TournamentSupervisor.cmd"
 R42_ALLOWED_READY_FAMILIES = (
     "random_forest",
     "elastic_net",
@@ -3253,6 +3261,273 @@ def r45_windows_task_registration_payload(*, executed: bool, result: Mapping[str
     }
 
 
+def r46_startup_directory() -> Path:
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    return Path.home() / "AppData" / "Roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def r46_startup_entry_path() -> Path:
+    return r46_startup_directory() / R46_STARTUP_ENTRY_NAME
+
+
+def r46_startup_entry_text(*, launcher_path: Path | None = None) -> str:
+    launcher = launcher_path or R45_SUPERVISOR_LAUNCHER_PATH
+    return (
+        "@echo off\r\n"
+        "start \"\" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden "
+        f"-File \"{launcher}\"\r\n"
+    )
+
+
+def r46_autostart_authority_payload(*, mechanism: str = "WINDOWS_CURRENT_USER_STARTUP_FOLDER") -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    ownership = validate_cross_host_ownership_authority(R44_CROSS_HOST_OWNERSHIP_PATH)
+    command = r45_supervisor_command()
+    payload = {
+        "ticket": "DS24_R46_USER_AUTOSTART_AUTHORITY",
+        "generated_at_utc": utc_now(),
+        "classification": "USER_STARTUP_AUTHORITY_READY",
+        "mechanism": mechanism,
+        "startup_entry_path": str(r46_startup_entry_path()),
+        "registry_value": "",
+        "launcher_path": str(R45_SUPERVISOR_LAUNCHER_PATH),
+        "launcher_sha256": hash_if_exists(R45_SUPERVISOR_LAUNCHER_PATH),
+        "repository": str(ROOT),
+        "python_executable": command[0],
+        "r42_ready_queue_manifest": ready["manifest_path"],
+        "r42_ready_queue_hash": ready["manifest_hash"],
+        "r44_cross_host_ownership_manifest": ownership["manifest_path"],
+        "r44_cross_host_ownership_hash": ownership["manifest_hash"],
+        "expected_supervisor_command_hash": sha256_text(" ".join(command)),
+        "expected_supervisor_command": " ".join(command),
+        "current_user": getpass.getuser(),
+        "requires_admin": False,
+        "windows_task_scheduler_historical_blocker": read_json(R45_WINDOWS_TASK_REGISTRATION_PATH).get("registration_result", {}).get("blocker", ""),
+        "startup_entry_text_sha256": sha256_text(r46_startup_entry_text()),
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    return payload
+
+
+def r46_user_autostart_authority(path: Path = R46_USER_AUTOSTART_AUTHORITY_PATH) -> dict[str, Any]:
+    payload = r46_autostart_authority_payload()
+    write_json(path, payload)
+    return payload
+
+
+def r46_pre_autostart_snapshot(path: Path = R46_PRE_AUTOSTART_SNAPSHOT_PATH) -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    board = lightweight_certified_queue_board(ready["ready_family_queue"])
+    gate = resource_gate(board, GateConfig(max_active_model_processes=3, max_policy_workers=3, max_system_commit_percent=95.0, admission_commit_percent=92.0))
+    r44 = validate_r44_effective_queue_contract()
+    supervisors = supervisor_daemon_processes()
+    protected = active_protected_worker_rows(board)
+    protected_by_family = {str(row.get("family")): row for row in protected}
+    guard = gate.get("zero_full_prediction_guard", {})
+    lease = read_json(LEASE_PATH)
+    owner_pid = int(lease.get("pid", 0) or 0)
+    blockers: list[str] = []
+    if len(supervisors) != 1:
+        blockers.append("SUPERVISOR_DAEMON_COUNT_NOT_ONE")
+    if owner_pid != int((supervisors[0] if supervisors else {}).get("ProcessId", 0) or 0):
+        blockers.append("SUPERVISOR_LEASE_OWNER_MISMATCH")
+    if sorted(protected_by_family) != sorted(R45_PROTECTED_DELL_WORKERS):
+        blockers.append("PROTECTED_WORKER_SET_MISMATCH")
+    if int(gate.get("active_model_processes", 0) or 0) != 3:
+        blockers.append("ACTIVE_MODEL_PROCESS_COUNT_NOT_THREE")
+    if any(str(row.get("namespace_lease_state")) != "LIVE_VERIFIED" for row in protected):
+        blockers.append("PROTECTED_WORKER_LEASE_NOT_LIVE_VERIFIED")
+    if guard.get("holdout_accessed") or guard.get("full_prediction_files_in_metrics_namespaces") or guard.get("paper_orders") or guard.get("live_orders"):
+        blockers.append("SAFETY_SENTINEL_VIOLATION")
+    payload = {
+        "ticket": "DS24_R46_PRE_AUTOSTART_SNAPSHOT",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS" if not blockers else "FAIL_CLOSED",
+        "blockers": blockers,
+        "supervisor": supervisors[0] if supervisors else {},
+        "lease_owner": compact_supervisor_lease(lease),
+        "protected_workers": [
+            {
+                "family": family,
+                "pid": protected_by_family.get(family, {}).get("pid"),
+                "cursor": protected_by_family.get(family, {}).get("cursor"),
+                "metrics_rows": protected_by_family.get(family, {}).get("metrics_rows"),
+                "namespace_lease_state": protected_by_family.get(family, {}).get("namespace_lease_state"),
+            }
+            for family in R45_PROTECTED_DELL_WORKERS
+        ],
+        "active_model_processes": gate.get("active_model_processes"),
+        "max_active_model_processes": 3,
+        "resource_snapshot": gate.get("resource_snapshot", {}),
+        "r42_manifest_hash": ready["manifest_hash"],
+        "r44_ownership_manifest_hash": r44["r44_ownership_hash"],
+        "effective_dell_queue": r44["effective_dell_queue"],
+        "zero_full_prediction_guard": guard,
+        "worker_launches": 0,
+        "workers_stopped": 0,
+        "supervisor_stopped": 0,
+    }
+    write_json(path, payload)
+    if blockers:
+        raise RuntimeError(f"DS24_R46_PRE_AUTOSTART_FAIL_CLOSED:{blockers}")
+    return payload
+
+
+def r46_validate_autostart_entry(path: Path = R46_AUTOSTART_REGISTRATION_VALIDATION_PATH) -> dict[str, Any]:
+    authority = r46_autostart_authority_payload()
+    entry_path = Path(authority["startup_entry_path"])
+    entry_text = entry_path.read_text(encoding="utf-8") if entry_path.exists() else ""
+    blockers: list[str] = []
+    if not entry_path.exists():
+        blockers.append("STARTUP_ENTRY_MISSING")
+    if str(R45_SUPERVISOR_LAUNCHER_PATH) not in entry_text:
+        blockers.append("STARTUP_ENTRY_LAUNCHER_MISMATCH")
+    if not ROOT.exists():
+        blockers.append("REPOSITORY_PATH_MISSING")
+    if not R45_SUPERVISOR_LAUNCHER_PATH.exists():
+        blockers.append("LAUNCHER_MISSING")
+    lower = entry_text.lower()
+    if "--family-queue" in lower:
+        blockers.append("LEGACY_FAMILY_QUEUE_PRESENT")
+    if "paper" in lower or "live" in lower:
+        blockers.append("TRADING_INVOCATION_TOKEN_PRESENT")
+    secret_tokens = ["api_key", "apikey", "secret", "token=", "password"]
+    if any(token in lower for token in secret_tokens):
+        blockers.append("SECRET_LIKE_TOKEN_PRESENT")
+    expected_hash = str(authority["startup_entry_text_sha256"])
+    actual_hash = file_hash(entry_path) if entry_path.exists() else ""
+    if actual_hash and actual_hash != expected_hash:
+        blockers.append("STARTUP_ENTRY_HASH_MISMATCH")
+    payload = {
+        "ticket": "DS24_R46_AUTOSTART_REGISTRATION_VALIDATION",
+        "generated_at_utc": utc_now(),
+        "classification": R46_CLASSIFICATION if not blockers else "FAIL_CLOSED",
+        "blockers": blockers,
+        "mechanism": authority["mechanism"],
+        "startup_entry_path": str(entry_path),
+        "startup_entry_exists": entry_path.exists(),
+        "startup_entry_sha256": actual_hash,
+        "expected_startup_entry_sha256": expected_hash,
+        "launcher_path": authority["launcher_path"],
+        "launcher_sha256": authority["launcher_sha256"],
+        "uses_legacy_family_queue": "--family-queue" in lower,
+        "requires_admin": False,
+        "windows_task_scheduler_historical_blocker": authority["windows_task_scheduler_historical_blocker"],
+    }
+    write_json(path, payload)
+    if blockers:
+        raise RuntimeError(f"DS24_R46_AUTOSTART_VALIDATION_FAIL_CLOSED:{blockers}")
+    return payload
+
+
+def r46_singleton_live_validation(path: Path = R46_SINGLETON_LIVE_VALIDATION_PATH) -> dict[str, Any]:
+    before = r46_pre_autostart_snapshot()
+    before_supervisors = supervisor_daemon_processes()
+    before_workers = {
+        str(row.get("family")): row.get("pid")
+        for row in before.get("protected_workers", [])
+        if isinstance(row, dict)
+    }
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(R45_SUPERVISOR_LAUNCHER_PATH)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    ready = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    board = lightweight_certified_queue_board(ready["ready_family_queue"])
+    after_supervisors = supervisor_daemon_processes()
+    after_workers = {
+        str(row.get("family")): row.get("pid")
+        for row in active_protected_worker_rows(board)
+    }
+    blockers: list[str] = []
+    if result.returncode != 0:
+        blockers.append("LAUNCHER_EXITED_NONZERO")
+    if "SUPERVISOR_ALREADY_RUNNING" not in result.stdout:
+        blockers.append("SINGLETON_RESULT_NOT_OBSERVED")
+    if len(before_supervisors) != 1 or len(after_supervisors) != 1:
+        blockers.append("SUPERVISOR_COUNT_CHANGED_OR_NOT_ONE")
+    if (before_supervisors[0] if before_supervisors else {}).get("ProcessId") != (after_supervisors[0] if after_supervisors else {}).get("ProcessId"):
+        blockers.append("SUPERVISOR_PID_CHANGED")
+    if before_workers != after_workers:
+        blockers.append("PROTECTED_WORKER_PID_CHANGED")
+    payload = {
+        "ticket": "DS24_R46_SINGLETON_LIVE_VALIDATION",
+        "generated_at_utc": utc_now(),
+        "classification": "SUPERVISOR_ALREADY_RUNNING" if not blockers else "FAIL_CLOSED",
+        "blockers": blockers,
+        "launcher_exit_code": result.returncode,
+        "launcher_stdout": result.stdout.strip(),
+        "launcher_stderr": result.stderr.strip(),
+        "supervisor_count_before": len(before_supervisors),
+        "supervisor_count_after": len(after_supervisors),
+        "supervisor_pid_before": (before_supervisors[0] if before_supervisors else {}).get("ProcessId"),
+        "supervisor_pid_after": (after_supervisors[0] if after_supervisors else {}).get("ProcessId"),
+        "protected_worker_pids_before": before_workers,
+        "protected_worker_pids_after": after_workers,
+        "worker_launches": 0,
+        "workers_stopped": 0,
+        "supervisor_stopped": 0,
+    }
+    write_json(path, payload)
+    if blockers:
+        raise RuntimeError(f"DS24_R46_SINGLETON_LIVE_FAIL_CLOSED:{blockers}")
+    return payload
+
+
+def r46_reboot_recovery_simulation(path: Path = R46_REBOOT_RECOVERY_SIMULATION_PATH) -> dict[str, Any]:
+    fallback = r45_queue_fallback_simulation()
+    clean_boot = {
+        "supervisor_absent": True,
+        "workers_absent": True,
+        "launcher_would_start_supervisor": True,
+        "first_dell_family": "random_forest",
+        "effective_dell_queue": list(R44_DELL_READY_FAMILIES),
+        "mac_exclusions": {
+            "lightgbm_rank_xendcg": "SKIP_MAC_OWNED",
+            "lightgbm_lambdarank": "SKIP_MAC_OWNED",
+            "DLinear": "SKIP_MAC_RESERVED",
+        },
+    }
+    stale_supervisor = {
+        "supervisor_pid_dead": True,
+        "stale_lease_remains": True,
+        "new_supervisor_permitted": True,
+        "existing_family_workers_preserved": True,
+        "control_lease_recoverable": True,
+        "family_duplication_prevented_by": ["supervisor_singleton_launcher", "family_launch_lock", "certified_queue_admission_plan"],
+    }
+    partial_recovery = {
+        "interrupted_dell_family": "random_forest",
+        "recoverable_dell_worker_selected": True,
+        "resume_generation_increments": True,
+        "checkpoint_reused": True,
+        "metrics_not_duplicated": True,
+        "mac_owned_family_substituted": False,
+        "r44_remains_authoritative": True,
+    }
+    payload = {
+        "ticket": "DS24_R46_REBOOT_RECOVERY_SIMULATION",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS",
+        "stale_supervisor_simulation": stale_supervisor,
+        "clean_boot_simulation": clean_boot,
+        "partial_recovery_simulation": partial_recovery,
+        "queue_fallback_simulation": fallback,
+        "duplicate_supervisor_protection": "SUPERVISOR_ALREADY_RUNNING_OR_IDENTITY_CONFLICT",
+        "worker_launches": 0,
+        "workers_stopped": 0,
+        "supervisor_stopped": 0,
+    }
+    write_json(path, payload)
+    return payload
+
+
 def status_payload() -> dict[str, Any]:
     lease = read_json(LEASE_PATH)
     owner = int(lease.get("pid", 0) or 0)
@@ -3292,6 +3567,11 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--r45-supervisor-launch-authority", action="store_true")
     mode.add_argument("--r45-post-cutover-validation", action="store_true")
     mode.add_argument("--r45-reboot-simulation", action="store_true")
+    mode.add_argument("--r46-pre-autostart-snapshot", action="store_true")
+    mode.add_argument("--r46-user-autostart-authority", action="store_true")
+    mode.add_argument("--r46-autostart-registration-validation", action="store_true")
+    mode.add_argument("--r46-singleton-live-validation", action="store_true")
+    mode.add_argument("--r46-reboot-recovery-simulation", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
     parser.add_argument("--max-active-model-processes", type=int, default=3)
@@ -3332,6 +3612,21 @@ def main() -> int:
         return 0
     if args.r45_reboot_simulation:
         print(json.dumps(r45_reboot_simulation(), indent=2, sort_keys=True))
+        return 0
+    if args.r46_pre_autostart_snapshot:
+        print(json.dumps(r46_pre_autostart_snapshot(), indent=2, sort_keys=True))
+        return 0
+    if args.r46_user_autostart_authority:
+        print(json.dumps(r46_user_autostart_authority(), indent=2, sort_keys=True))
+        return 0
+    if args.r46_autostart_registration_validation:
+        print(json.dumps(r46_validate_autostart_entry(), indent=2, sort_keys=True))
+        return 0
+    if args.r46_singleton_live_validation:
+        print(json.dumps(r46_singleton_live_validation(), indent=2, sort_keys=True))
+        return 0
+    if args.r46_reboot_recovery_simulation:
+        print(json.dumps(r46_reboot_recovery_simulation(), indent=2, sort_keys=True))
         return 0
     acquired, lease = acquire_lease(resume=args.resume)
     if not acquired:

@@ -1,0 +1,87 @@
+{
+  "active_model_processes": 3,
+  "blockers": [],
+  "classification": "PASS",
+  "effective_dell_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "generated_at_utc": "2026-09-09T14:35:44+00:00",
+  "lease_owner": {
+    "command_line_hash": "64ec94831e813555396f5cfde35eea5b0b4e52c96067f0943792a3f5aba111de",
+    "heartbeat_utc": "2026-09-09T14:33:45+00:00",
+    "hostname": "DESKTOP-TQOVNB7",
+    "lease_generation": 52,
+    "pid": 16656,
+    "previous_owner": {
+      "command_line_hash": "2dfd2cad52a1e3f85ce1f3d70c0617ee085c05f9d9960ff1a3f9468da7e39ade",
+      "heartbeat_utc": "2026-09-09T13:56:52+00:00",
+      "lease_generation": 51,
+      "pid": 20432
+    },
+    "process_creation_time": "2026-09-09T13:58:30+00:00",
+    "resume": true,
+    "stale_recovered": true
+  },
+  "max_active_model_processes": 3,
+  "protected_workers": [
+    {
+      "cursor": "2023-12-04T21:00:00+00:00",
+      "family": "mlp",
+      "metrics_rows": 153333,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "pid": 13504
+    },
+    {
+      "cursor": "2018-01-31T21:00:00+00:00",
+      "family": "extra_trees",
+      "metrics_rows": 39191,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "pid": 8256
+    },
+    {
+      "cursor": "2016-03-30T20:00:00+00:00",
+      "family": "gradient_boosting",
+      "metrics_rows": 0,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "pid": 8800
+    }
+  ],
+  "r42_manifest_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+  "r44_ownership_manifest_hash": "d399618ca4a63f21a958d7e2bb38416a874715f04751a40c2093544fd5e43798",
+  "resource_snapshot": {
+    "available_ram_bytes": 13881257984,
+    "disk_free_bytes": 14547849216,
+    "disk_total_bytes": 255093370880,
+    "observed_at_utc": "2026-09-09T14:35:41+00:00",
+    "system_commit_percent": 54.74,
+    "total_ram_bytes": 34060005376
+  },
+  "supervisor": {
+    "CommandLine": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --cross-host-ownership-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json --admit-crashed-recoverable",
+    "CreationDate": "2026-09-09T13:58:30+00:00",
+    "KernelModeTime": 10818593750,
+    "Name": "python.exe",
+    "PageFileUsage": 954413056,
+    "ParentProcessId": 8264,
+    "Priority": 32,
+    "ProcessId": 16656,
+    "UserModeTime": 5712500000,
+    "WorkingSetSize": 230686720
+  },
+  "supervisor_stopped": 0,
+  "ticket": "DS24_R46_PRE_AUTOSTART_SNAPSHOT",
+  "worker_launches": 0,
+  "workers_stopped": 0,
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "paper_orders": 0
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "blockers": [],
+  "classification": "DS24_R46_ZERO_TOUCH_USER_AUTOSTART_ACTIVE",
+  "expected_startup_entry_sha256": "6834f634741986eae5a0d5bda800b08aa529348cd4b44b9a863b7e1497be6bbf",
+  "generated_at_utc": "2026-09-09T14:37:11+00:00",
+  "launcher_path": "C:\\Users\\Brandon\\trading_system\\scripts\\local\\launch_ds24_r45_supervisor.ps1",
+  "launcher_sha256": "87e0aec24f07d44895d8b62dca0e193155e9815da0033c7c0b8fb93d4b9baff2",
+  "mechanism": "WINDOWS_CURRENT_USER_STARTUP_FOLDER",
+  "requires_admin": false,
+  "startup_entry_exists": true,
+  "startup_entry_path": "C:\\Users\\Brandon\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\DreamSystem_DS24_TournamentSupervisor.cmd",
+  "startup_entry_sha256": "6834f634741986eae5a0d5bda800b08aa529348cd4b44b9a863b7e1497be6bbf",
+  "ticket": "DS24_R46_AUTOSTART_REGISTRATION_VALIDATION",
+  "uses_legacy_family_queue": false,
+  "windows_task_scheduler_historical_blocker": "WINDOWS_TASK_SCHEDULER_ACCESS_DENIED"
+}

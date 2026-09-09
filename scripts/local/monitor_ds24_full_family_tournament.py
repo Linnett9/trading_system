@@ -117,6 +117,25 @@ def task_state(name: str) -> str:
     return "Absent"
 
 
+def supervisor_autostart_state() -> dict[str, Any]:
+    authority = read_json(STAGE / "R46_user_autostart_authority.json")
+    validation = read_json(STAGE / "R46_autostart_registration_validation.json")
+    startup_entry = Path(str(authority.get("startup_entry_path") or validation.get("startup_entry_path") or ""))
+    launcher = Path(str(authority.get("launcher_path") or validation.get("launcher_path") or ""))
+    active = bool(
+        authority
+        and validation.get("classification") == supervisor_api.R46_CLASSIFICATION
+        and startup_entry.exists()
+        and launcher.exists()
+    )
+    return {
+        "state": "USER_STARTUP_ACTIVE" if active else "USER_STARTUP_INACTIVE",
+        "mechanism": authority.get("mechanism") or validation.get("mechanism") or "",
+        "launcher_sha256": authority.get("launcher_sha256") or validation.get("launcher_sha256") or "",
+        "singleton_protection": "LAUNCHER_PREFLIGHT_ACTIVE" if launcher.exists() else "LAUNCHER_MISSING",
+    }
+
+
 def latest_classification() -> str:
     for name in (
         "R7_R40_terminal_result.json",
@@ -436,6 +455,14 @@ def main() -> int:
     print(f"DS24 Full-Family Tournament | {latest_classification()}")
     print(f"Supervisor PID {supervisor_pid}: {'alive' if supervisor_proc.get('alive') else 'dead'} heartbeat_age={heartbeat_age_seconds(heartbeat.get('heartbeat_utc'))}")
     print(f"Supervisor task: {task_state('DreamSystem_DS24_TournamentSupervisor')} | DS26 task: {task_state('DreamSystem_DS26_ProspectiveNewsCapture')}")
+    autostart = supervisor_autostart_state()
+    print(
+        "Supervisor autostart: "
+        f"{autostart.get('state')} "
+        f"mechanism={autostart.get('mechanism') or 'none'} "
+        f"launcher_hash={autostart.get('launcher_sha256') or 'none'} "
+        f"singleton={autostart.get('singleton_protection')}"
+    )
     print(f"Lease owner: {read_json(STAGE / 'R7_R27_tournament_supervisor.lease.json').get('pid')}")
     print(f"Active model processes: {gate.get('active_model_processes', heartbeat.get('active_model_processes'))} / {heartbeat.get('max_active_model_processes')}")
     exact_state = "COMPLETE" if exact.get("terminal_complete") else ("alive" if exact.get("pid_alive") else "dead")
