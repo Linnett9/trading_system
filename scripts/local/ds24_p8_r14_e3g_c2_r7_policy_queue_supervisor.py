@@ -149,6 +149,23 @@ R40_V3_METRICS_ROOTS = {
     "mlp": "metrics_only_v3_r37_mlp_direct_gen7",
 }
 R44_FORWARD_CONTRACT_ADOPTION_ID = "DS24_R44_FORWARD_CONTRACT_ADOPTION_V1"
+R42_READY_QUEUE_AUTHORITY_ID = "DS24_R42_FORWARD_METRICS_CAPABILITY_REPAIR_AND_READY_QUEUE"
+R42_READY_QUEUE_PATH = STAGE / "R42_ready_family_queue.json"
+R42_READINESS_MATRIX_PATH = STAGE / "R42_full_family_readiness_matrix.json"
+R42_REBOOT_TASK_PLAN_PATH = STAGE / "R43_reboot_supervisor_task_plan.json"
+R43_DRY_RUN_ADMISSION_PATH = STAGE / "R43_dry_run_admission.json"
+R42_ALLOWED_READY_FAMILIES = (
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder",
+)
 R44_CURRENT_CONTINUATION_GRANDFATHERED_NAMESPACES = dict(R40_V3_METRICS_ROOTS)
 R44A_DISK_READMISSION_CONTRACT_ID = "DS24_R44A_DISK_READMISSION_HYSTERESIS_V1"
 R44A_DISK_CONTAINMENT_REASONS = {
@@ -219,6 +236,18 @@ def sha256_text(text: str) -> str:
 
 def state_hash(payload: Any) -> str:
     return sha256_text(json.dumps(payload, sort_keys=True, default=str))
+
+
+def file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hash_if_exists(path: Path) -> str:
+    return file_hash(path) if path.exists() and path.is_file() else ""
 
 
 def same_utc_iso(left: Any, right: Any) -> bool:
@@ -348,7 +377,10 @@ def launch_enabled_for_family(family: str) -> bool:
     if family in LIGHTGBM_WORKER_FAMILIES:
         return (ROOT / "scripts" / "local" / LIGHTGBM_RANKING_WORKER_SCRIPT).exists()
     if family in SEQUENCE_WORKER_FAMILIES:
-        return False
+        return (
+            family != "Temporal Fusion Transformer"
+            and (ROOT / "scripts" / "local" / SEQUENCE_WORKER_SCRIPT).exists()
+        )
     return False
 
 
@@ -360,9 +392,11 @@ def default_metrics_root_name(family: str, requested: str = "") -> str:
     return f"metrics_only_v3_r40_{family_slug(family)}"
 
 
-def forward_metrics_capability_paths(family: str) -> list[Path]:
+def forward_metrics_capability_paths(family: str, *, include_r42_authority: bool = False) -> list[Path]:
     script = worker_script_for_family(family)
     paths = [POLICY_ROOT / family / "forward_metrics_capability.json"]
+    if include_r42_authority:
+        paths.append(STAGE / "R42_forward_metrics_capabilities" / f"{family_slug(family)}.forward_metrics_capability.json")
     if script:
         stem = Path(script).stem
         paths.append(ROOT / "scripts" / "local" / f"{stem}.forward_metrics_capability.json")
@@ -370,8 +404,13 @@ def forward_metrics_capability_paths(family: str) -> list[Path]:
     return paths
 
 
-def family_forward_metrics_capability_evidence(family: str, *, metrics_root_name: str = "metrics_only_v3") -> dict[str, Any]:
-    for path in forward_metrics_capability_paths(family):
+def family_forward_metrics_capability_evidence(
+    family: str,
+    *,
+    metrics_root_name: str = "metrics_only_v3",
+    include_r42_authority: bool = False,
+) -> dict[str, Any]:
+    for path in forward_metrics_capability_paths(family, include_r42_authority=include_r42_authority):
         payload = read_json(path)
         if payload:
             evidence = dict(payload)
@@ -395,6 +434,7 @@ def forward_metrics_contract_admission_decision(
     evaluation_version: str = "v3",
     metrics_root_name: str = "metrics_only_v3",
     capability: dict[str, Any] | None = None,
+    include_r42_authority: bool = False,
 ) -> dict[str, Any]:
     effective_metrics_root = default_metrics_root_name(family, metrics_root_name)
     base = {
@@ -423,7 +463,11 @@ def forward_metrics_contract_admission_decision(
             "grandfathered_current_namespace": True,
             "capability_decision": "CURRENT_EXACT_NAMESPACE_CONTINUATION_GRANDFATHERED",
         }
-    evidence = capability if capability is not None else family_forward_metrics_capability_evidence(family, metrics_root_name=metrics_root_name)
+    evidence = capability if capability is not None else family_forward_metrics_capability_evidence(
+        family,
+        metrics_root_name=metrics_root_name,
+        include_r42_authority=include_r42_authority,
+    )
     result = validate_extended_metrics_writer_capability(evidence, family=family)
     return {
         **base,
@@ -1042,11 +1086,17 @@ def exact_manifest() -> dict[str, Any]:
 
 def family_from_command_line(command: str) -> str:
     normalized = " ".join(str(command).replace("/", "\\").split()).lower()
-    if POLICY_WORKER_SCRIPT.lower() not in normalized:
+    if not any(
+        script.lower() in normalized
+        for script in (POLICY_WORKER_SCRIPT, LIGHTGBM_RANKING_WORKER_SCRIPT, SEQUENCE_WORKER_SCRIPT)
+    ):
         return ""
     for family in ALL_FAMILIES:
         family_lower = family.lower()
         if f"--family {family_lower}" in normalized or f"--family={family_lower}" in normalized:
+            return family
+        slug = family_slug(family)
+        if f"--family {slug}" in normalized or f"--family={slug}" in normalized:
             return family
     return ""
 
@@ -1368,6 +1418,64 @@ def build_family_board() -> list[dict[str, Any]]:
     return [classify_family(family, processes) for family in ALL_FAMILIES]
 
 
+def lightweight_processes_by_family() -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {family: [] for family in ALL_FAMILIES}
+    for row in python_processes():
+        command = str(row.get("CommandLine", ""))
+        family = family_from_command_line(command)
+        if family:
+            out.setdefault(family, []).append(row)
+    return out
+
+
+def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, Any]]:
+    processes = lightweight_processes_by_family()
+    board: list[dict[str, Any]] = []
+    families = list(queue) + [family for family, rows in processes.items() if rows and family not in set(queue)]
+    for family in families:
+        live = processes.get(family, [])
+        root = POLICY_ROOT / family
+        progress = read_json(root / "progress.json")
+        telemetry = read_json(root / "initialization_telemetry.json")
+        metrics_name = str(progress.get("metrics_root_name") or telemetry.get("metrics_root_name") or default_metrics_root_name(family, "metrics_only_v3"))
+        metrics_root = root / metrics_name
+        checkpoint = read_json(metrics_root / "resolved_performance_checkpoint_v3.json")
+        if live:
+            state = "RUNNING"
+        elif family == "elastic_net":
+            state = "CERTIFIED_READY"
+        elif family not in queue:
+            state = "RUNNING" if live else "NOT_IN_CERTIFIED_QUEUE"
+        else:
+            state = "V3_CERTIFIED_READY"
+        live_pids = [int(row.get("ProcessId", 0) or 0) for row in live]
+        board.append(
+            {
+                "family": family,
+                "state": state,
+                "worker_kind": worker_kind_for_family(family),
+                "worker_script": execution_registry_row(family)["worker_script"],
+                "launch_enabled": launch_enabled_for_family(family),
+                "pid": live_pids[0] if live_pids else 0,
+                "pid_alive": bool(live),
+                "live_worker_count": len(live),
+                "live_worker_pids": live_pids,
+                "duplicate_worker_count": max(0, len(live) - 1),
+                "namespace_lease_state": "LIVE_VERIFIED" if live else "STALE_RECOVERABLE",
+                "checkpoint": display_path(root / "progress.json") if (root / "progress.json").exists() else "",
+                "cursor": progress.get("last_completed_T") or telemetry.get("refit_T") or "",
+                "metrics_rows": int(checkpoint.get("resolved_performance_rows", 0) or 0),
+                "topn_rows": int(checkpoint.get("rank_ic_valid_rows", 0) or 0),
+                "resolved_performance_rows": int(checkpoint.get("resolved_performance_rows", 0) or 0),
+                "rank_ic_valid_rows": int(checkpoint.get("rank_ic_valid_rows", 0) or 0),
+                "working_set": sum(int(row.get("WorkingSetSize", 0) or 0) for row in live),
+                "private_memory": sum(int(row.get("PageFileUsage", 0) or 0) for row in live),
+                "heavy": family in HEAVY_FAMILIES,
+            }
+        )
+    return board
+
+
 def active_running(board: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         row
@@ -1377,26 +1485,139 @@ def active_running(board: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def selected_queue(family_queue: str = "") -> list[str]:
+def certified_queue_manifest_path(path: str | Path = "") -> Path:
+    return Path(path) if path else R42_READY_QUEUE_PATH
+
+
+def validate_ready_family_queue_manifest(path: str | Path = "") -> dict[str, Any]:
+    manifest_path = certified_queue_manifest_path(path)
+    payload = read_json(manifest_path)
+    if not payload:
+        raise RuntimeError(f"DS24_R43_READY_QUEUE_MANIFEST_MISSING_OR_INVALID_JSON:{display_path(manifest_path)}")
+    ticket = str(payload.get("ticket", ""))
+    if ticket != R42_READY_QUEUE_AUTHORITY_ID:
+        raise RuntimeError(f"DS24_R43_READY_QUEUE_AUTHORITY_MISMATCH:{ticket}")
+    queue = payload.get("ready_family_queue")
+    if not isinstance(queue, list) or not all(isinstance(item, str) and item.strip() for item in queue):
+        raise RuntimeError("DS24_R43_READY_QUEUE_SCHEMA_INVALID:ready_family_queue")
+    if len(queue) != len(set(queue)):
+        raise RuntimeError("DS24_R43_READY_QUEUE_DUPLICATE_FAMILIES")
+    if "Temporal Fusion Transformer" in queue or "temporal_fusion_transformer" in {family_slug(item) for item in queue}:
+        raise RuntimeError("DS24_R43_READY_QUEUE_TFT_FORBIDDEN")
+    unknown = [family for family in queue if family not in R42_ALLOWED_READY_FAMILIES]
+    if unknown:
+        raise RuntimeError(f"DS24_R43_READY_QUEUE_UNKNOWN_FAMILIES:{unknown}")
+    matrix = read_json(R42_READINESS_MATRIX_PATH)
+    rows = {str(row.get("family")): row for row in matrix.get("families", []) if isinstance(row, dict)}
+    not_ready = [
+        family
+        for family in queue
+        if rows.get(family, {}).get("current_r42_state") != "READY_TO_LAUNCH"
+    ]
+    if not_ready:
+        raise RuntimeError(f"DS24_R43_READY_QUEUE_FAMILY_WITHOUT_READY_AUTHORITY:{not_ready}")
+    return {
+        "authority": "R42",
+        "manifest_path": display_path(manifest_path),
+        "manifest_hash": hash_if_exists(manifest_path),
+        "matrix_path": display_path(R42_READINESS_MATRIX_PATH),
+        "matrix_hash": hash_if_exists(R42_READINESS_MATRIX_PATH),
+        "ticket": ticket,
+        "generated_at_utc": payload.get("generated_at_utc", ""),
+        "ready_family_queue": list(queue),
+    }
+
+
+def selected_queue(family_queue: str = "", *, ready_family_queue_manifest: str | Path = "") -> list[str]:
+    if ready_family_queue_manifest:
+        return list(validate_ready_family_queue_manifest(ready_family_queue_manifest)["ready_family_queue"])
     if family_queue:
         return [item.strip() for item in family_queue.split(",") if item.strip()]
     return R40_AUTOMATIC_QUEUE
 
 
-def next_ready_family(board: list[dict[str, Any]], *, family_queue: str = "", admit_crashed_recoverable: bool = False) -> str:
+def family_specific_skip_reason(row: Mapping[str, Any], *, allowed_states: set[str]) -> str:
+    family = str(row.get("family", ""))
+    if row.get("pid_alive"):
+        return "RUNNING"
+    if int(row.get("duplicate_worker_count", 0) or 0):
+        return "DUPLICATE_NAMESPACE_OWNER"
+    if not launch_enabled_for_family(family):
+        return "WORKER_ROUTE_NOT_LAUNCH_ENABLED"
+    state = str(row.get("state", ""))
+    if state == "COMPLETE":
+        return "COMPLETE"
+    if state in {"CONFIGURATION_AUTHORITY_REQUIRED", "V3_CERTIFICATION_REQUIRED", "V3_REPLAY_REQUIRED"}:
+        return state
+    if state not in allowed_states:
+        return f"STATE_NOT_ELIGIBLE:{state}"
+    return ""
+
+
+def certified_queue_admission_plan(
+    board: list[dict[str, Any]],
+    *,
+    family_queue: str = "",
+    ready_family_queue_manifest: str | Path = "",
+    admit_crashed_recoverable: bool = False,
+) -> dict[str, Any]:
     allowed = {"PAUSED_RESOURCE_GATE", "CERTIFIED_READY", "V3_CERTIFIED_READY"}
     if admit_crashed_recoverable:
         allowed.add("CRASHED_RECOVERABLE")
     rows_by_family = {row["family"]: row for row in board}
-    for family in selected_queue(family_queue):
+    queue_authority: dict[str, Any] = {}
+    queue = selected_queue(family_queue, ready_family_queue_manifest=ready_family_queue_manifest)
+    if ready_family_queue_manifest:
+        queue_authority = validate_ready_family_queue_manifest(ready_family_queue_manifest)
+    skipped: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
+    for family in queue:
         row = rows_by_family.get(family, {})
-        if row.get("pid_alive") or int(row.get("duplicate_worker_count", 0) or 0):
+        if not row:
+            skipped.append({"family": family, "reason": "FAMILY_NOT_ON_BOARD", "block_scope": "FAMILY_SPECIFIC_BLOCK"})
             continue
-        if not launch_enabled_for_family(family):
+        reason = family_specific_skip_reason(row, allowed_states=allowed)
+        route = execution_registry_row(family)
+        item = {
+            "family": family,
+            "state": row.get("state", ""),
+            "worker_kind": route["worker_kind"],
+            "worker_script": route["worker_script"],
+            "launch_enabled": route["launch_enabled"],
+            "checkpoint": row.get("checkpoint", ""),
+            "namespace_state": row.get("namespace_lease_state", ""),
+            "metrics_rows": row.get("metrics_rows", 0),
+            "resource_estimate": "heavy" if row.get("heavy") else "light",
+        }
+        if reason:
+            skipped.append({**item, "reason": reason, "block_scope": "FAMILY_SPECIFIC_BLOCK"})
             continue
-        if row.get("state") in allowed:
-            return family
-    return ""
+        eligible.append(item)
+    return {
+        "queue_authority": queue_authority or {"authority": "explicit" if family_queue else "R40_DEFAULT", "ready_family_queue": queue},
+        "queue": queue,
+        "first_eligible_family": eligible[0]["family"] if eligible else "",
+        "eligible_families": eligible,
+        "skipped_families": skipped,
+        "admit_crashed_recoverable": admit_crashed_recoverable,
+    }
+
+
+def next_ready_family(
+    board: list[dict[str, Any]],
+    *,
+    family_queue: str = "",
+    ready_family_queue_manifest: str | Path = "",
+    admit_crashed_recoverable: bool = False,
+) -> str:
+    return str(
+        certified_queue_admission_plan(
+            board,
+            family_queue=family_queue,
+            ready_family_queue_manifest=ready_family_queue_manifest,
+            admit_crashed_recoverable=admit_crashed_recoverable,
+        ).get("first_eligible_family", "")
+    )
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -2013,6 +2234,7 @@ def publish_state(
     last_error: str = "",
     max_active_model_processes: int | None = None,
     family_queue: str = "",
+    ready_family_queue_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
     evaluation_version: str = "v2",
     metrics_root_name: str = "metrics_only",
@@ -2021,7 +2243,13 @@ def publish_state(
     exact = exact_manifest()
     running = active_running(board)
     certification_queue = TREE_CERTIFICATION + RANKING_CERTIFICATION + SEQUENCE_CERTIFICATION
-    next_family = next_ready_family(board, family_queue=family_queue, admit_crashed_recoverable=admit_crashed_recoverable)
+    queue_plan = certified_queue_admission_plan(
+        board,
+        family_queue=family_queue,
+        ready_family_queue_manifest=ready_family_queue_manifest,
+        admit_crashed_recoverable=admit_crashed_recoverable,
+    )
+    next_family = str(queue_plan.get("first_eligible_family", ""))
     blocked = gate.get("blocked_reasons", [])
     scheduled_task = task_state(TASK_NAME)
     task_state_value = str(scheduled_task.get("State") or scheduled_task.get("state") or "")
@@ -2052,7 +2280,14 @@ def publish_state(
         "active_policy_workers": gate.get("active_policy_workers", len(running)),
         "running_policy_workers": gate.get("running_policy_workers", len(running)),
         "max_policy_workers": max_policy_workers,
-        "family_queue": selected_queue(family_queue),
+        "family_queue": list(queue_plan.get("queue", [])),
+        "certified_queue_authority": queue_plan.get("queue_authority", {}),
+        "certified_ready_remaining": len(queue_plan.get("eligible_families", [])),
+        "next_certified_family": next_family,
+        "next_worker_route": execution_registry_row(next_family) if next_family else {},
+        "queue_skip_reasons": queue_plan.get("skipped_families", []),
+        "global_resource_block": bool(blocked),
+        "family_specific_block": bool(queue_plan.get("skipped_families")),
         "admit_crashed_recoverable": admit_crashed_recoverable,
         "evaluation_version": evaluation_version.upper(),
         "metrics_root_name": metrics_root_name,
@@ -2063,6 +2298,7 @@ def publish_state(
         "terminal_validating_families": [row["family"] for row in board if row["state"] == "TERMINAL_VALIDATING"],
         "paused_resumable_families": [row["family"] for row in board if row["state"] == "PAUSED_RESOURCE_GATE"],
         "certified_ready_queue": [row["family"] for row in board if row["state"] in {"CERTIFIED_READY", "V3_CERTIFIED_READY"}],
+        "certified_queue_admission_plan": queue_plan,
         "certification_queue": certification_queue,
         "next_ready_family": next_family,
         "last_admission_decision": last_admission,
@@ -2085,6 +2321,8 @@ def publish_state(
         "active_worker_manifest": [exact] + running,
         "paused_resumable_manifest": [row for row in board if row["state"] == "PAUSED_RESOURCE_GATE"],
         "certified_ready_queue": [row["family"] for row in board if row["state"] in {"CERTIFIED_READY", "V3_CERTIFIED_READY"}],
+        "certified_queue_authority": queue_plan.get("queue_authority", {}),
+        "certified_queue_admission_plan": queue_plan,
         "certification_queue": certification_queue,
         "resource_gate": gate,
         "admission_ledger": display_path(ADMISSION_LEDGER_PATH),
@@ -2149,7 +2387,13 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         gate["active_resource_containment"] = containment
         gate["blocked_reasons"] = [*gate.get("blocked_reasons", []), "ACTIVE_RESOURCE_CONTAINMENT_APPLIED"]
     lease = refresh_lease(lease, board, gate)
-    next_family = next_ready_family(board, family_queue=args.family_queue, admit_crashed_recoverable=args.admit_crashed_recoverable)
+    queue_plan = certified_queue_admission_plan(
+        board,
+        family_queue=args.family_queue,
+        ready_family_queue_manifest=args.ready_family_queue_manifest,
+        admit_crashed_recoverable=args.admit_crashed_recoverable,
+    )
+    next_family = str(queue_plan.get("first_eligible_family", ""))
     proof_window = admission_proof_window()
     if next_family and gate["admitted"] and proof_window["blocked"]:
         gate = dict(gate)
@@ -2161,6 +2405,7 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
             next_family,
             evaluation_version=args.evaluation_version,
             metrics_root_name=args.metrics_root_name,
+            include_r42_authority=bool(args.ready_family_queue_manifest),
         )
         if next_family
         else {}
@@ -2211,6 +2456,7 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         max_policy_workers=args.max_policy_workers,
         max_active_model_processes=args.max_active_model_processes,
         family_queue=args.family_queue,
+        ready_family_queue_manifest=args.ready_family_queue_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
         evaluation_version=args.evaluation_version,
         metrics_root_name=args.metrics_root_name,
@@ -2218,6 +2464,127 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         last_admission=last_admission,
         last_launch=last_launch,
     )
+
+
+def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
+    manifest_path = certified_queue_manifest_path(args.ready_family_queue_manifest)
+    command = [
+        sys.executable,
+        "scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+        "--daemon",
+        "--resume",
+        "--poll-seconds",
+        str(args.poll_seconds),
+        "--max-active-model-processes",
+        str(args.max_active_model_processes),
+        "--max-policy-workers",
+        str(args.max_policy_workers),
+        "--max-restarts-per-family",
+        str(args.max_restarts_per_family),
+        "--admission-commit-percent",
+        str(args.admission_commit_percent),
+        "--max-system-commit-percent",
+        str(args.max_system_commit_percent),
+        "--min-available-ram-gb",
+        str(args.min_available_ram_gb),
+        "--evaluation-version",
+        args.evaluation_version,
+        "--metrics-root-name",
+        args.metrics_root_name,
+        "--refit-policy",
+        args.refit_policy,
+        "--ready-family-queue-manifest",
+        str(manifest_path),
+        "--admit-crashed-recoverable",
+    ]
+    action = (
+        f"$Action = New-ScheduledTaskAction -Execute '{sys.executable}' "
+        f"-Argument '{' '.join(command[1:])}' -WorkingDirectory '{ROOT}'"
+    )
+    trigger = "$Trigger = New-ScheduledTaskTrigger -AtStartup"
+    settings = "$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew"
+    register = f"Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $Action -Trigger $Trigger -Settings $Settings -Force"
+    return {
+        "ticket": "DS24_R43_REBOOT_SAFE_SUPERVISOR_TASK_PLAN",
+        "generated_at_utc": utc_now(),
+        "task_name": TASK_NAME,
+        "current_task_state": task_state(TASK_NAME),
+        "activation_deferred": True,
+        "reason": "live supervisor healthy; registration deferred to avoid disturbing current process",
+        "working_directory": str(ROOT),
+        "future_supervisor_command": " ".join(command),
+        "powershell_registration_commands": [action, trigger, settings, register],
+    }
+
+
+def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
+    queue_authority = validate_ready_family_queue_manifest(args.ready_family_queue_manifest)
+    board = lightweight_certified_queue_board(queue_authority["ready_family_queue"])
+    config = GateConfig(
+        max_active_model_processes=args.max_active_model_processes,
+        max_policy_workers=args.max_policy_workers,
+        max_system_commit_percent=args.max_system_commit_percent,
+        admission_commit_percent=args.admission_commit_percent,
+        min_available_ram_bytes=int(args.min_available_ram_gb * 1024**3),
+    )
+    gate = resource_gate(board, config)
+    queue_plan = certified_queue_admission_plan(
+        board,
+        ready_family_queue_manifest=args.ready_family_queue_manifest,
+        admit_crashed_recoverable=args.admit_crashed_recoverable,
+    )
+    global_blocked = bool(gate.get("blocked_reasons"))
+    first = str(queue_plan.get("first_eligible_family", ""))
+    status = "NO_SLOT_AVAILABLE" if "MAX_ACTIVE_MODEL_PROCESSES" in gate.get("blocked_reasons", []) else ("GLOBAL_RESOURCE_BLOCK" if global_blocked else ("READY_TO_ADMIT" if first else "NO_CERTIFIED_FAMILY_ELIGIBLE"))
+    task_plan = reboot_supervisor_task_plan(args)
+    write_json(R42_REBOOT_TASK_PLAN_PATH, task_plan)
+    lease = read_json(LEASE_PATH)
+    supervisor_pid = int(lease.get("pid", 0) or 0)
+    supervisor_status = process_status(supervisor_pid) if supervisor_pid else {"alive": False, "pid": 0}
+    payload = {
+        "ticket": "DS24_R43_DRY_RUN_ADMISSION",
+        "generated_at_utc": utc_now(),
+        "dry_run": True,
+        "status": status,
+        "worker_launches": 0,
+        "workers_stopped": 0,
+        "live_supervisor_queue_modified": False,
+        "queue_authority": queue_authority,
+        "current_supervisor": {
+            "pid": supervisor_pid,
+            "alive": bool(supervisor_status.get("alive")),
+            "command_line": supervisor_status.get("command_line", ""),
+            "explicit_family_queue": command_arg(str(supervisor_status.get("command_line", "")), "--family-queue") or "",
+        },
+        "current_active_workers": [row["family"] for row in active_running(board)],
+        "active_worker_details": [
+            {
+                "family": row["family"],
+                "pid": row.get("pid", 0),
+                "checkpoint": row.get("checkpoint", ""),
+                "cursor": row.get("cursor", ""),
+                "metrics_rows": row.get("metrics_rows", 0),
+                "namespace_state": row.get("namespace_lease_state", ""),
+            }
+            for row in active_running(board)
+        ],
+        "first_eligible_family": "" if global_blocked else first,
+        "next_when_slot_available": first,
+        "next_eligible_families": [row["family"] for row in queue_plan.get("eligible_families", [])],
+        "eligible_family_details": queue_plan.get("eligible_families", []),
+        "blocked_skipped_families": queue_plan.get("skipped_families", []),
+        "global_resource_block": {
+            "blocked": global_blocked,
+            "reasons": gate.get("blocked_reasons", []),
+        },
+        "family_specific_block_count": len(queue_plan.get("skipped_families", [])),
+        "resource_snapshot": gate.get("resource_snapshot", {}),
+        "zero_full_prediction_guard": gate.get("zero_full_prediction_guard", {}),
+        "reboot_task_plan_path": display_path(R42_REBOOT_TASK_PLAN_PATH),
+        "reboot_task_plan": task_plan,
+    }
+    write_json(R43_DRY_RUN_ADMISSION_PATH, payload)
+    return payload
 
 
 def status_payload() -> dict[str, Any]:
@@ -2254,6 +2621,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--once", action="store_true")
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--shutdown", action="store_true")
+    mode.add_argument("--dry-run-admission", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--poll-seconds", type=float, default=60.0)
     parser.add_argument("--max-active-model-processes", type=int, default=3)
@@ -2266,6 +2634,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metrics-root-name", default="metrics_only")
     parser.add_argument("--refit-policy", choices=["five_score_session_v1", "daily_session_v1"], default="five_score_session_v1")
     parser.add_argument("--family-queue", default="")
+    parser.add_argument("--ready-family-queue-manifest", default=str(R42_READY_QUEUE_PATH))
     parser.add_argument("--admit-crashed-recoverable", action="store_true")
     return parser.parse_args()
 
@@ -2277,6 +2646,9 @@ def main() -> int:
         return 0
     if args.shutdown:
         print(json.dumps(shutdown_supervisor(), indent=2, sort_keys=True))
+        return 0
+    if args.dry_run_admission:
+        print(json.dumps(dry_run_admission(args), indent=2, sort_keys=True))
         return 0
     acquired, lease = acquire_lease(resume=args.resume)
     if not acquired:
@@ -2300,6 +2672,7 @@ def main() -> int:
             "metrics_root_name": args.metrics_root_name,
             "refit_policy": args.refit_policy,
             "family_queue": args.family_queue,
+            "ready_family_queue_manifest": args.ready_family_queue_manifest,
             "admit_crashed_recoverable": args.admit_crashed_recoverable,
         },
     )

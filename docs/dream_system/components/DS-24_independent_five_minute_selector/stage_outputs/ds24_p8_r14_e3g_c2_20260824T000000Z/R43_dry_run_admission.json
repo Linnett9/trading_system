@@ -1,0 +1,237 @@
+{
+  "active_worker_details": [
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/progress.json",
+      "cursor": "2023-11-14T21:00:00+00:00",
+      "family": "mlp",
+      "metrics_rows": 152355,
+      "namespace_state": "LIVE_VERIFIED",
+      "pid": 13504
+    },
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/progress.json",
+      "cursor": "2018-01-11T21:00:00+00:00",
+      "family": "extra_trees",
+      "metrics_rows": 38177,
+      "namespace_state": "LIVE_VERIFIED",
+      "pid": 8256
+    },
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/progress.json",
+      "cursor": "2016-03-24T20:00:00+00:00",
+      "family": "gradient_boosting",
+      "metrics_rows": 0,
+      "namespace_state": "LIVE_VERIFIED",
+      "pid": 8800
+    }
+  ],
+  "blocked_skipped_families": [],
+  "current_active_workers": [
+    "mlp",
+    "extra_trees",
+    "gradient_boosting"
+  ],
+  "current_supervisor": {
+    "alive": true,
+    "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --admit-crashed-recoverable --family-queue extra_trees,gradient_boosting,random_forest,mlp,elastic_net",
+    "explicit_family_queue": "extra_trees,gradient_boosting,random_forest,mlp,elastic_net",
+    "pid": 20432
+  },
+  "dry_run": true,
+  "eligible_family_details": [
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/progress.json",
+      "family": "random_forest",
+      "launch_enabled": true,
+      "metrics_rows": 3887,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "TABULAR",
+      "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py"
+    },
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/progress.json",
+      "family": "elastic_net",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "light",
+      "state": "CERTIFIED_READY",
+      "worker_kind": "TABULAR",
+      "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "lightgbm_rank_xendcg",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "LIGHTGBM_RANKING",
+      "worker_script": "scripts/local/ds24_v3_lightgbm_ranking_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "lightgbm_lambdarank",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "LIGHTGBM_RANKING",
+      "worker_script": "scripts/local/ds24_v3_lightgbm_ranking_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "DLinear",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "PatchTST",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "Transformer",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "iTransformer",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "Momentum Transformer",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "checkpoint": "",
+      "family": "Market Context Encoder",
+      "launch_enabled": true,
+      "metrics_rows": 0,
+      "namespace_state": "STALE_RECOVERABLE",
+      "resource_estimate": "heavy",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    }
+  ],
+  "family_specific_block_count": 0,
+  "first_eligible_family": "",
+  "generated_at_utc": "2026-09-09T13:27:54+00:00",
+  "global_resource_block": {
+    "blocked": true,
+    "reasons": [
+      "MAX_ACTIVE_MODEL_PROCESSES",
+      "MAX_POLICY_WORKERS_ACTIVE"
+    ]
+  },
+  "live_supervisor_queue_modified": false,
+  "next_eligible_families": [
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "next_when_slot_available": "random_forest",
+  "queue_authority": {
+    "authority": "R42",
+    "generated_at_utc": "2026-09-09T13:07:09.079883+00:00",
+    "manifest_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+    "manifest_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_ready_family_queue.json",
+    "matrix_hash": "7213df8c4f64cbe3364a4d7b452310604a6b905dbee2d34f01f386a9b42aa51d",
+    "matrix_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_full_family_readiness_matrix.json",
+    "ready_family_queue": [
+      "random_forest",
+      "elastic_net",
+      "lightgbm_rank_xendcg",
+      "lightgbm_lambdarank",
+      "DLinear",
+      "PatchTST",
+      "Transformer",
+      "iTransformer",
+      "Momentum Transformer",
+      "Market Context Encoder"
+    ],
+    "ticket": "DS24_R42_FORWARD_METRICS_CAPABILITY_REPAIR_AND_READY_QUEUE"
+  },
+  "reboot_task_plan": {
+    "activation_deferred": true,
+    "current_task_state": {
+      "State": "Absent",
+      "TaskName": "DreamSystem_DS24_TournamentSupervisor",
+      "TaskPath": ""
+    },
+    "future_supervisor_command": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 60.0 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 3 --admission-commit-percent 92.0 --max-system-commit-percent 95.0 --min-available-ram-gb 6.0 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --admit-crashed-recoverable",
+    "generated_at_utc": "2026-09-09T13:27:53+00:00",
+    "powershell_registration_commands": [
+      "$Action = New-ScheduledTaskAction -Execute 'C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe' -Argument 'scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 60.0 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 3 --admission-commit-percent 92.0 --max-system-commit-percent 95.0 --min-available-ram-gb 6.0 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --admit-crashed-recoverable' -WorkingDirectory 'C:\\Users\\Brandon\\trading_system'",
+      "$Trigger = New-ScheduledTaskTrigger -AtStartup",
+      "$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew",
+      "Register-ScheduledTask -TaskName 'DreamSystem_DS24_TournamentSupervisor' -Action $Action -Trigger $Trigger -Settings $Settings -Force"
+    ],
+    "reason": "live supervisor healthy; registration deferred to avoid disturbing current process",
+    "task_name": "DreamSystem_DS24_TournamentSupervisor",
+    "ticket": "DS24_R43_REBOOT_SAFE_SUPERVISOR_TASK_PLAN",
+    "working_directory": "C:\\Users\\Brandon\\trading_system"
+  },
+  "reboot_task_plan_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R43_reboot_supervisor_task_plan.json",
+  "resource_snapshot": {
+    "available_ram_bytes": 13002170368,
+    "disk_free_bytes": 14645784576,
+    "disk_total_bytes": 255093370880,
+    "observed_at_utc": "2026-09-09T13:27:51+00:00",
+    "system_commit_percent": 55.35,
+    "total_ram_bytes": 34060005376
+  },
+  "status": "NO_SLOT_AVAILABLE",
+  "ticket": "DS24_R43_DRY_RUN_ADMISSION",
+  "worker_launches": 0,
+  "workers_stopped": 0,
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "paper_orders": 0
+  }
+}
