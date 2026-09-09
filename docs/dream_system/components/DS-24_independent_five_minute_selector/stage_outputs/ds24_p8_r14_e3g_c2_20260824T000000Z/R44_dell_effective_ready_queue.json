@@ -1,0 +1,48 @@
+{
+  "authority": "R44",
+  "authority_hash": "fdb65d74f619f7d6ff1a7f3f821491cc3fe26940909cf364249e33240c0fc4cc",
+  "dell_effective_ready_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "derived_from": {
+    "r42_ready_queue_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+    "r42_ready_queue_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_ready_family_queue.json",
+    "r44_ownership_hash": "d399618ca4a63f21a958d7e2bb38416a874715f04751a40c2093544fd5e43798",
+    "r44_ownership_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R44_cross_host_family_ownership.json"
+  },
+  "excluded_families": [
+    {
+      "family": "lightgbm_rank_xendcg",
+      "reason": "SKIP_MAC_OWNED"
+    },
+    {
+      "family": "lightgbm_lambdarank",
+      "reason": "SKIP_MAC_OWNED"
+    },
+    {
+      "family": "DLinear",
+      "reason": "SKIP_MAC_RESERVED"
+    },
+    {
+      "family": "Temporal Fusion Transformer",
+      "reason": "SKIP_CONFIGURATION_AUTHORITY_REQUIRED"
+    }
+  ],
+  "excluded_mac_owned": [
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank"
+  ],
+  "excluded_mac_reserved": [
+    "DLinear"
+  ],
+  "generated_at_utc": "2026-09-09T13:46:04+00:00",
+  "scientific_readiness_unchanged": true,
+  "ticket": "DS24_R44_DELL_EFFECTIVE_READY_QUEUE",
+  "worker_launches": 0
+}

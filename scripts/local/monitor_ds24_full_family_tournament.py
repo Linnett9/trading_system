@@ -256,9 +256,11 @@ def family_summary(family: str) -> dict[str, Any]:
 def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str]) -> dict[str, Any]:
     try:
         queue = supervisor_api.validate_ready_family_queue_manifest(supervisor_api.R42_READY_QUEUE_PATH)
+        ownership = supervisor_api.validate_cross_host_ownership_authority(supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH)
         plan = supervisor_api.certified_queue_admission_plan(
             board,
             ready_family_queue_manifest=supervisor_api.R42_READY_QUEUE_PATH,
+            cross_host_ownership_manifest=supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH,
             admit_crashed_recoverable=True,
         )
     except Exception as exc:
@@ -270,19 +272,39 @@ def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str
             "next_route": "",
             "global_block": bool(blocked),
             "family_specific_blocks": [],
+            "cross_host_authority": "R44_INVALID",
+            "cross_host_error": f"{type(exc).__name__}:{exc}",
         }
     next_family = str(plan.get("first_eligible_family", ""))
     route = supervisor_api.execution_registry_row(next_family) if next_family else {}
+    fallback = ""
+    if any(row.get("family") == "elastic_net" for row in plan.get("skipped_families", [])):
+        for row in plan.get("eligible_families", []):
+            if row.get("family") != "elastic_net":
+                fallback = str(row.get("family", ""))
+                break
     return {
         "authority": queue["authority"],
         "manifest_hash": queue["manifest_hash"],
+        "cross_host_authority": ownership["authority"],
+        "cross_host_manifest_hash": ownership["manifest_hash"],
+        "excluded_mac_owned": ownership["excluded_mac_owned"],
+        "excluded_mac_reserved": ownership["excluded_mac_reserved"],
+        "dell_ready_remaining": len(plan.get("eligible_families", [])),
         "remaining": len(plan.get("eligible_families", [])),
         "next_family": next_family,
         "next_route": route.get("worker_kind", ""),
+        "next_fallback": fallback,
         "global_block": bool(blocked),
         "global_block_reasons": blocked,
         "family_specific_blocks": plan.get("skipped_families", []),
     }
+
+
+def compact_route_label(route: object) -> str:
+    if route == "TABULAR":
+        return "classical"
+    return str(route or "")
 
 
 def family_validation_state(family: str) -> str:
@@ -457,6 +479,22 @@ def main() -> int:
         f"reasons={certified.get('global_block_reasons', [])} "
         f"FAMILY_SPECIFIC_BLOCK={len(certified.get('family_specific_blocks', []))}"
     )
+    print(
+        "Cross-host authority: "
+        f"{certified.get('cross_host_authority', 'R44')} "
+        f"hash={certified.get('cross_host_manifest_hash', '')} "
+        f"Mac owned: {', '.join(certified.get('excluded_mac_owned', [])) or 'none'} "
+        f"Mac reserved: {', '.join(certified.get('excluded_mac_reserved', [])) or 'none'} "
+        f"Dell ready remaining: {certified.get('dell_ready_remaining', certified.get('remaining'))} "
+        f"Next Dell family: {certified.get('next_family') or 'none'} "
+        f"Next Dell route: {compact_route_label(certified.get('next_route')) or 'none'}"
+    )
+    if certified.get("next_fallback"):
+        print(f"Next Dell fallback: {certified.get('next_fallback')}")
+    ownership_rows = (
+        supervisor_api.validate_cross_host_ownership_authority(supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH)
+        .get("by_family", {})
+    )
     if args.eta_window_minutes:
         print(f"ETA window: {args.eta_window_minutes:g} minutes")
     for line in r35_eta_text():
@@ -470,6 +508,13 @@ def main() -> int:
             f"stderr={row.get('stderr_state')} eval={row.get('evaluation_contract_version') or ''} "
             f"resolved={row.get('resolved_performance_rows', 0)} ic_ts={row.get('rank_ic_valid_rows', 0)} pending={row.get('pending_score_rows', 0)}"
         )
+        ownership = ownership_rows.get(str(row.get("family")), {})
+        if ownership:
+            line += (
+                f" readiness={ownership.get('readiness_state', '')} "
+                f"owner={ownership.get('execution_owner', '')}/{ownership.get('owner_state', '')} "
+                f"dell_eligible={ownership.get('dell_eligible')}"
+            )
         if not args.compact:
             line += (
                 f" terminal={row.get('registered_terminal_cursor')} "

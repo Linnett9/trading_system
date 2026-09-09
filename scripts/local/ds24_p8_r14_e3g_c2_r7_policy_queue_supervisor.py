@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -154,6 +154,11 @@ R42_READY_QUEUE_PATH = STAGE / "R42_ready_family_queue.json"
 R42_READINESS_MATRIX_PATH = STAGE / "R42_full_family_readiness_matrix.json"
 R42_REBOOT_TASK_PLAN_PATH = STAGE / "R43_reboot_supervisor_task_plan.json"
 R43_DRY_RUN_ADMISSION_PATH = STAGE / "R43_dry_run_admission.json"
+R44_CROSS_HOST_OWNERSHIP_AUTHORITY_ID = "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY"
+R44_CROSS_HOST_OWNERSHIP_PATH = STAGE / "R44_cross_host_family_ownership.json"
+R44_DELL_EFFECTIVE_READY_QUEUE_PATH = STAGE / "R44_dell_effective_ready_queue.json"
+R44_ADMISSION_VALIDATION_PATH = STAGE / "R44_cross_host_admission_validation.json"
+R44_REBOOT_TASK_PLAN_PATH = STAGE / "R44_reboot_supervisor_task_plan.json"
 R42_ALLOWED_READY_FAMILIES = (
     "random_forest",
     "elastic_net",
@@ -166,6 +171,33 @@ R42_ALLOWED_READY_FAMILIES = (
     "Momentum Transformer",
     "Market Context Encoder",
 )
+R44_MAC_OWNED_FAMILIES = ("lightgbm_rank_xendcg", "lightgbm_lambdarank")
+R44_MAC_RESERVED_FAMILIES = ("DLinear",)
+R44_DELL_READY_FAMILIES = (
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder",
+)
+R44_DELL_RUNNING_FAMILIES = ("mlp", "extra_trees", "gradient_boosting")
+R44_ALLOWED_OWNERSHIP_STATES = {
+    "DELL_OWNED",
+    "MAC_OWNED",
+    "MAC_RESERVED",
+    "UNASSIGNED",
+    "COMPLETE_IMPORTED",
+}
+R44_ALLOWED_OWNER_STATES = {
+    "DELL_OWNED",
+    "MAC_COMPLETE",
+    "MAC_RUNNING",
+    "MAC_RESERVED_NEXT",
+    "UNASSIGNED",
+    "COMPLETE_IMPORTED",
+}
 R44_CURRENT_CONTINUATION_GRANDFATHERED_NAMESPACES = dict(R40_V3_METRICS_ROOTS)
 R44A_DISK_READMISSION_CONTRACT_ID = "DS24_R44A_DISK_READMISSION_HYSTERESIS_V1"
 R44A_DISK_CONTAINMENT_REASONS = {
@@ -1528,6 +1560,238 @@ def validate_ready_family_queue_manifest(path: str | Path = "") -> dict[str, Any
     }
 
 
+def readiness_state_by_family() -> dict[str, str]:
+    matrix = read_json(R42_READINESS_MATRIX_PATH)
+    rows = matrix.get("families", [])
+    if not isinstance(rows, list):
+        return {}
+    return {
+        str(row.get("family")): str(row.get("current_r42_state") or row.get("readiness_state") or "")
+        for row in rows
+        if isinstance(row, dict) and row.get("family")
+    }
+
+
+def default_cross_host_owner_row(family: str, *, readiness_state: str, updated_at_utc: str) -> dict[str, Any]:
+    if family == "lightgbm_rank_xendcg":
+        row = {
+            "family": family,
+            "readiness_state": readiness_state,
+            "execution_owner": "MAC",
+            "ownership_state": "MAC_OWNED",
+            "owner_state": "MAC_COMPLETE",
+            "dell_eligible": False,
+            "mac_eligible": True,
+            "ownership_reason": "Completed on Mac lane; Dell recomputation forbidden unless ownership is reassigned.",
+        }
+    elif family == "lightgbm_lambdarank":
+        row = {
+            "family": family,
+            "readiness_state": readiness_state,
+            "execution_owner": "MAC",
+            "ownership_state": "MAC_OWNED",
+            "owner_state": "MAC_RUNNING",
+            "dell_eligible": False,
+            "mac_eligible": True,
+            "ownership_reason": "Currently running on Mac lane; Dell duplicate compute forbidden.",
+        }
+    elif family == "DLinear":
+        row = {
+            "family": family,
+            "readiness_state": readiness_state,
+            "execution_owner": "MAC",
+            "ownership_state": "MAC_RESERVED",
+            "owner_state": "MAC_RESERVED_NEXT",
+            "dell_eligible": False,
+            "mac_eligible": True,
+            "ownership_reason": "Reserved as the next Mac-lane family after LambdaRank.",
+        }
+    elif family in R44_DELL_READY_FAMILIES or family in R44_DELL_RUNNING_FAMILIES:
+        row = {
+            "family": family,
+            "readiness_state": readiness_state,
+            "execution_owner": "DELL",
+            "ownership_state": "DELL_OWNED",
+            "owner_state": "DELL_OWNED",
+            "dell_eligible": True,
+            "mac_eligible": False,
+            "ownership_reason": "Dell lane owns local execution for this certified or already-running family.",
+        }
+    else:
+        row = {
+            "family": family,
+            "readiness_state": readiness_state,
+            "execution_owner": "UNASSIGNED",
+            "ownership_state": "UNASSIGNED",
+            "owner_state": "UNASSIGNED",
+            "dell_eligible": False,
+            "mac_eligible": False,
+            "ownership_reason": "No host execution ownership assigned by R44.",
+        }
+    row["authority_source"] = R44_CROSS_HOST_OWNERSHIP_AUTHORITY_ID
+    row["updated_at_utc"] = updated_at_utc
+    row["authority_hash"] = state_hash(row)
+    return row
+
+
+def build_cross_host_ownership_authority(
+    *,
+    updated_at_utc: str | None = None,
+    path: Path = R44_CROSS_HOST_OWNERSHIP_PATH,
+) -> dict[str, Any]:
+    timestamp = updated_at_utc or utc_now()
+    ready_authority = validate_ready_family_queue_manifest(R42_READY_QUEUE_PATH)
+    readiness = readiness_state_by_family()
+    families = list(dict.fromkeys([*ALL_FAMILIES, *ready_authority["ready_family_queue"], "Temporal Fusion Transformer"]))
+    rows = [
+        default_cross_host_owner_row(
+            family,
+            readiness_state=readiness.get(family, "CONFIGURATION_AUTHORITY_REQUIRED" if family == "Temporal Fusion Transformer" else ""),
+            updated_at_utc=timestamp,
+        )
+        for family in families
+    ]
+    payload = {
+        "ticket": R44_CROSS_HOST_OWNERSHIP_AUTHORITY_ID,
+        "authority": "R44",
+        "schema_version": "1.0",
+        "parent_authority": "DS24_R43_CERTIFIED_READY_QUEUE_SUPERVISOR_INTEGRATION",
+        "parent_commit": "4460ad10f",
+        "generated_at_utc": timestamp,
+        "updated_at_utc": timestamp,
+        "r42_ready_queue_path": ready_authority["manifest_path"],
+        "r42_ready_queue_hash": ready_authority["manifest_hash"],
+        "r42_readiness_matrix_path": ready_authority["matrix_path"],
+        "r42_readiness_matrix_hash": ready_authority["matrix_hash"],
+        "ownership_states": sorted(R44_ALLOWED_OWNERSHIP_STATES),
+        "owner_states": sorted(R44_ALLOWED_OWNER_STATES),
+        "import_lifecycle": ["MAC_RUNNING", "MAC_COMPLETE", "COMPLETE_IMPORTED"],
+        "dlinear_release_transition": {
+            "from_owner_state": "MAC_RESERVED_NEXT",
+            "to_owner_state": "DELL_OWNED",
+            "scientific_recertification_required": False,
+        },
+        "families": rows,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(path, payload)
+    return payload
+
+
+def cross_host_ownership_manifest_path(path: str | Path = "") -> Path:
+    return Path(path) if path else R44_CROSS_HOST_OWNERSHIP_PATH
+
+
+def validate_cross_host_ownership_authority(path: str | Path = "") -> dict[str, Any]:
+    manifest_path = cross_host_ownership_manifest_path(path)
+    payload = read_json(manifest_path)
+    if not payload:
+        raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_MISSING_OR_INVALID_JSON:{display_path(manifest_path)}")
+    if str(payload.get("ticket", "")) != R44_CROSS_HOST_OWNERSHIP_AUTHORITY_ID:
+        raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_AUTHORITY_MISMATCH:{payload.get('ticket', '')}")
+    rows = payload.get("families")
+    if not isinstance(rows, list):
+        raise RuntimeError("DS24_R44_CROSS_HOST_OWNERSHIP_SCHEMA_INVALID:families")
+    by_family: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("family"), str):
+            raise RuntimeError("DS24_R44_CROSS_HOST_OWNERSHIP_SCHEMA_INVALID:family")
+        family = str(row["family"])
+        if family in by_family:
+            raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_DUPLICATE_FAMILY:{family}")
+        if str(row.get("ownership_state", "")) not in R44_ALLOWED_OWNERSHIP_STATES:
+            raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_STATE_INVALID:{family}")
+        if str(row.get("owner_state", "")) not in R44_ALLOWED_OWNER_STATES:
+            raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_OWNER_STATE_INVALID:{family}")
+        by_family[family] = dict(row)
+    missing = [family for family in (*R42_ALLOWED_READY_FAMILIES, "Temporal Fusion Transformer") if family not in by_family]
+    if missing:
+        raise RuntimeError(f"DS24_R44_CROSS_HOST_OWNERSHIP_MISSING_FAMILIES:{missing}")
+    return {
+        "authority": "R44",
+        "manifest_path": display_path(manifest_path),
+        "manifest_hash": hash_if_exists(manifest_path),
+        "ticket": payload.get("ticket", ""),
+        "generated_at_utc": payload.get("generated_at_utc", ""),
+        "updated_at_utc": payload.get("updated_at_utc", ""),
+        "r42_ready_queue_hash": payload.get("r42_ready_queue_hash", ""),
+        "families": list(rows),
+        "by_family": by_family,
+        "excluded_mac_owned": [family for family in R44_MAC_OWNED_FAMILIES if not by_family.get(family, {}).get("dell_eligible", True)],
+        "excluded_mac_reserved": [family for family in R44_MAC_RESERVED_FAMILIES if not by_family.get(family, {}).get("dell_eligible", True)],
+        "dell_eligible_families": [str(row["family"]) for row in rows if bool(row.get("dell_eligible"))],
+    }
+
+
+def cross_host_skip_reason(family: str, ownership_authority: Mapping[str, Any]) -> str:
+    row = ownership_authority.get("by_family", {}).get(family, {}) if ownership_authority else {}
+    if not row:
+        return ""
+    if bool(row.get("dell_eligible")):
+        return ""
+    owner_state = str(row.get("owner_state", ""))
+    execution_owner = str(row.get("execution_owner", ""))
+    readiness_state = str(row.get("readiness_state", ""))
+    if owner_state == "MAC_RESERVED_NEXT" or str(row.get("ownership_state", "")) == "MAC_RESERVED":
+        return "SKIP_MAC_RESERVED"
+    if execution_owner == "MAC" or str(row.get("ownership_state", "")) == "MAC_OWNED":
+        return "SKIP_MAC_OWNED"
+    if readiness_state == "CONFIGURATION_AUTHORITY_REQUIRED":
+        return "SKIP_CONFIGURATION_AUTHORITY_REQUIRED"
+    return "CROSS_HOST_OWNERSHIP_ADMISSION_BLOCKED"
+
+
+def assert_dell_ownership_admission(family: str, path: str | Path = "") -> dict[str, Any]:
+    manifest_path = cross_host_ownership_manifest_path(path)
+    if not manifest_path.exists():
+        return {"admitted": True, "authority": "R44_NOT_PRESENT", "family": family}
+    authority = validate_cross_host_ownership_authority(manifest_path)
+    reason = cross_host_skip_reason(family, authority)
+    if reason:
+        raise RuntimeError(f"CROSS_HOST_OWNERSHIP_ADMISSION_BLOCKED:{family}:{reason}")
+    row = authority["by_family"].get(family, {})
+    return {"admitted": True, "authority": "R44", "family": family, "ownership": row}
+
+
+def write_dell_effective_ready_queue(
+    *,
+    ready_family_queue_manifest: str | Path = R42_READY_QUEUE_PATH,
+    cross_host_ownership_manifest: str | Path = R44_CROSS_HOST_OWNERSHIP_PATH,
+    path: Path = R44_DELL_EFFECTIVE_READY_QUEUE_PATH,
+) -> dict[str, Any]:
+    ready = validate_ready_family_queue_manifest(ready_family_queue_manifest)
+    ownership = validate_cross_host_ownership_authority(cross_host_ownership_manifest)
+    queue = [family for family in ready["ready_family_queue"] if not cross_host_skip_reason(family, ownership)]
+    skipped = [
+        {"family": family, "reason": cross_host_skip_reason(family, ownership)}
+        for family in ready["ready_family_queue"]
+        if cross_host_skip_reason(family, ownership)
+    ]
+    tft = ownership["by_family"].get("Temporal Fusion Transformer", {})
+    if tft:
+        skipped.append({"family": "Temporal Fusion Transformer", "reason": cross_host_skip_reason("Temporal Fusion Transformer", ownership)})
+    payload = {
+        "ticket": "DS24_R44_DELL_EFFECTIVE_READY_QUEUE",
+        "authority": "R44",
+        "generated_at_utc": utc_now(),
+        "derived_from": {
+            "r42_ready_queue_path": ready["manifest_path"],
+            "r42_ready_queue_hash": ready["manifest_hash"],
+            "r44_ownership_path": ownership["manifest_path"],
+            "r44_ownership_hash": ownership["manifest_hash"],
+        },
+        "dell_effective_ready_queue": queue,
+        "excluded_families": skipped,
+        "excluded_mac_owned": ownership["excluded_mac_owned"],
+        "excluded_mac_reserved": ownership["excluded_mac_reserved"],
+        "scientific_readiness_unchanged": True,
+        "worker_launches": 0,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(path, payload)
+    return payload
+
+
 def selected_queue(family_queue: str = "", *, ready_family_queue_manifest: str | Path = "") -> list[str]:
     if ready_family_queue_manifest:
         return list(validate_ready_family_queue_manifest(ready_family_queue_manifest)["ready_family_queue"])
@@ -1559,6 +1823,7 @@ def certified_queue_admission_plan(
     *,
     family_queue: str = "",
     ready_family_queue_manifest: str | Path = "",
+    cross_host_ownership_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
 ) -> dict[str, Any]:
     allowed = {"PAUSED_RESOURCE_GATE", "CERTIFIED_READY", "V3_CERTIFIED_READY"}
@@ -1569,6 +1834,9 @@ def certified_queue_admission_plan(
     queue = selected_queue(family_queue, ready_family_queue_manifest=ready_family_queue_manifest)
     if ready_family_queue_manifest:
         queue_authority = validate_ready_family_queue_manifest(ready_family_queue_manifest)
+    ownership_authority: dict[str, Any] = {}
+    if cross_host_ownership_manifest:
+        ownership_authority = validate_cross_host_ownership_authority(cross_host_ownership_manifest)
     skipped: list[dict[str, Any]] = []
     eligible: list[dict[str, Any]] = []
     for family in queue:
@@ -1581,6 +1849,26 @@ def certified_queue_admission_plan(
         item = {
             "family": family,
             "state": row.get("state", ""),
+            "scientific_readiness": (
+                ownership_authority.get("by_family", {}).get(family, {}).get("readiness_state", row.get("state", ""))
+                if ownership_authority
+                else row.get("state", "")
+            ),
+            "execution_owner": (
+                ownership_authority.get("by_family", {}).get(family, {}).get("execution_owner", "")
+                if ownership_authority
+                else ""
+            ),
+            "owner_state": (
+                ownership_authority.get("by_family", {}).get(family, {}).get("owner_state", "")
+                if ownership_authority
+                else ""
+            ),
+            "dell_eligible": (
+                ownership_authority.get("by_family", {}).get(family, {}).get("dell_eligible", True)
+                if ownership_authority
+                else True
+            ),
             "worker_kind": route["worker_kind"],
             "worker_script": route["worker_script"],
             "launch_enabled": route["launch_enabled"],
@@ -1589,16 +1877,23 @@ def certified_queue_admission_plan(
             "metrics_rows": row.get("metrics_rows", 0),
             "resource_estimate": "heavy" if row.get("heavy") else "light",
         }
+        ownership_reason = cross_host_skip_reason(family, ownership_authority)
+        if ownership_reason:
+            skipped.append({**item, "reason": ownership_reason, "block_scope": "FAMILY_SPECIFIC_BLOCK"})
+            continue
         if reason:
             skipped.append({**item, "reason": reason, "block_scope": "FAMILY_SPECIFIC_BLOCK"})
             continue
         eligible.append(item)
     return {
         "queue_authority": queue_authority or {"authority": "explicit" if family_queue else "R40_DEFAULT", "ready_family_queue": queue},
+        "cross_host_ownership_authority": ownership_authority,
         "queue": queue,
         "first_eligible_family": eligible[0]["family"] if eligible else "",
         "eligible_families": eligible,
         "skipped_families": skipped,
+        "excluded_mac_owned": ownership_authority.get("excluded_mac_owned", []),
+        "excluded_mac_reserved": ownership_authority.get("excluded_mac_reserved", []),
         "admit_crashed_recoverable": admit_crashed_recoverable,
     }
 
@@ -1608,6 +1903,7 @@ def next_ready_family(
     *,
     family_queue: str = "",
     ready_family_queue_manifest: str | Path = "",
+    cross_host_ownership_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
 ) -> str:
     return str(
@@ -1615,6 +1911,7 @@ def next_ready_family(
             board,
             family_queue=family_queue,
             ready_family_queue_manifest=ready_family_queue_manifest,
+            cross_host_ownership_manifest=cross_host_ownership_manifest,
             admit_crashed_recoverable=admit_crashed_recoverable,
         ).get("first_eligible_family", "")
     )
@@ -2061,6 +2358,7 @@ def launch_family(
     refit_policy: str = "five_score_session_v1",
     forward_contract_admission: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    assert_dell_ownership_admission(family)
     registry = execution_registry_row(family)
     if not registry["launch_enabled"]:
         raise RuntimeError(f"DS24_R40_WORKER_ROUTE_NOT_LAUNCH_ENABLED:{family}:{registry['worker_kind']}")
@@ -2235,6 +2533,7 @@ def publish_state(
     max_active_model_processes: int | None = None,
     family_queue: str = "",
     ready_family_queue_manifest: str | Path = "",
+    cross_host_ownership_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
     evaluation_version: str = "v2",
     metrics_root_name: str = "metrics_only",
@@ -2247,6 +2546,7 @@ def publish_state(
         board,
         family_queue=family_queue,
         ready_family_queue_manifest=ready_family_queue_manifest,
+        cross_host_ownership_manifest=cross_host_ownership_manifest,
         admit_crashed_recoverable=admit_crashed_recoverable,
     )
     next_family = str(queue_plan.get("first_eligible_family", ""))
@@ -2282,6 +2582,7 @@ def publish_state(
         "max_policy_workers": max_policy_workers,
         "family_queue": list(queue_plan.get("queue", [])),
         "certified_queue_authority": queue_plan.get("queue_authority", {}),
+        "cross_host_ownership_authority": queue_plan.get("cross_host_ownership_authority", {}),
         "certified_ready_remaining": len(queue_plan.get("eligible_families", [])),
         "next_certified_family": next_family,
         "next_worker_route": execution_registry_row(next_family) if next_family else {},
@@ -2322,6 +2623,7 @@ def publish_state(
         "paused_resumable_manifest": [row for row in board if row["state"] == "PAUSED_RESOURCE_GATE"],
         "certified_ready_queue": [row["family"] for row in board if row["state"] in {"CERTIFIED_READY", "V3_CERTIFIED_READY"}],
         "certified_queue_authority": queue_plan.get("queue_authority", {}),
+        "cross_host_ownership_authority": queue_plan.get("cross_host_ownership_authority", {}),
         "certified_queue_admission_plan": queue_plan,
         "certification_queue": certification_queue,
         "resource_gate": gate,
@@ -2391,6 +2693,7 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         board,
         family_queue=args.family_queue,
         ready_family_queue_manifest=args.ready_family_queue_manifest,
+        cross_host_ownership_manifest=args.cross_host_ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
     )
     next_family = str(queue_plan.get("first_eligible_family", ""))
@@ -2457,6 +2760,7 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         max_active_model_processes=args.max_active_model_processes,
         family_queue=args.family_queue,
         ready_family_queue_manifest=args.ready_family_queue_manifest,
+        cross_host_ownership_manifest=args.cross_host_ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
         evaluation_version=args.evaluation_version,
         metrics_root_name=args.metrics_root_name,
@@ -2468,6 +2772,8 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
 
 def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
     manifest_path = certified_queue_manifest_path(args.ready_family_queue_manifest)
+    ownership_arg = str(getattr(args, "cross_host_ownership_manifest", "") or "")
+    ownership_path = cross_host_ownership_manifest_path(ownership_arg) if ownership_arg else Path("")
     command = [
         sys.executable,
         "scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
@@ -2497,6 +2803,8 @@ def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
         str(manifest_path),
         "--admit-crashed-recoverable",
     ]
+    if ownership_arg:
+        command[-1:-1] = ["--cross-host-ownership-manifest", str(ownership_path)]
     action = (
         f"$Action = New-ScheduledTaskAction -Execute '{sys.executable}' "
         f"-Argument '{' '.join(command[1:])}' -WorkingDirectory '{ROOT}'"
@@ -2505,7 +2813,7 @@ def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
     settings = "$Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew"
     register = f"Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $Action -Trigger $Trigger -Settings $Settings -Force"
     return {
-        "ticket": "DS24_R43_REBOOT_SAFE_SUPERVISOR_TASK_PLAN",
+        "ticket": "DS24_R44_REBOOT_SAFE_SUPERVISOR_TASK_PLAN" if ownership_arg else "DS24_R43_REBOOT_SAFE_SUPERVISOR_TASK_PLAN",
         "generated_at_utc": utc_now(),
         "task_name": TASK_NAME,
         "current_task_state": task_state(TASK_NAME),
@@ -2513,12 +2821,16 @@ def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
         "reason": "live supervisor healthy; registration deferred to avoid disturbing current process",
         "working_directory": str(ROOT),
         "future_supervisor_command": " ".join(command),
+        "r42_ready_queue_manifest": display_path(manifest_path),
+        "r44_cross_host_ownership_manifest": display_path(ownership_path) if ownership_arg else "",
         "powershell_registration_commands": [action, trigger, settings, register],
     }
 
 
 def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
     queue_authority = validate_ready_family_queue_manifest(args.ready_family_queue_manifest)
+    ownership_manifest = str(getattr(args, "cross_host_ownership_manifest", "") or "")
+    ownership_authority = validate_cross_host_ownership_authority(ownership_manifest) if ownership_manifest else {}
     board = lightweight_certified_queue_board(queue_authority["ready_family_queue"])
     config = GateConfig(
         max_active_model_processes=args.max_active_model_processes,
@@ -2531,18 +2843,20 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
     queue_plan = certified_queue_admission_plan(
         board,
         ready_family_queue_manifest=args.ready_family_queue_manifest,
+        cross_host_ownership_manifest=ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
     )
     global_blocked = bool(gate.get("blocked_reasons"))
     first = str(queue_plan.get("first_eligible_family", ""))
     status = "NO_SLOT_AVAILABLE" if "MAX_ACTIVE_MODEL_PROCESSES" in gate.get("blocked_reasons", []) else ("GLOBAL_RESOURCE_BLOCK" if global_blocked else ("READY_TO_ADMIT" if first else "NO_CERTIFIED_FAMILY_ELIGIBLE"))
     task_plan = reboot_supervisor_task_plan(args)
-    write_json(R42_REBOOT_TASK_PLAN_PATH, task_plan)
+    reboot_path = R44_REBOOT_TASK_PLAN_PATH if ownership_manifest else R42_REBOOT_TASK_PLAN_PATH
+    write_json(reboot_path, task_plan)
     lease = read_json(LEASE_PATH)
     supervisor_pid = int(lease.get("pid", 0) or 0)
     supervisor_status = process_status(supervisor_pid) if supervisor_pid else {"alive": False, "pid": 0}
     payload = {
-        "ticket": "DS24_R43_DRY_RUN_ADMISSION",
+        "ticket": "DS24_R44_CROSS_HOST_ADMISSION_VALIDATION" if ownership_manifest else "DS24_R43_DRY_RUN_ADMISSION",
         "generated_at_utc": utc_now(),
         "dry_run": True,
         "status": status,
@@ -2550,6 +2864,9 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
         "workers_stopped": 0,
         "live_supervisor_queue_modified": False,
         "queue_authority": queue_authority,
+        "cross_host_ownership_authority": ownership_authority,
+        "excluded_mac_owned": queue_plan.get("excluded_mac_owned", []),
+        "excluded_mac_reserved": queue_plan.get("excluded_mac_reserved", []),
         "current_supervisor": {
             "pid": supervisor_pid,
             "alive": bool(supervisor_status.get("alive")),
@@ -2580,10 +2897,10 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
         "family_specific_block_count": len(queue_plan.get("skipped_families", [])),
         "resource_snapshot": gate.get("resource_snapshot", {}),
         "zero_full_prediction_guard": gate.get("zero_full_prediction_guard", {}),
-        "reboot_task_plan_path": display_path(R42_REBOOT_TASK_PLAN_PATH),
+        "reboot_task_plan_path": display_path(reboot_path),
         "reboot_task_plan": task_plan,
     }
-    write_json(R43_DRY_RUN_ADMISSION_PATH, payload)
+    write_json(R44_ADMISSION_VALIDATION_PATH if ownership_manifest else R43_DRY_RUN_ADMISSION_PATH, payload)
     return payload
 
 
@@ -2635,6 +2952,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--refit-policy", choices=["five_score_session_v1", "daily_session_v1"], default="five_score_session_v1")
     parser.add_argument("--family-queue", default="")
     parser.add_argument("--ready-family-queue-manifest", default=str(R42_READY_QUEUE_PATH))
+    parser.add_argument("--cross-host-ownership-manifest", default=str(R44_CROSS_HOST_OWNERSHIP_PATH))
     parser.add_argument("--admit-crashed-recoverable", action="store_true")
     return parser.parse_args()
 
