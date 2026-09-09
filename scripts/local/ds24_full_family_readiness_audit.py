@@ -536,14 +536,14 @@ def classify_state(
         ):
             return "RUNNING_VERIFIED", "continue read-only monitoring", ""
         return "REPAIR_REQUIRED", "forensic repair before relying on running worker", "running worker failed lease/stderr/safety verification"
-    if not implementation["worker_script_exists"] or not implementation["family_resolves"]:
-        return "IMPLEMENTATION_BLOCKED", "build or bind production worker route", str(implementation.get("route_error") or "worker route missing")
     if family == "Temporal Fusion Transformer":
         return (
             "CONFIGURATION_AUTHORITY_REQUIRED",
             "bind accepted TFT tournament authority or repair TFT family adapter",
             "R40 records missing accepted full TFT static/recurrent tournament authority",
         )
+    if not implementation["worker_script_exists"] or not implementation["family_resolves"]:
+        return "IMPLEMENTATION_BLOCKED", "build or bind production worker route", str(implementation.get("route_error") or "worker route missing")
     if forward["state"] == "FORWARD_METRICS_CONTRACT_ADMISSION_BLOCKED":
         return (
             "FORWARD_METRICS_CONTRACT_REQUIRED",

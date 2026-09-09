@@ -1,0 +1,1284 @@
+{
+  "capability_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities",
+  "families": [
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_ELASTIC_NET_READINESS.json",
+        "record_keys": [
+          "estimated_ram",
+          "family",
+          "generated_at_utc",
+          "proofs",
+          "registered_configuration",
+          "registered_implementation_owner",
+          "registry_entry_present",
+          "repair",
+          "root_cause",
+          "runtime_guards",
+          "safe_future_launch_command",
+          "state",
+          "ticket",
+          "traceback"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/elastic_net.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_ELASTIC_NET_READINESS.json"
+      ],
+      "family": "elastic_net",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/elastic_net.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "TABULAR",
+        "worker_script": "ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "basis": "live tournament V3 metrics/checkpoint evidence",
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/metrics_only_v3_r37_mlp_direct_gen7",
+        "state": "PASS"
+      },
+      "current_r42_state": "RUNNING_VERIFIED",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/progress.json#ffd753d515138bb1",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/metrics_only_v3_r37_mlp_direct_gen7/resolved_performance_checkpoint_v3.json#25dc1ee2bf045759",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/stderr_r34_v3_gen72.log#f47449fcbd87aa5b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/metrics_only_v3_r37_mlp_direct_gen7"
+      ],
+      "family": "mlp",
+      "forward_metrics": {
+        "base_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "base_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "capability_decision": "CURRENT_EXACT_NAMESPACE_CONTINUATION_GRANDFATHERED",
+        "capability_path": "",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464",
+        "contract_id": "DS24_EXTENDED_PERFORMANCE_METRICS_V1",
+        "missing_requirements": [],
+        "state": "PASS"
+      },
+      "implementation": {
+        "configuration_authority_present": true,
+        "family_resolves": true,
+        "launch_enabled": true,
+        "route_error": "",
+        "state": "PASS",
+        "worker_kind": "TABULAR",
+        "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+        "worker_script_exists": true
+      },
+      "previous_r41_state": "RUNNING_VERIFIED",
+      "remaining_blocker": "",
+      "repair_performed": "inherited_from_r41",
+      "safety": {
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "basis": "live tournament V3 metrics/checkpoint evidence",
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/metrics_only_v3_r40_random_forest",
+        "state": "PASS"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/progress.json#391d807c6710a585",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/metrics_only_v3_r40_random_forest/resolved_performance_checkpoint_v3.json#44eff606e120ae97",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/stderr_r34_v3_gen6.log#0d22559b4bcf21b7",
+        "scripts/local/random_forest.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/metrics_only_v3_r40_random_forest"
+      ],
+      "family": "random_forest",
+      "forward_metrics": {
+        "base_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "base_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "scripts/local/random_forest.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464",
+        "contract_id": "DS24_EXTENDED_PERFORMANCE_METRICS_V1",
+        "missing_requirements": [],
+        "state": "PASS"
+      },
+      "implementation": {
+        "configuration_authority_present": true,
+        "family_resolves": true,
+        "launch_enabled": true,
+        "route_error": "",
+        "state": "PASS",
+        "worker_kind": "TABULAR",
+        "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+        "worker_script_exists": true
+      },
+      "previous_r41_state": "READY_TO_LAUNCH",
+      "remaining_blocker": "",
+      "repair_performed": "inherited_from_r41",
+      "safety": {
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "basis": "live tournament V3 metrics/checkpoint evidence",
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/metrics_only_v3_r40_extra_trees",
+        "state": "PASS"
+      },
+      "current_r42_state": "RUNNING_VERIFIED",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/progress.json#0265c830a852d914",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/metrics_only_v3_r40_extra_trees/resolved_performance_checkpoint_v3.json#5901a1920cac763f",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/stderr_r34_v3_gen3.log#d03f34a79d012810",
+        "scripts/local/extra_trees.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/metrics_only_v3_r40_extra_trees"
+      ],
+      "family": "extra_trees",
+      "forward_metrics": {
+        "base_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "base_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "scripts/local/extra_trees.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464",
+        "contract_id": "DS24_EXTENDED_PERFORMANCE_METRICS_V1",
+        "missing_requirements": [],
+        "state": "PASS"
+      },
+      "implementation": {
+        "configuration_authority_present": true,
+        "family_resolves": true,
+        "launch_enabled": true,
+        "route_error": "",
+        "state": "PASS",
+        "worker_kind": "TABULAR",
+        "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+        "worker_script_exists": true
+      },
+      "previous_r41_state": "RUNNING_VERIFIED",
+      "remaining_blocker": "",
+      "repair_performed": "inherited_from_r41",
+      "safety": {
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "basis": "live tournament V3 metrics/checkpoint evidence",
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/metrics_only_v3_r40_gradient_boosting",
+        "state": "PASS"
+      },
+      "current_r42_state": "RUNNING_VERIFIED",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json#b225048d0e2c593b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/progress.json#7759c0dec194119b",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/stderr_r34_v3_gen2.log#d03f34a79d012810",
+        "scripts/local/gradient_boosting.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/metrics_only_v3_r40_gradient_boosting"
+      ],
+      "family": "gradient_boosting",
+      "forward_metrics": {
+        "base_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "base_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "scripts/local/gradient_boosting.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464",
+        "contract_id": "DS24_EXTENDED_PERFORMANCE_METRICS_V1",
+        "missing_requirements": [],
+        "state": "PASS"
+      },
+      "implementation": {
+        "configuration_authority_present": true,
+        "family_resolves": true,
+        "launch_enabled": true,
+        "route_error": "",
+        "state": "PASS",
+        "worker_kind": "TABULAR",
+        "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+        "worker_script_exists": true
+      },
+      "previous_r41_state": "RUNNING_VERIFIED",
+      "remaining_blocker": "",
+      "repair_performed": "inherited_from_r41",
+      "safety": {
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json",
+        "record_keys": [
+          "bounded_search_policy",
+          "dependency",
+          "estimated_ram_disk_refit_cost",
+          "family",
+          "fixed_configuration",
+          "fixed_configuration_checksum",
+          "implementation_owner",
+          "objective_configuration_owner",
+          "objective_smoke",
+          "query_group_authority",
+          "registered_objective",
+          "registry_configuration_checksum",
+          "relevance_label_authority",
+          "resume_proof",
+          "runtime_guards",
+          "state"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_rank_xendcg.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_rank_xendcg",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_rank_xendcg.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "LIGHTGBM_RANKING",
+        "worker_script": "ds24_v3_lightgbm_ranking_policy_worker.py"
+      },
+      "previous_r41_state": "IMPLEMENTATION_BLOCKED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json",
+        "record_keys": [
+          "bounded_search_policy",
+          "dependency",
+          "estimated_ram_disk_refit_cost",
+          "family",
+          "fixed_configuration",
+          "fixed_configuration_checksum",
+          "implementation_owner",
+          "objective_configuration_owner",
+          "objective_smoke",
+          "query_group_authority",
+          "registered_objective",
+          "registry_configuration_checksum",
+          "relevance_label_authority",
+          "resume_proof",
+          "runtime_guards",
+          "state"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_lambdarank.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_lambdarank",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_lambdarank.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "LIGHTGBM_RANKING",
+        "worker_script": "ds24_v3_lightgbm_ranking_policy_worker.py"
+      },
+      "previous_r41_state": "IMPLEMENTATION_BLOCKED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/dlinear.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "DLinear",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/dlinear.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/patchtst.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "PatchTST",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/patchtst.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/transformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Transformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/transformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/itransformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "iTransformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/itransformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/momentum_transformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Momentum Transformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/momentum_transformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/market_context_encoder.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Market Context Encoder",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/market_context_encoder.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R40_06_tft_certification.json",
+        "state": "CONFIGURATION_AUTHORITY_REQUIRED"
+      },
+      "current_r42_state": "CONFIGURATION_AUTHORITY_REQUIRED",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R40_06_tft_certification.json"
+      ],
+      "family": "Temporal Fusion Transformer",
+      "forward_metrics": {
+        "admitted": false,
+        "capability_decision": "TFT_AUTHORITY_HELD_CLOSED"
+      },
+      "implementation": {
+        "ready": false,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "CONFIGURATION_AUTHORITY_REQUIRED",
+      "remaining_blocker": "R40/R41 accepted full TFT static/recurrent tournament authority not found",
+      "repair_performed": "not_repaired_without_accepted_tft_tournament_authority",
+      "safety": {
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    }
+  ],
+  "generated_at_utc": "2026-09-09T13:07:09.079883+00:00",
+  "live_supervisor_queue_modified": false,
+  "parent_r41_commit": "198aca19e",
+  "r41_matrix_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R41_full_family_readiness_matrix.json",
+  "read_only_runtime": true,
+  "ready_to_launch_families": [
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "recommended_supervisor_queue_when_slot_opens": [
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "remaining_repair_queue": [
+    {
+      "blocker": "R40/R41 accepted full TFT static/recurrent tournament authority not found",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R40_06_tft_certification.json"
+      ],
+      "family": "Temporal Fusion Transformer",
+      "state": "CONFIGURATION_AUTHORITY_REQUIRED"
+    }
+  ],
+  "repair_results": [
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_ELASTIC_NET_READINESS.json",
+        "record_keys": [
+          "estimated_ram",
+          "family",
+          "generated_at_utc",
+          "proofs",
+          "registered_configuration",
+          "registered_implementation_owner",
+          "registry_entry_present",
+          "repair",
+          "root_cause",
+          "runtime_guards",
+          "safe_future_launch_command",
+          "state",
+          "ticket",
+          "traceback"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/elastic_net.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_ELASTIC_NET_READINESS.json"
+      ],
+      "family": "elastic_net",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/elastic_net.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "TABULAR",
+        "worker_script": "ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json",
+        "record_keys": [
+          "bounded_search_policy",
+          "dependency",
+          "estimated_ram_disk_refit_cost",
+          "family",
+          "fixed_configuration",
+          "fixed_configuration_checksum",
+          "implementation_owner",
+          "objective_configuration_owner",
+          "objective_smoke",
+          "query_group_authority",
+          "registered_objective",
+          "registry_configuration_checksum",
+          "relevance_label_authority",
+          "resume_proof",
+          "runtime_guards",
+          "state"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_rank_xendcg.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_rank_xendcg",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_rank_xendcg.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "LIGHTGBM_RANKING",
+        "worker_script": "ds24_v3_lightgbm_ranking_policy_worker.py"
+      },
+      "previous_r41_state": "IMPLEMENTATION_BLOCKED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json",
+        "record_keys": [
+          "bounded_search_policy",
+          "dependency",
+          "estimated_ram_disk_refit_cost",
+          "family",
+          "fixed_configuration",
+          "fixed_configuration_checksum",
+          "implementation_owner",
+          "objective_configuration_owner",
+          "objective_smoke",
+          "query_group_authority",
+          "registered_objective",
+          "registry_configuration_checksum",
+          "relevance_label_authority",
+          "resume_proof",
+          "runtime_guards",
+          "state"
+        ],
+        "state": "V3_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_lambdarank.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_LIGHTGBM_RANKING_READINESS.json"
+      ],
+      "family": "lightgbm_lambdarank",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/lightgbm_lambdarank.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": true,
+        "worker_kind": "LIGHTGBM_RANKING",
+        "worker_script": "ds24_v3_lightgbm_ranking_policy_worker.py"
+      },
+      "previous_r41_state": "IMPLEMENTATION_BLOCKED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/dlinear.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "DLinear",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/dlinear.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/patchtst.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "PatchTST",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/patchtst.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/transformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Transformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/transformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/itransformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "iTransformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/itransformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/momentum_transformer.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Momentum Transformer",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/momentum_transformer.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json",
+        "record_keys": [
+          "checkpoint_resume_result",
+          "chronology_proof",
+          "commit_result",
+          "daily_refit_five_minute_scoring",
+          "duplicate_writer_refusal",
+          "ensemble_trace_compatibility",
+          "family",
+          "guards",
+          "registry_hashes",
+          "resource_estimate",
+          "resource_preflight",
+          "state",
+          "supported_cli",
+          "tensor_contract",
+          "v3_metrics_only",
+          "worker_path"
+        ],
+        "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY"
+      },
+      "current_r42_state": "READY_TO_LAUNCH",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/market_context_encoder.forward_metrics_capability.json",
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
+      ],
+      "family": "Market Context Encoder",
+      "forward_metrics": {
+        "admitted": true,
+        "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+        "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/market_context_encoder.forward_metrics_capability.json",
+        "contract_hash": "1638e85f7265110c86f3622b07c07fbaf61c11e94078bac6c690956244b97464"
+      },
+      "implementation": {
+        "ready": true,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "FORWARD_METRICS_CONTRACT_REQUIRED",
+      "remaining_blocker": "",
+      "repair_performed": "forward_metrics_capability_published_and_validated",
+      "safety": {
+        "full_prediction_files_written": 0,
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_orders": 0,
+        "live_supervisor_queue_modified": false,
+        "paper_orders": 0,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    },
+    {
+      "bounded_certification": {
+        "evidence_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R40_06_tft_certification.json",
+        "state": "CONFIGURATION_AUTHORITY_REQUIRED"
+      },
+      "current_r42_state": "CONFIGURATION_AUTHORITY_REQUIRED",
+      "evidence_paths": [
+        "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R40_06_tft_certification.json"
+      ],
+      "family": "Temporal Fusion Transformer",
+      "forward_metrics": {
+        "admitted": false,
+        "capability_decision": "TFT_AUTHORITY_HELD_CLOSED"
+      },
+      "implementation": {
+        "ready": false,
+        "supervisor_launch_enabled": false,
+        "worker_kind": "PYTORCH_SEQUENCE",
+        "worker_script": "ds24_v3_sequence_policy_worker.py"
+      },
+      "previous_r41_state": "CONFIGURATION_AUTHORITY_REQUIRED",
+      "remaining_blocker": "R40/R41 accepted full TFT static/recurrent tournament authority not found",
+      "repair_performed": "not_repaired_without_accepted_tft_tournament_authority",
+      "safety": {
+        "holdout_accessed": false,
+        "live_namespaces_modified": false,
+        "live_supervisor_queue_modified": false,
+        "worker_launches": 0,
+        "workers_stopped": 0
+      }
+    }
+  ],
+  "running_verified_families_before_after_expected": [
+    "mlp",
+    "extra_trees",
+    "gradient_boosting"
+  ],
+  "ticket": "DS24_R42_FORWARD_METRICS_CAPABILITY_REPAIR_AND_READY_QUEUE",
+  "worker_launches": 0,
+  "workers_stopped": 0
+}

@@ -1,0 +1,29 @@
+{
+  "generated_at_utc": "2026-09-09T13:07:09.079883+00:00",
+  "not_applied_to_live_supervisor": true,
+  "ready_family_queue": [
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "recommended_supervisor_queue_when_slot_opens": [
+    "random_forest",
+    "elastic_net",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "ticket": "DS24_R42_FORWARD_METRICS_CAPABILITY_REPAIR_AND_READY_QUEUE"
+}
