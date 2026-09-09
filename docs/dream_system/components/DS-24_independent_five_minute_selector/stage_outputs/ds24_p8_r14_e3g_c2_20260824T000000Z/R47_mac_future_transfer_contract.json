@@ -1,0 +1,60 @@
+{
+  "classification": "DS24_R47_CROSS_HOST_IMPORT_AUTHORITY_ACTIVE",
+  "do_not_transfer_large_datasets": true,
+  "families": {
+    "DLinear": {
+      "current_import_readiness": "IMPORT_BLOCKED_MISSING_AUTHORITY_OR_ARTIFACTS",
+      "missing_requirements": [
+        "producer_source_hash",
+        "model_config_authority_hash",
+        "metrics_manifest",
+        "metrics_hashes",
+        "score_oof_population",
+        "date_range",
+        "feature_count",
+        "feature_hash",
+        "refit_count",
+        "mac_dlinear_not_started_or_completed"
+      ],
+      "required_bundle": [
+        "terminal_manifest",
+        "metrics_manifest",
+        "oof_or_topn_artifacts",
+        "model_artifact_hash_manifest",
+        "checkpoint_or_final_status",
+        "producer_config_authority",
+        "producer_source_authority",
+        "compact_provenance"
+      ],
+      "transfer_large_model_artifacts": "ONLY_IF_REQUIRED_FOR_RETAINED_AUTHORITY_OR_FUTURE_USE"
+    },
+    "lightgbm_lambdarank": {
+      "current_import_readiness": "IMPORT_BLOCKED_MISSING_AUTHORITY_OR_ARTIFACTS",
+      "missing_requirements": [
+        "producer_source_hash",
+        "model_config_authority_hash",
+        "metrics_manifest",
+        "metrics_hashes",
+        "score_oof_population",
+        "date_range",
+        "feature_count",
+        "feature_hash",
+        "refit_count",
+        "mac_completion_artifacts_not_present"
+      ],
+      "required_bundle": [
+        "terminal_manifest",
+        "metrics_manifest",
+        "oof_or_topn_artifacts",
+        "model_artifact_hash_manifest",
+        "checkpoint_or_final_status",
+        "producer_config_authority",
+        "producer_source_authority",
+        "compact_provenance"
+      ],
+      "transfer_large_model_artifacts": "ONLY_IF_REQUIRED_FOR_RETAINED_AUTHORITY_OR_FUTURE_USE"
+    }
+  },
+  "generated_at_utc": "2026-09-09T14:50:43+00:00",
+  "ticket": "DS24_R47_MAC_FUTURE_TRANSFER_CONTRACT"
+}

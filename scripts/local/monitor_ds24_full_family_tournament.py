@@ -320,6 +320,38 @@ def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str
     }
 
 
+def ownership_monitor_rows() -> dict[str, Any]:
+    r47 = read_json(STAGE / "R47_cross_host_ownership_state.json")
+    by_family = r47.get("by_family")
+    if isinstance(by_family, dict) and by_family:
+        return by_family
+    return (
+        supervisor_api.validate_cross_host_ownership_authority(supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH)
+        .get("by_family", {})
+    )
+
+
+def display_ownership_state(family: str, row: Mapping[str, Any], ownership: Mapping[str, Any]) -> str:
+    owner_state = str(ownership.get("owner_state", ""))
+    execution_owner = str(ownership.get("execution_owner", ""))
+    state = str(row.get("state", ""))
+    if owner_state == "COMPLETE_IMPORTED":
+        return "COMPLETE_IMPORTED (Mac)"
+    if state == "COMPLETE":
+        return "COMPLETE_LOCAL"
+    if owner_state == "MAC_RUNNING":
+        return "MAC_RUNNING"
+    if owner_state == "MAC_COMPLETE":
+        return "MAC_COMPLETE"
+    if owner_state == "MAC_RESERVED_NEXT":
+        return "MAC_RESERVED"
+    if execution_owner == "DELL" and row.get("pid_alive"):
+        return "DELL_RUNNING"
+    if execution_owner == "DELL":
+        return "DELL_READY"
+    return ""
+
+
 def compact_route_label(route: object) -> str:
     if route == "TABULAR":
         return "classical"
@@ -518,10 +550,7 @@ def main() -> int:
     )
     if certified.get("next_fallback"):
         print(f"Next Dell fallback: {certified.get('next_fallback')}")
-    ownership_rows = (
-        supervisor_api.validate_cross_host_ownership_authority(supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH)
-        .get("by_family", {})
-    )
+    ownership_rows = ownership_monitor_rows()
     if args.eta_window_minutes:
         print(f"ETA window: {args.eta_window_minutes:g} minutes")
     for line in r35_eta_text():
@@ -537,10 +566,12 @@ def main() -> int:
         )
         ownership = ownership_rows.get(str(row.get("family")), {})
         if ownership:
+            display_state = display_ownership_state(str(row.get("family")), row, ownership)
             line += (
                 f" readiness={ownership.get('readiness_state', '')} "
                 f"owner={ownership.get('execution_owner', '')}/{ownership.get('owner_state', '')} "
                 f"dell_eligible={ownership.get('dell_eligible')}"
+                f"{' display=' + display_state if display_state else ''}"
             )
         if not args.compact:
             line += (

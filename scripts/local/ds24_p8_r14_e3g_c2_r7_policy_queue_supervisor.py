@@ -1828,7 +1828,7 @@ def family_specific_skip_reason(row: Mapping[str, Any], *, allowed_states: set[s
     if not launch_enabled_for_family(family):
         return "WORKER_ROUTE_NOT_LAUNCH_ENABLED"
     state = str(row.get("state", ""))
-    if state == "COMPLETE":
+    if state in {"COMPLETE", "COMPLETE_IMPORTED"}:
         return "COMPLETE"
     if state in {"CONFIGURATION_AUTHORITY_REQUIRED", "V3_CERTIFICATION_REQUIRED", "V3_REPLAY_REQUIRED"}:
         return state

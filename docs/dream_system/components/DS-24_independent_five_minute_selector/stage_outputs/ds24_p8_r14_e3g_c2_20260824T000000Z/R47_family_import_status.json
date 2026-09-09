@@ -1,0 +1,124 @@
+{
+  "classification": "DS24_R47_CROSS_HOST_IMPORT_AUTHORITY_ACTIVE",
+  "families": {
+    "DLinear": {
+      "apple_double_sidecar_count": 0,
+      "artifact_hash": "",
+      "artifact_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/model_artifacts",
+      "classification": "IMPORT_BLOCKED_MISSING_AUTHORITY_OR_ARTIFACTS",
+      "family": "DLinear",
+      "missing_requirements": [
+        "producer_source_hash",
+        "model_config_authority_hash",
+        "metrics_manifest",
+        "metrics_hashes",
+        "score_oof_population",
+        "date_range",
+        "feature_count",
+        "feature_hash",
+        "refit_count",
+        "mac_dlinear_not_started_or_completed"
+      ],
+      "model_artifact_count": 0,
+      "original_metrics": {},
+      "previous_ownership": {
+        "authority_hash": "9e6fbbc946d0707b81773dec3192bef43071c5190c0325802fb5e675b0fee2dc",
+        "authority_source": "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY",
+        "dell_eligible": false,
+        "execution_owner": "MAC",
+        "family": "DLinear",
+        "mac_eligible": true,
+        "owner_state": "MAC_RESERVED_NEXT",
+        "ownership_reason": "Reserved as the next Mac-lane family after LambdaRank.",
+        "ownership_state": "MAC_RESERVED",
+        "readiness_state": "READY_TO_LAUNCH",
+        "updated_at_utc": "2026-09-09T13:46:04+00:00"
+      },
+      "source_host": "MAC",
+      "source_run_id": "MAC_DLINEAR_RESERVED_NEXT",
+      "tournament_comparable_metrics_status": "MAC_RESERVED_NEXT_NO_IMPORT_ARTIFACTS"
+    },
+    "lightgbm_lambdarank": {
+      "apple_double_sidecar_count": 0,
+      "artifact_hash": "",
+      "artifact_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/model_artifacts",
+      "classification": "IMPORT_BLOCKED_MISSING_AUTHORITY_OR_ARTIFACTS",
+      "family": "lightgbm_lambdarank",
+      "missing_requirements": [
+        "producer_source_hash",
+        "model_config_authority_hash",
+        "metrics_manifest",
+        "metrics_hashes",
+        "score_oof_population",
+        "date_range",
+        "feature_count",
+        "feature_hash",
+        "refit_count",
+        "mac_completion_artifacts_not_present"
+      ],
+      "model_artifact_count": 0,
+      "original_metrics": {},
+      "previous_ownership": {
+        "authority_hash": "bb5e45d67679060b372d94cfa9acbc27da97236a9f56d4c4e324624d42abd9a4",
+        "authority_source": "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY",
+        "dell_eligible": false,
+        "execution_owner": "MAC",
+        "family": "lightgbm_lambdarank",
+        "mac_eligible": true,
+        "owner_state": "MAC_RUNNING",
+        "ownership_reason": "Currently running on Mac lane; Dell duplicate compute forbidden.",
+        "ownership_state": "MAC_OWNED",
+        "readiness_state": "READY_TO_LAUNCH",
+        "updated_at_utc": "2026-09-09T13:46:04+00:00"
+      },
+      "source_host": "MAC",
+      "source_run_id": "MAC_LIGHTGBM_LAMBDARANK_PENDING_COMPLETION",
+      "tournament_comparable_metrics_status": "AWAITING_MAC_COMPLETION"
+    },
+    "lightgbm_rank_xendcg": {
+      "apple_double_sidecar_count": 0,
+      "artifact_hash": "",
+      "artifact_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/model_artifacts",
+      "classification": "IMPORT_BLOCKED_MISSING_AUTHORITY_OR_ARTIFACTS",
+      "family": "lightgbm_rank_xendcg",
+      "missing_requirements": [
+        "producer_source_hash",
+        "model_config_authority_hash",
+        "metrics_manifest",
+        "metrics_hashes",
+        "score_oof_population",
+        "date_range",
+        "feature_hash",
+        "expected_2262_non_appledouble_model_artifacts"
+      ],
+      "model_artifact_count": 0,
+      "original_metrics": {
+        "annualised_arithmetic_return": 1.774883897978,
+        "caution": "Extraordinary Mac-origin result; import is provenance acceptance, not independent prospective confirmation.",
+        "daily_sharpe": 13.233750175466,
+        "directional_accuracy": 0.580621053511,
+        "max_drawdown": -0.029690054964,
+        "mean_rank_ic": 0.250646544554,
+        "ndcg_at_20": 0.228239431375
+      },
+      "previous_ownership": {
+        "authority_hash": "b720ebedfa0e32a9d9c1dcb02a996adb16b8edeb12033581bc0d13ba47a7026e",
+        "authority_source": "DS24_R44_CROSS_HOST_FAMILY_OWNERSHIP_AUTHORITY",
+        "dell_eligible": false,
+        "execution_owner": "MAC",
+        "family": "lightgbm_rank_xendcg",
+        "mac_eligible": true,
+        "owner_state": "MAC_COMPLETE",
+        "ownership_reason": "Completed on Mac lane; Dell recomputation forbidden unless ownership is reassigned.",
+        "ownership_state": "MAC_OWNED",
+        "readiness_state": "READY_TO_LAUNCH",
+        "updated_at_utc": "2026-09-09T13:46:04+00:00"
+      },
+      "source_host": "MAC",
+      "source_run_id": "MAC_LIGHTGBM_RANK_XENDCG_COMPLETE_TRANSFERRED_AUTHORITY",
+      "tournament_comparable_metrics_status": "NOT_DERIVABLE_FROM_RETAINED_DELL_ARTIFACTS"
+    }
+  },
+  "generated_at_utc": "2026-09-09T14:50:43+00:00",
+  "ticket": "DS24_R47_FAMILY_IMPORT_STATUS"
+}
