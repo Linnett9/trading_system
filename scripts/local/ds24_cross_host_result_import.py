@@ -7,6 +7,7 @@ import os
 import re
 import socket
 import sys
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -41,6 +42,26 @@ R47A_XENDCG_IMPORT_AUTHORITY_PATH = STAGE / "R47A_xendcg_import_authority.json"
 R47A_XENDCG_IMPORT_RESULT_PATH = STAGE / "R47A_xendcg_import_result.json"
 R47A_OWNERSHIP_STATE_PATH = STAGE / "R47A_cross_host_ownership_state.json"
 R47A_DELL_EFFECTIVE_READY_QUEUE_PATH = STAGE / "R47A_dell_effective_ready_queue.json"
+R49_CLASSIFICATION = "DS24_R49_LAMBDARANK_CROSS_HOST_IMPORT_COMPLETE"
+R49_BLOCKED_CLASSIFICATION = "DS24_R49_LAMBDARANK_TRANSFER_ARCHIVE_MISSING_FAIL_CLOSED"
+LAMBDARANK_TRANSFER_ARCHIVE = Path(r"C:\Users\Brandon\Desktop\ds24_lightgbm_lambdarank_transfer_r1.tar")
+LAMBDARANK_TRANSFER_SHA_FILE = Path(r"C:\Users\Brandon\Desktop\ds24_lightgbm_lambdarank_transfer_r1.tar.sha256")
+LAMBDARANK_EXPECTED_TRANSFER_SHA256 = "f2c11fe69a5eaae97c850816e6cc5fd702a0d7477e0c46f0a06c762ea1705a5b"
+LAMBDARANK_EXPECTED_ARCHIVE_SIZE_BYTES = 174_458_880
+LAMBDARANK_EXPECTED_TAR_FILE_COUNT = 4_552
+LAMBDARANK_EXPECTED_MODEL_ARTIFACTS = 2262
+LAMBDARANK_EXPECTED_FIRST_ORDINAL = 2
+LAMBDARANK_EXPECTED_LAST_ORDINAL = 2263
+LAMBDARANK_EXPECTED_OOF_FILES = 2262
+LAMBDARANK_EXPECTED_OOF_ROWS = 1_150_792
+LAMBDARANK_SOURCE_RUN_ID = "MAC_LIGHTGBM_LAMBDARANK_COMPLETE_TRANSFER_READY"
+R49_PRE_IMPORT_SNAPSHOT_PATH = STAGE / "R49_pre_import_snapshot.json"
+R49_TRANSFER_VALIDATION_PATH = STAGE / "R49_lambdarank_transfer_validation.json"
+R49_ARTIFACT_VALIDATION_PATH = STAGE / "R49_lambdarank_artifact_validation.json"
+R49_IMPORT_AUTHORITY_PATH = STAGE / "R49_lambdarank_import_authority.json"
+R49_IMPORT_RESULT_PATH = STAGE / "R49_lambdarank_import_result.json"
+R49_OWNERSHIP_STATE_PATH = STAGE / "R49_cross_host_ownership_state.json"
+R49_DELL_EFFECTIVE_READY_QUEUE_PATH = STAGE / "R49_dell_effective_ready_queue.json"
 IMPORTABLE_FAMILIES = ("lightgbm_rank_xendcg", "lightgbm_lambdarank", "DLinear")
 XENDCG_EXPECTED_MODEL_ARTIFACTS = 2262
 XENDCG_EXPECTED_FIRST_ORDINAL = 2
@@ -87,6 +108,21 @@ KNOWN_XENDCG_METRICS = {
     "annual_volatility": 0.134117984278,
     "max_drawdown": -0.029690054964,
     "caution": "Extraordinary Mac-origin result; import is provenance acceptance, not independent prospective confirmation.",
+}
+KNOWN_LAMBDARANK_METRICS = {
+    "spearman_rank_ic": 0.23352211415399945,
+    "pearson_ic": 0.23420864835881408,
+    "ndcg": 0.2202022843677893,
+    "directional_accuracy": 0.5374975656776529,
+    "hit_rate": 0.6992031872509961,
+    "mean_net_return": 0.00680408273381489,
+    "arithmetic_annualised_return": 1.7146288489213524,
+    "annual_volatility": 0.1285966619897688,
+    "sharpe": 13.333385349129582,
+    "max_drawdown": -0.036911615079195936,
+    "win_rate": 0.8468348826914563,
+    "cost_evidence_status": "TRANSACTION_COST_EVIDENCE_NOT_PRESENT_IN_RETAINED_LAMBDARANK_METRICS",
+    "ndcg_definition_note": "Retained Mac NDCG implementation uses signed forward-return relevance; do not assume conventional [0,1] bounded relevance.",
 }
 
 
@@ -543,6 +579,293 @@ def stable_xendcg_artifact_hash(
             "metrics_sha256": metrics_sha256,
         }
     )
+
+
+def mac_aux_model_inventory(
+    family: str,
+    family_root: Path,
+    *,
+    expected_model_count: int,
+    expected_first_ordinal: int = 2,
+    expected_last_ordinal: int = 2263,
+) -> dict[str, Any]:
+    model_root = family_root / "model_artifacts"
+    genuine = family_model_artifacts(family, model_root)
+    sidecars = apple_double_sidecars(family, model_root)
+    ordinals = [ordinal for path in genuine if (ordinal := model_refit_ordinal(path)) is not None]
+    ordinal_counts = {ordinal: ordinals.count(ordinal) for ordinal in sorted(set(ordinals))}
+    expected = set(range(expected_first_ordinal, expected_last_ordinal + 1))
+    observed = set(ordinals)
+    missing = sorted(expected - observed)
+    duplicates = sorted(ordinal for ordinal, count in ordinal_counts.items() if count > 1)
+    return {
+        "root": display_path(model_root),
+        "model_artifact_count": len(genuine),
+        "genuine_pkl_count": len(genuine),
+        "apple_double_sidecar_count": len(sidecars),
+        "missing_ordinals": [f"{ordinal:06d}" for ordinal in missing],
+        "missing_ordinal_count": len(missing),
+        "duplicate_ordinals": [f"{ordinal:06d}" for ordinal in duplicates],
+        "duplicate_ordinal_count": len(duplicates),
+        "first_ordinal": f"{min(ordinals):06d}" if ordinals else "",
+        "last_ordinal": f"{max(ordinals):06d}" if ordinals else "",
+        "expected_first_ordinal": f"{expected_first_ordinal:06d}",
+        "expected_last_ordinal": f"{expected_last_ordinal:06d}",
+        "expected_genuine_pkl_count": expected_model_count,
+        "unexpected_filenames": [path.name for path in genuine if model_refit_ordinal(path) is None],
+    }
+
+
+def safe_tar_file_count(archive: Path) -> tuple[int, bool, str]:
+    try:
+        with tarfile.open(archive, "r") as handle:
+            members = handle.getmembers()
+        return sum(1 for member in members if member.isfile()), True, ""
+    except (OSError, tarfile.TarError) as exc:
+        return 0, False, f"{type(exc).__name__}:{exc}"
+
+
+def r49_transfer_validation() -> dict[str, Any]:
+    archive_exists = LAMBDARANK_TRANSFER_ARCHIVE.exists()
+    sha_file_exists = LAMBDARANK_TRANSFER_SHA_FILE.exists()
+    actual_sha = file_hash(LAMBDARANK_TRANSFER_ARCHIVE) if archive_exists else ""
+    actual_size = LAMBDARANK_TRANSFER_ARCHIVE.stat().st_size if archive_exists else 0
+    tar_file_count, readable, error = safe_tar_file_count(LAMBDARANK_TRANSFER_ARCHIVE) if archive_exists else (0, False, "ARCHIVE_MISSING")
+    missing = []
+    if not archive_exists:
+        missing.append("transfer_archive_missing")
+    if not sha_file_exists:
+        missing.append("transfer_sha_file_missing")
+    if archive_exists and actual_sha != LAMBDARANK_EXPECTED_TRANSFER_SHA256:
+        missing.append("transfer_sha256_mismatch")
+    if archive_exists and actual_size != LAMBDARANK_EXPECTED_ARCHIVE_SIZE_BYTES:
+        missing.append("transfer_archive_size_mismatch")
+    if archive_exists and (not readable):
+        missing.append("transfer_tar_not_readable")
+    if archive_exists and readable and tar_file_count != LAMBDARANK_EXPECTED_TAR_FILE_COUNT:
+        missing.append("transfer_tar_file_count_mismatch")
+    payload = {
+        "ticket": "DS24_R49_LAMBDARANK_TRANSFER_VALIDATION",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS" if not missing else "LAMBDARANK_TRANSFER_HASH_MISMATCH" if "transfer_sha256_mismatch" in missing else R49_BLOCKED_CLASSIFICATION,
+        "mac_source_archive": "/Users/brandonlinnett/Desktop/ds24_lightgbm_lambdarank_transfer_r1.tar",
+        "dell_archive_destination": display_path(LAMBDARANK_TRANSFER_ARCHIVE),
+        "dell_sha_destination": display_path(LAMBDARANK_TRANSFER_SHA_FILE),
+        "archive_exists": archive_exists,
+        "sha_file_exists": sha_file_exists,
+        "expected_sha256": LAMBDARANK_EXPECTED_TRANSFER_SHA256,
+        "actual_sha256": actual_sha,
+        "expected_size_bytes": LAMBDARANK_EXPECTED_ARCHIVE_SIZE_BYTES,
+        "actual_size_bytes": actual_size,
+        "expected_tar_file_count": LAMBDARANK_EXPECTED_TAR_FILE_COUNT,
+        "actual_tar_file_count": tar_file_count,
+        "archive_readable": readable,
+        "read_error": error,
+        "missing_requirements": missing,
+        "extracted": False,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(R49_TRANSFER_VALIDATION_PATH, payload)
+    return payload
+
+
+def lambdarank_oof_validation(family_root: Path = LAMBDARANK_MAC_AUX_FAMILY_ROOT) -> dict[str, Any]:
+    manifest_path = family_root / "ensemble_oof_scores_manifest_v2.json"
+    manifest = read_json(manifest_path) if manifest_path.exists() else {}
+    files = manifest.get("files", []) if isinstance(manifest.get("files"), list) else []
+    decision_dates = [str(row.get("decision_date")) for row in files if row.get("decision_date")]
+    return {
+        "manifest_path": display_path(manifest_path),
+        "manifest_exists": manifest_path.exists(),
+        "manifest_sha256": file_hash(manifest_path) if manifest_path.exists() else "",
+        "oof_file_count": len(files),
+        "expected_oof_file_count": LAMBDARANK_EXPECTED_OOF_FILES,
+        "oof_row_count": manifest.get("row_count", 0),
+        "expected_oof_row_count": LAMBDARANK_EXPECTED_OOF_ROWS,
+        "date_range": {"start": min(decision_dates) if decision_dates else "", "end": max(decision_dates) if decision_dates else ""},
+        "expected_date_range": {"start": "2016-01-05", "end": "2024-12-31"},
+    }
+
+
+def r49_lambdarank_artifact_validation() -> dict[str, Any]:
+    family_root = LAMBDARANK_MAC_AUX_FAMILY_ROOT
+    inventory = mac_aux_model_inventory(
+        "lightgbm_lambdarank",
+        family_root,
+        expected_model_count=LAMBDARANK_EXPECTED_MODEL_ARTIFACTS,
+        expected_first_ordinal=LAMBDARANK_EXPECTED_FIRST_ORDINAL,
+        expected_last_ordinal=LAMBDARANK_EXPECTED_LAST_ORDINAL,
+    )
+    oof = lambdarank_oof_validation(family_root)
+    summary_path = family_root / "family_execution_summary.json"
+    summary = read_json(summary_path) if summary_path.exists() else {}
+    missing = []
+    if not family_root.exists():
+        missing.append("lambdarank_mac_aux_family_root_missing")
+    if inventory["genuine_pkl_count"] != LAMBDARANK_EXPECTED_MODEL_ARTIFACTS:
+        missing.append("expected_2262_non_appledouble_lambdarank_models")
+    if inventory["apple_double_sidecar_count"] != 0:
+        missing.append("appledouble_sidecars_present")
+    if inventory["missing_ordinal_count"]:
+        missing.append("missing_model_ordinals")
+    if inventory["duplicate_ordinal_count"]:
+        missing.append("duplicate_model_ordinals")
+    if oof["oof_file_count"] != LAMBDARANK_EXPECTED_OOF_FILES:
+        missing.append("expected_2262_oof_files")
+    if oof["oof_row_count"] != LAMBDARANK_EXPECTED_OOF_ROWS:
+        missing.append("expected_1150792_oof_rows")
+    if oof["date_range"] != oof["expected_date_range"]:
+        missing.append("oof_date_range_mismatch")
+    payload = {
+        "ticket": "DS24_R49_LAMBDARANK_ARTIFACT_VALIDATION",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS" if not missing else "FAIL_CLOSED",
+        "source_root_type": MAC_AUX_SOURCE_ROOT_TYPE,
+        "source_root": display_path(family_root),
+        "family_root_exists": family_root.exists(),
+        "family_summary_path": display_path(summary_path),
+        "family_summary": summary,
+        "model_inventory": inventory,
+        "oof_validation": oof,
+        "original_mac_metrics": KNOWN_LAMBDARANK_METRICS,
+        "cost_evidence_status": KNOWN_LAMBDARANK_METRICS["cost_evidence_status"],
+        "missing_requirements": list(dict.fromkeys(missing)),
+        "no_model_fits": True,
+        "no_new_predictions": True,
+    }
+    payload["artifact_validation_hash"] = state_hash({key: value for key, value in payload.items() if key != "artifact_validation_hash"})
+    write_json(R49_ARTIFACT_VALIDATION_PATH, payload)
+    return payload
+
+
+def r49_pre_import_snapshot() -> dict[str, Any]:
+    ready = supervisor.validate_ready_family_queue_manifest(supervisor.R42_READY_QUEUE_PATH)
+    ownership_path = R47A_OWNERSHIP_STATE_PATH if R47A_OWNERSHIP_STATE_PATH.exists() else supervisor.R44_CROSS_HOST_OWNERSHIP_PATH
+    ownership = read_json(ownership_path)
+    board = supervisor.lightweight_certified_queue_board(ready["ready_family_queue"])
+    gate = supervisor.resource_gate(board, supervisor.GateConfig(max_active_model_processes=3, max_policy_workers=3, max_system_commit_percent=95.0, admission_commit_percent=92.0))
+    payload = {
+        "ticket": "DS24_R49_PRE_IMPORT_SNAPSHOT",
+        "generated_at_utc": utc_now(),
+        "classification": "PASS",
+        "supervisor_pid": read_json(supervisor.LEASE_PATH).get("pid"),
+        "dell_active_workers": [row for row in board if row.get("pid_alive")],
+        "r47a_ownership_authority": display_path(ownership_path),
+        "r47a_ownership_hash": state_hash(ownership) if ownership else "",
+        "current_dell_effective_queue": read_json(R47A_DELL_EFFECTIVE_READY_QUEUE_PATH).get("dell_effective_ready_queue", []),
+        "resource_snapshot": gate.get("resource_snapshot", {}),
+        "zero_full_prediction_guard": gate.get("zero_full_prediction_guard", {}),
+        "paper_orders": gate.get("zero_full_prediction_guard", {}).get("paper_orders", 0),
+        "live_orders": gate.get("zero_full_prediction_guard", {}).get("live_orders", 0),
+        "worker_launches": 0,
+        "workers_stopped": 0,
+        "supervisor_restarted": 0,
+    }
+    write_json(R49_PRE_IMPORT_SNAPSHOT_PATH, payload)
+    return payload
+
+
+def write_r49_import_authority(transfer: Mapping[str, Any], artifact_validation: Mapping[str, Any]) -> dict[str, Any]:
+    can_import = transfer.get("classification") == "PASS" and artifact_validation.get("classification") == "PASS"
+    payload = {
+        "ticket": "DS24_R49_LAMBDARANK_IMPORT_AUTHORITY",
+        "generated_at_utc": utc_now(),
+        "classification": R49_CLASSIFICATION if can_import else R49_BLOCKED_CLASSIFICATION,
+        "source_host": "MAC",
+        "source_run_id": LAMBDARANK_SOURCE_RUN_ID,
+        "source_root_type": MAC_AUX_SOURCE_ROOT_TYPE,
+        "source_root": display_path(LAMBDARANK_MAC_AUX_FAMILY_ROOT),
+        "transfer_validation": transfer,
+        "artifact_validation": artifact_validation,
+        "original_mac_metrics": KNOWN_LAMBDARANK_METRICS,
+        "cost_evidence_status": KNOWN_LAMBDARANK_METRICS["cost_evidence_status"],
+        "no_model_fits": True,
+        "no_new_predictions": True,
+        "no_worker_launches": True,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(R49_IMPORT_AUTHORITY_PATH, payload)
+    return payload
+
+
+def write_r49_ownership_state(imported: bool) -> dict[str, Any]:
+    base = read_json(R47A_OWNERSHIP_STATE_PATH) if R47A_OWNERSHIP_STATE_PATH.exists() else supervisor.validate_cross_host_ownership_authority(supervisor.R44_CROSS_HOST_OWNERSHIP_PATH)
+    rows = []
+    for row in base.get("families", []):
+        current = dict(row)
+        if current.get("family") == "lightgbm_lambdarank" and imported:
+            current.update(
+                {
+                    "execution_owner": "MAC",
+                    "ownership_state": "COMPLETE_IMPORTED",
+                    "owner_state": "COMPLETE_IMPORTED",
+                    "dell_eligible": False,
+                    "mac_eligible": False,
+                    "ownership_reason": "R49 imported verified Mac auxiliary LambdaRank result; Dell recomputation forbidden.",
+                    "import_source_root_type": MAC_AUX_SOURCE_ROOT_TYPE,
+                    "import_source_run_id": LAMBDARANK_SOURCE_RUN_ID,
+                }
+            )
+        current["authority_hash"] = state_hash(current)
+        rows.append(current)
+    payload = {
+        "ticket": "DS24_R49_CROSS_HOST_OWNERSHIP_STATE",
+        "generated_at_utc": utc_now(),
+        "classification": R49_CLASSIFICATION if imported else R49_BLOCKED_CLASSIFICATION,
+        "derived_from": display_path(R47A_OWNERSHIP_STATE_PATH if R47A_OWNERSHIP_STATE_PATH.exists() else supervisor.R44_CROSS_HOST_OWNERSHIP_PATH),
+        "families": rows,
+        "by_family": {str(row["family"]): row for row in rows},
+    }
+    write_json(R49_OWNERSHIP_STATE_PATH, payload)
+    return payload
+
+
+def write_r49_dell_effective_queue(ownership_state: Mapping[str, Any]) -> dict[str, Any]:
+    ready = supervisor.validate_ready_family_queue_manifest(supervisor.R42_READY_QUEUE_PATH)
+    queue = [family for family in ready["ready_family_queue"] if not cross_host_skip_reason_r47(family, ownership_state)]
+    skipped = [
+        {"family": family, "reason": cross_host_skip_reason_r47(family, ownership_state)}
+        for family in ready["ready_family_queue"]
+        if cross_host_skip_reason_r47(family, ownership_state)
+    ]
+    payload = {
+        "ticket": "DS24_R49_DELL_EFFECTIVE_READY_QUEUE",
+        "generated_at_utc": utc_now(),
+        "classification": str(ownership_state.get("classification", R49_BLOCKED_CLASSIFICATION)),
+        "dell_effective_ready_queue": queue,
+        "excluded_families": skipped,
+        "worker_launches": 0,
+    }
+    payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
+    write_json(R49_DELL_EFFECTIVE_READY_QUEUE_PATH, payload)
+    return payload
+
+
+def run_r49_lambdarank_import() -> dict[str, Any]:
+    snapshot = r49_pre_import_snapshot()
+    transfer = r49_transfer_validation()
+    artifact_validation = r49_lambdarank_artifact_validation()
+    authority = write_r49_import_authority(transfer, artifact_validation)
+    imported = authority["classification"] == R49_CLASSIFICATION
+    ownership = write_r49_ownership_state(imported)
+    queue = write_r49_dell_effective_queue(ownership)
+    result = {
+        "ticket": "DS24_R49_LAMBDARANK_IMPORT_RESULT",
+        "generated_at_utc": utc_now(),
+        "classification": "LAMBDARANK_COMPLETE_IMPORTED" if imported else R49_BLOCKED_CLASSIFICATION,
+        "source_run_id": LAMBDARANK_SOURCE_RUN_ID,
+        "transfer_classification": transfer["classification"],
+        "artifact_validation_classification": artifact_validation["classification"],
+        "missing_requirements": list(dict.fromkeys(transfer.get("missing_requirements", []) + artifact_validation.get("missing_requirements", []))),
+        "ownership_state": ownership["by_family"].get("lightgbm_lambdarank", {}).get("owner_state", ""),
+        "effective_queue": queue["dell_effective_ready_queue"],
+        "ledger_appended": False,
+        "snapshot": snapshot,
+        "no_model_fits": True,
+        "no_new_predictions": True,
+    }
+    write_json(R49_IMPORT_RESULT_PATH, result)
+    return result
 
 
 def xendcg_source_discovery() -> dict[str, Any]:
@@ -1091,6 +1414,7 @@ def parse_args() -> argparse.Namespace:
     mode.add_argument("--r47a-xendcg-source-discovery", action="store_true")
     mode.add_argument("--r47a-xendcg-artifact-validation", action="store_true")
     mode.add_argument("--r47a-import-xendcg", action="store_true")
+    mode.add_argument("--r49-import-lambdarank", action="store_true")
     return parser.parse_args()
 
 
@@ -1104,6 +1428,9 @@ def main() -> int:
         return 0
     if args.r47a_import_xendcg:
         print(json.dumps(run_r47a_xendcg_import(), indent=2, sort_keys=True))
+        return 0
+    if args.r49_import_lambdarank:
+        print(json.dumps(run_r49_lambdarank_import(), indent=2, sort_keys=True))
         return 0
     if args.audit_family:
         print(json.dumps(verify_family_import(args.audit_family).as_dict(), indent=2, sort_keys=True))

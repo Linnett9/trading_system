@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -67,10 +68,26 @@ def _configure_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importer, "R47A_XENDCG_IMPORT_RESULT_PATH", stage / "R47A_xendcg_import_result.json")
     monkeypatch.setattr(importer, "R47A_OWNERSHIP_STATE_PATH", stage / "R47A_cross_host_ownership_state.json")
     monkeypatch.setattr(importer, "R47A_DELL_EFFECTIVE_READY_QUEUE_PATH", stage / "R47A_dell_effective_ready_queue.json")
+    monkeypatch.setattr(importer, "R49_PRE_IMPORT_SNAPSHOT_PATH", stage / "R49_pre_import_snapshot.json")
+    monkeypatch.setattr(importer, "R49_TRANSFER_VALIDATION_PATH", stage / "R49_lambdarank_transfer_validation.json")
+    monkeypatch.setattr(importer, "R49_ARTIFACT_VALIDATION_PATH", stage / "R49_lambdarank_artifact_validation.json")
+    monkeypatch.setattr(importer, "R49_IMPORT_AUTHORITY_PATH", stage / "R49_lambdarank_import_authority.json")
+    monkeypatch.setattr(importer, "R49_IMPORT_RESULT_PATH", stage / "R49_lambdarank_import_result.json")
+    monkeypatch.setattr(importer, "R49_OWNERSHIP_STATE_PATH", stage / "R49_cross_host_ownership_state.json")
+    monkeypatch.setattr(importer, "R49_DELL_EFFECTIVE_READY_QUEUE_PATH", stage / "R49_dell_effective_ready_queue.json")
+    monkeypatch.setattr(importer, "LAMBDARANK_TRANSFER_ARCHIVE", stage / "ds24_lightgbm_lambdarank_transfer_r1.tar")
+    monkeypatch.setattr(importer, "LAMBDARANK_TRANSFER_SHA_FILE", stage / "ds24_lightgbm_lambdarank_transfer_r1.tar.sha256")
+    monkeypatch.setattr(importer, "LAMBDARANK_MAC_AUX_FAMILY_ROOT", stage / "mac_aux" / "queue=DS24_MAC_AUX_NINE_FAMILY_R1" / "family=lightgbm_lambdarank")
     monkeypatch.setattr(importer, "XENDCG_EXPECTED_MODEL_ARTIFACTS", 2)
     monkeypatch.setattr(importer, "XENDCG_EXPECTED_FIRST_ORDINAL", 2)
     monkeypatch.setattr(importer, "XENDCG_EXPECTED_LAST_ORDINAL", 3)
     monkeypatch.setattr(importer, "XENDCG_FIXTURE_REFITS", ("000002", "000003"))
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_MODEL_ARTIFACTS", 2)
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_FIRST_ORDINAL", 2)
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_LAST_ORDINAL", 3)
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_OOF_FILES", 2)
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_OOF_ROWS", 4)
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_TAR_FILE_COUNT", 2)
 
 
 def _complete_xendcg_status(stage: Path) -> None:
@@ -247,6 +264,48 @@ def _complete_mac_aux_xendcg_root() -> None:
     )
 
 
+def _complete_mac_aux_lambdarank_root() -> None:
+    root = importer.LAMBDARANK_MAC_AUX_FAMILY_ROOT
+    (root / "model_artifacts").mkdir(parents=True)
+    (root / "ensemble_oof_scores_v2" / "decision_date=2016-01-05").mkdir(parents=True)
+    (root / "ensemble_oof_scores_v2" / "decision_date=2024-12-31").mkdir(parents=True)
+    for refit, body in (("000002", b"a"), ("000003", b"b")):
+        (root / "model_artifacts" / f"lightgbm_lambdarank_refit={refit}.pkl").write_bytes(body)
+    first_oof = root / "ensemble_oof_scores_v2" / "decision_date=2016-01-05" / "part-refit=000002.parquet"
+    last_oof = root / "ensemble_oof_scores_v2" / "decision_date=2024-12-31" / "part-refit=000003.parquet"
+    first_oof.write_bytes(b"oof-a")
+    last_oof.write_bytes(b"oof-b")
+    (root / "family_execution_summary.json").write_text(
+        json.dumps({"family": "lightgbm_lambdarank", "status": "PASS", "zero_holdout": True}),
+        encoding="utf-8",
+    )
+    (root / "ensemble_oof_scores_manifest_v2.json").write_text(
+        json.dumps(
+            {
+                "files": [
+                    {"decision_date": "2016-01-05", "refit_ordinal": 2, "relative_path": "ensemble_oof_scores_v2/decision_date=2016-01-05/part-refit=000002.parquet"},
+                    {"decision_date": "2024-12-31", "refit_ordinal": 3, "relative_path": "ensemble_oof_scores_v2/decision_date=2024-12-31/part-refit=000003.parquet"},
+                ],
+                "row_count": 4,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_lambdarank_transfer_archive() -> None:
+    archive = importer.LAMBDARANK_TRANSFER_ARCHIVE
+    with tarfile.open(archive, "w") as handle:
+        first = archive.parent / "one.txt"
+        second = archive.parent / "two.txt"
+        first.write_text("one", encoding="utf-8")
+        second.write_text("two", encoding="utf-8")
+        handle.add(first, arcname="one.txt")
+        handle.add(second, arcname="two.txt")
+    archive_hash = importer.file_hash(archive)
+    importer.LAMBDARANK_TRANSFER_SHA_FILE.write_text(f"{archive_hash}  {archive.name}\n", encoding="utf-8")
+
+
 def test_xendcg_import_validation_succeeds_with_complete_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _configure_stage(tmp_path, monkeypatch)
     _complete_mac_aux_xendcg_root()
@@ -355,3 +414,52 @@ def test_r47a_hash_conflict_fails_closed(tmp_path: Path, monkeypatch: pytest.Mon
 
     with pytest.raises(RuntimeError, match="CROSS_HOST_IMPORT_HASH_CONFLICT"):
         importer.run_r47a_xendcg_import()
+
+
+def test_r49_missing_transfer_archive_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_stage(tmp_path, monkeypatch)
+    _complete_mac_aux_xendcg_root()
+    importer.run_r47a_xendcg_import()
+
+    result = importer.run_r49_lambdarank_import()
+
+    assert result["classification"] == importer.R49_BLOCKED_CLASSIFICATION
+    assert "transfer_archive_missing" in result["missing_requirements"]
+    assert result["ownership_state"] == "MAC_RUNNING"
+
+
+def test_r49_transfer_hash_and_tar_inventory_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_stage(tmp_path, monkeypatch)
+    _write_lambdarank_transfer_archive()
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_TRANSFER_SHA256", importer.file_hash(importer.LAMBDARANK_TRANSFER_ARCHIVE))
+    monkeypatch.setattr(importer, "LAMBDARANK_EXPECTED_ARCHIVE_SIZE_BYTES", importer.LAMBDARANK_TRANSFER_ARCHIVE.stat().st_size)
+
+    validation = importer.r49_transfer_validation()
+
+    assert validation["classification"] == "PASS"
+    assert validation["actual_tar_file_count"] == 2
+
+
+def test_r49_lambdarank_artifact_validation_passes_for_complete_mac_aux_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_stage(tmp_path, monkeypatch)
+    _complete_mac_aux_lambdarank_root()
+
+    validation = importer.r49_lambdarank_artifact_validation()
+
+    assert validation["classification"] == "PASS"
+    assert validation["model_inventory"]["genuine_pkl_count"] == 2
+    assert validation["model_inventory"]["apple_double_sidecar_count"] == 0
+    assert validation["oof_validation"]["oof_file_count"] == 2
+    assert validation["oof_validation"]["oof_row_count"] == 4
+
+
+def test_r49_blocked_import_keeps_xendcg_imported_and_lambdarank_mac_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_stage(tmp_path, monkeypatch)
+    _complete_mac_aux_xendcg_root()
+    importer.run_r47a_xendcg_import()
+
+    importer.run_r49_lambdarank_import()
+    ownership = json.loads(importer.R49_OWNERSHIP_STATE_PATH.read_text(encoding="utf-8"))
+
+    assert ownership["by_family"]["lightgbm_rank_xendcg"]["owner_state"] == "COMPLETE_IMPORTED"
+    assert ownership["by_family"]["lightgbm_lambdarank"]["owner_state"] == "MAC_RUNNING"

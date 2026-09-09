@@ -1,0 +1,24 @@
+{
+  "actual_sha256": "",
+  "actual_size_bytes": 0,
+  "actual_tar_file_count": 0,
+  "archive_exists": false,
+  "archive_readable": false,
+  "authority_hash": "0a42017f895451f605cc2f4f0ec203a40de67526112f4f1306621c39444fba99",
+  "classification": "DS24_R49_LAMBDARANK_TRANSFER_ARCHIVE_MISSING_FAIL_CLOSED",
+  "dell_archive_destination": "C:\\Users\\Brandon\\Desktop\\ds24_lightgbm_lambdarank_transfer_r1.tar",
+  "dell_sha_destination": "C:\\Users\\Brandon\\Desktop\\ds24_lightgbm_lambdarank_transfer_r1.tar.sha256",
+  "expected_sha256": "f2c11fe69a5eaae97c850816e6cc5fd702a0d7477e0c46f0a06c762ea1705a5b",
+  "expected_size_bytes": 174458880,
+  "expected_tar_file_count": 4552,
+  "extracted": false,
+  "generated_at_utc": "2026-09-09T21:56:32+00:00",
+  "mac_source_archive": "/Users/brandonlinnett/Desktop/ds24_lightgbm_lambdarank_transfer_r1.tar",
+  "missing_requirements": [
+    "transfer_archive_missing",
+    "transfer_sha_file_missing"
+  ],
+  "read_error": "ARCHIVE_MISSING",
+  "sha_file_exists": false,
+  "ticket": "DS24_R49_LAMBDARANK_TRANSFER_VALIDATION"
+}

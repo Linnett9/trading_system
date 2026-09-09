@@ -1,0 +1,119 @@
+{
+  "classification": "PASS",
+  "current_dell_effective_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "dell_active_workers": [
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/progress.json",
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family mlp --resume --resume-generation 72 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r37_mlp_direct_gen7 --refit-policy daily_session_v1",
+      "creation_time": "2026-09-09T12:01:02+00:00",
+      "cursor": "2024-04-01T20:00:00+00:00",
+      "duplicate_worker_count": 0,
+      "family": "mlp",
+      "heavy": false,
+      "launch_enabled": true,
+      "live_worker_count": 1,
+      "live_worker_pids": [
+        13504
+      ],
+      "metrics_rows": 159573,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "parent_pid": 15364,
+      "pid": 13504,
+      "pid_alive": true,
+      "private_memory": 3253506048,
+      "rank_ic_valid_rows": 134903,
+      "resolved_performance_rows": 159573,
+      "state": "RUNNING",
+      "topn_rows": 134903,
+      "worker_kind": "TABULAR",
+      "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+      "working_set": 3197661184
+    },
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/progress.json",
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family extra_trees --resume --resume-generation 3 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_extra_trees --refit-policy daily_session_v1",
+      "creation_time": "2026-09-09T12:21:39+00:00",
+      "cursor": "2018-06-21T20:00:00+00:00",
+      "duplicate_worker_count": 0,
+      "family": "extra_trees",
+      "heavy": true,
+      "launch_enabled": true,
+      "live_worker_count": 1,
+      "live_worker_pids": [
+        8256
+      ],
+      "metrics_rows": 46835,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "parent_pid": 20432,
+      "pid": 8256,
+      "pid_alive": true,
+      "private_memory": 2186424320,
+      "rank_ic_valid_rows": 39611,
+      "resolved_performance_rows": 46835,
+      "state": "RUNNING",
+      "topn_rows": 39611,
+      "worker_kind": "TABULAR",
+      "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+      "working_set": 2142240768
+    },
+    {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/gradient_boosting/progress.json",
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family gradient_boosting --resume --resume-generation 2 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_gradient_boosting --refit-policy daily_session_v1",
+      "creation_time": "2026-09-09T12:24:26+00:00",
+      "cursor": "2016-04-29T20:00:00+00:00",
+      "duplicate_worker_count": 0,
+      "family": "gradient_boosting",
+      "heavy": true,
+      "launch_enabled": true,
+      "live_worker_count": 1,
+      "live_worker_pids": [
+        8800
+      ],
+      "metrics_rows": 0,
+      "namespace_lease_state": "LIVE_VERIFIED",
+      "parent_pid": 20432,
+      "pid": 8800,
+      "pid_alive": true,
+      "private_memory": 2418294784,
+      "rank_ic_valid_rows": 0,
+      "resolved_performance_rows": 0,
+      "state": "RUNNING",
+      "topn_rows": 0,
+      "worker_kind": "TABULAR",
+      "worker_script": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+      "working_set": 2349699072
+    }
+  ],
+  "generated_at_utc": "2026-09-09T21:56:32+00:00",
+  "live_orders": 0,
+  "paper_orders": 0,
+  "r47a_ownership_authority": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R47A_cross_host_ownership_state.json",
+  "r47a_ownership_hash": "80a3ed2752203a330feeeb58483a78fe588aec621a0229e3a20adc1f5da07e01",
+  "resource_snapshot": {
+    "available_ram_bytes": 13651255296,
+    "disk_free_bytes": 12627255296,
+    "disk_total_bytes": 255093370880,
+    "observed_at_utc": "2026-09-09T21:56:30+00:00",
+    "system_commit_percent": 57.26,
+    "total_ram_bytes": 34060005376
+  },
+  "supervisor_pid": 16656,
+  "supervisor_restarted": 0,
+  "ticket": "DS24_R49_PRE_IMPORT_SNAPSHOT",
+  "worker_launches": 0,
+  "workers_stopped": 0,
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "paper_orders": 0
+  }
+}
