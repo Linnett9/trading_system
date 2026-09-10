@@ -1,0 +1,172 @@
+{
+  "active_model_processes": 2,
+  "active_workers": [
+    "random_forest",
+    "elastic_net"
+  ],
+  "active_workers_count": 2,
+  "classification": "PASS",
+  "generated_at_utc": "2026-09-10T13:28:49+00:00",
+  "manual_model_launches": 0,
+  "max_active_model_processes": 3,
+  "resource_gate": {
+    "active_heavy_workers": 1,
+    "active_model_processes": 2,
+    "active_policy_workers": 2,
+    "admitted": true,
+    "aggregate_ds24_private_bytes": 6112641024,
+    "aggregate_ds24_working_set_bytes": 6009192448,
+    "blocked_reasons": [],
+    "disallowed_processes": {
+      "cleanup": [],
+      "ds26_passive_capture": [],
+      "ds26_workers": [],
+      "r20_compactor": [],
+      "supervisors": [
+        {
+          "CommandLine": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --cross-host-ownership-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json --admit-crashed-recoverable",
+          "CreationDate": "2026-09-10T12:23:24+00:00",
+          "KernelModeTime": 16144531250,
+          "Name": "python.exe",
+          "PageFileUsage": 983015424,
+          "ParentProcessId": 3184,
+          "Priority": 32,
+          "ProcessId": 7560,
+          "UserModeTime": 9721718750,
+          "WorkingSetSize": 261713920
+        }
+      ]
+    },
+    "disk_readmission_policy": {
+      "clean_admission_disk_floor_bytes": 4294967296,
+      "contract_id": "DS24_R44A_DISK_READMISSION_HYSTERESIS_V1",
+      "disk_containment_readmission_cooldown_seconds": 600,
+      "hard_disk_floor_bytes": 3221225472,
+      "post_disk_containment_readmission_floor_bytes": 21474836480,
+      "recent_hard_resource_containment": {
+        "age_seconds": 243754.0,
+        "containment_ledger": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R33_active_resource_containment_ledger.json",
+        "contract_id": "DS24_R44A_DISK_READMISSION_HYSTERESIS_V1",
+        "cooldown_seconds": 600,
+        "latest_timestamp": "2026-09-07T17:46:14+00:00",
+        "reason": "DISK_BELOW_12_GIB_PAUSE_NEWEST",
+        "recent": false,
+        "stopped_worker_count": 1,
+        "stopped_workers": [
+          {
+            "family": "mlp",
+            "pid": 21992,
+            "stopped": true
+          }
+        ]
+      },
+      "three_worker_reactivation_floor_bytes": 4294967296
+    },
+    "ds26_task": {
+      "State": "Absent",
+      "TaskName": "DreamSystem_DS26_ProspectiveNewsCapture",
+      "TaskPath": ""
+    },
+    "protected_exact": {
+      "checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/33_global_progress.json",
+      "command_line": "",
+      "creation_time": null,
+      "cursor": "2026-06-30T19:00:00+00:00",
+      "family": "exact_ridge_pca",
+      "heartbeat": "2026-08-27T13:17:53.047196+00:00",
+      "kernel_time": 0,
+      "metrics_rows": 136610,
+      "output_namespace": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r25_metrics_only/exact_ridge_pca",
+      "parent_pid": null,
+      "pid": 0,
+      "pid_alive": false,
+      "priority": null,
+      "private_memory": 0,
+      "protected": true,
+      "recorded_pid": 7876,
+      "resume_generation": 25,
+      "state": "COMPLETE",
+      "stderr_tail": "",
+      "terminal_T": "2026-06-30T19:00:00+00:00",
+      "terminal_complete": true,
+      "topn_rows": 2732200,
+      "user_time": 0,
+      "working_set": 0
+    },
+    "r36_admission_hold": {},
+    "resource_snapshot": {
+      "available_ram_bytes": 14921834496,
+      "disk_free_bytes": 19197276160,
+      "disk_total_bytes": 254997950464,
+      "observed_at_utc": "2026-09-10T13:28:46+00:00",
+      "system_commit_percent": 49.21,
+      "total_ram_bytes": 34060005376
+    },
+    "running_policy_workers": 2,
+    "source_gap_hold": {},
+    "storage_hold": {},
+    "zero_full_prediction_guard": {
+      "full_prediction_files_in_metrics_namespaces": 0,
+      "holdout_accessed": false,
+      "live_orders": 0,
+      "paper_orders": 0
+    }
+  },
+  "source_patch_active_in_running_supervisor": false,
+  "supervisor": {
+    "alive": true,
+    "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --ready-family-queue-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R42_ready_family_queue.json --cross-host-ownership-manifest C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R44_cross_host_family_ownership.json --admit-crashed-recoverable",
+    "creation_time": "2026-09-10T12:23:24+00:00",
+    "kernel_time": 16144531250,
+    "parent_pid": 3184,
+    "pid": 7560,
+    "priority": 32,
+    "private_memory": 983011328,
+    "user_time": 9721718750,
+    "working_set": 261709824
+  },
+  "supervisor_stopped": 0,
+  "third_slot_free": true,
+  "ticket": "DS24_R50_PRE_REPAIR_RUNTIME_SNAPSHOT",
+  "workers": {
+    "elastic_net": {
+      "alive": true,
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family elastic_net --resume --resume-generation 29 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_elastic_net --refit-policy daily_session_v1",
+      "creation_time": "2026-09-10T12:31:02+00:00",
+      "cursor": "2025-04-10T20:00:00+00:00",
+      "kernel_time": 1149531250,
+      "lease_state": "LIVE_VERIFIED",
+      "metric_rows": 534,
+      "parent_pid": 7560,
+      "pid": 12608,
+      "priority": 32,
+      "private_memory": 3851005952,
+      "user_time": 32375937500,
+      "worker_family": "elastic_net",
+      "working_set": 3773071360
+    },
+    "random_forest": {
+      "alive": true,
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family random_forest --resume --resume-generation 8 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_random_forest --refit-policy daily_session_v1",
+      "creation_time": "2026-09-10T12:26:38+00:00",
+      "cursor": "2016-04-14T20:00:00+00:00",
+      "kernel_time": 248906250,
+      "lease_state": "LIVE_VERIFIED",
+      "metric_rows": 3965,
+      "parent_pid": 7560,
+      "pid": 8332,
+      "priority": 32,
+      "private_memory": 2316070912,
+      "user_time": 35708750000,
+      "worker_family": "random_forest",
+      "working_set": 2258837504
+    }
+  },
+  "workers_stopped": 0,
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "holdout_accessed": false,
+    "live_orders": 0,
+    "paper_orders": 0
+  }
+}

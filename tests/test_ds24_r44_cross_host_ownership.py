@@ -228,7 +228,7 @@ def test_r44_reboot_reconstruction_does_not_duplicate_mac_owned_or_running_famil
 def test_r44_dry_run_reports_no_slot_and_mac_exclusions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = write_manifest_pair(tmp_path, monkeypatch)
     ownership = write_ownership(tmp_path, monkeypatch)
-    monkeypatch.setattr(supervisor, "lightweight_certified_queue_board", lambda _queue: board())
+    monkeypatch.setattr(supervisor, "build_family_board", lambda: board())
     monkeypatch.setattr(
         supervisor,
         "resource_gate",

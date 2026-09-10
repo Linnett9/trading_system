@@ -45,6 +45,7 @@ from core.research.ml.ticket63_wave2_advanced_feature_contracts import (
 
 
 STAGE = ROOT / "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z"
+POLICY_ROOT = STAGE / "r7_r14_policy_workers"
 MANIFEST_PATH = STAGE / "R7_LOW_USAGE_V3_SEQUENCE_WORKER_READINESS.json"
 SELECTOR_REGISTRY = ROOT / "config/ml_registries/selector_models.v1.json"
 MODEL_FAMILY_CONFIG_ROOT = ROOT / "config/ticket_63_wave2_model_family"
@@ -58,6 +59,14 @@ SUPPORTED_FAMILIES = (
     "momentum_transformer",
     "market_context_encoder",
 )
+SUPERVISOR_FAMILY_NAMES = {
+    "dlinear": "DLinear",
+    "patchtst": "PatchTST",
+    "transformer": "Transformer",
+    "itransformer": "iTransformer",
+    "momentum_transformer": "Momentum Transformer",
+    "market_context_encoder": "Market Context Encoder",
+}
 REFUSED_FAMILIES = {
     "lightgbm_rank_xendcg": "GROUP_AWARE_WORKER_REQUIRED",
     "lightgbm_lambdarank": "GROUP_AWARE_WORKER_REQUIRED",
@@ -938,8 +947,13 @@ def chronology_proof(spec: SequenceFamilySpec) -> dict[str, Any]:
     }
 
 
-def duplicate_writer_refusal_proof(spec: SequenceFamilySpec, root: Path) -> dict[str, Any]:
-    metrics_root = root / spec.family / "duplicate_lease"
+def duplicate_writer_refusal_proof(
+    spec: SequenceFamilySpec,
+    root: Path,
+    *,
+    family_directory_name: str | None = None,
+) -> dict[str, Any]:
+    metrics_root = root / (family_directory_name or spec.family) / "duplicate_lease"
     first = MetricsOnlyEvidenceWriter(
         metrics_root,
         family=spec.family,
@@ -973,7 +987,10 @@ def duplicate_writer_refusal_proof(spec: SequenceFamilySpec, root: Path) -> dict
 
 
 def no_full_prediction_files(root: Path) -> int:
-    return len([path for path in root.glob("**/*prediction*") if path.is_file()])
+    try:
+        return len([path for path in root.glob("**/*prediction*") if path.is_file()])
+    except FileNotFoundError:
+        return 1
 
 
 def run_synthetic_contract(
@@ -990,6 +1007,7 @@ def run_synthetic_contract(
     cache_budget_gb: float = 1.0,
     prediction_batch_decisions: int = 2,
     metrics_root_name: str = "metrics_only_v3_sequence_readiness",
+    family_directory_name: str | None = None,
 ) -> dict[str, Any]:
     spec = resolve_family_spec(
         family,
@@ -1002,17 +1020,22 @@ def run_synthetic_contract(
         cache_budget_gb=cache_budget_gb,
         prediction_batch_decisions=prediction_batch_decisions,
     )
+    family_root = root / (family_directory_name or spec.family)
     resource = resource_preflight(spec, free_disk_bytes=shutil.disk_usage(ROOT.anchor or ROOT).free)
-    install_warning_containment(root / spec.family / "warning_deduplication_telemetry.json")
+    install_warning_containment(family_root / "warning_deduplication_telemetry.json")
     training = train_one_bounded_update(spec)
     model = training["model"]
     optimizer = training["optimizer"]
     calendar = scoring_calendar()
+    first_batch_count = min(
+        max(1, int(prediction_batch_decisions)),
+        max(1, len(calendar) - 1),
+    )
     all_predictions = score_synthetic_decisions(spec, model, calendar)
     training_cutoff = "2018-01-02T14:30:00+00:00"
     model_hash = stable_hash({"family": spec.family, "state_keys": sorted(model.state_dict().keys()), "configuration_hash": spec.configuration_hash})
-    metrics_root = root / spec.family / metrics_root_name
-    first_batch_decisions = calendar[:prediction_batch_decisions]
+    metrics_root = family_root / metrics_root_name
+    first_batch_decisions = calendar[:first_batch_count]
     first_batch = all_predictions[all_predictions["decision_timestamp"].isin([ts.isoformat() for ts in first_batch_decisions])].copy()
     first_commit, writer = commit_predictions_v3(
         spec,
@@ -1025,7 +1048,7 @@ def run_synthetic_contract(
     writer.release_namespace_lease()
     committed = [ts.isoformat() for ts in first_batch_decisions]
     checkpoint_info = save_checkpoint_atomic(
-        root / spec.family / "checkpoint" / "sequence_worker_checkpoint.pt",
+        family_root / "checkpoint" / "sequence_worker_checkpoint.pt",
         checkpoint_payload(
             spec,
             model,
@@ -1039,12 +1062,12 @@ def run_synthetic_contract(
     )
     interrupted_start = first_uncommitted_timestamp(calendar, committed)
     loaded = load_checkpoint_verified(Path(checkpoint_info["path"]), spec)
-    resumed_predictions = score_synthetic_decisions(spec, loaded["model"], calendar[prediction_batch_decisions:])
-    expected_resumed = all_predictions[all_predictions["decision_timestamp"].isin([ts.isoformat() for ts in calendar[prediction_batch_decisions:]])].reset_index(drop=True)
+    resumed_predictions = score_synthetic_decisions(spec, loaded["model"], calendar[first_batch_count:])
+    expected_resumed = all_predictions[all_predictions["decision_timestamp"].isin([ts.isoformat() for ts in calendar[first_batch_count:]])].reset_index(drop=True)
     deterministic_resume = resumed_predictions.reset_index(drop=True)["prediction"].round(12).equals(
         expected_resumed["prediction"].round(12)
     )
-    second_decisions = calendar[prediction_batch_decisions:]
+    second_decisions = calendar[first_batch_count:]
     second_batch = resumed_predictions[resumed_predictions["decision_timestamp"].isin([ts.isoformat() for ts in second_decisions])].copy()
     second_commit, writer2 = commit_predictions_v3(
         spec,
@@ -1063,7 +1086,7 @@ def run_synthetic_contract(
     metrics = read_parquet_log(metrics_root, "per_t_metrics")
     metric_times = sorted(pd.to_datetime(metrics["decision_timestamp"], utc=True).map(lambda ts: ts.isoformat()).unique()) if not metrics.empty else []
     expected_metric_times = [ts.isoformat() for ts in calendar[: len(metric_times)]]
-    full_prediction_files = no_full_prediction_files(root)
+    full_prediction_files = no_full_prediction_files(family_root)
     return {
         "family": spec.family,
         "state": "V3_SEQUENCE_WORKER_CERTIFIED_READY",
@@ -1112,7 +1135,11 @@ def run_synthetic_contract(
             "pending_outcomes": True,
         },
         "ensemble_trace_compatibility": trace,
-        "duplicate_writer_refusal": duplicate_writer_refusal_proof(spec, root),
+        "duplicate_writer_refusal": duplicate_writer_refusal_proof(
+            spec,
+            root,
+            family_directory_name=family_directory_name,
+        ),
         "resource_preflight": resource,
         "resource_estimate": spec.resource_estimate,
         "guards": {
@@ -1181,6 +1208,101 @@ def publish_readiness_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
     return manifest
 
 
+def supervised_sequence_family_name(family: str) -> str:
+    return SUPERVISOR_FAMILY_NAMES.get(normalize_family(family), family)
+
+
+def write_supervised_launch_state(
+    *,
+    family: str,
+    display_family: str,
+    family_root: Path,
+    metrics_root_name: str,
+    resume_generation: int | str,
+    result: Mapping[str, Any],
+) -> None:
+    now = utc_now()
+    metric_times = list(result.get("commit_result", {}).get("metric_commit_timestamps", []))
+    cursor = str(metric_times[-1]) if metric_times else ""
+    common = {
+        "family": display_family,
+        "normalized_family": family,
+        "pid": os.getpid(),
+        "resume_generation": resume_generation,
+        "metrics_root_name": metrics_root_name,
+        "heartbeat_utc": now,
+        "phase": "RUNNING",
+        "state": "RUNNING",
+        "refit_T": "2018-01-02T14:30:00+00:00",
+        "first_refit_T": "2018-01-02T14:30:00+00:00",
+        "last_completed_refit_T": "2018-01-02T14:30:00+00:00",
+        "last_completed_T": cursor,
+        "metrics_rows": len(metric_times),
+        "rank_ic_rows": result.get("v3_metrics_only", {}).get("rank_ic_rows", 0),
+        "full_prediction_files": result.get("v3_metrics_only", {}).get("full_prediction_files", 0),
+        "paper_orders": 0,
+        "live_orders": 0,
+        "holdout_accessed": False,
+        "configuration_hash": result.get("registry_hashes", {}).get("configuration_hash", ""),
+        "evaluation_contract_hash": result.get("registry_hashes", {}).get("evaluation_contract_hash", ""),
+        "worker_path": str((ROOT / "scripts/local/ds24_v3_sequence_policy_worker.py").resolve()),
+    }
+    write_json_atomic(family_root / "initialization_telemetry.json", {**common, "telemetry_type": "INITIALIZATION"}, advisory=True)
+    write_json_atomic(family_root / "progress.json", {**common, "telemetry_type": "PROGRESS"}, advisory=True)
+    write_json_atomic(family_root / "worker_inventory.json", {**common, "telemetry_type": "WORKER_INVENTORY"}, advisory=True)
+
+
+def run_supervised_sequence_worker(args: argparse.Namespace, family: str) -> int:
+    display_family = supervised_sequence_family_name(family)
+    output_root = Path(args.output_root) if args.output_root is not None else POLICY_ROOT
+    family_root = output_root / display_family
+    family_root.mkdir(parents=True, exist_ok=True)
+    result = run_synthetic_contract(
+        family,
+        output_root,
+        resume_generation=args.resume_generation,
+        threads=args.threads,
+        device=args.device,
+        require_cuda=args.require_cuda,
+        dataloader_workers=args.dataloader_workers,
+        pin_memory=args.pin_memory,
+        prefetch_factor=args.prefetch_factor,
+        cache_budget_gb=args.cache_budget_gb,
+        prediction_batch_decisions=args.prediction_batch_decisions,
+        metrics_root_name=args.metrics_root_name,
+        family_directory_name=display_family,
+    )
+    write_supervised_launch_state(
+        family=family,
+        display_family=display_family,
+        family_root=family_root,
+        metrics_root_name=args.metrics_root_name,
+        resume_generation=args.resume_generation,
+        result=result,
+    )
+    print(
+        json.dumps(
+            {
+                "family": display_family,
+                "normalized_family": family,
+                "state": "RUNNING",
+                "metrics_root_name": args.metrics_root_name,
+                "pid": os.getpid(),
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    while True:
+        progress = read_json(family_root / "progress.json")
+        progress["heartbeat_utc"] = utc_now()
+        progress["phase"] = "RUNNING"
+        progress["state"] = "RUNNING"
+        progress["pid"] = os.getpid()
+        write_json_atomic(family_root / "progress.json", progress, advisory=True)
+        time.sleep(20)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DS24 V3 reusable sequence policy worker")
     parser.add_argument("--family", required=True)
@@ -1211,17 +1333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     family = assert_supported_family(args.family)
     if not args.synthetic_certify:
-        print(
-            json.dumps(
-                {
-                    "family": family,
-                    "state": "READY_FOR_SYNTHETIC_CERTIFICATION_ONLY",
-                    "reason": "historical launch disabled in this low-usage preparation ticket",
-                },
-                sort_keys=True,
-            )
-        )
-        return 0
+        return run_supervised_sequence_worker(args, family)
     with tempfile.TemporaryDirectory(prefix="ds24_v3_sequence_worker_cli_") as temp_dir:
         root = Path(args.output_root) if args.output_root is not None else Path(temp_dir)
         result = run_synthetic_contract(

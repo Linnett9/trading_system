@@ -442,9 +442,10 @@ def default_metrics_root_name(family: str, requested: str = "") -> str:
 
 def forward_metrics_capability_paths(family: str, *, include_r42_authority: bool = False) -> list[Path]:
     script = worker_script_for_family(family)
-    paths = [POLICY_ROOT / family / "forward_metrics_capability.json"]
+    paths: list[Path] = []
     if include_r42_authority:
         paths.append(STAGE / "R42_forward_metrics_capabilities" / f"{family_slug(family)}.forward_metrics_capability.json")
+    paths.append(POLICY_ROOT / family / "forward_metrics_capability.json")
     if script:
         stem = Path(script).stem
         paths.append(ROOT / "scripts" / "local" / f"{stem}.forward_metrics_capability.json")
@@ -526,9 +527,14 @@ def forward_metrics_contract_admission_decision(
     }
 
 
-def execution_registry_row(family: str) -> dict[str, Any]:
+def execution_registry_row(family: str, *, include_r42_authority: bool = False) -> dict[str, Any]:
     script = worker_script_for_family(family)
-    forward_decision = forward_metrics_contract_admission_decision(family, evaluation_version="v3", metrics_root_name="metrics_only_v3")
+    forward_decision = forward_metrics_contract_admission_decision(
+        family,
+        evaluation_version="v3",
+        metrics_root_name="metrics_only_v3",
+        include_r42_authority=include_r42_authority,
+    )
     return {
         "family": family,
         "worker_kind": worker_kind_for_family(family),
@@ -1295,6 +1301,11 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
     recorded_pid = int(progress.get("pid") or telemetry.get("pid") or worker_inventory.get("pid") or 0)
     heartbeat = progress.get("heartbeat_utc") or telemetry.get("heartbeat_utc")
     phase = progress.get("phase") or telemetry.get("phase") or plan.get("phase") or ""
+    sequence_reconciliation = (
+        sequence_certification_reconciliation(family)
+        if family in SEQUENCE_CERTIFICATION
+        else {}
+    )
     terminal = r31_has_reached_registered_terminal(family, progress or metrics_checkpoint)
     terminal_exclusion = r31_terminal_exclusion_state(family, root=POLICY_ROOT)
     terminal_complete = bool(terminal["reached"] and met["metric_rows"] > 0 and met["topn_rows"] > 0 and inv_dupes == 0)
@@ -1323,7 +1334,11 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
     elif fatal_effective and checkpoint_valid(family):
         state = "CRASHED_RECOVERABLE"
     elif fatal_effective:
-        state = "CRASHED_BLOCKED"
+        state = (
+            "CRASHED_RECOVERABLE"
+            if sequence_reconciliation.get("admission_state") == "V3_CERTIFIED_READY"
+            else "CRASHED_BLOCKED"
+        )
     elif terminal["reached"] and met["metric_rows"] > 0 and inv_dupes == 0:
         state = "TERMINAL_VALIDATING"
     elif terminal_complete:
@@ -1353,7 +1368,7 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
         "market_context_encoder",
         "temporal_fusion_transformer",
     }:
-        state = "V3_CERTIFICATION_REQUIRED"
+        state = str(sequence_reconciliation.get("admission_state") or "V3_CERTIFICATION_REQUIRED")
     else:
         state = "NOT_IMPLEMENTED"
     if state == "CRASHED_RECOVERABLE":
@@ -1365,8 +1380,12 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
     return {
         "family": family,
         "state": state,
+        "scientific_readiness": sequence_reconciliation.get("scientific_readiness", ""),
+        "runtime_state": "RUNNING" if live else "ABSENT",
+        "state_reconciliation_reason": sequence_reconciliation.get("reason", ""),
+        "sequence_certification_reconciliation": sequence_reconciliation,
         "worker_kind": worker_kind_for_family(family),
-        "worker_script": execution_registry_row(family)["worker_script"],
+        "worker_script": execution_registry_row(family, include_r42_authority=bool(sequence_reconciliation))["worker_script"],
         "launch_enabled": launch_enabled_for_family(family),
         "pid": int(live[0].get("ProcessId", 0) or 0) if live else 0,
         "recorded_pid": recorded_pid,
@@ -1488,12 +1507,19 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
         metrics_name = str(progress.get("metrics_root_name") or telemetry.get("metrics_root_name") or default_metrics_root_name(family, "metrics_only_v3"))
         metrics_root = root / metrics_name
         checkpoint = read_json(metrics_root / "resolved_performance_checkpoint_v3.json")
+        sequence_reconciliation = (
+            sequence_certification_reconciliation(family)
+            if family in SEQUENCE_CERTIFICATION
+            else {}
+        )
         if live:
             state = "RUNNING"
         elif family == "elastic_net":
             state = "CERTIFIED_READY"
         elif family not in queue:
             state = "RUNNING" if live else "NOT_IN_CERTIFIED_QUEUE"
+        elif sequence_reconciliation:
+            state = str(sequence_reconciliation.get("admission_state") or "V3_CERTIFICATION_REQUIRED")
         else:
             state = "V3_CERTIFIED_READY"
         live_pids = [int(row.get("ProcessId", 0) or 0) for row in live]
@@ -1501,8 +1527,12 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
             {
                 "family": family,
                 "state": state,
+                "scientific_readiness": sequence_reconciliation.get("scientific_readiness", ""),
+                "runtime_state": "RUNNING" if live else "ABSENT",
+                "state_reconciliation_reason": sequence_reconciliation.get("reason", ""),
+                "sequence_certification_reconciliation": sequence_reconciliation,
                 "worker_kind": worker_kind_for_family(family),
-                "worker_script": execution_registry_row(family)["worker_script"],
+                "worker_script": execution_registry_row(family, include_r42_authority=bool(sequence_reconciliation))["worker_script"],
                 "launch_enabled": launch_enabled_for_family(family),
                 "pid": live_pids[0] if live_pids else 0,
                 "pid_alive": bool(live),
@@ -1588,6 +1618,46 @@ def readiness_state_by_family() -> dict[str, str]:
         str(row.get("family")): str(row.get("current_r42_state") or row.get("readiness_state") or "")
         for row in rows
         if isinstance(row, dict) and row.get("family")
+    }
+
+
+def sequence_certification_reconciliation(
+    family: str,
+    *,
+    evaluation_version: str = "v3",
+    metrics_root_name: str = "metrics_only_v3",
+) -> dict[str, Any]:
+    readiness = readiness_state_by_family().get(family, "")
+    forward_decision = forward_metrics_contract_admission_decision(
+        family,
+        evaluation_version=evaluation_version,
+        metrics_root_name=metrics_root_name,
+        include_r42_authority=True,
+    )
+    if family == "Temporal Fusion Transformer" or readiness == "CONFIGURATION_AUTHORITY_REQUIRED":
+        admission_state = "CONFIGURATION_AUTHORITY_REQUIRED"
+        reason = "SCIENTIFIC_CONFIGURATION_AUTHORITY_REQUIRED"
+    elif readiness == "READY_TO_LAUNCH" and forward_decision.get("admitted"):
+        admission_state = "V3_CERTIFIED_READY"
+        reason = "R42_READY_TO_LAUNCH_WITH_CANONICAL_FORWARD_METRICS_AUTHORITY"
+    elif readiness == "READY_TO_LAUNCH":
+        admission_state = "V3_CERTIFICATION_REQUIRED"
+        reason = "R42_FORWARD_METRICS_CAPABILITY_INVALID_OR_MISSING"
+    elif readiness:
+        admission_state = readiness
+        reason = "R42_SCIENTIFIC_READINESS_NOT_READY_TO_LAUNCH"
+    else:
+        admission_state = "V3_CERTIFICATION_REQUIRED"
+        reason = "R42_SCIENTIFIC_READINESS_MISSING"
+    return {
+        "family": family,
+        "scientific_readiness": readiness,
+        "admission_state": admission_state,
+        "runtime_state_if_no_namespace": "ABSENT",
+        "reason": reason,
+        "forward_metrics": forward_decision,
+        "capability_path": forward_decision.get("capability_path", ""),
+        "missing_requirements": forward_decision.get("missing_requirements", []),
     }
 
 
@@ -1864,7 +1934,7 @@ def certified_queue_admission_plan(
             skipped.append({"family": family, "reason": "FAMILY_NOT_ON_BOARD", "block_scope": "FAMILY_SPECIFIC_BLOCK"})
             continue
         reason = family_specific_skip_reason(row, allowed_states=allowed)
-        route = execution_registry_row(family)
+        route = execution_registry_row(family, include_r42_authority=bool(ready_family_queue_manifest))
         item = {
             "family": family,
             "state": row.get("state", ""),
@@ -2054,8 +2124,15 @@ def validate_family_launch_slot(family: str) -> dict[str, Any]:
 
 
 def post_launch_family_guard(family: str, launched_pid: int) -> dict[str, Any]:
-    time.sleep(0.5)
-    live = family_processes().get(family, [])
+    worker_kind = execution_registry_row(family)["worker_kind"]
+    deadline = time.time() + (60.0 if worker_kind == "PYTORCH_SEQUENCE" else 0.5)
+    live: list[dict[str, Any]] = []
+    while True:
+        live = family_processes().get(family, [])
+        pids = [int(row.get("ProcessId", 0) or 0) for row in live]
+        if launched_pid in pids or time.time() >= deadline:
+            break
+        time.sleep(0.5)
     pids = [int(row.get("ProcessId", 0) or 0) for row in live]
     if launched_pid not in pids:
         raise RuntimeError(f"DS24_R36_POSTLAUNCH_WORKER_NOT_ADOPTED:{family}:pid={launched_pid}:live_pids={pids}")
@@ -2604,7 +2681,7 @@ def publish_state(
         "cross_host_ownership_authority": queue_plan.get("cross_host_ownership_authority", {}),
         "certified_ready_remaining": len(queue_plan.get("eligible_families", [])),
         "next_certified_family": next_family,
-        "next_worker_route": execution_registry_row(next_family) if next_family else {},
+        "next_worker_route": execution_registry_row(next_family, include_r42_authority=bool(ready_family_queue_manifest)) if next_family else {},
         "queue_skip_reasons": queue_plan.get("skipped_families", []),
         "global_resource_block": bool(blocked),
         "family_specific_block": bool(queue_plan.get("skipped_families")),
@@ -2850,7 +2927,7 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
     queue_authority = validate_ready_family_queue_manifest(args.ready_family_queue_manifest)
     ownership_manifest = str(getattr(args, "cross_host_ownership_manifest", "") or "")
     ownership_authority = validate_cross_host_ownership_authority(ownership_manifest) if ownership_manifest else {}
-    board = lightweight_certified_queue_board(queue_authority["ready_family_queue"])
+    board = build_family_board()
     config = GateConfig(
         max_active_model_processes=args.max_active_model_processes,
         max_policy_workers=args.max_policy_workers,
