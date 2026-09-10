@@ -1,0 +1,31 @@
+{
+  "actual_size_bytes": 0,
+  "actual_tar_file_count": 0,
+  "archive_exists": false,
+  "archive_readable": false,
+  "authority_hash": "85f91b237ea30ce278c46dbe00d047b1f9147d2339fd052575de7d5092fe4b14",
+  "classification": "DS24_R51_LAMBDARANK_TRANSFER_FILES_MISSING",
+  "dell_archive_path": "C:\\Users\\Brandon\\Desktop\\ds24_lightgbm_lambdarank_transfer_r1.tar",
+  "dell_sha256": "",
+  "dell_sha_path": "C:\\Users\\Brandon\\Desktop\\ds24_lightgbm_lambdarank_transfer_r1.tar.sha256",
+  "expected_sha256": "f2c11fe69a5eaae97c850816e6cc5fd702a0d7477e0c46f0a06c762ea1705a5b",
+  "expected_size_bytes": 174458880,
+  "expected_tar_file_count": 4552,
+  "extracted": false,
+  "generated_at_utc": "2026-09-10T14:19:54.704213+00:00",
+  "import_attempted": false,
+  "missing_requirements": [
+    "transfer_archive_missing",
+    "transfer_sha_file_missing"
+  ],
+  "no_model_fits": true,
+  "no_new_predictions": true,
+  "no_worker_launches": true,
+  "sha256_match": false,
+  "sha_file_exists": false,
+  "sidecar_sha256": "",
+  "stop_reason": "STOP_BEFORE_IMPORT_TRANSFER_FILES_MISSING",
+  "tar_safety_classification": "NOT_INSPECTED_TRANSFER_FILES_MISSING",
+  "ticket": "DS24_R51_LAMBDARANK_TRANSFER_VALIDATION",
+  "workers_stopped": 0
+}

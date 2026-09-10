@@ -1,0 +1,36 @@
+{
+  "authority_hash": "f6b4117dfc4f8abb5b1536a8bbb4eaf3f0d9ca4c6f9bff95bf7416f5c75794c6",
+  "classification": "DS24_R51_LAMBDARANK_TRANSFER_FILES_MISSING",
+  "dell_effective_ready_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "derived_from": {
+    "r42_ready_queue_hash": "4384f3387d3621bfe09da4daad5809228741ab2418db07f7f0b228513f0f7a28",
+    "r51_ownership_state_hash": "cdcb7a54ddedf2ed6f219b591881fe19af88d899f55b6e6b31b3a9320edca88d"
+  },
+  "excluded_families": [
+    {
+      "family": "lightgbm_rank_xendcg",
+      "reason": "SKIP_COMPLETE_IMPORTED"
+    },
+    {
+      "family": "lightgbm_lambdarank",
+      "reason": "SKIP_MAC_RUNNING"
+    },
+    {
+      "family": "DLinear",
+      "reason": "SKIP_MAC_RUNNING"
+    }
+  ],
+  "generated_at_utc": "2026-09-10T14:26:49.912026+00:00",
+  "supervisor_restarted": 0,
+  "ticket": "DS24_R51_DELL_EFFECTIVE_READY_QUEUE",
+  "worker_launches": 0,
+  "workers_stopped": 0
+}

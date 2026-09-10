@@ -1,0 +1,33 @@
+{
+  "archive_received": false,
+  "authority_hash": "db80368fefa98d2ab92fcf5978af509f4d2d7337d891870ed276d2111b30d477",
+  "classification": "DS24_R51_LAMBDARANK_TRANSFER_FILES_MISSING",
+  "dlinear_state": "MAC_RUNNING",
+  "effective_queue": [
+    "random_forest",
+    "elastic_net",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "family": "lightgbm_lambdarank",
+  "generated_at_utc": "2026-09-10T14:26:49.912026+00:00",
+  "import_result": "NOT_ATTEMPTED_TRANSFER_FILES_MISSING",
+  "ledger_appended": false,
+  "missing_requirements": [
+    "transfer_archive_missing",
+    "transfer_sha_file_missing"
+  ],
+  "no_model_fits": true,
+  "no_new_predictions": true,
+  "no_worker_launches": true,
+  "ownership_state": "MAC_RUNNING",
+  "source_run_id": "MAC_LIGHTGBM_LAMBDARANK_COMPLETE_TRANSFER_READY",
+  "supervisor_restarted": 0,
+  "ticket": "DS24_R51_LAMBDARANK_IMPORT_RESULT",
+  "transfer_validation_classification": "DS24_R51_LAMBDARANK_TRANSFER_FILES_MISSING",
+  "workers_stopped": 0,
+  "xendcg_state": "COMPLETE_IMPORTED"
+}
