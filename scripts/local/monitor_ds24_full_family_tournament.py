@@ -474,8 +474,13 @@ def compact_summary_text(family: str) -> str:
 def main() -> int:
     args = parse_args()
     heartbeat = read_json(STAGE / "R7_R27_01_supervisor_heartbeat.json")
-    supervisor_pid = int(heartbeat.get("pid") or 0)
-    supervisor_proc = process_status(supervisor_pid) if supervisor_pid else {"alive": False}
+    lease = read_json(STAGE / "R7_R27_tournament_supervisor.lease.json")
+    heartbeat_pid = int(heartbeat.get("pid") or 0)
+    lease_pid = int(lease.get("pid") or 0)
+    lease_proc = process_status(lease_pid) if lease_pid else {"alive": False}
+    heartbeat_proc = process_status(heartbeat_pid) if heartbeat_pid else {"alive": False}
+    supervisor_pid = lease_pid if lease_proc.get("alive") else heartbeat_pid
+    supervisor_proc = lease_proc if lease_proc.get("alive") else heartbeat_proc
     gate_config = supervisor_gate_config(supervisor_pid, heartbeat) if supervisor_proc.get("alive") else supervisor_api.GateConfig()
     gate: dict[str, Any] = {}
     try:
@@ -493,7 +498,10 @@ def main() -> int:
     disk = shutil.disk_usage(str(ROOT.anchor or "C:\\"))
     guard = heartbeat.get("zero_full_prediction_guard", {})
     print(f"DS24 Full-Family Tournament | {latest_classification()}")
-    print(f"Supervisor PID {supervisor_pid}: {'alive' if supervisor_proc.get('alive') else 'dead'} heartbeat_age={heartbeat_age_seconds(heartbeat.get('heartbeat_utc'))}")
+    print(
+        f"Supervisor PID {supervisor_pid}: {'alive' if supervisor_proc.get('alive') else 'dead'} "
+        f"heartbeat_pid={heartbeat_pid} heartbeat_age={heartbeat_age_seconds(heartbeat.get('heartbeat_utc'))}"
+    )
     print(f"Supervisor task: {task_state('DreamSystem_DS24_TournamentSupervisor')} | DS26 task: {task_state('DreamSystem_DS26_ProspectiveNewsCapture')}")
     autostart = supervisor_autostart_state()
     print(
@@ -503,7 +511,7 @@ def main() -> int:
         f"launcher_hash={autostart.get('launcher_sha256') or 'none'} "
         f"singleton={autostart.get('singleton_protection')}"
     )
-    print(f"Lease owner: {read_json(STAGE / 'R7_R27_tournament_supervisor.lease.json').get('pid')}")
+    print(f"Lease owner: {lease.get('pid')}")
     print(f"Active model processes: {gate.get('active_model_processes', heartbeat.get('active_model_processes'))} / {heartbeat.get('max_active_model_processes')}")
     exact_state = "COMPLETE" if exact.get("terminal_complete") else ("alive" if exact.get("pid_alive") else "dead")
     print(f"Exact PID {exact.get('pid')}: {exact_state} metric_rows={exact.get('metrics_rows')} topn_rows={exact.get('topn_rows')} cursor={exact.get('cursor')}")

@@ -1,0 +1,45 @@
+{
+  "canonical_data_authority": "92_r7_r1_extended_model_data_authority.json",
+  "classification": "REAL_SEQUENCE_WORKER_CONTRACT_MAPPED",
+  "families": {
+    "Market Context Encoder": {
+      "metrics_root_name": "metrics_only_v3_r40_market_context_encoder",
+      "scientific_readiness": "READY_TO_LAUNCH",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    "Momentum Transformer": {
+      "metrics_root_name": "metrics_only_v3_r40_momentum_transformer",
+      "scientific_readiness": "READY_TO_LAUNCH",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    "PatchTST": {
+      "metrics_root_name": "metrics_only_v3_r40_patchtst",
+      "scientific_readiness": "READY_TO_LAUNCH",
+      "state": "RUNNING",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    "Transformer": {
+      "metrics_root_name": "metrics_only_v3_r40_transformer",
+      "scientific_readiness": "READY_TO_LAUNCH",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    "iTransformer": {
+      "metrics_root_name": "metrics_only_v3_r40_itransformer",
+      "scientific_readiness": "READY_TO_LAUNCH",
+      "state": "V3_CERTIFIED_READY",
+      "worker_kind": "PYTORCH_SEQUENCE",
+      "worker_script": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    }
+  },
+  "generated_at_utc": "2026-09-10T15:36:21+00:00",
+  "metrics_only_writer": "MetricsOnlyEvidenceWriter",
+  "no_full_prediction_persistence": true,
+  "ticket": "DS24_R52_REAL_PATCHTST_HISTORICAL_TOURNAMENT_EXECUTION"
+}

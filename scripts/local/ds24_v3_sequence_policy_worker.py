@@ -12,8 +12,9 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,7 @@ from core.research.ml.ticket63_wave2_advanced_feature_contracts import (
     STATIC_SYMBOL_FEATURES,
     validate_tft_known_future,
 )
+from scripts.local import ds24_p8_r14_e3g_c2_r7_r14_policy_worker as canonical_worker
 
 
 STAGE = ROOT / "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z"
@@ -987,10 +989,153 @@ def duplicate_writer_refusal_proof(
 
 
 def no_full_prediction_files(root: Path) -> int:
-    try:
-        return len([path for path in root.glob("**/*prediction*") if path.is_file()])
-    except FileNotFoundError:
+    if not root.exists():
         return 1
+    count = 0
+    for current_root, dirnames, filenames in os.walk(root, onerror=lambda _error: None):
+        current = Path(current_root)
+        if any(part.lower().startswith("metrics_only") for part in current.parts):
+            dirnames[:] = []
+            continue
+        dirnames[:] = [dirname for dirname in dirnames if not dirname.lower().startswith("metrics_only")]
+        count += sum(1 for filename in filenames if "prediction" in filename.lower())
+    return count
+
+
+def sequence_worker_full_prediction_files(root: Path) -> int:
+    return no_full_prediction_files(root)
+
+
+def real_worker_metadata(
+    spec: SequenceFamilySpec,
+    *,
+    training_cutoff: str,
+    model_hash: str,
+    model_vintage_id: str,
+    preprocessing_hash: str,
+) -> dict[str, Any]:
+    return {
+        "source_worker": "ds24_v3_sequence_policy_worker",
+        "execution_mode": "REAL_DS24_HISTORICAL_WALK_FORWARD",
+        "model_hash": model_hash,
+        "model_vintage_id": model_vintage_id,
+        "preprocessing_hash": preprocessing_hash,
+        "policy_hash": canonical_worker.policy_hash(),
+        "training_cutoff": training_cutoff,
+        "prediction_timestamp": utc_now(),
+        "refit_T": training_cutoff,
+        "refit_policy": "daily_session_v1",
+        "runtime_telemetry": {
+            "threads": spec.config.torch_num_threads,
+            "bounded_batch_size": spec.bounded_batch_size,
+            "device": spec.config.device,
+            "cuda_required": spec.config.cuda_required,
+            "dataloader_num_workers": spec.config.dataloader_num_workers,
+            "dataloader_pin_memory": spec.config.dataloader_pin_memory,
+            "dataloader_prefetch_factor": spec.config.dataloader_prefetch_factor,
+        },
+    }
+
+
+def sequence_examples_from_panel(
+    panel: pd.DataFrame,
+    predictors: Sequence[str],
+    *,
+    sequence_length: int,
+    eligible_mask: pd.Series | Sequence[bool],
+    include_targets: bool,
+    max_examples: int | None = None,
+) -> tuple[list[list[list[float]]], list[float], pd.DataFrame]:
+    if panel.empty:
+        return [], [], pd.DataFrame()
+    required = {"asset_id", "decision_timestamp", *predictors}
+    missing = sorted(required - set(panel.columns))
+    if missing:
+        raise SequenceWorkerError(f"DS24_SEQUENCE_PANEL_SCHEMA_MISSING:{missing}")
+    mask_values = pd.Series(eligible_mask).astype(bool).to_numpy()
+    if len(mask_values) != len(panel):
+        raise SequenceWorkerError(f"DS24_SEQUENCE_ELIGIBLE_MASK_LENGTH_MISMATCH:{len(mask_values)}:{len(panel)}")
+    data = panel.copy().reset_index(drop=True)
+    data["_source_row_position"] = range(len(data))
+    data["decision_timestamp"] = pd.to_datetime(data["decision_timestamp"], utc=True)
+    data = data.sort_values(["asset_id", "decision_timestamp"]).reset_index(drop=True)
+    eligible = pd.Series(mask_values[data["_source_row_position"].to_numpy()], index=data.index).astype(bool)
+    eligible_indices = list(eligible[eligible].index)
+    if max_examples is not None and max_examples > 0:
+        eligible_indices = eligible_indices[-max_examples:]
+    eligible_index_set = set(eligible_indices)
+    sequences: list[list[list[float]]] = []
+    targets: list[float] = []
+    metadata: list[dict[str, Any]] = []
+    for _asset, group in data.groupby("asset_id", sort=False):
+        group = group.sort_values("decision_timestamp")
+        predictor_values = group[list(predictors)].to_numpy(dtype=np.float32, copy=True)
+        group_indices = list(group.index)
+        for local_index, source_index in enumerate(group_indices):
+            if source_index not in eligible_index_set:
+                continue
+            start = local_index - int(sequence_length) + 1
+            if start < 0:
+                continue
+            window = predictor_values[start : local_index + 1]
+            if len(window) != int(sequence_length):
+                continue
+            row = group.loc[source_index]
+            sequences.append(window.astype(float).tolist())
+            if include_targets:
+                targets.append(float(row["target_value"]))
+            metadata.append(
+                {
+                    "asset_id": str(row["asset_id"]),
+                    "decision_timestamp": pd.Timestamp(row["decision_timestamp"]).tz_convert("UTC").isoformat(),
+                }
+            )
+    return sequences, targets, pd.DataFrame(metadata)
+
+
+def canonical_sequence_progress_payload(
+    *,
+    family: str,
+    display_family: str,
+    pid: int,
+    package_state: str,
+    resume_generation: int | str,
+    metrics_root_name: str,
+    current_refit_session: str,
+    current_scoring_cursor: str,
+    last_committed_decision_timestamp: str,
+    metrics_rows: int,
+    resolved_performance_rows: int,
+    partition_count: int,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "pid": int(pid),
+        "family": display_family,
+        "normalized_family": family,
+        "package_state": package_state,
+        "state": package_state,
+        "phase": package_state,
+        "heartbeat": utc_now(),
+        "heartbeat_utc": utc_now(),
+        "metrics_rows": int(metrics_rows),
+        "resolved_performance_rows": int(resolved_performance_rows),
+        "current_refit_session": current_refit_session,
+        "current_scoring_cursor": current_scoring_cursor,
+        "last_committed_decision_timestamp": last_committed_decision_timestamp,
+        "partition_count": int(partition_count),
+        "resume_generation": resume_generation,
+        "metrics_root_name": metrics_root_name,
+        "execution_mode": "REAL_DS24_HISTORICAL_WALK_FORWARD",
+        "holdout_accessed": False,
+        "paper_orders": 0,
+        "live_orders": 0,
+        "full_prediction_files": 0,
+        "worker_path": str((ROOT / "scripts/local/ds24_v3_sequence_policy_worker.py").resolve()),
+    }
+    if extra:
+        payload.update(dict(extra))
+    return payload
 
 
 def run_synthetic_contract(
@@ -1252,15 +1397,168 @@ def write_supervised_launch_state(
     write_json_atomic(family_root / "worker_inventory.json", {**common, "telemetry_type": "WORKER_INVENTORY"}, advisory=True)
 
 
-def run_supervised_sequence_worker(args: argparse.Namespace, family: str) -> int:
+def deterministic_training_cap(
+    sequences: list[list[list[float]]],
+    targets: list[float],
+    *,
+    max_examples: int,
+) -> tuple[list[list[list[float]]], list[float]]:
+    if max_examples <= 0 or len(sequences) <= max_examples:
+        return sequences, targets
+    start = len(sequences) - max_examples
+    return sequences[start:], targets[start:]
+
+
+def save_real_model_artifact(
+    path: Path,
+    *,
+    family: str,
+    display_family: str,
+    model: TorchSequenceReturnRegressor,
+    spec: Any,
+    predictors: Sequence[str],
+    predictor_manifest_hash: str,
+) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    torch = None
+    if model.model is not None:
+        import torch as torch_module
+
+        torch = torch_module
+
+    with temp.open("wb") as handle:
+        if torch is None:
+            json_payload = {
+                "schema": "DS24_R52_REAL_SEQUENCE_MODEL_ARTIFACT_V1",
+                "family": display_family,
+                "normalized_family": family,
+                "spec": spec,
+                "predictors": list(predictors),
+                "predictor_manifest_hash": predictor_manifest_hash,
+                "model_state_dict": None,
+                "feature_impute_values": None,
+                "feature_means": None,
+                "feature_stds": None,
+                "target_mean": model.target_mean,
+                "target_std": model.target_std,
+                "diagnostics": dict(model.diagnostics),
+            }
+            handle.write(json.dumps(json_payload, sort_keys=True, default=str).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        else:
+            torch.save(
+                {
+                    "schema": "DS24_R52_REAL_SEQUENCE_MODEL_ARTIFACT_V1",
+                    "family": display_family,
+                    "normalized_family": family,
+                    "spec": spec,
+                    "config": asdict(model.config),
+                    "predictors": list(predictors),
+                    "predictor_manifest_hash": predictor_manifest_hash,
+                    "model_state_dict": model.model.state_dict(),
+                    "feature_impute_values": model.feature_impute_values,
+                    "feature_means": model.feature_means,
+                    "feature_stds": model.feature_stds,
+                    "target_mean": model.target_mean,
+                    "target_std": model.target_std,
+                    "auxiliary_means": model.auxiliary_means,
+                    "auxiliary_stds": model.auxiliary_stds,
+                    "diagnostics": dict(model.diagnostics),
+                },
+                handle,
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+    os.replace(temp, path)
+    return canonical_worker.sha256_file_openable(path)
+
+
+def write_real_sequence_checkpoint(
+    path: Path,
+    *,
+    family: str,
+    display_family: str,
+    resume_generation: int | str,
+    spec: Any,
+    model_artifact_path: Path,
+    model_hash: str,
+    predictor_manifest_hash: str,
+    feature_order_hash: str,
+    last_committed_decision_timestamp: str,
+    metrics_root_name: str,
+    commit_result: Mapping[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        "schema": "DS24_R52_REAL_SEQUENCE_WORKER_CHECKPOINT_V1",
+        "family": display_family,
+        "normalized_family": family,
+        "resume_generation": resume_generation,
+        "refit_T": spec.refit_T.isoformat(),
+        "training_window_start": spec.training_session_dates[0],
+        "training_window_end": spec.training_session_dates[-1],
+        "score_session_dates": list(spec.score_session_dates),
+        "model_artifact_path": canonical_worker.display_path(model_artifact_path),
+        "model_hash": model_hash,
+        "predictor_manifest_hash": predictor_manifest_hash,
+        "feature_order_hash": feature_order_hash,
+        "policy_hash": canonical_worker.policy_hash(),
+        "metrics_only_policy_hash": canonical_worker.metrics_policy_hash(),
+        "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
+        "last_committed_decision_timestamp": last_committed_decision_timestamp,
+        "metrics_root_name": metrics_root_name,
+        "commit_result": dict(commit_result),
+        "holdout_accessed": False,
+        "paper_orders": 0,
+        "live_orders": 0,
+        "full_prediction_files": 0,
+        "written_at_utc": utc_now(),
+    }
+    write_json_atomic(path, payload, advisory=True)
+    return payload
+
+
+def iter_daily_session_refit_schedule(spine: Sequence[pd.Timestamp]) -> Iterator[Any]:
+    sessions: list[str] = []
+    first_timestamp_by_session: dict[str, pd.Timestamp] = {}
+    seen_sessions: set[str] = set()
+    for timestamp in spine:
+        value = pd.Timestamp(timestamp).tz_convert("UTC")
+        session = value.date().isoformat()
+        if session in seen_sessions:
+            continue
+        seen_sessions.add(session)
+        sessions.append(session)
+        first_timestamp_by_session[session] = value
+    digest = canonical_worker.policy_hash()
+    for ordinal, start in enumerate(range(canonical_worker.TRAINING_SESSIONS, len(sessions))):
+        score_session = sessions[start]
+        yield canonical_worker.RefitPackageSpec(
+            ordinal=ordinal,
+            refit_T=first_timestamp_by_session[score_session],
+            training_session_dates=sessions[start - canonical_worker.TRAINING_SESSIONS : start],
+            score_session_dates=[score_session],
+            policy_hash=digest,
+        )
+
+
+def run_real_historical_sequence_worker(
+    args: argparse.Namespace,
+    family: str,
+    *,
+    stop_after_committed_timestamps: int | None = None,
+) -> dict[str, Any]:
     display_family = supervised_sequence_family_name(family)
     output_root = Path(args.output_root) if args.output_root is not None else POLICY_ROOT
     family_root = output_root / display_family
+    metrics_root = family_root / args.metrics_root_name
+    model_root = family_root / "models"
+    progress_path = family_root / "progress.json"
     family_root.mkdir(parents=True, exist_ok=True)
-    result = run_synthetic_contract(
+    install_warning_containment(family_root / "warning_deduplication_telemetry.json")
+    spec = resolve_family_spec(
         family,
-        output_root,
-        resume_generation=args.resume_generation,
         threads=args.threads,
         device=args.device,
         require_cuda=args.require_cuda,
@@ -1269,38 +1567,361 @@ def run_supervised_sequence_worker(args: argparse.Namespace, family: str) -> int
         prefetch_factor=args.prefetch_factor,
         cache_budget_gb=args.cache_budget_gb,
         prediction_batch_decisions=args.prediction_batch_decisions,
-        metrics_root_name=args.metrics_root_name,
-        family_directory_name=display_family,
+        evaluation_version=args.evaluation_version,
+        refit_policy=args.refit_policy,
     )
-    write_supervised_launch_state(
+    resource = resource_preflight(spec, free_disk_bytes=shutil.disk_usage(ROOT.anchor or ROOT).free)
+    authority_payload = read_json(canonical_worker.STAGE / "92_r7_r1_extended_model_data_authority.json")
+    predictor_manifest = canonical_worker.load_predictor_manifest(canonical_worker.PREDICTORS)
+    partitions = canonical_worker.read_partition_manifest(canonical_worker.STAGE / authority_payload["manifest_path"])
+    engine = canonical_worker.CanonicalPrequentialEngine(
+        root=ROOT,
+        feature_root=canonical_worker.FEATURE_ROOT,
+        predictor_manifest=predictor_manifest,
+        partitions=partitions,
+    )
+    metrics_writer = MetricsOnlyEvidenceWriter(
+        metrics_root,
+        family=display_family,
+        enable_resolved_performance_v3=True,
+        target_loader=canonical_worker.load_targets_for_keys,
+        terminal_timestamp=canonical_worker.POLICY_TERMINAL_T,
+        namespace_lease_enabled=True,
+        resume_generation=args.resume_generation,
+        command_hash=stable_hash(" ".join(sys.argv)),
+        configuration_hash=spec.configuration_hash,
+        evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+    )
+    predictors = predictor_manifest.predictors
+    feature_order_hash = stable_hash(list(predictors))
+    start_payload = canonical_sequence_progress_payload(
         family=family,
         display_family=display_family,
-        family_root=family_root,
-        metrics_root_name=args.metrics_root_name,
+        pid=os.getpid(),
+        package_state="DISCOVERING_DECISION_SPINE",
         resume_generation=args.resume_generation,
-        result=result,
+        metrics_root_name=args.metrics_root_name,
+        current_refit_session="",
+        current_scoring_cursor="",
+        last_committed_decision_timestamp="",
+        metrics_rows=0,
+        resolved_performance_rows=0,
+        partition_count=0,
+        extra={
+            "run_id": canonical_worker.RUN_ID,
+            "feature_count": len(predictors),
+            "feature_order_hash": feature_order_hash,
+            "target": "forward_return_60m__decision_5m",
+            "sequence_length": spec.sequence_length,
+            "training_lookback_sessions": canonical_worker.TRAINING_SESSIONS,
+            "refit_policy": args.refit_policy,
+            "refit_cadence": canonical_worker.refit_cadence_id(args.refit_policy),
+        },
     )
-    print(
-        json.dumps(
+    write_json_atomic(family_root / "initialization_telemetry.json", {**start_payload, "telemetry_type": "INITIALIZATION"}, advisory=True)
+    write_json_atomic(family_root / "worker_inventory.json", {**start_payload, "telemetry_type": "WORKER_INVENTORY"}, advisory=True)
+    write_json_atomic(progress_path, {**start_payload, "telemetry_type": "PROGRESS"}, advisory=True)
+    metrics_writer.heartbeat_namespace_lease(phase="DISCOVERING_DECISION_SPINE")
+    spine = list(engine.decision_spine())
+    schedule = iter_daily_session_refit_schedule(spine) if args.refit_policy == "daily_session_v1" else canonical_worker.build_refit_schedule(spine)
+    score_timestamps_by_session = canonical_worker.score_timestamp_index(spine)
+    completed_evidence = canonical_worker.completed_key_evidence(
+        family_root,
+        metrics_root_name=args.metrics_root_name,
+        include_legacy_sources=False,
+    )
+    if completed_evidence["hash_mismatches"]:
+        raise SequenceWorkerError(f"COMPLETED_KEY_HASH_MISMATCH:{completed_evidence['hash_mismatches'][:5]}")
+    done = completed_evidence["keys"]
+    committed_timestamps = 0
+    last_commit_result: dict[str, Any] = {}
+    for package in schedule:
+        score_timestamps = canonical_worker.score_timestamps_for_spec(spine, package, by_session=score_timestamps_by_session)
+        completion = canonical_worker.package_completion_status(display_family, score_timestamps, done)
+        if completion["fully_completed"]:
+            metrics_writer.heartbeat_namespace_lease(phase="SKIPPING_COMPLETED_REFIT_PACKAGE", cursor=score_timestamps[-1].isoformat())
+            continue
+        package_dates = set(package.training_session_dates + package.score_session_dates)
+        package_years = {int(date[:4]) for date in package_dates}
+        package_partitions = [row for row in partitions if row.year in package_years]
+        progress = canonical_sequence_progress_payload(
+            family=family,
+            display_family=display_family,
+            pid=os.getpid(),
+            package_state="ASSEMBLING_REFIT_PACKAGE",
+            resume_generation=args.resume_generation,
+            metrics_root_name=args.metrics_root_name,
+            current_refit_session=package.refit_T.isoformat(),
+            current_scoring_cursor=completion.get("first_uncommitted_T", ""),
+            last_committed_decision_timestamp="",
+            metrics_rows=len(read_parquet_log(metrics_root, "per_t_metrics")),
+            resolved_performance_rows=len(read_parquet_log(metrics_root, "rank_ic_v3")),
+            partition_count=len(package_partitions),
+            extra={"training_window_start": package.training_session_dates[0], "training_window_end": package.training_session_dates[-1], "score_session_dates": list(package.score_session_dates)},
+        )
+        write_json_atomic(progress_path, {**progress, "telemetry_type": "PROGRESS"}, advisory=True)
+        metrics_writer.heartbeat_namespace_lease(phase="ASSEMBLING_REFIT_PACKAGE", cursor=package.refit_T.isoformat())
+        panel = engine.assemble_partitions(rows=package_partitions, decision_dates=package_dates)
+        if panel.empty:
+            raise SequenceWorkerError(f"DS24_R52_EMPTY_REAL_SEQUENCE_PACKAGE:{display_family}:{package.refit_T.isoformat()}")
+        panel["decision_timestamp"] = pd.to_datetime(panel["decision_timestamp"], utc=True)
+        panel["target_available_timestamp"] = pd.to_datetime(panel["target_available_timestamp"], utc=True)
+        train_mask = (
+            (panel["decision_timestamp"] < package.refit_T)
+            & panel["target_is_trainable"].astype(bool)
+            & (panel["target_available_timestamp"] <= package.refit_T)
+            & np.isfinite(panel["target_value"].astype(float))
+        )
+        train_sequences, train_targets, _train_meta = sequence_examples_from_panel(
+            panel,
+            predictors,
+            sequence_length=spec.sequence_length,
+            eligible_mask=train_mask,
+            include_targets=True,
+            max_examples=max(1, int(getattr(args, "max_training_examples", 24000))),
+        )
+        train_sequences, train_targets = deterministic_training_cap(
+            train_sequences,
+            train_targets,
+            max_examples=max(1, int(getattr(args, "max_training_examples", 24000))),
+        )
+        if not train_sequences:
+            raise SequenceWorkerError(f"DS24_R52_NO_SEQUENCE_TRAINING_WINDOWS:{display_family}:{package.refit_T.isoformat()}")
+        model = TorchSequenceReturnRegressor(spec.config)
+        fit_start = time.perf_counter()
+        model.fit(train_sequences, train_targets)
+        fit_seconds = time.perf_counter() - fit_start
+        model_stamp = package.refit_T.strftime("%Y%m%dT%H%M%SZ")
+        model_path = model_root / f"{family}_{model_stamp}.pkl"
+        model_hash = save_real_model_artifact(
+            model_path,
+            family=family,
+            display_family=display_family,
+            model=model,
+            spec=package,
+            predictors=predictors,
+            predictor_manifest_hash=predictor_manifest.manifest_hash,
+        )
+        model_vintage_id = stable_hash({"family": display_family, "refit_T": package.refit_T.isoformat(), "model_hash": model_hash})
+        preprocessing_hash = stable_hash(
             {
                 "family": display_family,
-                "normalized_family": family,
-                "state": "RUNNING",
-                "metrics_root_name": args.metrics_root_name,
-                "pid": os.getpid(),
-            },
-            sort_keys=True,
-        ),
-        flush=True,
-    )
-    while True:
-        progress = read_json(family_root / "progress.json")
-        progress["heartbeat_utc"] = utc_now()
-        progress["phase"] = "RUNNING"
-        progress["state"] = "RUNNING"
-        progress["pid"] = os.getpid()
-        write_json_atomic(family_root / "progress.json", progress, advisory=True)
-        time.sleep(20)
+                "feature_order_hash": feature_order_hash,
+                "feature_imputation_strategy": model.diagnostics.get("feature_imputation_strategy", ""),
+            }
+        )
+        pending_outputs: list[pd.DataFrame] = []
+        last_completed = ""
+        for timestamp in score_timestamps:
+            timestamp = pd.Timestamp(timestamp).tz_convert("UTC")
+            key = (display_family, timestamp.isoformat())
+            if key in done:
+                continue
+            score_mask = panel["decision_timestamp"] == timestamp
+            score_sequences, _targets, score_meta = sequence_examples_from_panel(
+                panel,
+                predictors,
+                sequence_length=spec.sequence_length,
+                eligible_mask=score_mask,
+                include_targets=False,
+            )
+            if not score_sequences:
+                continue
+            predictions = model.predict(score_sequences)
+            output = pd.DataFrame(
+                {
+                    "family": display_family,
+                    "config": "policy_v1",
+                    "policy_hash": canonical_worker.policy_hash(),
+                    "decision_timestamp": timestamp.isoformat(),
+                    "asset_id": score_meta["asset_id"].astype(str),
+                    "prediction": np.asarray(predictions, dtype=float),
+                    "model_vintage_id": model_vintage_id,
+                    "model_hash": model_hash,
+                    "preprocessing_hash": preprocessing_hash,
+                    "training_cutoff": package.refit_T.isoformat(),
+                    "prediction_timestamp": utc_now(),
+                }
+            )
+            pending_outputs.append(output)
+            if len(pending_outputs) < max(1, int(args.prediction_batch_decisions)):
+                continue
+            combined = pd.concat(pending_outputs, ignore_index=True)
+            last_commit_result = metrics_writer.commit_predictions(
+                combined,
+                metadata=real_worker_metadata(
+                    spec,
+                    training_cutoff=package.refit_T.isoformat(),
+                    model_hash=model_hash,
+                    model_vintage_id=model_vintage_id,
+                    preprocessing_hash=preprocessing_hash,
+                ),
+            )
+            for decision in sorted(pd.to_datetime(combined["decision_timestamp"], utc=True).unique()):
+                iso = pd.Timestamp(decision).tz_convert("UTC").isoformat()
+                done.add((display_family, iso))
+                last_completed = iso
+                committed_timestamps += 1
+            pending_outputs.clear()
+            checkpoint = write_real_sequence_checkpoint(
+                family_root / "checkpoint" / "sequence_worker_checkpoint.json",
+                family=family,
+                display_family=display_family,
+                resume_generation=args.resume_generation,
+                spec=package,
+                model_artifact_path=model_path,
+                model_hash=model_hash,
+                predictor_manifest_hash=predictor_manifest.manifest_hash,
+                feature_order_hash=feature_order_hash,
+                last_committed_decision_timestamp=last_completed,
+                metrics_root_name=args.metrics_root_name,
+                commit_result=last_commit_result,
+            )
+            metrics = read_parquet_log(metrics_root, "per_t_metrics")
+            rank_ic = read_parquet_log(metrics_root, "rank_ic_v3")
+            progress = canonical_sequence_progress_payload(
+                family=family,
+                display_family=display_family,
+                pid=os.getpid(),
+                package_state="RUNNING",
+                resume_generation=args.resume_generation,
+                metrics_root_name=args.metrics_root_name,
+                current_refit_session=package.refit_T.isoformat(),
+                current_scoring_cursor=last_completed,
+                last_committed_decision_timestamp=last_completed,
+                metrics_rows=len(metrics),
+                resolved_performance_rows=len(rank_ic),
+                partition_count=int(last_commit_result.get("checkpoint", {}).get("partition_count", 0) or 0),
+                extra={
+                    "fit_elapsed_seconds": round(fit_seconds, 6),
+                    "training_examples_last_refit": len(train_sequences),
+                    "training_window_start": package.training_session_dates[0],
+                    "training_window_end": package.training_session_dates[-1],
+                    "feature_count": len(predictors),
+                    "feature_order_hash": feature_order_hash,
+                    "target": "forward_return_60m__decision_5m",
+                    "sequence_length": spec.sequence_length,
+                    "model_hash": model_hash,
+                    "checkpoint": checkpoint,
+                },
+            )
+            write_json_atomic(progress_path, {**progress, "telemetry_type": "PROGRESS"}, advisory=True)
+            metrics_writer.heartbeat_namespace_lease(phase="RUNNING", cursor=last_completed)
+            if stop_after_committed_timestamps and committed_timestamps >= stop_after_committed_timestamps:
+                metrics_writer.release_namespace_lease()
+                return {
+                    "classification": "PATCHTST_REAL_HISTORICAL_EXECUTION_BOUNDED_PROOF_COMPLETE",
+                    "family": display_family,
+                    "committed_timestamps": committed_timestamps,
+                    "last_committed_decision_timestamp": last_completed,
+                    "metrics_rows": len(metrics),
+                    "resolved_performance_rows": len(rank_ic),
+                    "resource_preflight": resource,
+                    "progress": progress,
+                }
+        if pending_outputs:
+            combined = pd.concat(pending_outputs, ignore_index=True)
+            last_commit_result = metrics_writer.commit_predictions(
+                combined,
+                metadata=real_worker_metadata(
+                    spec,
+                    training_cutoff=package.refit_T.isoformat(),
+                    model_hash=model_hash,
+                    model_vintage_id=model_vintage_id,
+                    preprocessing_hash=preprocessing_hash,
+                ),
+            )
+            for decision in sorted(pd.to_datetime(combined["decision_timestamp"], utc=True).unique()):
+                iso = pd.Timestamp(decision).tz_convert("UTC").isoformat()
+                done.add((display_family, iso))
+                last_completed = iso
+                committed_timestamps += 1
+            pending_outputs.clear()
+            checkpoint = write_real_sequence_checkpoint(
+                family_root / "checkpoint" / "sequence_worker_checkpoint.json",
+                family=family,
+                display_family=display_family,
+                resume_generation=args.resume_generation,
+                spec=package,
+                model_artifact_path=model_path,
+                model_hash=model_hash,
+                predictor_manifest_hash=predictor_manifest.manifest_hash,
+                feature_order_hash=feature_order_hash,
+                last_committed_decision_timestamp=last_completed,
+                metrics_root_name=args.metrics_root_name,
+                commit_result=last_commit_result,
+            )
+            metrics = read_parquet_log(metrics_root, "per_t_metrics")
+            rank_ic = read_parquet_log(metrics_root, "rank_ic_v3")
+            progress = canonical_sequence_progress_payload(
+                family=family,
+                display_family=display_family,
+                pid=os.getpid(),
+                package_state="RUNNING",
+                resume_generation=args.resume_generation,
+                metrics_root_name=args.metrics_root_name,
+                current_refit_session=package.refit_T.isoformat(),
+                current_scoring_cursor=last_completed,
+                last_committed_decision_timestamp=last_completed,
+                metrics_rows=len(metrics),
+                resolved_performance_rows=len(rank_ic),
+                partition_count=int(last_commit_result.get("checkpoint", {}).get("partition_count", 0) or 0),
+                extra={
+                    "fit_elapsed_seconds": round(fit_seconds, 6),
+                    "training_examples_last_refit": len(train_sequences),
+                    "training_window_start": package.training_session_dates[0],
+                    "training_window_end": package.training_session_dates[-1],
+                    "feature_count": len(predictors),
+                    "feature_order_hash": feature_order_hash,
+                    "target": "forward_return_60m__decision_5m",
+                    "sequence_length": spec.sequence_length,
+                    "model_hash": model_hash,
+                    "checkpoint": checkpoint,
+                },
+            )
+            write_json_atomic(progress_path, {**progress, "telemetry_type": "PROGRESS"}, advisory=True)
+            metrics_writer.heartbeat_namespace_lease(phase="RUNNING", cursor=last_completed)
+            if stop_after_committed_timestamps and committed_timestamps >= stop_after_committed_timestamps:
+                metrics_writer.release_namespace_lease()
+                return {
+                    "classification": "PATCHTST_REAL_HISTORICAL_EXECUTION_BOUNDED_PROOF_COMPLETE",
+                    "family": display_family,
+                    "committed_timestamps": committed_timestamps,
+                    "last_committed_decision_timestamp": last_completed,
+                    "metrics_rows": len(metrics),
+                    "resolved_performance_rows": len(rank_ic),
+                    "resource_preflight": resource,
+                    "progress": progress,
+                }
+        if model_path.exists():
+            apply_checkpoint_retention(
+                family_root=family_root,
+                checkpoint_dir=model_root,
+                family=display_family,
+                current_checkpoint_path=model_path,
+                active_refit_timestamp=package.refit_T.isoformat(),
+                deterministic_rebuild_authority=True,
+                referenced_paths=[model_path],
+                pattern=f"{family}_*.pkl",
+                ledger_path=family_root / "checkpoint_retention_ledger.jsonl",
+                dry_run=False,
+            )
+    metrics_writer.release_namespace_lease()
+    return {
+        "classification": "PATCHTST_REAL_HISTORICAL_EXECUTION_COMPLETE",
+        "family": display_family,
+        "committed_timestamps": committed_timestamps,
+        "last_committed_decision_timestamp": "",
+        "metrics_rows": len(read_parquet_log(metrics_root, "per_t_metrics")),
+        "resolved_performance_rows": len(read_parquet_log(metrics_root, "rank_ic_v3")),
+        "resource_preflight": resource,
+    }
+
+
+def run_supervised_sequence_worker(args: argparse.Namespace, family: str) -> int:
+    result = run_real_historical_sequence_worker(args, family)
+    print(json.dumps(result, sort_keys=True, default=str), flush=True)
+    return 0
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -1322,6 +1943,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--synthetic-certify", action="store_true")
     parser.add_argument("--publish-readiness", action="store_true")
     parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument("--max-training-examples", type=int, default=24000)
     return parser.parse_args(argv)
 
 

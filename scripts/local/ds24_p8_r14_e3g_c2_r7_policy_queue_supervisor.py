@@ -228,6 +228,14 @@ TERMINAL_T = "2026-06-30T19:00:00+00:00"
 POLICY_TERMINAL_T = "2026-06-30T20:00:00+00:00"
 REFIT_CADENCE_ID = "FIVE_SCORE_SESSION_REFIT_WITH_FIVE_MINUTE_SCORING_V1"
 DECISION_CADENCE_ID = "REGISTERED_FIVE_MINUTE_DECISION_SPINE"
+DS24_PROCESS_COMMAND_TOKENS = (
+    "ds24_p8_r14_e3g_c2_r7",
+    SEQUENCE_WORKER_SCRIPT.lower(),
+    LIGHTGBM_RANKING_WORKER_SCRIPT.lower(),
+    "ds26",
+    "r20",
+    "compactor",
+)
 
 
 @dataclass(frozen=True)
@@ -585,7 +593,7 @@ def python_processes() -> list[dict[str, Any]]:
                 command_line = " ".join(str(part) for part in (info.get("cmdline") or []))
                 if "python" not in name.lower() and "powershell" not in name.lower():
                     continue
-                if not any(token in command_line.lower() for token in ["ds24_p8_r14_e3g_c2_r7", "ds26", "r20", "compactor"]):
+                if not is_relevant_python_process_command(command_line):
                     continue
                 memory = info.get("memory_info")
                 cpu = info.get("cpu_times")
@@ -617,6 +625,11 @@ def python_processes() -> list[dict[str, Any]]:
     if isinstance(data, list):
         return data
     return [data] if isinstance(data, dict) else []
+
+
+def is_relevant_python_process_command(command_line: str) -> bool:
+    normalized = str(command_line).replace("/", "\\").lower()
+    return any(token in normalized for token in DS24_PROCESS_COMMAND_TOKENS)
 
 
 def process_status(pid: int) -> dict[str, Any]:

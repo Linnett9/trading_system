@@ -1,0 +1,22 @@
+{
+  "classification": "PRE_REPAIR_SYNTHETIC_SUPERVISED_PATH_CONFIRMED_REPAIRED_TO_REAL_PATH",
+  "generated_at_utc": "2026-09-10T15:36:21+00:00",
+  "post_repair_call_path": [
+    "main",
+    "run_supervised_sequence_worker",
+    "run_real_historical_sequence_worker",
+    "CanonicalPrequentialEngine",
+    "TorchSequenceReturnRegressor",
+    "MetricsOnlyEvidenceWriter.commit_predictions"
+  ],
+  "pre_repair_call_path": [
+    "main",
+    "run_supervised_sequence_worker",
+    "run_synthetic_contract",
+    "write_supervised_launch_state",
+    "heartbeat_loop"
+  ],
+  "responsible_function": "run_supervised_sequence_worker",
+  "synthetic_allowed_only_under": "--synthetic-certify",
+  "ticket": "DS24_R52_REAL_PATCHTST_HISTORICAL_TOURNAMENT_EXECUTION"
+}

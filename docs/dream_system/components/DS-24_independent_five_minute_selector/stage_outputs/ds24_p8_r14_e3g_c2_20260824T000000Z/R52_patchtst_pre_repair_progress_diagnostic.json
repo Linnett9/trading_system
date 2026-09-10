@@ -1,0 +1,60 @@
+{
+  "authority_hash": "45c9cd8e85272e90b93afc4411ab0b726f6788d143dd6ecd1c2b30513a380201",
+  "classification": "PATCHTST_RESIDENT_NONPROGRESSING",
+  "cpu_delta_seconds": 0.015625,
+  "diagnostic_note": "Progress heartbeat may refresh; classification depends on committed historical fields, not resident PID.",
+  "generated_at_utc": "2026-09-10T14:39:32.532623+00:00",
+  "historical_fields_advanced": false,
+  "observation_interval_seconds": 75,
+  "samples": [
+    {
+      "checkpoint_mtime_utc": "2026-09-10T13:56:06.452819+00:00",
+      "checkpoint_partition_count": 13,
+      "checkpoint_raw_metric_rows": null,
+      "checkpoint_resolved_performance_rows": 2,
+      "label": "sample_1",
+      "observed_at_utc": "2026-09-10T14:38:16.756408+00:00",
+      "per_t_rows": 14,
+      "process": {
+        "alive": true,
+        "cpu": 9.609375,
+        "pid": 19668,
+        "start_time": "2026-09-10T13:55:57.3300308Z",
+        "working_set": 352239616
+      },
+      "progress_current_refit_session": "2018-01-02T14:30:00+00:00",
+      "progress_current_scoring_cursor": "2018-01-02T15:40:00+00:00",
+      "progress_heartbeat_utc": "2026-09-10T14:38:08.848348+00:00",
+      "progress_last_completed_T": "2018-01-02T15:40:00+00:00",
+      "progress_last_completed_refit_T": "2018-01-02T14:30:00+00:00",
+      "progress_metrics_rows": 14,
+      "progress_mtime_utc": "2026-09-10T14:38:08.848348+00:00",
+      "rank_ic_rows": 2
+    },
+    {
+      "checkpoint_mtime_utc": "2026-09-10T13:56:06.452819+00:00",
+      "checkpoint_partition_count": 13,
+      "checkpoint_raw_metric_rows": null,
+      "checkpoint_resolved_performance_rows": 2,
+      "label": "sample_2",
+      "observed_at_utc": "2026-09-10T14:39:32.149340+00:00",
+      "per_t_rows": 14,
+      "process": {
+        "alive": true,
+        "cpu": 9.625,
+        "pid": 19668,
+        "start_time": "2026-09-10T13:55:57.3300308Z",
+        "working_set": 352239616
+      },
+      "progress_current_refit_session": "2018-01-02T14:30:00+00:00",
+      "progress_current_scoring_cursor": "2018-01-02T15:40:00+00:00",
+      "progress_heartbeat_utc": "2026-09-10T14:39:28.910091+00:00",
+      "progress_last_completed_T": "2018-01-02T15:40:00+00:00",
+      "progress_last_completed_refit_T": "2018-01-02T14:30:00+00:00",
+      "progress_metrics_rows": 14,
+      "progress_mtime_utc": "2026-09-10T14:39:28.911101+00:00",
+      "rank_ic_rows": 2
+    }
+  ],
+  "ticket": "DS24_R52_PATCHTST_PRE_REPAIR_PROGRESS_DIAGNOSTIC"
+}

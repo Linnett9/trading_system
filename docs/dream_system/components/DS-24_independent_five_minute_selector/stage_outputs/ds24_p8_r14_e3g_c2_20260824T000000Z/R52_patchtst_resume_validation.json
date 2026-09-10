@@ -1,0 +1,12 @@
+{
+  "checkpoint_exists": true,
+  "checkpoint_schema": "DS24_R52_REAL_SEQUENCE_WORKER_CHECKPOINT_V1",
+  "classification": "PATCHTST_RESUME_REAL_PATH_READY",
+  "generated_at_utc": "2026-09-10T15:36:21+00:00",
+  "last_committed_decision_timestamp": "2016-02-03T20:00:00+00:00",
+  "metrics_root_name": "metrics_only_v3_r40_patchtst",
+  "model_artifact_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/PatchTST/models/patchtst_20160203T143500Z.pkl",
+  "model_hash": "b3887e73e63af550fa5fadaac551c97059bb699299428b0d1f5fdbac0fab637a",
+  "resume_generation": "2",
+  "ticket": "DS24_R52_REAL_PATCHTST_HISTORICAL_TOURNAMENT_EXECUTION"
+}

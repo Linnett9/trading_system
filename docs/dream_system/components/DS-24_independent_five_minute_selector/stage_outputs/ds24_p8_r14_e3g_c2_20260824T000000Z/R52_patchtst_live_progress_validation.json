@@ -1,0 +1,496 @@
+{
+  "checkpoint": {
+    "commit_result": {
+      "checkpoint": {
+        "checkpoint_utc": "2026-09-10T15:37:48.111796+00:00",
+        "current_temporary_bytes": 0,
+        "decision_rows": 2408,
+        "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "evaluation_contract_version": "V3",
+        "family": "PatchTST",
+        "full_prediction_files_written": 0,
+        "last_completed_T": "2016-02-03T20:00:00+00:00",
+        "metadata": {
+          "execution_mode": "REAL_DS24_HISTORICAL_WALK_FORWARD",
+          "model_hash": "b3887e73e63af550fa5fadaac551c97059bb699299428b0d1f5fdbac0fab637a",
+          "model_vintage_id": "819ee6f2c478a9178406b094ade4d50fc1ed34ea6e29628ee3a35f16a28b3e80",
+          "policy_hash": "506101994d1aaca1b9e8d93e1e86eaf7d53cb57b64edf0b5ef158023979e6ada",
+          "prediction_timestamp": "2026-09-10T15:37:24.060579+00:00",
+          "preprocessing_hash": "db606084b9faca93b9d024201d771bdb6a24f8665d4519a0c2a5ff3d59260b4a",
+          "refit_T": "2016-02-03T14:35:00+00:00",
+          "refit_policy": "daily_session_v1",
+          "runtime_telemetry": {
+            "bounded_batch_size": 8,
+            "cuda_required": false,
+            "dataloader_num_workers": 0,
+            "dataloader_pin_memory": false,
+            "dataloader_prefetch_factor": 2,
+            "device": "cpu",
+            "threads": 1
+          },
+          "source_worker": "ds24_v3_sequence_policy_worker",
+          "training_cutoff": "2016-02-03T14:35:00+00:00"
+        },
+        "metric_rows": 133,
+        "namespace_writer_lease": {
+          "acquired_at_utc": "2026-09-10T15:24:38.281855+00:00",
+          "command_hash": "b21e435b25ebcd19f613ed86486addf9559c8d880c25155014ccb14bf1e73036",
+          "configuration_hash": "8e9474281d705984ea7817c892e4f5609307b4fa0091e76b8c4e3726ca9610de",
+          "contract": "DS24_R37_V3_NAMESPACE_SINGLE_WRITER_LEASE_V1",
+          "cursor": "2016-02-03T20:00:00+00:00",
+          "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+          "family": "PatchTST",
+          "heartbeat_count": 7,
+          "heartbeat_utc": "2026-09-10T15:37:24.064878+00:00",
+          "hostname": "DESKTOP-TQOVNB7",
+          "lease_generation": 1,
+          "lease_hash": "986af9bfd98eac16b10e85f2af4372079d0963f5bb4228f84e61ab576bc821f7",
+          "namespace": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst",
+          "namespace_root": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst",
+          "phase": "COMMIT_PREDICTIONS_START",
+          "pid": 14872,
+          "previous_owner": {},
+          "process_creation_time": "2026-09-10T15:24:32.997521162+00:00",
+          "resume_generation": "2",
+          "stale_recovered": false,
+          "stale_recovery_reason": "",
+          "token": "5fa495d7ca00f794ff78683fa721d7037a2eeb0218eb5ffc0a3e833a1a8b2ea7"
+        },
+        "namespace_writer_lease_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\namespace_writer_lease.json",
+        "peak_temporary_bytes": 0,
+        "pending_bytes": 111474,
+        "pending_logical_unit": "rollback_asset_score_row",
+        "pending_rows": 8851,
+        "pending_timestamp_count": 18,
+        "pending_timestamp_limit": 18,
+        "policy_hash": "cf00888a450c4d1fd3cbafb7015fae91b95ad4a343d426539068c40cf2fcf842",
+        "policy_id": "DS24_METRICS_ONLY_RESEARCH_OUTPUT_POLICY_V1",
+        "transient_storage_contract_id": "DS24_V2_TRANSIENT_STORAGE_CONTRACT_V1",
+        "v2_pending_score_rows": 0,
+        "v2_rank_ic_valid_rows": 0,
+        "v2_resolved_performance_rows": 0,
+        "v2_return_valid_rows": 0,
+        "v2_terminal_censored_rows": 0,
+        "v3_duplicate_count": 0,
+        "v3_partition_count": 28,
+        "v3_pending_score_rows": 6164,
+        "v3_rank_ic_valid_rows": 109,
+        "v3_resolved_performance_rows": 109,
+        "v3_return_valid_rows": 1,
+        "v3_terminal_censored_rows": 0
+      },
+      "committed": true,
+      "current_temporary_bytes": 0,
+      "decision_publication": {
+        "appended": true,
+        "bytes": 23046,
+        "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\decision_trace_manifest.json",
+        "parts": [
+          {
+            "bytes": 23046,
+            "created_at_utc": "2026-09-10T15:37:47.935896+00:00",
+            "max_decision_timestamp": "2016-02-03T20:00:00+00:00",
+            "min_decision_timestamp": "2016-02-03T14:35:00+00:00",
+            "path": "decision_trace_parts/decision_date=2016-02-03/part-14872-1789054667923537600.parquet",
+            "rows": 1320,
+            "sha256": "8afbcf2b755b0bccbccc04cf675b8b0a61ed2b2520f8758ae1433d471e28fca8"
+          }
+        ],
+        "rows": 1320
+      },
+      "decision_rows_added": 1320,
+      "metric_publication": {
+        "appended": true,
+        "bytes": 24688,
+        "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\per_t_metrics_manifest.json",
+        "parts": [
+          {
+            "bytes": 24688,
+            "created_at_utc": "2026-09-10T15:37:47.916699+00:00",
+            "max_decision_timestamp": "2016-02-03T20:00:00+00:00",
+            "min_decision_timestamp": "2016-02-03T14:35:00+00:00",
+            "path": "per_t_metrics_parts/decision_date=2016-02-03/part-14872-1789054667903654000.parquet",
+            "rows": 66,
+            "sha256": "775b0375a995ca95b204abd3805ceaa68f32006b8d3e0036f695d3b1dfc4cdcf"
+          }
+        ],
+        "rows": 66
+      },
+      "metric_rows_added": 66,
+      "namespace_writer_lease": {
+        "acquired_at_utc": "2026-09-10T15:24:38.281855+00:00",
+        "command_hash": "b21e435b25ebcd19f613ed86486addf9559c8d880c25155014ccb14bf1e73036",
+        "configuration_hash": "8e9474281d705984ea7817c892e4f5609307b4fa0091e76b8c4e3726ca9610de",
+        "contract": "DS24_R37_V3_NAMESPACE_SINGLE_WRITER_LEASE_V1",
+        "cursor": "2016-02-03T20:00:00+00:00",
+        "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "family": "PatchTST",
+        "heartbeat_count": 8,
+        "heartbeat_utc": "2026-09-10T15:37:48.112741+00:00",
+        "hostname": "DESKTOP-TQOVNB7",
+        "lease_generation": 1,
+        "lease_hash": "a6431b8f8fe77eedef8ce6d76f3fc00f5013f9facfd0c063fd4ce4f6d74b835d",
+        "namespace": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst",
+        "namespace_root": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst",
+        "phase": "COMMIT_PREDICTIONS_COMPLETE",
+        "pid": 14872,
+        "previous_owner": {},
+        "process_creation_time": "2026-09-10T15:24:32.997521162+00:00",
+        "resume_generation": "2",
+        "stale_recovered": false,
+        "stale_recovery_reason": "",
+        "token": "5fa495d7ca00f794ff78683fa721d7037a2eeb0218eb5ffc0a3e833a1a8b2ea7"
+      },
+      "peak_temporary_bytes": 0,
+      "pending_publication": {
+        "bytes": 111474,
+        "path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\pending_buffer.parquet",
+        "rows": 8851,
+        "sha256": "9c63c93042b4facc9624a0125569af511dd0673183d8f88fe63d96846f69865d"
+      },
+      "pending_rows": 8851,
+      "policy_hash": "cf00888a450c4d1fd3cbafb7015fae91b95ad4a343d426539068c40cf2fcf842",
+      "policy_id": "DS24_METRICS_ONLY_RESEARCH_OUTPUT_POLICY_V1",
+      "resolved_performance_v2": {},
+      "resolved_performance_v3": {
+        "audit_sample_publication": {
+          "appended": true,
+          "bytes": 138744,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\rank_ic_audit_sample_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 138744,
+              "created_at_utc": "2026-09-10T15:37:46.706084+00:00",
+              "max_decision_timestamp": "2016-02-03T19:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T19:05:00+00:00",
+              "path": "rank_ic_audit_sample_v3_parts/decision_date=2016-02-02/part-14872-1789054666693076200.parquet",
+              "rows": 1320,
+              "sha256": "aa7e2c1904a0663485b6bb0f2095e45f60b3197b62e2e5951025e599c3fe8774"
+            }
+          ],
+          "rows": 1320
+        },
+        "checkpoint": {
+          "active_pending_score_limit_rows": 9252,
+          "bounded_pending_storage_bytes": 95850,
+          "checkpoint_utc": "2026-09-10T15:37:47.061153+00:00",
+          "current_temporary_bytes": 0,
+          "daily_refit_count": 3,
+          "daily_refit_with_five_minute_scoring": true,
+          "daily_return_rows": 1,
+          "duplicate_count": 0,
+          "durable_metrics_bytes": 1070342,
+          "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+          "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+          "evaluation_contract_version": "V3",
+          "family": "PatchTST",
+          "first_uncommitted_timestamp": "2016-02-03T19:05:00+00:00",
+          "largest_temporary_file_bytes": 0,
+          "last_refit_session": "2016-02-03",
+          "last_resolution_timestamp": "2016-02-03T20:00:00+00:00",
+          "no_five_minute_retraining": true,
+          "partition_count": 28,
+          "peak_temporary_bytes": 0,
+          "pending_buffer_bytes": 95850,
+          "pending_horizon_within_contract": false,
+          "pending_logical_unit": "asset_score_row",
+          "pending_retention_exception": "PENDING_HORIZON_OVERFLOW_RETAINED_BOUNDED_UNTIL_TARGET_MATURITY",
+          "pending_retention_exception_detail": "RESOLVED_PERFORMANCE_V2_PENDING_HORIZON_LIMIT_EXCEEDED:timestamps=24>18;rows=6164>9252",
+          "pending_score_rows": 6164,
+          "pending_timestamp_count": 24,
+          "pending_timestamp_limit": 18,
+          "permanent_full_prediction_files_written": 0,
+          "rank_ic_valid_rows": 109,
+          "resolution_meta": {
+            "pending_rows": 6164,
+            "resolution_timestamp": "2016-02-03T20:00:00+00:00",
+            "resolved_timestamps": 66,
+            "skipped_existing_timestamps": 0,
+            "terminal_censored_rows": 0
+          },
+          "resolved_performance_rows": 109,
+          "return_valid_rows": 1,
+          "target_load": {
+            "asset_registry_path": "data/reference/assets/canonical_asset_registry.csv",
+            "asset_registry_rows": 514,
+            "manifest_rows": 5654,
+            "model_partition_manifest_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/91_r7_r1_extended_model_data_partition_manifest.csv",
+            "target_fallback_resolved_files": 0,
+            "target_files_missing": 20,
+            "target_files_read": 510,
+            "target_lookup_mode": "CANONICAL_REGISTRY_TO_MODEL_PARTITION_MANIFEST",
+            "target_lookup_rows": 5654,
+            "target_lookup_unique_assets": 514,
+            "target_manifest_resolved_files": 510,
+            "target_missing_manifest_mappings": 20,
+            "target_rows_loaded": 38250
+          },
+          "terminal_censored_rows": 0,
+          "transient_storage_contract_hash": "f11fe93c42a618328363fd296b54069579a92b9f924029f942fc331396ce7635",
+          "transient_storage_contract_id": "DS24_V2_TRANSIENT_STORAGE_CONTRACT_V1"
+        },
+        "committed": true,
+        "current_temporary_bytes": 0,
+        "daily_return_publication": {
+          "appended": true,
+          "bytes": 8972,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\daily_portfolio_returns_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 8972,
+              "created_at_utc": "2026-09-10T15:37:46.939866+00:00",
+              "max_decision_timestamp": "2016-02-02T00:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T00:00:00+00:00",
+              "path": "daily_portfolio_returns_v3_parts/decision_date=2016-02-02/part-14872-1789054666930044900.parquet",
+              "rows": 1,
+              "sha256": "7160df8ab806d62f0082fac4e62f85430906d72a06345c5b25bffdbf99b268d4"
+            }
+          ],
+          "rows": 1
+        },
+        "decision_trace_publication_v3": {
+          "appended": true,
+          "bytes": 216497,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\decision_trace_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 216497,
+              "created_at_utc": "2026-09-10T15:37:46.646546+00:00",
+              "max_decision_timestamp": "2016-02-03T19:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T19:05:00+00:00",
+              "path": "decision_trace_v3_parts/decision_date=2016-02-02/part-14872-1789054666634116300.parquet",
+              "rows": 2640,
+              "sha256": "98d19ec40f017b477ac77ac0b38c9ba00ee7eab525978b10c95c81e82862ca6f"
+            }
+          ],
+          "rows": 2640
+        },
+        "duplicate_count": 0,
+        "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "partition_count": 28,
+        "peak_temporary_bytes": 0,
+        "pending_horizon_within_contract": false,
+        "pending_ledger_publication": {
+          "appended": true,
+          "bytes": 7937,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\pending_outcome_ledger_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 7937,
+              "created_at_utc": "2026-09-10T15:37:46.782760+00:00",
+              "max_decision_timestamp": "2016-02-03T20:00:00+00:00",
+              "min_decision_timestamp": "2016-02-03T20:00:00+00:00",
+              "path": "pending_outcome_ledger_v3_parts/decision_date=2016-02-03/part-14872-1789054666772040200.parquet",
+              "rows": 1,
+              "sha256": "541da215627f4b6a8953747aeaf307aa141ed79c68121001e3320d8e9ff41134"
+            }
+          ],
+          "rows": 1
+        },
+        "pending_retention_exception": "PENDING_HORIZON_OVERFLOW_RETAINED_BOUNDED_UNTIL_TARGET_MATURITY",
+        "pending_score_rows": 6164,
+        "pending_timestamp_count": 24,
+        "rank_ic_publication": {
+          "appended": true,
+          "bytes": 39110,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\rank_ic_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 39110,
+              "created_at_utc": "2026-09-10T15:37:46.620920+00:00",
+              "max_decision_timestamp": "2016-02-03T19:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T19:05:00+00:00",
+              "path": "rank_ic_v3_parts/decision_date=2016-02-02/part-14872-1789054666593180400.parquet",
+              "rows": 66,
+              "sha256": "92afdf78c95b20e6777ed96b6a0757503f6cb825209d16f6e4210e6688c36725"
+            }
+          ],
+          "rows": 66
+        },
+        "rank_ic_valid_rows": 109,
+        "refit_event_publication": {
+          "appended": true,
+          "bytes": 10088,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\refit_events_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 10088,
+              "created_at_utc": "2026-09-10T15:37:46.879798+00:00",
+              "max_decision_timestamp": "",
+              "min_decision_timestamp": "",
+              "path": "refit_events_v3_parts/decision_date=unknown/part-14872-1789054666870616900.parquet",
+              "rows": 1,
+              "sha256": "274a865b8aa38a52c8817eedaaa44f1fa0f2034c459d6babc514d5327e42b7e4"
+            }
+          ],
+          "rows": 1
+        },
+        "resolved_performance_rows": 109,
+        "resolved_rows_added": 66,
+        "return_valid_rows": 1,
+        "sleeve_publication": {
+          "appended": true,
+          "bytes": 51159,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\sleeve_maturity_ledger_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 51159,
+              "created_at_utc": "2026-09-10T15:37:46.659813+00:00",
+              "max_decision_timestamp": "2016-02-03T19:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T19:05:00+00:00",
+              "path": "sleeve_maturity_ledger_v3_parts/decision_date=2016-02-02/part-14872-1789054666646546900.parquet",
+              "rows": 66,
+              "sha256": "f5cd5a47991aa8af3bea8212580330dc1b5ef03f172dad2d87763c34e091a6a2"
+            }
+          ],
+          "rows": 66
+        },
+        "summary": {
+          "coverage": {
+            "eligible_resolved_fraction": 0.9238508770251918,
+            "pending_score_rows": 6164,
+            "terminal_censored_rows": 0
+          },
+          "created_at_utc": "2026-09-10T15:37:46.985239+00:00",
+          "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+          "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+          "evaluation_contract_version": "V3",
+          "first_resolved_decision_timestamp": "2016-02-02T14:35:00+00:00",
+          "last_resolved_decision_timestamp": "2018-01-02T14:40:00+00:00",
+          "rank_ic": {
+            "daily_ic_rows": 3,
+            "daily_mean_spearman_rank_ic": -0.10982861916705026,
+            "dependence_aware_95_ci": {
+              "lag": 12,
+              "lower": 0.12179863812903283,
+              "mean": 0.19624183995567532,
+              "observations": 109,
+              "standard_error": 0.03798122542175637,
+              "upper": 0.2706850417823178
+            },
+            "inference_method": "newey_west_hac_lag_12_for_overlapping_60m_targets",
+            "mean_spearman_rank_ic": 0.19624183995567532,
+            "median_spearman_rank_ic": 0.21199581325697278,
+            "positive_fraction": 0.9541284403669725,
+            "valid_timestamps": 109
+          },
+          "resolved_performance_rows": 109,
+          "returns": {
+            "annualized_return_from_daily_returns": -0.0688974569700537,
+            "annualized_volatility_from_daily_returns": null,
+            "cumulative_gross_return": -0.0002734026070240203,
+            "cumulative_net_return": -0.0002734026070240203,
+            "daily_return_rows": 1,
+            "daily_sharpe": null,
+            "last_daily_net_return": -0.00027340260702402264,
+            "maximum_drawdown": 0.0,
+            "mean_turnover": 0.6922018348623855,
+            "portfolio_contract": "twelve_staggered_equal_capital_sleeves",
+            "raw_overlapping_forward_returns_annualized": false,
+            "simultaneous_capital_limit": 1.0,
+            "sleeve_count": 12,
+            "total_estimated_costs": 0.0,
+            "win_rate": 0.0
+          },
+          "status": "PROVISIONAL"
+        },
+        "terminal_censored_publication": {
+          "appended": false,
+          "bytes": 0,
+          "parts": [],
+          "rows": 0
+        },
+        "terminal_censored_rows": 0,
+        "transaction_cost_publication": {
+          "appended": true,
+          "bytes": 12325,
+          "manifest_path": "C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\r7_r14_policy_workers\\PatchTST\\metrics_only_v3_r40_patchtst\\transaction_costs_v3_manifest.json",
+          "parts": [
+            {
+              "bytes": 12325,
+              "created_at_utc": "2026-09-10T15:37:46.679985+00:00",
+              "max_decision_timestamp": "2016-02-03T19:00:00+00:00",
+              "min_decision_timestamp": "2016-02-02T19:05:00+00:00",
+              "path": "transaction_costs_v3_parts/decision_date=2016-02-02/part-14872-1789054666659813800.parquet",
+              "rows": 66,
+              "sha256": "29b6e01a8e84416986649cf9fb8d810d1bb4801a488992c5797069c503185c89"
+            }
+          ],
+          "rows": 66
+        }
+      }
+    },
+    "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+    "family": "PatchTST",
+    "feature_order_hash": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+    "full_prediction_files": 0,
+    "holdout_accessed": false,
+    "last_committed_decision_timestamp": "2016-02-03T20:00:00+00:00",
+    "live_orders": 0,
+    "metrics_only_policy_hash": "cf00888a450c4d1fd3cbafb7015fae91b95ad4a343d426539068c40cf2fcf842",
+    "metrics_root_name": "metrics_only_v3_r40_patchtst",
+    "model_artifact_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/PatchTST/models/patchtst_20160203T143500Z.pkl",
+    "model_hash": "b3887e73e63af550fa5fadaac551c97059bb699299428b0d1f5fdbac0fab637a",
+    "normalized_family": "patchtst",
+    "paper_orders": 0,
+    "policy_hash": "506101994d1aaca1b9e8d93e1e86eaf7d53cb57b64edf0b5ef158023979e6ada",
+    "predictor_manifest_hash": "d21722c41f0e54edc02519184a10596a2847091f0c04e80e4a0503251ffb60ca",
+    "refit_T": "2016-02-03T14:35:00+00:00",
+    "resume_generation": "2",
+    "schema": "DS24_R52_REAL_SEQUENCE_WORKER_CHECKPOINT_V1",
+    "score_session_dates": [
+      "2016-02-03"
+    ],
+    "training_window_end": "2016-02-02",
+    "training_window_start": "2016-01-05",
+    "written_at_utc": "2026-09-10T15:37:48.129648+00:00"
+  },
+  "classification": "PATCHTST_RUNNING_VERIFIED",
+  "current_metrics_rows": 133,
+  "full_prediction_files": 0,
+  "generated_at_utc": "2026-09-10T15:42:11+00:00",
+  "holdout_accessed": false,
+  "live_orders": 0,
+  "metrics_advanced": true,
+  "paper_orders": 0,
+  "patchtst_live_worker_pids": [
+    14872
+  ],
+  "patchtst_pid": 14872,
+  "patchtst_state": "RUNNING",
+  "pre_repair_metrics_rows": 14,
+  "progress": {
+    "current_refit_session": "2016-02-04T14:35:00+00:00",
+    "current_scoring_cursor": "2016-02-04T14:35:00+00:00",
+    "execution_mode": "REAL_DS24_HISTORICAL_WALK_FORWARD",
+    "family": "PatchTST",
+    "full_prediction_files": 0,
+    "heartbeat": "2026-09-10T15:37:48.272784+00:00",
+    "heartbeat_utc": "2026-09-10T15:37:48.272784+00:00",
+    "holdout_accessed": false,
+    "last_committed_decision_timestamp": "",
+    "live_orders": 0,
+    "metrics_root_name": "metrics_only_v3_r40_patchtst",
+    "metrics_rows": 133,
+    "normalized_family": "patchtst",
+    "package_state": "ASSEMBLING_REFIT_PACKAGE",
+    "paper_orders": 0,
+    "partition_count": 514,
+    "phase": "ASSEMBLING_REFIT_PACKAGE",
+    "pid": 14872,
+    "resolved_performance_rows": 109,
+    "resume_generation": "2",
+    "score_session_dates": [
+      "2016-02-04"
+    ],
+    "state": "ASSEMBLING_REFIT_PACKAGE",
+    "telemetry_type": "PROGRESS",
+    "training_window_end": "2016-02-03",
+    "training_window_start": "2016-01-06",
+    "worker_path": "C:\\Users\\Brandon\\trading_system\\scripts\\local\\ds24_v3_sequence_policy_worker.py"
+  },
+  "stderr_state": "CLEAN",
+  "ticket": "DS24_R52_REAL_PATCHTST_HISTORICAL_TOURNAMENT_EXECUTION"
+}

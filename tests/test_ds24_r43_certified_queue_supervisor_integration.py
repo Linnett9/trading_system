@@ -145,6 +145,15 @@ def test_reboot_reconstruction_does_not_duplicate_running_family(tmp_path: Path,
     assert reasons["elastic_net"] == "DUPLICATE_NAMESPACE_OWNER"
 
 
+def test_relevant_python_process_filter_includes_v3_sequence_worker() -> None:
+    command = (
+        r"C:\Python\python.exe scripts\local\ds24_v3_sequence_policy_worker.py "
+        "--family PatchTST --resume"
+    )
+
+    assert supervisor.is_relevant_python_process_command(command)
+
+
 def test_dry_run_admission_reports_no_slot_but_next_when_available(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = write_manifest_pair(tmp_path, monkeypatch)
     monkeypatch.setattr(supervisor, "build_family_board", lambda: board())
