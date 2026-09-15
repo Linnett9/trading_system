@@ -8,10 +8,13 @@ from scripts.local.ds24_r53_tournament_results_consolidation import (
     REQUESTED_FAMILIES,
     R53_DIRNAME,
     R53A_DIRNAME,
+    R53B_DIRNAME,
     build_rows,
     build_r53a_rows,
+    build_r53b_rows,
     run,
     run_r53a,
+    run_r53b,
 )
 
 
@@ -298,3 +301,154 @@ def test_r53a_outputs_scorecard_and_keeps_r53_directory_separate(tmp_path: Path)
     assert summary["unfinished"] == 5
     assert (output / "R53A_COMPLETED_14_MODEL_SCORECARD.csv").exists()
     assert not (stage / R53_DIRNAME / "R53A_COMPLETED_14_MODEL_SCORECARD.csv").exists()
+
+
+def write_xendcg_import_authority(path: Path) -> None:
+    write_json(
+        path,
+        {
+            "classification": "DS24_R47A_XENDCG_CROSS_HOST_IMPORT_COMPLETE",
+            "contract": {
+                "family": "lightgbm_rank_xendcg",
+                "mac_run_id": "MAC_LIGHTGBM_RANK_XENDCG_COMPLETE_TRANSFERRED_AUTHORITY",
+                "mac_producing_host": "MAC",
+                "date_range": {"start": "2016-01-05", "end": "2024-12-31"},
+                "original_metrics": {
+                    "mean_spearman_rank_ic": 0.250646544554,
+                    "pearson_ic": 0.247020330954,
+                    "ndcg_at_20": 0.228239431375,
+                    "directional_accuracy": 0.580621053511,
+                    "mean_hit_rate": 0.70376272687,
+                    "annualised_arithmetic_return": 1.774883897978,
+                    "annual_volatility": 0.134117984278,
+                    "daily_sharpe": 13.233750175466,
+                    "max_drawdown": -0.029690054964,
+                },
+                "retained_metrics": {
+                    "family": "lightgbm_rank_xendcg",
+                    "rank_ic_rows": 2262,
+                    "decision_rows": 45240,
+                    "mean_spearman_rank_ic": 0.2506464517395151,
+                    "status": "PASS",
+                    "target_contract": "forward_return_60m__decision_5m",
+                },
+                "score_oof_population": {"row_count": 1150792},
+                "source_terminal_manifest": {
+                    "checkpoint_cursor": "family_complete",
+                    "run_id": "DS24_MAC_AUX_NINE_FAMILY_R1",
+                    "decision_date_range": {"start": "2016-01-05", "end": "2024-12-31"},
+                    "target": "forward_return_60m__decision_5m",
+                },
+            },
+        },
+    )
+
+
+def write_mac_terminal_summary(mac: Path, family: str, mean_ic: float) -> None:
+    root = mac / f"family={family}"
+    write_json(root / "metrics_only_v3" / "resolved_performance_summary_v3.json", v3_summary(family, mean_ic=mean_ic, sharpe=3.0, start="2016-01-05T14:35:00+00:00"))
+    write_json(
+        root / "family_execution_summary.json",
+        {
+            "family": family,
+            "status": "PASS",
+            "metrics_rows": 2262,
+            "validation": {"status": "PASS", "metrics_summary": (root / "metrics_only_v3" / "resolved_performance_summary_v3.json").as_posix()},
+        },
+    )
+
+
+def test_r53b_partial_window_rejected_when_later_terminal_exists(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    terminal = worker / "random_forest" / "metrics_only_v3_r53b_terminal"
+    write_json(terminal / "resolved_performance_summary_v3.json", v3_summary("random_forest", mean_ic=0.25, sharpe=1.2, start="2016-02-02T14:35:00+00:00"))
+    rows, scorecard, inventory, *_ = build_r53b_rows(stage, worker, mac)
+    random_forest = row_by_family(rows, "random_forest")
+    assert random_forest["source path"].endswith("metrics_only_v3_r53b_terminal/resolved_performance_summary_v3.json")
+    rejected = [row for row in inventory if row["family"] == "random_forest" and "metrics_only_v3_running" in row["source path"]]
+    assert rejected and "PARTIAL_WINDOW_NOT_TERMINAL" in rejected[0]["rejection reason"]
+    assert any(row["model"] == "random_forest" for row in scorecard)
+
+
+def test_r53b_wrong_campaign_csv_cannot_override_terminal(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    terminal = worker / "random_forest" / "metrics_only_v3_r53b_terminal"
+    write_json(terminal / "resolved_performance_summary_v3.json", v3_summary("random_forest", mean_ic=0.25, sharpe=1.2, start="2016-02-02T14:35:00+00:00"))
+    write_historical_csv(stage.parent / "older_stage" / "results.csv")
+    rows, _, inventory, *_ = build_r53b_rows(stage, worker, mac)
+    random_forest = row_by_family(rows, "random_forest")
+    assert "older_stage" not in random_forest["source path"]
+    csv_candidates = [row for row in inventory if row["family"] == "random_forest" and row["source class"] == "OLDER_DS24_CAMPAIGN"]
+    assert csv_candidates
+    assert all(row["selected/rejected"] == "REJECTED" for row in csv_candidates)
+
+
+def test_r53b_legacy_control_terminal_not_rejected_by_terminal_censor_date(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    spline_summary = legacy_summary("spline_additive_ridge")
+    spline_summary["portfolio_performance"]["top_n_equal_weight"][
+        "last_resolved_decision_timestamp"
+    ] = "2026-06-29T15:35:00+00:00"
+    write_json(worker / "spline_additive_ridge" / "r31_performance_summary.json", spline_summary)
+    rows, *_ = build_r53b_rows(stage, worker, mac)
+    spline = row_by_family(rows, "spline_additive_ridge")
+    assert spline["terminal authority class"] == "CURRENT_DS24_TERMINAL_LEGACY"
+    assert spline["scientific acceptance"] == "QUARANTINED_AFTER_COMPLETION"
+    assert spline["sharpe"] == 5.0
+
+
+def test_r53b_mac_lambdarank_terminal_beats_unrelated_dell_history(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_mac_terminal_summary(mac, "lightgbm_lambdarank", mean_ic=0.23)
+    write_historical_csv(stage.parent / "older_stage" / "ranking_results.csv")
+    rows, scorecard, *_ = build_r53b_rows(stage, worker, mac)
+    lambdarank = row_by_family(rows, "lightgbm_lambdarank")
+    assert lambdarank["terminal authority class"] == "CURRENT_DS24_MAC_TERMINAL"
+    assert "mac_aux_runs" in lambdarank["source path"]
+    assert lambdarank["mean_spearman_rank_ic"] == 0.23
+    assert any(row["model"] == "lightgbm_lambdarank" and row["Rank IC"] == 0.23 for row in scorecard)
+
+
+def test_r53b_dlinear_copied_mac_evidence_selected(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_mac_terminal_summary(mac, "dlinear", mean_ic=0.19)
+    rows, *_ = build_r53b_rows(stage, worker, mac)
+    dlinear = row_by_family(rows, "DLinear")
+    assert dlinear["terminal authority class"] == "CURRENT_DS24_MAC_TERMINAL"
+    assert dlinear["scientific acceptance"] == "MAC_SCIENTIFIC_COMPLETION"
+    assert dlinear["mean_spearman_rank_ic"] == 0.19
+
+
+def test_r53b_dlinear_transfer_required_instead_of_historical_row(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "sequence_results.csv")
+    output = stage / R53B_DIRNAME
+    summary = run_r53b(stage, worker, mac, output)
+    rows, *_ = build_r53b_rows(stage, worker, mac)
+    dlinear = row_by_family(rows, "DLinear")
+    assert dlinear["historical_terminal_result"] == "DLINEAR_MAC_TERMINAL_RESULT_REQUIRES_TRANSFER"
+    assert dlinear["source path"] == ""
+    assert (output / "R53B_dlinear_transfer_required.json").exists()
+    assert summary["completed"] == 13
+
+
+def test_r53b_tft_remains_open_despite_historical_metrics(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "sequence_results.csv")
+    rows, scorecard, *_ = build_r53b_rows(stage, worker, mac)
+    tft = row_by_family(rows, "Temporal Fusion Transformer")
+    assert tft["r53b_lifecycle"] == "OPEN"
+    assert tft["historical_terminal_result"] == "NOT_COMPLETED"
+    assert "Temporal Fusion Transformer" not in {row["model"] for row in scorecard}
+
+
+def test_r53b_rich_imported_xendcg_metrics_are_preserved(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_xendcg_import_authority(stage / "R47A_xendcg_import_authority.json")
+    rows, scorecard, *_ = build_r53b_rows(stage, worker, mac)
+    xendcg = row_by_family(rows, "lightgbm_rank_xendcg")
+    assert xendcg["terminal authority class"] == "CURRENT_DS24_IMPORTED_MAC_TERMINAL"
+    score = next(row for row in scorecard if row["model"] == "lightgbm_rank_xendcg")
+    assert score["Pearson IC"] == 0.247020330954
+    assert score["NDCG@20"] == 0.228239431375
+    assert score["Sharpe"] == 13.233750175466

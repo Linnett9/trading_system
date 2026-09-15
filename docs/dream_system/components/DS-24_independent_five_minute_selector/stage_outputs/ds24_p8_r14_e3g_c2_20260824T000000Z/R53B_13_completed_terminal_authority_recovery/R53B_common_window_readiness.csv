@@ -1,0 +1,14 @@
+family,retained compact OOF,retained Rank IC series,retained daily returns,earliest timestamp,latest timestamp,common-window recomputation possible without refitting,blocker
+ridge_policy_v1_control,False,False,True,2024-12-31T14:45:00+00:00,2026-06-30T19:00:00+00:00,True,
+pca_ridge_policy_v1_control,False,False,True,2020-05-11T18:50:00+00:00,2026-06-30T19:00:00+00:00,True,
+spline_additive_ridge,False,False,True,2025-04-02T14:20:00+00:00,2026-06-29T15:35:00+00:00,True,
+elastic_net,False,True,True,2025-04-02T13:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+rff_ridge,False,True,True,2016-02-02T14:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+huber,False,True,True,2016-02-02T14:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+mlp,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.
+random_forest,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.
+extra_trees,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.
+gradient_boosting,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.
+lightgbm_rank_xendcg,True,False,True,2016-01-05T14:35:00+00:00,2024-12-31T20:00:00+00:00,True,
+lightgbm_lambdarank,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.
+DLinear,False,False,False,,,False,Terminal authority or retained timestamp-level evidence is not locally available.

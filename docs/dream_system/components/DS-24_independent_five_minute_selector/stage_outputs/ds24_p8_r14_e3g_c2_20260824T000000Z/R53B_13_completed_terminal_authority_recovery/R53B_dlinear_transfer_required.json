@@ -1,0 +1,24 @@
+{
+  "classification": "DLINEAR_MAC_TERMINAL_RESULT_REQUIRES_TRANSFER",
+  "dell_archive_path": "C:\\Users\\Brandon\\Desktop\\ds24_dlinear_mac_terminal_transfer_r1.tar",
+  "dell_destination": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=dlinear",
+  "expected_hashes": {},
+  "expected_mac_source_roots": [
+    "/Users/brandonlinnett/Desktop/trading_system/mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=dlinear",
+    "/Users/brandonlinnett/Desktop/trading_system/mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=DLinear"
+  ],
+  "import_reconciliation_command": "python scripts/local/ds24_r53_tournament_results_consolidation.py --r53b",
+  "note": "No transfer is executed by R53B; this is an exact manifest for the next manual Mac-to-Dell copy.",
+  "recommended_archive_name": "ds24_dlinear_mac_terminal_transfer_r1.tar",
+  "required_files": [
+    "family_execution_summary.json",
+    "metrics_only_v3/resolved_performance_summary_v3.json",
+    "metrics_only_v3/checkpoint.json",
+    "ensemble_oof_scores_manifest_v2.json",
+    "ensemble_oof_partition_ledger_v2.csv",
+    "model_artifacts/*",
+    "ensemble_oof_scores_v2/**/part-refit=*.parquet",
+    "checksums or transfer sha256 sidecar"
+  ],
+  "transfer_verification_command": "python scripts/local/ds24_r53_tournament_results_consolidation.py --r53b --verify-transfer C:\\Users\\Brandon\\Desktop\\ds24_dlinear_mac_terminal_transfer_r1.tar"
+}

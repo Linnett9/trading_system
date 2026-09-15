@@ -1,0 +1,241 @@
+{
+  "families": {
+    "DLinear": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "No local Mac DLinear terminal estate or trusted terminal summary was found; historical Dell rows are rejected.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c1_20260823T000000Z/21_sequence_scale_results.csv",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "DLINEAR_MAC_TERMINAL_RESULT_REQUIRES_TRANSFER",
+      "terminal_completion_evidence": {
+        "candidate_count": 14,
+        "current_cursor": null,
+        "terminal_marker": false
+      }
+    },
+    "elastic_net": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-30T19:00:00+00:00",
+        "start": "2025-04-02T13:35:00+00:00"
+      },
+      "reason_r53a_source_rejected": "",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": null,
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/resolved_performance_summary_v3.json",
+      "source_hash": "b31417b9b6165143cf6c5084f10d7b5a4e62fcf2922af47b95603cf060b7128d",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_V3",
+      "terminal_completion_evidence": {
+        "candidate_count": 124,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    },
+    "extra_trees": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "Only current partial-window progress was found; no eligible terminal authority selected.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/extra_trees/metrics_only_v3_r40_extra_trees/resolved_performance_summary_v3.json",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "LOCAL_PARTIAL_PROGRESS_ONLY_NO_TERMINAL_AUTHORITY",
+      "terminal_completion_evidence": {
+        "candidate_count": 47,
+        "current_cursor": "2018-08-15T20:00:00+00:00",
+        "terminal_marker": false
+      }
+    },
+    "gradient_boosting": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "No eligible terminal tournament authority was found locally.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c1_20260823T000000Z/19_tabular_scale_results.csv",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "TERMINAL_AUTHORITY_NOT_LOCAL",
+      "terminal_completion_evidence": {
+        "candidate_count": 77,
+        "current_cursor": "2016-05-11T20:00:00+00:00",
+        "terminal_marker": false
+      }
+    },
+    "huber": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-30T19:00:00+00:00",
+        "start": "2016-02-02T14:35:00+00:00"
+      },
+      "reason_r53a_source_rejected": "",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": null,
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/resolved_performance_summary_v3.json",
+      "source_hash": "6e2c3d8374453dede892b72a5d1b0d714db008b5961ab3a4f38ef79572f84604",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_V3",
+      "terminal_completion_evidence": {
+        "candidate_count": 106,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    },
+    "lightgbm_lambdarank": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "R49/R51 prove LambdaRank transfer files are missing locally; historical LambdaRank rows are rejected.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c1_20260823T000000Z/23_ranking_scale_results.csv",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "LAMBDARANK_MAC_TERMINAL_RESULT_REQUIRES_TRANSFER",
+      "terminal_completion_evidence": {
+        "candidate_count": 32,
+        "current_cursor": null,
+        "terminal_marker": false
+      }
+    },
+    "lightgbm_rank_xendcg": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2024-12-31T20:00:00+00:00",
+        "start": "2016-01-05T14:35:00+00:00"
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/resolved_performance_summary_v3.json",
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R47A_xendcg_import_authority.json",
+      "source_hash": "e2fdb969741605232f2f80f905219efdf070de191f6a22860a02aa0ef26d9db6",
+      "terminal_authority_class": "CURRENT_DS24_IMPORTED_MAC_TERMINAL",
+      "terminal_completion_evidence": {
+        "candidate_count": 40,
+        "current_cursor": null,
+        "terminal_marker": true
+      }
+    },
+    "mlp": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "Only current partial-window progress was found; no eligible terminal authority selected.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/mlp/metrics_only_v3_r37_mlp_direct_gen7/resolved_performance_summary_v3.json",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "LOCAL_PARTIAL_PROGRESS_ONLY_NO_TERMINAL_AUTHORITY",
+      "terminal_completion_evidence": {
+        "candidate_count": 65,
+        "current_cursor": "2024-05-15T20:00:00+00:00",
+        "terminal_marker": false
+      }
+    },
+    "pca_ridge_policy_v1_control": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-30T19:00:00+00:00",
+        "start": "2020-05-11T18:50:00+00:00"
+      },
+      "reason_r53a_source_rejected": "",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": null,
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/pca_ridge_policy_v1_control/r31_performance_summary.json",
+      "source_hash": "4a87fa2d2d4b55311f80474cebd12c0f5eb61600a13f867051b5e87e5b9fdab6",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_LEGACY",
+      "terminal_completion_evidence": {
+        "candidate_count": 31,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    },
+    "random_forest": {
+      "confidence": "LOW",
+      "final_evaluation_window": {
+        "end": "",
+        "start": ""
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "Only current partial-window progress was found; no eligible terminal authority selected.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/random_forest/metrics_only_v3_r40_random_forest/resolved_performance_summary_v3.json",
+      "selected_source": null,
+      "source_hash": null,
+      "terminal_authority_class": "LOCAL_PARTIAL_PROGRESS_ONLY_NO_TERMINAL_AUTHORITY",
+      "terminal_completion_evidence": {
+        "candidate_count": 77,
+        "current_cursor": "2016-12-28T21:00:00+00:00",
+        "terminal_marker": false
+      }
+    },
+    "rff_ridge": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-30T19:00:00+00:00",
+        "start": "2016-02-02T14:35:00+00:00"
+      },
+      "reason_r53a_source_rejected": "",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": null,
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/rff_ridge/metrics_only_v3_r37_rff_retry/resolved_performance_summary_v3.json",
+      "source_hash": "87c7004430c8ebee24072f1b0dff3419c33c89eea154daf2db5ce7f33e31045b",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_V3",
+      "terminal_completion_evidence": {
+        "candidate_count": 85,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    },
+    "ridge_policy_v1_control": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-30T19:00:00+00:00",
+        "start": "2024-12-31T14:45:00+00:00"
+      },
+      "reason_r53a_source_rejected": "R53A source was partial, historical, transfer-missing, or wrong lifecycle for R53B terminal-authority rules.",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c1_20260823T000000Z/19_tabular_scale_results.csv",
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/ridge_policy_v1_control/r31_performance_summary.json",
+      "source_hash": "be79de7331fdd53291393ff8025f4d86fb3ffb80009f58af43f5876a1da8015b",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_LEGACY",
+      "terminal_completion_evidence": {
+        "candidate_count": 91,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    },
+    "spline_additive_ridge": {
+      "confidence": "HIGH",
+      "final_evaluation_window": {
+        "end": "2026-06-29T15:35:00+00:00",
+        "start": "2025-04-02T14:20:00+00:00"
+      },
+      "reason_r53a_source_rejected": "",
+      "reason_selected": "Selected eligible terminal authority by tournament lineage/source class.",
+      "rejected_r53a_source": null,
+      "selected_source": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/spline_additive_ridge/r31_performance_summary.json",
+      "source_hash": "04aa89388495eb00ee8c6c1b3abd55fc90bf3a3b37b269fbf4a3bd2184907e7b",
+      "terminal_authority_class": "CURRENT_DS24_TERMINAL_LEGACY",
+      "terminal_completion_evidence": {
+        "candidate_count": 30,
+        "current_cursor": "2026-06-30T20:00:00+00:00",
+        "terminal_marker": true
+      }
+    }
+  },
+  "generated_at_utc": "2026-09-15T20:07:43.820799+00:00",
+  "parent_r53_commit": "af03b5e6cf6773f386670259ff593fd6e4fab7a8",
+  "parent_r53a_commit": "a0344185ef51145ad0a13e873c306bd7406cc831"
+}
