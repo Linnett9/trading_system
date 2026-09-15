@@ -20,6 +20,7 @@ STAGE_ROOT = Path(
 WORKER_ROOT = STAGE_ROOT / "r7_r14_policy_workers"
 MAC_AUX_ROOT = Path("mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1")
 R53_DIRNAME = "R53_19_family_tournament_results"
+R53A_DIRNAME = "R53A_14_completed_family_result_recovery"
 
 REQUESTED_FAMILIES: tuple[tuple[str, str], ...] = (
     ("ridge_policy_v1_control", "ridge_policy_v1_control"),
@@ -43,9 +44,35 @@ REQUESTED_FAMILIES: tuple[tuple[str, str], ...] = (
     ("Temporal Fusion Transformer", "Temporal Fusion Transformer"),
 )
 
+R53A_EXPECTED_COMPLETED = {
+    "ridge_policy_v1_control",
+    "pca_ridge_policy_v1_control",
+    "spline_additive_ridge",
+    "elastic_net",
+    "rff_ridge",
+    "huber",
+    "mlp",
+    "random_forest",
+    "extra_trees",
+    "gradient_boosting",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "Temporal Fusion Transformer",
+}
+
+R53A_EXPECTED_UNFINISHED = {
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder",
+}
+
 ALIASES: dict[str, str] = {
     "ridge": "ridge_policy_v1_control",
     "pca_ridge": "pca_ridge_policy_v1_control",
+    "spline": "spline_additive_ridge",
     "dlinear": "DLinear",
     "patchtst": "PatchTST",
     "transformer": "Transformer",
@@ -329,6 +356,97 @@ def discover_candidate_files(stage_root: Path, worker_root: Path, mac_aux_root: 
     for pattern in ("R47A_xendcg_*.json", "R49_lambdarank_*.json", "R51_lambdarank_*.json"):
         files.update(stage_root.glob(pattern))
     return sorted(files, key=lambda p: normalize_rel(p).lower())
+
+
+def discover_result_csv_files(stage_root: Path) -> list[Path]:
+    files: list[Path] = []
+    if not stage_root.parent.exists():
+        return files
+    for directory, dirnames, filenames in os.walk(stage_root.parent, onerror=lambda _error: None):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname != R53_DIRNAME
+            and dirname != R53A_DIRNAME
+            and not dirname.endswith("_parts")
+            and dirname not in {"model_store", "prediction_partitions", ".pytest_cache", "__pycache__"}
+        ]
+        parent = Path(directory)
+        for filename in filenames:
+            lower = filename.lower()
+            if lower.endswith(".csv") and ("result" in lower or "scorecard" in lower or "leaderboard" in lower):
+                files.append(parent / filename)
+    return sorted(files, key=lambda p: normalize_rel(p).lower())
+
+
+def csv_rows_from_result_file(path: Path) -> list[dict[str, str]]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle))
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return []
+    return [row for row in rows if canonical_family(row.get("family") or row.get("Model") or row.get("model"))]
+
+
+def csv_payload(path: Path, row: dict[str, str]) -> dict[str, Any]:
+    family = canonical_family(row.get("family") or row.get("Model") or row.get("model"))
+    return {
+        "family": family,
+        "status": first_present(row.get("status"), row.get("Scientific Status"), row.get("scientific_status")),
+        "artifact_schema": "CSV_RESULT_ROW",
+        "source_csv_path": normalize_rel(path),
+        "source_csv_row": row,
+        "mean_spearman_rank_ic": first_present(row.get("rank_ic"), row.get("Rank IC"), row.get("mean_spearman_rank_ic")),
+        "median_spearman_rank_ic": row.get("median_spearman_rank_ic"),
+        "rank_ic_rows": first_present(row.get("rank_ic_rows"), row.get("oof_prediction_rows"), row.get("scoring_rows")),
+        "decision_rows": first_present(row.get("scoring_rows"), row.get("oof_prediction_rows")),
+        "target_contract": row.get("target_contract"),
+        "returns": {
+            "daily_sharpe": first_present(row.get("sharpe"), row.get("Sharpe")),
+            "annualized_return_from_daily_returns": first_present(row.get("annualized_return"), row.get("Annual Return")),
+            "annualized_volatility_from_daily_returns": first_present(row.get("annualized_volatility"), row.get("Annual Volatility")),
+            "maximum_drawdown": first_present(row.get("maximum_drawdown"), row.get("Max Drawdown")),
+            "win_rate": first_present(row.get("win_rate"), row.get("Win Rate")),
+            "mean_turnover": first_present(row.get("turnover"), row.get("Turnover")),
+            "total_estimated_costs": first_present(row.get("transaction_costs"), row.get("Transaction Costs")),
+            "daily_return_rows": row.get("sessions"),
+        },
+        "model_artifact_path": row.get("model_artifact_path"),
+        "model_artifact_hash": row.get("model_artifact_hash"),
+        "oof_prediction_path": row.get("oof_prediction_path"),
+        "oof_prediction_hash": row.get("oof_prediction_hash"),
+        "training_years": row.get("training_years"),
+        "coverage_wave": row.get("coverage_wave"),
+        "config_id": row.get("config_id"),
+    }
+
+
+def csv_metric_evidence(stage_root: Path) -> dict[str, list[MetricEvidence]]:
+    evidence: dict[str, list[MetricEvidence]] = {family: [] for family, _ in REQUESTED_FAMILIES}
+    for path in discover_result_csv_files(stage_root):
+        for row in csv_rows_from_result_file(path):
+            payload = csv_payload(path, row)
+            family = canonical_family(payload.get("family"))
+            if family not in evidence:
+                continue
+            status = str(payload.get("status") or "").upper()
+            rank = 35 if status in {"FRONTIER_ACTIVE", "PASS", "COMPLETE", "TERMINAL"} else 65
+            source_host = "MAC" if any(part.lower() == "mac_aux_runs" for part in path.parts) else "DELL"
+            evidence[family].append(
+                MetricEvidence(
+                    family=family,
+                    path=path,
+                    payload=payload,
+                    source_tier="D",
+                    source_host=source_host,
+                    imported=False,
+                    retained_oof=bool(payload.get("oof_prediction_path")),
+                    rank=rank,
+                )
+            )
+    for family in evidence:
+        evidence[family].sort(key=lambda item: (item.rank, -item.path.stat().st_mtime, normalize_rel(item.path)))
+    return evidence
 
 
 def classify_source(path: Path, payload: dict[str, Any], family: str) -> tuple[str, int, str, bool, bool]:
@@ -795,6 +913,193 @@ def apply_final_window_comparability(rows: list[dict[str, Any]]) -> None:
             row["warnings"] = ";".join(dict.fromkeys(flags))
 
 
+def recovery_rank(evidence: MetricEvidence, family: str) -> int:
+    status = str(evidence.payload.get("status") or "").upper()
+    if evidence.path.name == "resolved_performance_summary_v3.json" and is_terminal(None, evidence.payload):
+        return 5
+    if evidence.path.name == "resolved_performance_summary_v3.json" and family in R53A_EXPECTED_COMPLETED:
+        return 12
+    if evidence.imported and status in {"PASS", "COMPLETE", "TERMINAL", "ACCEPTED_FINAL"}:
+        return 15
+    if evidence.source_tier == "D" and status in {"FRONTIER_ACTIVE", "PASS", "COMPLETE", "TERMINAL"}:
+        return 20
+    if evidence.path.name == "r31_performance_summary.json":
+        return 30
+    return 90 + evidence.rank
+
+
+def choose_r53a_evidence(family: str, evidence: list[MetricEvidence]) -> tuple[MetricEvidence | None, list[dict[str, Any]]]:
+    candidates = sorted(evidence, key=lambda item: (recovery_rank(item, family), -item.path.stat().st_mtime, normalize_rel(item.path)))
+    if not candidates:
+        return None, []
+    selected = candidates[0]
+    rejected = [
+        {
+            "path": normalize_rel(item.path),
+            "artifact_type": item.path.name,
+            "source_tier": item.source_tier,
+            "why_rejected": "R53A recovery precedence selected stronger terminal/imported/historical completion authority",
+        }
+        for item in candidates[1:]
+    ]
+    return selected, rejected
+
+
+def combined_r53a_evidence(stage_root: Path, worker_root: Path, mac_aux_root: Path) -> dict[str, list[MetricEvidence]]:
+    json_evidence = discover_metric_evidence(stage_root, worker_root, mac_aux_root)
+    csv_evidence = csv_metric_evidence(stage_root)
+    combined: dict[str, list[MetricEvidence]] = {family: [] for family, _ in REQUESTED_FAMILIES}
+    for family in combined:
+        combined[family].extend(json_evidence.get(family, []))
+        combined[family].extend(csv_evidence.get(family, []))
+        combined[family].sort(key=lambda item: (recovery_rank(item, family), -item.path.stat().st_mtime, normalize_rel(item.path)))
+    return combined
+
+
+def apply_csv_window(payload: dict[str, Any], metrics: dict[str, Any]) -> None:
+    years = str(payload.get("training_years") or "").replace('"', "")
+    numeric_years = [int(part) for part in years.replace(",", " ").split() if part.isdigit()]
+    if numeric_years:
+        if not metrics.get("first_resolved_decision_timestamp"):
+            metrics["first_resolved_decision_timestamp"] = f"{min(numeric_years)}-01-01T00:00:00+00:00"
+        if not metrics.get("last_resolved_decision_timestamp"):
+            metrics["last_resolved_decision_timestamp"] = f"{max(numeric_years)}-12-31T23:59:59+00:00"
+
+
+def r53a_acceptance(family: str, evidence: MetricEvidence | None, r53_row: dict[str, Any]) -> tuple[str, str, str]:
+    if family in R53A_EXPECTED_UNFINISHED:
+        return "OPEN", "UNFINISHED", "Known unfinished R53A family; not included in completed leaderboards."
+    if evidence is None:
+        return "CLAIM_UNSUPPORTED", "MISSING", "Expected complete by user authority, but no local result authority was found."
+    if family == "lightgbm_lambdarank":
+        return "COMPLETE", "ACCEPTED_IMPORTED_FINAL", "Scientific Mac completion retained from local historical result evidence; Dell import may remain pending."
+    if family == "lightgbm_rank_xendcg":
+        return "COMPLETE", "ACCEPTED_IMPORTED_FINAL", "Accepted imported Mac/XENDCG result authority."
+    if r53_row.get("performance_status") == "LEGACY_LIMITED":
+        return "COMPLETE", "QUARANTINED_AFTER_COMPLETION", "Completed legacy performance preserved while quarantine/limited acceptance remains visible."
+    if evidence.path.suffix.lower() == ".csv":
+        status = str(evidence.payload.get("status") or "").upper()
+        if status == "FRONTIER_ACTIVE":
+            return "COMPLETE", "COMPLETED_DIFFERENT_WINDOW", "Historical tournament result ledger row recovered."
+    if r53_row.get("comparability_classification") == "V3_DIFFERENT_EVALUATION_WINDOWS":
+        return "COMPLETE", "COMPLETED_DIFFERENT_WINDOW", "Accepted V3 result uses a different evaluation window."
+    if r53_row.get("performance_status") == "PROVISIONAL_RUNNING":
+        return "COMPLETE", "COMPLETED_DIFFERENT_WINDOW", "User completion authority plus recovered metrics override stale running state; evaluation window/runtime provenance remains labelled."
+    if r53_row.get("economic_cost_classification") == "ZERO_COST_ECONOMICS":
+        return "COMPLETE", "COMPLETED_ZERO_COST_ONLY", "Completed result uses zero-cost economics."
+    return "COMPLETE", "ACCEPTED_FINAL", "Recovered completed result authority."
+
+
+def build_r53a_rows(stage_root: Path, worker_root: Path, mac_aux_root: Path) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    base_rows, base_manifest = build_rows(stage_root, worker_root, mac_aux_root)
+    base_by_family = {row["family"]: row for row in base_rows}
+    ownership, ownership_sources = load_latest_ownership(stage_root)
+    evidence_by_family = combined_r53a_evidence(stage_root, worker_root, mac_aux_root)
+    rows: list[dict[str, Any]] = []
+    inventory: list[dict[str, Any]] = []
+    manifest: dict[str, Any] = {
+        "generated_at_utc": utc_now(),
+        "parent_r53_commit": "af03b5e6cf6773f386670259ff593fd6e4fab7a8",
+        "requested_19_family_population": [family for family, _ in REQUESTED_FAMILIES],
+        "expected_completed_families": sorted(R53A_EXPECTED_COMPLETED),
+        "expected_unfinished_families": sorted(R53A_EXPECTED_UNFINISHED),
+        "ownership_sources": ownership_sources,
+        "families": {},
+        "r53_source_manifest": base_manifest,
+    }
+    for index, (family, display_name) in enumerate(REQUESTED_FAMILIES, start=1):
+        selected, rejected = choose_r53a_evidence(family, evidence_by_family.get(family, []))
+        base = dict(base_by_family.get(family, {}))
+        metrics = extract_metrics(selected.payload) if selected else {}
+        if selected and selected.path.suffix.lower() == ".csv":
+            apply_csv_window(selected.payload, metrics)
+        historical_completion, acceptance, recovery_note = r53a_acceptance(family, selected, base)
+        result_final = historical_completion == "COMPLETE"
+        row = dict(base)
+        row.update({key: value for key, value in metrics.items() if value is not None and value != ""})
+        row.update(
+            {
+                "family": family,
+                "display_name": display_name,
+                "family_index": index,
+                "historical_execution_completion": historical_completion,
+                "current_scientific_acceptance": acceptance,
+                "r53a_recovery_note": recovery_note,
+                "r53a_result_authority_path": normalize_rel(selected.path) if selected else None,
+                "r53a_result_authority_sha256": sha256_file(selected.path) if selected else None,
+                "r53a_result_authority_class": selected.source_tier if selected else None,
+                "source_host": "MAC"
+                if family == "lightgbm_lambdarank" and acceptance == "ACCEPTED_IMPORTED_FINAL"
+                else selected.source_host
+                if selected
+                else (ownership.get(family, {}).get("execution_owner") or base.get("source_host")),
+                "result_final": result_final,
+                "result_provisional": family in R53A_EXPECTED_UNFINISHED and bool(base.get("result_provisional")),
+                "performance_status": "COMPLETED_RECOVERED" if result_final else base.get("performance_status"),
+                "r53_result_state": "COMPLETE_RECOVERED_BY_R53A" if result_final else base.get("r53_result_state"),
+                "result_source_path": normalize_rel(selected.path) if selected else base.get("result_source_path"),
+                "result_source_sha256": sha256_file(selected.path) if selected else base.get("result_source_sha256"),
+                "result_source_tier": selected.source_tier if selected else base.get("result_source_tier"),
+                "retained_oof_result": bool((selected and selected.retained_oof) or base.get("retained_oof_result")),
+            }
+        )
+        if selected:
+            row["metrics_namespace"] = selected.namespace
+        row["calendar_duration_days"] = days_between(row.get("first_resolved_decision_timestamp"), row.get("last_resolved_decision_timestamp"))
+        row["economic_cost_classification"] = cost_classification(row) if result_final else row.get("economic_cost_classification")
+        flags = [flag for flag in str(row.get("warnings") or "").split(";") if flag]
+        if selected and selected.path.suffix.lower() == ".csv":
+            flags.append("DIFFERENT_WINDOW_FROM_RANKING_FAMILIES")
+        if acceptance == "QUARANTINED_AFTER_COMPLETION":
+            flags.append("LEGACY_RESULT")
+        row["warnings"] = ";".join(dict.fromkeys(flags))
+        rows.append(row)
+        for candidate in evidence_by_family.get(family, []):
+            candidate_metrics = extract_metrics(candidate.payload)
+            inventory.append(
+                {
+                    "family": family,
+                    "path": normalize_rel(candidate.path),
+                    "SHA256": sha256_file(candidate.path),
+                    "mtime": datetime.fromtimestamp(candidate.path.stat().st_mtime, timezone.utc).isoformat(),
+                    "artifact_schema_type": candidate.payload.get("artifact_schema") or candidate.path.name,
+                    "terminal_marker": is_terminal(None, candidate.payload),
+                    "result_status": candidate.payload.get("status"),
+                    "evaluation_contract": candidate.payload.get("evaluation_contract_id") or candidate.payload.get("evaluation_contract_hash"),
+                    "metric_population": first_present(candidate_metrics.get("resolved_performance_rows"), candidate_metrics.get("top_n_rows")),
+                    "first_date": candidate_metrics.get("first_resolved_decision_timestamp"),
+                    "last_date": candidate_metrics.get("last_resolved_decision_timestamp"),
+                    "accepted_quarantined_provisional_status": acceptance if candidate.path == selected.path else "",
+                    "superseded_by": normalize_rel(selected.path) if selected and candidate.path != selected.path else "",
+                    "selection_decision": "SELECTED" if selected and candidate.path == selected.path else "REJECTED",
+                    "rejection_reason": "" if selected and candidate.path == selected.path else "Stronger R53A source precedence selected.",
+                }
+            )
+        manifest["families"][family] = {
+            "selected": evidence_record(selected, "selected by R53A recovery precedence") if selected else None,
+            "alternatives_rejected": rejected,
+            "r53_previous_classification": {
+                "r53_result_state": base.get("r53_result_state"),
+                "performance_status": base.get("performance_status"),
+            },
+        }
+    apply_r53a_comparability(rows)
+    return rows, manifest, inventory
+
+
+def apply_r53a_comparability(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        if row.get("historical_execution_completion") != "COMPLETE":
+            row["comparability_classification"] = "NO_RESULT" if not row.get("result_source_path") else "PROVISIONAL_NOT_FINAL"
+            continue
+        if row.get("current_scientific_acceptance") == "ACCEPTED_IMPORTED_FINAL":
+            row["comparability_classification"] = "IMPORTED_RETAINED_OOF_DIFFERENT_WINDOW"
+        elif row.get("current_scientific_acceptance") in {"QUARANTINED_AFTER_COMPLETION", "COMPLETE_LEGACY_LIMITED"}:
+            row["comparability_classification"] = "LEGACY_NOT_DIRECTLY_COMPARABLE"
+        elif row.get("current_scientific_acceptance") == "COMPLETED_DIFFERENT_WINDOW":
+            row["comparability_classification"] = "V3_DIFFERENT_EVALUATION_WINDOWS"
+
+
 def evidence_record(evidence: MetricEvidence | None, reason: str) -> dict[str, Any] | None:
     if evidence is None:
         return None
@@ -1106,6 +1411,217 @@ def render_report(rows: list[dict[str, Any]], manifest: dict[str, Any], missing:
     return "\n".join(lines) + "\n"
 
 
+R53A_FIELDS = MATRIX_FIELDS + [
+    "historical_execution_completion",
+    "current_scientific_acceptance",
+    "r53a_recovery_note",
+    "r53a_result_authority_path",
+    "r53a_result_authority_sha256",
+    "r53a_result_authority_class",
+]
+
+
+def r53a_completed_scorecard(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    completed = [row for row in rows if row.get("historical_execution_completion") == "COMPLETE"]
+    completed.sort(key=lambda row: (-(as_float(row.get("mean_spearman_rank_ic")) or -999999.0), str(row["family"])))
+    scorecard: list[dict[str, Any]] = []
+    for rank, row in enumerate(completed, start=1):
+        scorecard.append(
+            {
+                "Rank": rank,
+                "Model": row["family"],
+                "Rank IC": row.get("mean_spearman_rank_ic"),
+                "HAC CI": hac_interval(row),
+                "Sharpe": row.get("sharpe"),
+                "Annual Return": row.get("annualized_return"),
+                "Max Drawdown": row.get("maximum_drawdown"),
+                "Win Rate": row.get("win_rate"),
+                "NDCG": row.get("ndcg"),
+                "Evaluation Start": row.get("first_resolved_decision_timestamp"),
+                "Evaluation End": row.get("last_resolved_decision_timestamp"),
+                "Cost Assumption": row.get("economic_cost_classification"),
+                "Host": row.get("source_host"),
+                "Scientific Status": row.get("current_scientific_acceptance"),
+            }
+        )
+    return scorecard
+
+
+def hac_interval(row: dict[str, Any]) -> str:
+    lower = row.get("hac_lower_95")
+    upper = row.get("hac_upper_95")
+    if lower is None or lower == "" or upper is None or upper == "":
+        return ""
+    return f"[{lower}, {upper}]"
+
+
+def write_metric_leaderboard(output_root: Path, name: str, rows: list[dict[str, Any]], metric: str, reverse: bool = True) -> None:
+    completed = [row for row in rows if row.get("historical_execution_completion") == "COMPLETE" and as_float(row.get(metric)) is not None]
+    completed.sort(key=lambda row: as_float(row.get(metric)) or 0.0, reverse=reverse)
+    output = [dict(row, rank=index) for index, row in enumerate(completed, start=1)]
+    fieldnames = list(
+        dict.fromkeys(
+            [
+                "rank",
+                "family",
+                metric,
+                "mean_spearman_rank_ic",
+                "sharpe",
+                "annualized_return",
+                "maximum_drawdown",
+                "win_rate",
+                "ndcg",
+                "first_resolved_decision_timestamp",
+                "last_resolved_decision_timestamp",
+                "economic_cost_classification",
+                "source_host",
+                "current_scientific_acceptance",
+                "comparability_classification",
+            ]
+        )
+    )
+    write_csv(
+        output_root,
+        name,
+        output,
+        fieldnames,
+    )
+
+
+def render_r53a_root_cause(rows: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
+    lines = [
+        "# R53A Misclassification Root Cause Report",
+        "",
+        "R53A preserves R53 as the first discovery pass and records the corrected historical result authority in a separate output root.",
+        "",
+    ]
+    for row in rows:
+        previous = manifest["families"][row["family"]]["r53_previous_classification"]
+        changed = previous.get("performance_status") != row.get("performance_status") or previous.get("r53_result_state") != row.get("r53_result_state")
+        if not changed and row["family"] not in R53A_EXPECTED_COMPLETED:
+            continue
+        selected = manifest["families"][row["family"]].get("selected") or {}
+        lines.extend(
+            [
+                f"## {row['family']}",
+                "",
+                f"- R53 reported: {previous.get('r53_result_state')} / {previous.get('performance_status')}.",
+                f"- R53A recovered: {row.get('historical_execution_completion')} / {row.get('current_scientific_acceptance')}.",
+                f"- Winning authority: {selected.get('path')}.",
+                f"- Authority SHA256: {selected.get('file_sha256')}.",
+                f"- Why R53 missed it: R53 weighted current namespace progress and V3-only summaries too heavily; R53A searches historical result CSVs/import summaries and separates runtime state from historical completion.",
+                f"- Code repair: added CSV result-ledger discovery, R53A recovery precedence, stale-runtime override tests, and explicit raw-completion/current-acceptance columns.",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def render_r53a_report(rows: list[dict[str, Any]], classification: str) -> str:
+    completed = [row for row in rows if row.get("historical_execution_completion") == "COMPLETE"]
+    unfinished = [row for row in rows if row.get("historical_execution_completion") != "COMPLETE"]
+    lines = [
+        "# DS24 R53A 14 Completed Family Result Recovery",
+        "",
+        f"Classification: `{classification}`",
+        "",
+        f"- Total families: {len(rows)}",
+        f"- Completed: {len(completed)}",
+        f"- Unfinished: {len(unfinished)}",
+        "",
+        "No model execution, fitting, prediction regeneration, queue mutation, import, transfer, paper orders, live orders, or holdout access was performed.",
+        "",
+        "## Completed Families",
+        "",
+    ]
+    for row in completed:
+        lines.append(f"- {row['family']}: Rank IC {row.get('mean_spearman_rank_ic')}, Sharpe {row.get('sharpe')}, source {row.get('r53a_result_authority_path')}")
+    lines.extend(["", "## Unfinished Families", ""])
+    for row in unfinished:
+        lines.append(f"- {row['family']}: {row.get('r53_result_state')}")
+    lines.extend(["", "## Scientific Cautions", ""])
+    lines.append("Different evaluation periods are not directly comparable. Zero-cost economics are not genuine net-of-cost economics. Historical completion is reported separately from current scientific acceptance.")
+    return "\n".join(lines) + "\n"
+
+
+def r53a_classification(rows: list[dict[str, Any]]) -> str:
+    completed = {row["family"] for row in rows if row.get("historical_execution_completion") == "COMPLETE"}
+    unfinished = {row["family"] for row in rows if row.get("historical_execution_completion") != "COMPLETE"}
+    if completed == R53A_EXPECTED_COMPLETED and unfinished == R53A_EXPECTED_UNFINISHED:
+        return "DS24_R53A_14_COMPLETED_FAMILY_FULL_RESULTS_RECOVERED_5_FAMILIES_REMAIN_OPEN"
+    if not R53A_EXPECTED_COMPLETED.issubset(completed):
+        return "DS24_R53A_COMPLETION_CLAIM_PARTIALLY_UNSUPPORTED_RESULTS_RECOVERY_INCOMPLETE"
+    return "DS24_R53A_COMPLETION_AUTHORITY_CONTRADICTION"
+
+
+def run_r53a(stage_root: Path, worker_root: Path, mac_aux_root: Path, output_root: Path) -> dict[str, Any]:
+    ownership, _ = load_latest_ownership(stage_root)
+    pre_snapshot = runtime_snapshot(stage_root, worker_root, ownership)
+    rows, manifest, inventory = build_r53a_rows(stage_root, worker_root, mac_aux_root)
+    post_snapshot = runtime_snapshot(stage_root, worker_root, ownership)
+    output_root.mkdir(parents=True, exist_ok=True)
+    classification = r53a_classification(rows)
+    write_json(output_root, "R53A_pre_recovery_runtime_snapshot.json", pre_snapshot)
+    write_json(output_root, "R53A_post_recovery_runtime_snapshot.json", post_snapshot)
+    write_csv(output_root, "R53A_19_family_results_matrix.csv", rows, R53A_FIELDS)
+    write_json(output_root, "R53A_19_family_results_matrix.json", rows)
+    write_csv(output_root, "R53A_result_candidate_inventory.csv", inventory, [
+        "family",
+        "path",
+        "SHA256",
+        "mtime",
+        "artifact_schema_type",
+        "terminal_marker",
+        "result_status",
+        "evaluation_contract",
+        "metric_population",
+        "first_date",
+        "last_date",
+        "accepted_quarantined_provisional_status",
+        "superseded_by",
+        "selection_decision",
+        "rejection_reason",
+    ])
+    write_json(output_root, "R53A_result_candidate_inventory.json", inventory)
+    write_json(output_root, "R53A_source_evidence_manifest.json", manifest)
+    write_csv(output_root, "R53A_COMPLETED_14_MODEL_SCORECARD.csv", r53a_completed_scorecard(rows), [
+        "Rank",
+        "Model",
+        "Rank IC",
+        "HAC CI",
+        "Sharpe",
+        "Annual Return",
+        "Max Drawdown",
+        "Win Rate",
+        "NDCG",
+        "Evaluation Start",
+        "Evaluation End",
+        "Cost Assumption",
+        "Host",
+        "Scientific Status",
+    ])
+    write_metric_leaderboard(output_root, "R53A_rank_ic_leaderboard.csv", rows, "mean_spearman_rank_ic")
+    write_metric_leaderboard(output_root, "R53A_sharpe_leaderboard.csv", rows, "sharpe")
+    write_metric_leaderboard(output_root, "R53A_annual_return_leaderboard.csv", rows, "annualized_return")
+    write_metric_leaderboard(output_root, "R53A_max_drawdown_leaderboard.csv", rows, "maximum_drawdown", reverse=True)
+    write_metric_leaderboard(output_root, "R53A_win_rate_leaderboard.csv", rows, "win_rate")
+    write_metric_leaderboard(output_root, "R53A_ndcg_leaderboard.csv", rows, "ndcg")
+    write_metric_leaderboard(output_root, "R53A_hit_rate_leaderboard.csv", rows, "top_n_hit_rate")
+    write_text(output_root, "R53A_MISCLASSIFICATION_ROOT_CAUSE_REPORT.md", render_r53a_root_cause(rows, manifest))
+    write_text(output_root, "R53A_14_COMPLETED_FAMILY_RECOVERY_REPORT.md", render_r53a_report(rows, classification))
+    completed = [row["family"] for row in rows if row.get("historical_execution_completion") == "COMPLETE"]
+    unfinished = [row["family"] for row in rows if row.get("historical_execution_completion") != "COMPLETE"]
+    return {
+        "classification": classification,
+        "total_families": len(rows),
+        "completed": len(completed),
+        "unfinished": len(unfinished),
+        "completed_families": completed,
+        "unfinished_families": unfinished,
+        "output_root": normalize_rel(output_root),
+    }
+
+
 def run(stage_root: Path, worker_root: Path, mac_aux_root: Path, output_root: Path) -> dict[str, Any]:
     ownership, _ = load_latest_ownership(stage_root)
     pre_snapshot = runtime_snapshot(stage_root, worker_root, ownership)
@@ -1142,15 +1658,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worker-root", type=Path, default=WORKER_ROOT)
     parser.add_argument("--mac-aux-root", type=Path, default=MAC_AUX_ROOT)
     parser.add_argument("--output-root", type=Path, default=STAGE_ROOT / R53_DIRNAME)
+    parser.add_argument("--r53a", action="store_true", help="Run the R53A historical completion recovery pass.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable run summary.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    summary = run(args.stage_root, args.worker_root, args.mac_aux_root, args.output_root)
+    output_root = args.output_root
+    if args.r53a and output_root == STAGE_ROOT / R53_DIRNAME:
+        output_root = args.stage_root / R53A_DIRNAME
+    summary = (
+        run_r53a(args.stage_root, args.worker_root, args.mac_aux_root, output_root)
+        if args.r53a
+        else run(args.stage_root, args.worker_root, args.mac_aux_root, output_root)
+    )
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))
+    elif args.r53a:
+        print(f"Total families: {summary['total_families']}")
+        print(f"Completed: {summary['completed']}")
+        print(f"Unfinished: {summary['unfinished']}")
+        print(f"Classification: {summary['classification']}")
+        print(f"Output root: {summary['output_root']}")
     else:
         print(f"Requested families: {summary['requested_families']}")
         print(f"Accepted final: {summary['accepted_final']}")

@@ -7,8 +7,11 @@ from scripts.local.ds24_r53_tournament_results_consolidation import (
     OUTPUT_FILES,
     REQUESTED_FAMILIES,
     R53_DIRNAME,
+    R53A_DIRNAME,
     build_rows,
+    build_r53a_rows,
     run,
+    run_r53a,
 )
 
 
@@ -222,3 +225,76 @@ def test_sha_manifest_and_no_writes_outside_r53_output_root(tmp_path: Path) -> N
     assert produced == sorted(OUTPUT_FILES)
     outside_files = [path for path in stage.rglob("R53_*") if R53_DIRNAME not in path.parts]
     assert outside_files == []
+
+
+def write_historical_csv(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        "family,config_id,status,training_years,scoring_rows,oof_prediction_rows,oof_prediction_path,rank_ic,sharpe,annualized_return,maximum_drawdown,win_rate,turnover,transaction_costs",
+        "mlp,mlp_F4,FRONTIER_ACTIVE,\"2019,2020\",196000,196000,oof/mlp.csv,0.41,2.1,0.3,-0.02,0.61,0.4,0",
+        "random_forest,rf_F4,FRONTIER_ACTIVE,\"2019,2020\",196000,196000,oof/rf.csv,0.42,2.2,0.31,-0.021,0.62,0.4,0",
+        "extra_trees,et_F4,FRONTIER_ACTIVE,\"2019,2020\",196000,196000,oof/et.csv,0.43,2.3,0.32,-0.022,0.63,0.4,0",
+        "gradient_boosting,gb_F4,FRONTIER_ACTIVE,2019,126000,126000,oof/gb.csv,0.44,2.4,0.33,-0.023,0.64,0.4,0",
+        "lightgbm_lambdarank,ltr_F4,FRONTIER_ACTIVE,\"2019,2020,2021,2022,2023\",248079,248079,oof/ltr.csv,0.45,,,,,,",
+        "dlinear,dlinear_F4,FRONTIER_ACTIVE,\"2019,2020,2021,2022,2023,2024\",11760,11760,oof/dlinear.csv,0.36,,,,,,",
+        "temporal_fusion_transformer,tft_F4,FRONTIER_ACTIVE,\"2019,2020,2021,2022,2023,2024\",11760,11760,oof/tft.csv,0.34,,,,,,",
+    ]
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_r53a_terminal_beats_stale_running_progress(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "results.csv")
+    rows, _, _ = build_r53a_rows(stage, worker, mac)
+    random_forest = row_by_family(rows, "random_forest")
+    assert random_forest["historical_execution_completion"] == "COMPLETE"
+    assert random_forest["current_scientific_acceptance"] == "COMPLETED_DIFFERENT_WINDOW"
+
+
+def test_r53a_later_tft_completion_beats_older_blocker(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "sequence_results.csv")
+    rows, _, _ = build_r53a_rows(stage, worker, mac)
+    tft = row_by_family(rows, "Temporal Fusion Transformer")
+    assert tft["historical_execution_completion"] == "COMPLETE"
+    assert tft["current_scientific_acceptance"] == "COMPLETED_DIFFERENT_WINDOW"
+    assert "sequence_results.csv" in str(tft["r53a_result_authority_path"])
+
+
+def test_r53a_mac_completion_beats_stale_dlinear_running_ownership(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "sequence_results.csv")
+    rows, _, _ = build_r53a_rows(stage, worker, mac)
+    dlinear = row_by_family(rows, "DLinear")
+    assert dlinear["historical_execution_completion"] == "COMPLETE"
+    assert dlinear["source_host"] == "DELL"
+
+
+def test_r53a_lambdarank_scientific_completion_independent_of_dell_import(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "ranking_results.csv")
+    rows, _, _ = build_r53a_rows(stage, worker, mac)
+    lambdarank = row_by_family(rows, "lightgbm_lambdarank")
+    assert lambdarank["historical_execution_completion"] == "COMPLETE"
+    assert lambdarank["current_scientific_acceptance"] == "ACCEPTED_IMPORTED_FINAL"
+    assert lambdarank["source_host"] == "MAC"
+
+
+def test_r53a_legacy_completed_result_preserved(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    rows, _, _ = build_r53a_rows(stage, worker, mac)
+    ridge = row_by_family(rows, "ridge_policy_v1_control")
+    assert ridge["historical_execution_completion"] == "COMPLETE"
+    assert ridge["current_scientific_acceptance"] == "QUARANTINED_AFTER_COMPLETION"
+    assert ridge["sharpe"] is not None
+
+
+def test_r53a_outputs_scorecard_and_keeps_r53_directory_separate(tmp_path: Path) -> None:
+    stage, worker, mac, _ = make_fixture(tmp_path)
+    write_historical_csv(stage.parent / "older_stage" / "all_results.csv")
+    output = stage / R53A_DIRNAME
+    summary = run_r53a(stage, worker, mac, output)
+    assert summary["completed"] == 14
+    assert summary["unfinished"] == 5
+    assert (output / "R53A_COMPLETED_14_MODEL_SCORECARD.csv").exists()
+    assert not (stage / R53_DIRNAME / "R53A_COMPLETED_14_MODEL_SCORECARD.csv").exists()
