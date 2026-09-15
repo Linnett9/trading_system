@@ -1,0 +1,58 @@
+{
+  "completed_family_with_missing_final_result": [],
+  "configuration_blocker": [
+    "Temporal Fusion Transformer"
+  ],
+  "generated_at_utc": "2026-09-15T19:10:10.542843+00:00",
+  "legacy_result_with_no_accepted_v3_authority": [
+    "ridge_policy_v1_control",
+    "pca_ridge_policy_v1_control",
+    "spline_additive_ridge"
+  ],
+  "mac_only_result_not_locally_present": [
+    "lightgbm_lambdarank"
+  ],
+  "running_result_only": [
+    "mlp",
+    "random_forest",
+    "extra_trees",
+    "gradient_boosting",
+    "DLinear",
+    "PatchTST",
+    "Transformer"
+  ],
+  "unavailable_common_window_evidence": [
+    "ridge_policy_v1_control",
+    "pca_ridge_policy_v1_control",
+    "spline_additive_ridge",
+    "elastic_net",
+    "mlp",
+    "random_forest",
+    "extra_trees",
+    "gradient_boosting",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "PatchTST",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder",
+    "Temporal Fusion Transformer"
+  ],
+  "unavailable_cost_information": [
+    "gradient_boosting",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank"
+  ],
+  "unavailable_evaluation_dates": [
+    "gradient_boosting",
+    "lightgbm_rank_xendcg",
+    "lightgbm_lambdarank",
+    "DLinear",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder",
+    "Temporal Fusion Transformer"
+  ]
+}

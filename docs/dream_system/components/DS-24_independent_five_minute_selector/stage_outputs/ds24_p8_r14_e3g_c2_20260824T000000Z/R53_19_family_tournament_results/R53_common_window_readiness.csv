@@ -1,0 +1,20 @@
+family,retained_timestamp_level_metric_evidence_exists,retained_daily_returns_exist,retained_compact_oof_exists,earliest_available_date,latest_available_date,common_window_reconstruction_possible_without_refitting,blocker
+ridge_policy_v1_control,True,True,False,2024-12-31T14:45:00+00:00,2026-06-30T19:00:00+00:00,False,COMPLETE_LEGACY_RESULT_LIMITED
+pca_ridge_policy_v1_control,True,True,False,2020-05-11T18:50:00+00:00,2026-06-30T19:00:00+00:00,False,COMPLETE_LEGACY_RESULT_LIMITED
+spline_additive_ridge,True,True,False,2025-04-02T14:20:00+00:00,2026-06-29T15:35:00+00:00,False,COMPLETE_LEGACY_RESULT_LIMITED
+elastic_net,True,True,False,2025-04-02T13:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+rff_ridge,True,True,False,2016-02-02T14:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+huber,True,True,False,2016-02-02T14:35:00+00:00,2026-06-30T19:00:00+00:00,True,
+mlp,True,True,False,2016-02-02T14:35:00+00:00,2024-05-16T19:00:00+00:00,True,
+random_forest,True,True,False,2016-02-02T14:35:00+00:00,2016-12-27T20:00:00+00:00,True,
+extra_trees,True,True,False,2016-02-02T14:35:00+00:00,2018-08-15T19:00:00+00:00,True,
+gradient_boosting,False,False,False,,,False,RUNNING_PROVISIONAL_RESULT
+lightgbm_rank_xendcg,True,False,True,,,False,COMPLETE_IMPORTED_RESULT_AVAILABLE
+lightgbm_lambdarank,False,False,False,,,False,EXTERNAL_MAC_RESULT_NOT_LOCALLY_AVAILABLE
+DLinear,False,False,False,,,False,RUNNING_PROVISIONAL_RESULT
+PatchTST,True,True,False,2016-02-02T14:35:00+00:00,2019-07-23T18:00:00+00:00,True,
+Transformer,True,True,False,2016-02-02T14:35:00+00:00,2018-12-28T19:00:00+00:00,True,
+iTransformer,False,False,False,,,False,READY_NOT_STARTED
+Momentum Transformer,False,False,False,,,False,READY_NOT_STARTED
+Market Context Encoder,False,False,False,,,False,READY_NOT_STARTED
+Temporal Fusion Transformer,False,False,False,,,False,CONFIGURATION_AUTHORITY_REQUIRED
