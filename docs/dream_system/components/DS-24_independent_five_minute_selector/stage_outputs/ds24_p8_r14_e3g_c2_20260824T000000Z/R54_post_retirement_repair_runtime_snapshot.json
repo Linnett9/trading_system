@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-21T18:47:53.4860000Z",
+  "supervisor": {
+    "pid": 14432,
+    "alive": true,
+    "command": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" -u scripts\\local\\ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py --daemon --resume --poll-seconds 20 --max-active-model-processes 3 --max-policy-workers 3 --max-restarts-per-family 2 --admission-commit-percent 92 --max-system-commit-percent 95 --min-available-ram-gb 6 --evaluation-version v3 --metrics-root-name metrics_only_v3 --refit-policy daily_session_v1 --family-queue \"random_forest,Transformer,iTransformer,Momentum Transformer,Market Context Encoder\" --exclude-family PatchTST --retired-families-path docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\stage_outputs\\ds24_p8_r14_e3g_c2_20260824T000000Z\\R54_retired_families.json",
+    "first_daemon_heartbeat_pending": true
+  },
+  "protected_workers": {
+    "random_forest": {
+      "expected_pid": 7068,
+      "observed_pid": 7068,
+      "unchanged": true
+    },
+    "Transformer": {
+      "expected_pid": 11300,
+      "observed_pid": 11300,
+      "unchanged": true
+    }
+  },
+  "patchtst": {
+    "pid": 0,
+    "state": "EXCLUDED_BY_OPERATOR",
+    "retirement_authority": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R54_retired_families.json"
+  },
+  "itransformer": {
+    "pid": 22980,
+    "state": "RUNNING",
+    "metrics_root": "metrics_only_v3_r40_itransformer",
+    "resume_generation": 1
+  },
+  "active_model_workers": [
+    "random_forest",
+    "Transformer",
+    "iTransformer"
+  ],
+  "active_model_worker_count": 3,
+  "max_active_model_processes": 3,
+  "queue": [
+    "random_forest",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "excluded_families": [
+    "PatchTST"
+  ],
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "paper_orders": 0,
+    "live_orders": 0,
+    "holdout_accessed": false
+  },
+  "classification": "DS24_R54_PATCHTST_PERSISTENTLY_RETIRED_ITRANSFORMER_ADMITTED"
+}

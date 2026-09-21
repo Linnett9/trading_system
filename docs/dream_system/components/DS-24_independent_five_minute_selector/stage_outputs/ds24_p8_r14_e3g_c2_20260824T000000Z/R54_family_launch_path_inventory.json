@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-21T18:18:48.8423255Z",
+  "root_cause": "selected_queue previously preferred the default R42 ready-family manifest over an explicit --family-queue, so manifest-backed startup/recovery planning could continue to see PatchTST even after operators supplied a queue without PatchTST. Crash/restart admission then flowed through certified_queue_admission_plan when --admit-crashed-recoverable or sequence V3 readiness made the family eligible.",
+  "post_patch_invariant": "canonical_family_name(family) in effective_excluded_families => never launch automatically",
+  "launch_paths": [
+    {
+      "function": "selected_queue",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 1992,
+      "candidate_family_source": "--family-queue, --ready-family-queue-manifest, or R40_AUTOMATIC_QUEUE",
+      "current_filtering": "explicit --family-queue now takes precedence over the ready manifest",
+      "family_queue_applies": true,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "queue consumers pass through certified_queue_admission_plan"
+    },
+    {
+      "function": "certified_queue_admission_plan",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 2026,
+      "candidate_family_source": "selected_queue plus current family board",
+      "current_filtering": "operator exclusion, cross-host ownership, running/duplicate/route/state gates",
+      "family_queue_applies": true,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "EXCLUDED_BY_OPERATOR skip reason before eligible_families"
+    },
+    {
+      "function": "family_specific_skip_reason",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 2000,
+      "candidate_family_source": "one queue-board row",
+      "current_filtering": "running, duplicate, retired/operator-excluded, launch route, terminal/configuration/state",
+      "family_queue_applies": true,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "returns EXCLUDED_BY_OPERATOR for retired families"
+    },
+    {
+      "function": "supervisor_poll",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 2932,
+      "candidate_family_source": "certified_queue_admission_plan first_eligible_family",
+      "current_filtering": "resource gate, admission proof window, forward metrics contract, retired-family authority",
+      "family_queue_applies": true,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "passes args.exclude_family and args.retired_families_path into admission and launch"
+    },
+    {
+      "function": "launch_family",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 2594,
+      "candidate_family_source": "direct launch caller or supervisor_poll",
+      "current_filtering": "retired-family guard, Dell ownership, route, forward metrics, family launch lock, duplicate prelaunch guard",
+      "family_queue_applies": "indirect",
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "raises DS24_R54_EXCLUDED_FAMILY_LAUNCH_REFUSED before lock acquisition or subprocess spawn"
+    },
+    {
+      "function": "validate_family_launch_slot",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 2257,
+      "candidate_family_source": "launch_family prelaunch validation",
+      "current_filtering": "retired-family guard and duplicate live process guard",
+      "family_queue_applies": "indirect",
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "raises DS24_R54_EXCLUDED_FAMILY_LAUNCH_REFUSED before duplicate process scan"
+    },
+    {
+      "function": "lightweight_certified_queue_board",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 1602,
+      "candidate_family_source": "ready queue and live process reconciliation",
+      "current_filtering": "retired absent families are surfaced as EXCLUDED_BY_OPERATOR",
+      "family_queue_applies": true,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "monitor/reboot simulations see PatchTST as excluded instead of ready"
+    },
+    {
+      "function": "r45_supervisor_command",
+      "source_file": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py",
+      "line": 3212,
+      "candidate_family_source": "startup/reboot launcher command",
+      "current_filtering": "passes --retired-families-path and omits --admit-crashed-recoverable",
+      "family_queue_applies": false,
+      "retirement_filtering_before_patch": false,
+      "retirement_filtering_after_patch": "future auto-starts consume R54_retired_families.json"
+    }
+  ]
+}

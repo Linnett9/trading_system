@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-21T18:47:53.4860000Z",
+  "poll_spacing_seconds": 22,
+  "retirement_authority": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R54_retired_families.json",
+  "retired_families": [
+    "PatchTST"
+  ],
+  "supervisor": {
+    "pid": 14432,
+    "alive": true,
+    "command_contains_exclude_family": true,
+    "command_contains_retired_families_path": true,
+    "command_contains_admit_crashed_recoverable": false,
+    "first_daemon_heartbeat_pending": true
+  },
+  "snapshots": [
+    {
+      "index": 1,
+      "captured_at_utc": "2026-09-21T18:43:46.6762112Z",
+      "random_forest_pid": 7068,
+      "transformer_pid": 11300,
+      "itransformer_pid": 22980,
+      "patchtst_pid": 0,
+      "patchtst_launch_event_after_r54": false
+    },
+    {
+      "index": 2,
+      "captured_at_utc": "2026-09-21T18:44:08.8751919Z",
+      "random_forest_pid": 7068,
+      "transformer_pid": 11300,
+      "itransformer_pid": 22980,
+      "patchtst_pid": 0,
+      "patchtst_launch_event_after_r54": false
+    },
+    {
+      "index": 3,
+      "captured_at_utc": "2026-09-21T18:44:30.9900713Z",
+      "random_forest_pid": 7068,
+      "transformer_pid": 11300,
+      "itransformer_pid": 22980,
+      "patchtst_pid": 0,
+      "patchtst_launch_event_after_r54": false
+    }
+  ],
+  "restart_ledger_patchtst_event_after_r54": false,
+  "automatic_launch_ledger_patchtst_event_after_r54": false,
+  "proof_result": "PATCHTST_ABSENT_ACROSS_THREE_POLLS"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "authority": "DS24_R54_RETIRED_FAMILY_LAUNCH_EXCLUSION_V1",
+  "generated_at_utc": "2026-09-21T18:18:48.8423255Z",
+  "families": [
+    {
+      "family": "PatchTST",
+      "reason": "COMPUTE_PRIORITY_AFTER_PROVISIONAL_COMPARISON",
+      "classification": "RETIRED_COMPUTE_PRIORITY_PROVISIONAL_EVIDENCE_PRESERVED",
+      "effective_at_utc": "2026-09-21T18:18:48.8423255Z",
+      "preserve_results": true
+    }
+  ]
+}

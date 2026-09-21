@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "family": "PatchTST",
+  "retirement_timestamp_utc": "2026-09-21T18:18:48.8423255Z",
+  "reason": "COMPUTE_PRIORITY_AFTER_PROVISIONAL_COMPARISON",
+  "classification": "RETIRED_COMPUTE_PRIORITY_PROVISIONAL_EVIDENCE_PRESERVED",
+  "preserve_results": true,
+  "last_known_provisional_summary_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/PatchTST/metrics_only_v3_r40_patchtst/resolved_performance_summary_v3.json",
+  "summary_sha256": "f8b39f0fec4899eb11ae25a9444bb3b763af26b3bc328cf162b328da847d8dc1",
+  "metrics_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/PatchTST/metrics_only_v3_r40_patchtst",
+  "last_resolved_decision_timestamp": "2023-01-03T19:00:00+00:00",
+  "last_resolution_timestamp": "2023-01-03T20:00:00+00:00",
+  "resolved_rows": 114462,
+  "rank_ic": 0.2974805603763064,
+  "sharpe": 8.770070452224786,
+  "annual_return": 0.8046801707747688,
+  "max_drawdown": -0.016909133465692228,
+  "win_rate": 0.917037037037037,
+  "total_estimated_costs": 0.0,
+  "worker_pid_stopped_before_r54": 0
+}

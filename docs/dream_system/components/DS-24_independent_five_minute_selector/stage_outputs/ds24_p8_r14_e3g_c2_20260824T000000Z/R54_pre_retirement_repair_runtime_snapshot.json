@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-21T18:18:48.8423255Z",
+  "system_commit": {
+    "total_virtual_memory_kib": 62333760,
+    "free_virtual_memory_kib": 19066656,
+    "commit_percent_estimate": 69.41048642950374
+  },
+  "ram": {
+    "total_visible_memory_kib": 33261724,
+    "free_physical_memory_kib": 8775284
+  },
+  "free_disk": {
+    "drive": "C:",
+    "free_bytes": 16073887744
+  },
+  "system_commit_hash": "f30137b6fa9989e2bb0f49c0ef4b803a51a2ac53",
+  "python_processes": [
+    {
+      "pid": 7068,
+      "family": "random_forest",
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family random_forest --resume --resume-generation 9 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_random_forest --refit-policy daily_session_v1",
+      "working_set_bytes": 2422951936,
+      "page_file_usage_kib": 2548360
+    },
+    {
+      "pid": 12020,
+      "family": "DS26_PASSIVE_CAPTURE",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" C:\\Users\\Brandon\\trading_system\\scripts\\local\\ds26_prospective_capture_worker.py --poll-interval-seconds 900 --storage-root C:\\Users\\Brandon\\trading_system\\data\\processed\\news\\ds26_prospective\\version=ds26_news_possession_authority_v2_breadth_r1 --authority-version ds26_news_possession_authority_v2_breadth_r1 --source-authority-path C:\\Users\\Brandon\\trading_system\\data\\processed\\news\\ds26_prospective\\version=ds26_news_possession_authority_v2_breadth_r1\\manifests\\source_authority.json",
+      "working_set_bytes": 905216,
+      "page_file_usage_kib": 584752
+    },
+    {
+      "pid": 11300,
+      "family": "Transformer",
+      "command_line": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_v3_sequence_policy_worker.py --family Transformer --resume --resume-generation 3 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_transformer --refit-policy daily_session_v1",
+      "working_set_bytes": 8878288896,
+      "page_file_usage_kib": 9072592
+    },
+    {
+      "pid": 23388,
+      "family": "UNRELATED_DS24_COST_AWARE_RECONSTRUCT",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" C:\\Users\\Brandon\\trading_system\\scripts\\local\\ds24_cost_aware_r5_operator.py C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\cost_aware_policy_experiment\\cost_aware_policy_tournament_r2_20260917T115428Z C:\\Users\\Brandon\\trading_system\\docs\\dream_system\\components\\DS-24_independent_five_minute_selector\\cost_aware_policy_experiment\\cost_aware_policy_terminal_r4_20260917T141014Z --model xendcg --stage RECONSTRUCT --max-batches 0 --ignore-ram-gates",
+      "working_set_bytes": 255541248,
+      "page_file_usage_kib": 1143476
+    },
+    {
+      "pid": 21620,
+      "family": "UNRELATED_ALPACA_FINALIZER",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" -m infrastructure.data.alpaca_5m_symbol_year_finalizer --config C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\state\\r2b_catchup\\finalizer_config.yaml --validate-archive",
+      "working_set_bytes": 52604928,
+      "page_file_usage_kib": 397004
+    },
+    {
+      "pid": 22408,
+      "family": "UNRELATED_ALPACA_FINALIZER_CHILD",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" \"-c\" \"from multiprocessing.spawn import spawn_main; spawn_main(parent_pid=21620, pipe_handle=428)\" \"--multiprocessing-fork\"",
+      "working_set_bytes": 53637120,
+      "page_file_usage_kib": 406684
+    },
+    {
+      "pid": 19440,
+      "family": "UNRELATED_ALPACA_FINALIZER_CHILD",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" \"-c\" \"from multiprocessing.spawn import spawn_main; spawn_main(parent_pid=21620, pipe_handle=932)\" \"--multiprocessing-fork\"",
+      "working_set_bytes": 53235712,
+      "page_file_usage_kib": 406688
+    },
+    {
+      "pid": 13488,
+      "family": "DS24_MONITOR",
+      "command_line": "\"C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe\" -u scripts\\local\\monitor_ds24_full_family_tournament.py --compact --eta-window-minutes 60",
+      "working_set_bytes": 60583936,
+      "page_file_usage_kib": 399976
+    }
+  ],
+  "protected_workers": {
+    "random_forest": {
+      "expected_pid": 7068,
+      "observed_pid": 7068,
+      "alive": true
+    },
+    "Transformer": {
+      "expected_pid": 11300,
+      "observed_pid": 11300,
+      "alive": true
+    }
+  },
+  "patchtst_pid": 0,
+  "supervisor_pid": 0,
+  "active_model_worker_count": 2,
+  "ds26_process_state": "PASSIVE_DS26_PROSPECTIVE_CAPTURE_RUNNING_PID_12020",
+  "zero_full_prediction_guard": {
+    "full_prediction_files_in_metrics_namespaces": 0,
+    "paper_orders": 0,
+    "live_orders": 0,
+    "holdout_accessed": false
+  },
+  "assertions": {
+    "random_forest_alive": true,
+    "transformer_alive": true,
+    "patchtst_absent": true,
+    "supervisor_absent": true,
+    "r54_may_continue": true
+  }
+}

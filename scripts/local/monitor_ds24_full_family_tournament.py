@@ -280,7 +280,7 @@ def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str
             board,
             ready_family_queue_manifest=supervisor_api.R42_READY_QUEUE_PATH,
             cross_host_ownership_manifest=supervisor_api.R44_CROSS_HOST_OWNERSHIP_PATH,
-            admit_crashed_recoverable=True,
+            retired_families_path=supervisor_api.R54_RETIRED_FAMILIES_PATH,
         )
     except Exception as exc:
         return {
@@ -309,6 +309,8 @@ def certified_queue_monitor_state(board: list[dict[str, Any]], blocked: list[str
         "cross_host_manifest_hash": ownership["manifest_hash"],
         "excluded_mac_owned": ownership["excluded_mac_owned"],
         "excluded_mac_reserved": ownership["excluded_mac_reserved"],
+        "excluded_families": plan.get("excluded_families", []),
+        "retired_family_authority": plan.get("retired_family_authority", {}),
         "dell_ready_remaining": len(plan.get("eligible_families", [])),
         "remaining": len(plan.get("eligible_families", [])),
         "next_family": next_family,
@@ -560,6 +562,7 @@ def main() -> int:
         f"hash={certified.get('cross_host_manifest_hash', '')} "
         f"Mac owned: {', '.join(certified.get('excluded_mac_owned', [])) or 'none'} "
         f"Mac reserved: {', '.join(certified.get('excluded_mac_reserved', [])) or 'none'} "
+        f"Operator excluded: {', '.join(certified.get('excluded_families', [])) or 'none'} "
         f"Dell ready remaining: {certified.get('dell_ready_remaining', certified.get('remaining'))} "
         f"Next Dell family: {certified.get('next_family') or 'none'} "
         f"Next Dell route: {compact_route_label(certified.get('next_route')) or 'none'}"

@@ -174,6 +174,8 @@ R46_SINGLETON_LIVE_VALIDATION_PATH = STAGE / "R46_singleton_live_validation.json
 R46_REBOOT_RECOVERY_SIMULATION_PATH = STAGE / "R46_reboot_recovery_simulation.json"
 R46_CLASSIFICATION = "DS24_R46_ZERO_TOUCH_USER_AUTOSTART_ACTIVE"
 R46_STARTUP_ENTRY_NAME = "DreamSystem_DS24_TournamentSupervisor.cmd"
+R54_RETIRED_FAMILIES_PATH = STAGE / "R54_retired_families.json"
+R54_RETIREMENT_AUTHORITY_ID = "DS24_R54_RETIRED_FAMILY_LAUNCH_EXCLUSION_V1"
 R42_ALLOWED_READY_FAMILIES = (
     "random_forest",
     "elastic_net",
@@ -342,6 +344,91 @@ def display_path(path: Path) -> str:
 
 def family_slug(family: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", family.lower()).strip("_")
+
+
+def canonical_family_name(family: str) -> str:
+    value = str(family or "").strip()
+    slug = family_slug(value)
+    if not slug:
+        return ""
+    for known in ALL_FAMILIES:
+        if family_slug(known) == slug:
+            return known
+    return value
+
+
+def family_list_values(values: str | Sequence[str] | None) -> list[str]:
+    if values is None:
+        return []
+    raw_items: Sequence[str]
+    if isinstance(values, str):
+        raw_items = [values]
+    else:
+        raw_items = values
+    families: list[str] = []
+    for item in raw_items:
+        for part in str(item).split(","):
+            family = canonical_family_name(part)
+            if family:
+                families.append(family)
+    return list(dict.fromkeys(families))
+
+
+def retired_family_authority(path: str | Path = R54_RETIRED_FAMILIES_PATH) -> dict[str, Any]:
+    authority_path = Path(path) if path else R54_RETIRED_FAMILIES_PATH
+    payload = read_json(authority_path)
+    families: list[dict[str, Any]] = []
+    raw_families = payload.get("families", []) if isinstance(payload, dict) else []
+    if isinstance(raw_families, list):
+        for item in raw_families:
+            if isinstance(item, Mapping):
+                family = canonical_family_name(str(item.get("family", "")))
+                if family:
+                    families.append({**dict(item), "family": family})
+            else:
+                family = canonical_family_name(str(item))
+                if family:
+                    families.append({"family": family})
+    return {
+        "authority": str(payload.get("authority") or R54_RETIREMENT_AUTHORITY_ID) if isinstance(payload, dict) else R54_RETIREMENT_AUTHORITY_ID,
+        "schema_version": int(payload.get("schema_version", 1) or 1) if isinstance(payload, dict) else 1,
+        "path": display_path(authority_path),
+        "families": families,
+        "authority_hash": hash_if_exists(authority_path),
+    }
+
+
+def effective_excluded_families(
+    excluded_families: str | Sequence[str] | None = None,
+    *,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
+) -> list[str]:
+    explicit = family_list_values(excluded_families)
+    retired = [str(row["family"]) for row in retired_family_authority(retired_families_path)["families"]]
+    return list(dict.fromkeys([*retired, *explicit]))
+
+
+def family_is_excluded(
+    family: str,
+    excluded_families: str | Sequence[str] | None = None,
+    *,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
+) -> bool:
+    canonical = canonical_family_name(family)
+    return canonical in set(effective_excluded_families(excluded_families, retired_families_path=retired_families_path))
+
+
+def family_is_launchable(
+    family: str,
+    excluded_families: str | Sequence[str] | None = None,
+    *,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
+) -> bool:
+    return launch_enabled_for_family(family) and not family_is_excluded(
+        family,
+        excluded_families,
+        retired_families_path=retired_families_path,
+    )
 
 
 def recent_disk_containment_state(
@@ -548,7 +635,7 @@ def execution_registry_row(family: str, *, include_r42_authority: bool = False) 
         "worker_kind": worker_kind_for_family(family),
         "worker_script": f"scripts/local/{script}" if script else "",
         "worker_script_exists": bool(script and (ROOT / "scripts" / "local" / script).exists()),
-        "launch_enabled": launch_enabled_for_family(family),
+        "launch_enabled": family_is_launchable(family),
         "default_metrics_root_name": default_metrics_root_name(family, "metrics_only_v3"),
         "metrics_only": True,
         "full_prediction_persistence": False,
@@ -1323,6 +1410,7 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
     terminal_exclusion = r31_terminal_exclusion_state(family, root=POLICY_ROOT)
     terminal_complete = bool(terminal["reached"] and met["metric_rows"] > 0 and met["topn_rows"] > 0 and inv_dupes == 0)
     live_ok = bool(live) and dup_workers == 0 and checkpoint_valid(family) and not fatal_effective
+    excluded = family_is_excluded(family)
     lease_unverified_live = lease_state["namespace_lease_state"] == "LIVE_UNVERIFIED_OR_PID_REUSED"
     lease_owner_mismatch = bool(
         live
@@ -1340,6 +1428,8 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
         state = "NAMESPACE_QUARANTINED_REPAIR_REQUIRED"
     elif fatal_effective and live:
         state = "NAMESPACE_RECONCILING"
+    elif excluded and not live:
+        state = "EXCLUDED_BY_OPERATOR"
     elif terminal_exclusion == "COMPLETE":
         state = "COMPLETE"
     elif terminal_exclusion == "TERMINAL_VALIDATING":
@@ -1399,7 +1489,8 @@ def classify_family(family: str, processes: dict[str, list[dict[str, Any]]] | No
         "sequence_certification_reconciliation": sequence_reconciliation,
         "worker_kind": worker_kind_for_family(family),
         "worker_script": execution_registry_row(family, include_r42_authority=bool(sequence_reconciliation))["worker_script"],
-        "launch_enabled": launch_enabled_for_family(family),
+        "launch_enabled": family_is_launchable(family),
+        "excluded_by_operator": excluded,
         "pid": int(live[0].get("ProcessId", 0) or 0) if live else 0,
         "recorded_pid": recorded_pid,
         "pid_alive": bool(live),
@@ -1520,6 +1611,7 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
         metrics_name = str(progress.get("metrics_root_name") or telemetry.get("metrics_root_name") or default_metrics_root_name(family, "metrics_only_v3"))
         metrics_root = root / metrics_name
         checkpoint = read_json(metrics_root / "resolved_performance_checkpoint_v3.json")
+        excluded = family_is_excluded(family)
         sequence_reconciliation = (
             sequence_certification_reconciliation(family)
             if family in SEQUENCE_CERTIFICATION
@@ -1527,6 +1619,8 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
         )
         if live:
             state = "RUNNING"
+        elif excluded:
+            state = "EXCLUDED_BY_OPERATOR"
         elif family == "elastic_net":
             state = "CERTIFIED_READY"
         elif family not in queue:
@@ -1546,7 +1640,8 @@ def lightweight_certified_queue_board(queue: Sequence[str]) -> list[dict[str, An
                 "sequence_certification_reconciliation": sequence_reconciliation,
                 "worker_kind": worker_kind_for_family(family),
                 "worker_script": execution_registry_row(family, include_r42_authority=bool(sequence_reconciliation))["worker_script"],
-                "launch_enabled": launch_enabled_for_family(family),
+                "launch_enabled": family_is_launchable(family),
+                "excluded_by_operator": excluded,
                 "pid": live_pids[0] if live_pids else 0,
                 "pid_alive": bool(live),
                 "creation_time": live[0].get("CreationDate") if live else None,
@@ -1895,20 +1990,28 @@ def write_dell_effective_ready_queue(
 
 
 def selected_queue(family_queue: str = "", *, ready_family_queue_manifest: str | Path = "") -> list[str]:
-    if ready_family_queue_manifest:
-        return list(validate_ready_family_queue_manifest(ready_family_queue_manifest)["ready_family_queue"])
     if family_queue:
         return [item.strip() for item in family_queue.split(",") if item.strip()]
+    if ready_family_queue_manifest:
+        return list(validate_ready_family_queue_manifest(ready_family_queue_manifest)["ready_family_queue"])
     return R40_AUTOMATIC_QUEUE
 
 
-def family_specific_skip_reason(row: Mapping[str, Any], *, allowed_states: set[str]) -> str:
+def family_specific_skip_reason(
+    row: Mapping[str, Any],
+    *,
+    allowed_states: set[str],
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
+) -> str:
     family = str(row.get("family", ""))
     if row.get("pid_alive"):
         return "RUNNING"
     if int(row.get("duplicate_worker_count", 0) or 0):
         return "DUPLICATE_NAMESPACE_OWNER"
-    if not launch_enabled_for_family(family):
+    if family_is_excluded(family, excluded_families, retired_families_path=retired_families_path):
+        return "EXCLUDED_BY_OPERATOR"
+    if not family_is_launchable(family, excluded_families, retired_families_path=retired_families_path):
         return "WORKER_ROUTE_NOT_LAUNCH_ENABLED"
     state = str(row.get("state", ""))
     if state in {"COMPLETE", "COMPLETE_IMPORTED"}:
@@ -1927,6 +2030,8 @@ def certified_queue_admission_plan(
     ready_family_queue_manifest: str | Path = "",
     cross_host_ownership_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
 ) -> dict[str, Any]:
     allowed = {"PAUSED_RESOURCE_GATE", "CERTIFIED_READY", "V3_CERTIFIED_READY"}
     if admit_crashed_recoverable:
@@ -1934,7 +2039,12 @@ def certified_queue_admission_plan(
     rows_by_family = {row["family"]: row for row in board}
     queue_authority: dict[str, Any] = {}
     queue = selected_queue(family_queue, ready_family_queue_manifest=ready_family_queue_manifest)
-    if ready_family_queue_manifest:
+    effective_exclusions = effective_excluded_families(
+        excluded_families,
+        retired_families_path=retired_families_path,
+    )
+    retired_authority = retired_family_authority(retired_families_path)
+    if ready_family_queue_manifest and not family_queue:
         queue_authority = validate_ready_family_queue_manifest(ready_family_queue_manifest)
     ownership_authority: dict[str, Any] = {}
     if cross_host_ownership_manifest:
@@ -1946,7 +2056,12 @@ def certified_queue_admission_plan(
         if not row:
             skipped.append({"family": family, "reason": "FAMILY_NOT_ON_BOARD", "block_scope": "FAMILY_SPECIFIC_BLOCK"})
             continue
-        reason = family_specific_skip_reason(row, allowed_states=allowed)
+        reason = family_specific_skip_reason(
+            row,
+            allowed_states=allowed,
+            excluded_families=effective_exclusions,
+            retired_families_path=retired_families_path,
+        )
         route = execution_registry_row(family, include_r42_authority=bool(ready_family_queue_manifest))
         item = {
             "family": family,
@@ -1973,7 +2088,12 @@ def certified_queue_admission_plan(
             ),
             "worker_kind": route["worker_kind"],
             "worker_script": route["worker_script"],
-            "launch_enabled": route["launch_enabled"],
+            "launch_enabled": family_is_launchable(
+                family,
+                effective_exclusions,
+                retired_families_path=retired_families_path,
+            ),
+            "excluded_by_operator": family in effective_exclusions,
             "checkpoint": row.get("checkpoint", ""),
             "namespace_state": row.get("namespace_lease_state", ""),
             "metrics_rows": row.get("metrics_rows", 0),
@@ -1996,6 +2116,8 @@ def certified_queue_admission_plan(
         "skipped_families": skipped,
         "excluded_mac_owned": ownership_authority.get("excluded_mac_owned", []),
         "excluded_mac_reserved": ownership_authority.get("excluded_mac_reserved", []),
+        "excluded_families": effective_exclusions,
+        "retired_family_authority": retired_authority,
         "admit_crashed_recoverable": admit_crashed_recoverable,
     }
 
@@ -2007,6 +2129,8 @@ def next_ready_family(
     ready_family_queue_manifest: str | Path = "",
     cross_host_ownership_manifest: str | Path = "",
     admit_crashed_recoverable: bool = False,
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
 ) -> str:
     return str(
         certified_queue_admission_plan(
@@ -2015,6 +2139,8 @@ def next_ready_family(
             ready_family_queue_manifest=ready_family_queue_manifest,
             cross_host_ownership_manifest=cross_host_ownership_manifest,
             admit_crashed_recoverable=admit_crashed_recoverable,
+            excluded_families=excluded_families,
+            retired_families_path=retired_families_path,
         ).get("first_eligible_family", "")
     )
 
@@ -2128,7 +2254,14 @@ def release_family_launch_lock(family: str, token: str) -> None:
         pass
 
 
-def validate_family_launch_slot(family: str) -> dict[str, Any]:
+def validate_family_launch_slot(
+    family: str,
+    *,
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
+) -> dict[str, Any]:
+    if family_is_excluded(family, excluded_families, retired_families_path=retired_families_path):
+        raise RuntimeError(f"DS24_R54_EXCLUDED_FAMILY_LAUNCH_REFUSED:{canonical_family_name(family)}")
     live = family_processes().get(family, [])
     if live:
         pids = ",".join(str(int(row.get("ProcessId", 0) or 0)) for row in live)
@@ -2466,7 +2599,11 @@ def launch_family(
     metrics_root_name: str = "metrics_only",
     refit_policy: str = "five_score_session_v1",
     forward_contract_admission: dict[str, Any] | None = None,
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
 ) -> dict[str, Any]:
+    if family_is_excluded(family, excluded_families, retired_families_path=retired_families_path):
+        raise RuntimeError(f"DS24_R54_EXCLUDED_FAMILY_LAUNCH_REFUSED:{canonical_family_name(family)}")
     assert_dell_ownership_admission(family)
     registry = execution_registry_row(family)
     if not registry["launch_enabled"]:
@@ -2487,7 +2624,11 @@ def launch_family(
     family_dir.mkdir(parents=True, exist_ok=True)
     launch_lock = acquire_family_launch_lock(family, resume_generation)
     try:
-        validate_family_launch_slot(family)
+        validate_family_launch_slot(
+            family,
+            excluded_families=excluded_families,
+            retired_families_path=retired_families_path,
+        )
     except Exception:
         release_family_launch_lock(family, str(launch_lock.get("launch_token", "")))
         raise
@@ -2647,6 +2788,8 @@ def publish_state(
     evaluation_version: str = "v2",
     metrics_root_name: str = "metrics_only",
     refit_policy: str = "five_score_session_v1",
+    excluded_families: str | Sequence[str] | None = None,
+    retired_families_path: str | Path = R54_RETIRED_FAMILIES_PATH,
 ) -> dict[str, Any]:
     exact = exact_manifest()
     running = active_running(board)
@@ -2657,6 +2800,8 @@ def publish_state(
         ready_family_queue_manifest=ready_family_queue_manifest,
         cross_host_ownership_manifest=cross_host_ownership_manifest,
         admit_crashed_recoverable=admit_crashed_recoverable,
+        excluded_families=excluded_families,
+        retired_families_path=retired_families_path,
     )
     next_family = str(queue_plan.get("first_eligible_family", ""))
     blocked = gate.get("blocked_reasons", [])
@@ -2699,6 +2844,8 @@ def publish_state(
         "global_resource_block": bool(blocked),
         "family_specific_block": bool(queue_plan.get("skipped_families")),
         "admit_crashed_recoverable": admit_crashed_recoverable,
+        "excluded_families": queue_plan.get("excluded_families", []),
+        "retired_family_authority": queue_plan.get("retired_family_authority", {}),
         "evaluation_version": evaluation_version.upper(),
         "metrics_root_name": metrics_root_name,
         "refit_policy": refit_policy,
@@ -2734,6 +2881,8 @@ def publish_state(
         "certified_queue_authority": queue_plan.get("queue_authority", {}),
         "cross_host_ownership_authority": queue_plan.get("cross_host_ownership_authority", {}),
         "certified_queue_admission_plan": queue_plan,
+        "excluded_families": queue_plan.get("excluded_families", []),
+        "retired_family_authority": queue_plan.get("retired_family_authority", {}),
         "certification_queue": certification_queue,
         "resource_gate": gate,
         "admission_ledger": display_path(ADMISSION_LEDGER_PATH),
@@ -2804,6 +2953,8 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         ready_family_queue_manifest=args.ready_family_queue_manifest,
         cross_host_ownership_manifest=args.cross_host_ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
+        excluded_families=args.exclude_family,
+        retired_families_path=args.retired_families_path,
     )
     next_family = str(queue_plan.get("first_eligible_family", ""))
     proof_window = admission_proof_window()
@@ -2857,6 +3008,8 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
             metrics_root_name=args.metrics_root_name,
             refit_policy=args.refit_policy,
             forward_contract_admission=forward_admission,
+            excluded_families=args.exclude_family,
+            retired_families_path=args.retired_families_path,
         )
         last_admission["admitted"] = True
     append_csv(ADMISSION_LEDGER_PATH, last_admission)
@@ -2871,6 +3024,8 @@ def supervisor_poll(args: argparse.Namespace, lease: dict[str, Any]) -> dict[str
         ready_family_queue_manifest=args.ready_family_queue_manifest,
         cross_host_ownership_manifest=args.cross_host_ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
+        excluded_families=args.exclude_family,
+        retired_families_path=args.retired_families_path,
         evaluation_version=args.evaluation_version,
         metrics_root_name=args.metrics_root_name,
         refit_policy=args.refit_policy,
@@ -2910,10 +3065,12 @@ def reboot_supervisor_task_plan(args: argparse.Namespace) -> dict[str, Any]:
         args.refit_policy,
         "--ready-family-queue-manifest",
         str(manifest_path),
-        "--admit-crashed-recoverable",
     ]
     if ownership_arg:
-        command[-1:-1] = ["--cross-host-ownership-manifest", str(ownership_path)]
+        command.extend(["--cross-host-ownership-manifest", str(ownership_path)])
+    command.extend(["--retired-families-path", str(args.retired_families_path)])
+    for family in family_list_values(args.exclude_family):
+        command.extend(["--exclude-family", family])
     action = (
         f"$Action = New-ScheduledTaskAction -Execute '{sys.executable}' "
         f"-Argument '{' '.join(command[1:])}' -WorkingDirectory '{ROOT}'"
@@ -2954,6 +3111,8 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
         ready_family_queue_manifest=args.ready_family_queue_manifest,
         cross_host_ownership_manifest=ownership_manifest,
         admit_crashed_recoverable=args.admit_crashed_recoverable,
+        excluded_families=args.exclude_family,
+        retired_families_path=args.retired_families_path,
     )
     global_blocked = bool(gate.get("blocked_reasons"))
     first = str(queue_plan.get("first_eligible_family", ""))
@@ -2976,6 +3135,8 @@ def dry_run_admission(args: argparse.Namespace) -> dict[str, Any]:
         "cross_host_ownership_authority": ownership_authority,
         "excluded_mac_owned": queue_plan.get("excluded_mac_owned", []),
         "excluded_mac_reserved": queue_plan.get("excluded_mac_reserved", []),
+        "excluded_families": queue_plan.get("excluded_families", []),
+        "retired_family_authority": queue_plan.get("retired_family_authority", {}),
         "current_supervisor": {
             "pid": supervisor_pid,
             "alive": bool(supervisor_status.get("alive")),
@@ -3078,7 +3239,8 @@ def r45_supervisor_command(*, python_executable: str | None = None) -> list[str]
         str(R42_READY_QUEUE_PATH),
         "--cross-host-ownership-manifest",
         str(R44_CROSS_HOST_OWNERSHIP_PATH),
-        "--admit-crashed-recoverable",
+        "--retired-families-path",
+        str(R54_RETIRED_FAMILIES_PATH),
     ]
 
 
@@ -3103,6 +3265,8 @@ def r45_supervisor_launch_authority(path: Path = R45_SUPERVISOR_LAUNCH_AUTHORITY
         "r44_effective_queue_path": display_path(R44_DELL_EFFECTIVE_READY_QUEUE_PATH),
         "r44_effective_queue_hash": hash_if_exists(R44_DELL_EFFECTIVE_READY_QUEUE_PATH),
         "effective_dell_queue": effective.get("dell_effective_ready_queue", []),
+        "excluded_families": effective_excluded_families(retired_families_path=R54_RETIRED_FAMILIES_PATH),
+        "retired_family_authority": retired_family_authority(R54_RETIRED_FAMILIES_PATH),
         "worker_launches": 0,
     }
     payload["authority_hash"] = state_hash({key: value for key, value in payload.items() if key != "authority_hash"})
@@ -3201,6 +3365,7 @@ def r45_queue_fallback_simulation() -> dict[str, Any]:
         ready_family_queue_manifest=R42_READY_QUEUE_PATH,
         cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
         admit_crashed_recoverable=True,
+        retired_families_path=R54_RETIRED_FAMILIES_PATH,
     )
     by_family["elastic_net"]["state"] = "CRASHED_BLOCKED"
     elastic_blocked = certified_queue_admission_plan(
@@ -3208,6 +3373,7 @@ def r45_queue_fallback_simulation() -> dict[str, Any]:
         ready_family_queue_manifest=R42_READY_QUEUE_PATH,
         cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
         admit_crashed_recoverable=True,
+        retired_families_path=R54_RETIRED_FAMILIES_PATH,
     )
     by_family["PatchTST"]["state"] = "V3_CERTIFICATION_REQUIRED"
     patchtst_unavailable = certified_queue_admission_plan(
@@ -3215,6 +3381,7 @@ def r45_queue_fallback_simulation() -> dict[str, Any]:
         ready_family_queue_manifest=R42_READY_QUEUE_PATH,
         cross_host_ownership_manifest=R44_CROSS_HOST_OWNERSHIP_PATH,
         admit_crashed_recoverable=True,
+        retired_families_path=R54_RETIRED_FAMILIES_PATH,
     )
     return {
         "rf_running_next": rf_running.get("first_eligible_family", ""),
@@ -3348,6 +3515,8 @@ def r45_windows_task_registration_payload(*, executed: bool, result: Mapping[str
         "r42_ready_queue_manifest": display_path(R42_READY_QUEUE_PATH),
         "r44_cross_host_ownership_manifest": display_path(R44_CROSS_HOST_OWNERSHIP_PATH),
         "duplicate_start_protection": "Supervisor acquire_lease refuses a second live daemon with LIVE_LEASE_OWNER.",
+        "excluded_families": effective_excluded_families(retired_families_path=R54_RETIRED_FAMILIES_PATH),
+        "retired_family_authority": retired_family_authority(R54_RETIRED_FAMILIES_PATH),
     }
 
 
@@ -3392,6 +3561,8 @@ def r46_autostart_authority_payload(*, mechanism: str = "WINDOWS_CURRENT_USER_ST
         "r44_cross_host_ownership_hash": ownership["manifest_hash"],
         "expected_supervisor_command_hash": sha256_text(" ".join(command)),
         "expected_supervisor_command": " ".join(command),
+        "excluded_families": effective_excluded_families(retired_families_path=R54_RETIRED_FAMILIES_PATH),
+        "retired_family_authority": retired_family_authority(R54_RETIRED_FAMILIES_PATH),
         "current_user": getpass.getuser(),
         "requires_admin": False,
         "windows_task_scheduler_historical_blocker": read_json(R45_WINDOWS_TASK_REGISTRATION_PATH).get("registration_result", {}).get("blocker", ""),
@@ -3676,6 +3847,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--family-queue", default="")
     parser.add_argument("--ready-family-queue-manifest", default=str(R42_READY_QUEUE_PATH))
     parser.add_argument("--cross-host-ownership-manifest", default=str(R44_CROSS_HOST_OWNERSHIP_PATH))
+    parser.add_argument("--exclude-family", action="append", default=[])
+    parser.add_argument("--retired-families-path", default=str(R54_RETIRED_FAMILIES_PATH))
     parser.add_argument("--admit-crashed-recoverable", action="store_true")
     return parser.parse_args()
 
@@ -3741,6 +3914,8 @@ def main() -> int:
             "refit_policy": args.refit_policy,
             "family_queue": args.family_queue,
             "ready_family_queue_manifest": args.ready_family_queue_manifest,
+            "excluded_families": ",".join(effective_excluded_families(args.exclude_family, retired_families_path=args.retired_families_path)),
+            "retired_families_path": args.retired_families_path,
             "admit_crashed_recoverable": args.admit_crashed_recoverable,
         },
     )

@@ -20,6 +20,8 @@ if (Test-Path -LiteralPath $LeasePath) {
         $commandLine.Contains("--daemon") -and
         $commandLine.Contains("--ready-family-queue-manifest") -and
         $commandLine.Contains("--cross-host-ownership-manifest") -and
+        $commandLine.Contains("--retired-families-path") -and
+        -not $commandLine.Contains("--admit-crashed-recoverable") -and
         -not $commandLine.Contains("--family-queue")
       )
       $hostOk = ([string]$lease.hostname) -eq $env:COMPUTERNAME
@@ -74,4 +76,5 @@ if (Test-Path -LiteralPath $LeasePath) {
   "C:\Users\Brandon\trading_system\docs\dream_system\components\DS-24_independent_five_minute_selector\stage_outputs\ds24_p8_r14_e3g_c2_20260824T000000Z\R42_ready_family_queue.json" `
   "--cross-host-ownership-manifest" `
   "C:\Users\Brandon\trading_system\docs\dream_system\components\DS-24_independent_five_minute_selector\stage_outputs\ds24_p8_r14_e3g_c2_20260824T000000Z\R44_cross_host_family_ownership.json" `
-  "--admit-crashed-recoverable"
+  "--retired-families-path" `
+  "C:\Users\Brandon\trading_system\docs\dream_system\components\DS-24_independent_five_minute_selector\stage_outputs\ds24_p8_r14_e3g_c2_20260824T000000Z\R54_retired_families.json"

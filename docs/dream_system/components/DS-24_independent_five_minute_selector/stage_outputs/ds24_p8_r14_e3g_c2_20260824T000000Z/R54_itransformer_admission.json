@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-21T18:47:53.4860000Z",
+  "family": "iTransformer",
+  "admitted": true,
+  "pid": 22980,
+  "launch_time_utc": "2026-09-21T18:25:28+00:00",
+  "launch_source": "supervisor_poll governed admission path during --once validation poll",
+  "command": "C:\\Users\\Brandon\\AppData\\Local\\Programs\\Python\\Python311\\python.exe scripts\\local\\ds24_v3_sequence_policy_worker.py --family iTransformer --resume --resume-generation 1 --threads 1 --cache-budget-gb 1 --prediction-batch-decisions 78 --evaluation-version v3 --metrics-root-name metrics_only_v3_r40_itransformer --refit-policy daily_session_v1",
+  "metrics_root": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/iTransformer/metrics_only_v3_r40_itransformer",
+  "resume_generation": 1,
+  "queue_state": [
+    "random_forest",
+    "Transformer",
+    "iTransformer",
+    "Momentum Transformer",
+    "Market Context Encoder"
+  ],
+  "excluded_families": [
+    "PatchTST"
+  ],
+  "resource_snapshot_at_prelaunch_poll": {
+    "available_ram_bytes": 9766739968,
+    "disk_free_bytes": 16052527104,
+    "system_commit_percent": 65.36,
+    "blocked_reasons": []
+  },
+  "forward_metrics_admission": {
+    "admitted": true,
+    "capability_decision": "ADMITTED_EXTENDED_PERFORMANCE_METRICS_READY",
+    "capability_path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R42_forward_metrics_capabilities/itransformer.forward_metrics_capability.json",
+    "contract_id": "DS24_EXTENDED_PERFORMANCE_METRICS_V1",
+    "contract_version": "V1"
+  },
+  "patchtst_absent_at_capture": true
+}
