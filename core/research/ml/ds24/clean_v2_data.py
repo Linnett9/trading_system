@@ -701,12 +701,20 @@ class CleanV2CompositeData:
         session_dates: Iterable[str],
         *,
         maximum_assets: int | None = None,
+        asset_ids: Iterable[str] | None = None,
     ) -> pd.DataFrame:
         dates = tuple(sorted({str(value) for value in session_dates}))
         if not dates:
             return pd.DataFrame()
         years = {int(value[:4]) for value in dates}
-        assets = sorted({row.asset_id for row in self.partitions if row.year in years})
+        available_assets = {
+            row.asset_id for row in self.partitions if row.year in years
+        }
+        assets = sorted(
+            available_assets
+            if asset_ids is None
+            else available_assets & {str(value) for value in asset_ids}
+        )
         if maximum_assets is not None:
             assets = assets[: max(1, int(maximum_assets))]
         selected_assets = set(assets)
@@ -738,6 +746,8 @@ class CleanV2CompositeData:
         panel["decision_timestamp"] = pd.to_datetime(
             panel["decision_timestamp"], utc=True
         )
+        for predictor in self.context_predictors:
+            panel[predictor] = np.nan
         for year, positions in panel.groupby(
             panel["decision_timestamp"].dt.year, sort=False
         ).groups.items():
@@ -767,9 +777,12 @@ class CleanV2CompositeData:
                 how="left",
                 validate="many_to_one",
             )
-            panel.loc[positions, list(self.context_predictors)] = mapped[
-                list(self.context_predictors)
-            ].to_numpy()
+            numeric_context = mapped[list(self.context_predictors)].apply(
+                pd.to_numeric, errors="coerce"
+            )
+            panel.loc[positions, list(self.context_predictors)] = (
+                numeric_context.to_numpy(dtype="float64")
+            )
 
         missing = sorted(set(self.predictors) - set(panel.columns))
         if missing:

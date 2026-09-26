@@ -107,8 +107,15 @@ def run(*, family: str, asset_id: str, year: int) -> dict[str, Any]:
     ]
     diagnostics = data.diagnose_feature_partition(partition, session_dates)
     # Exercise the same production method that failed, without assembling other
-    # assets, reading targets, fitting a model, or writing an artifact.
+    # assets, fitting a model, or writing an artifact.
     production = data._read_feature_partition(partition, session_dates)
+    assembled = data.assemble_sessions(session_dates, asset_ids=(asset_id,))
+    assembled_assets = sorted(set(assembled["canonical_symbol"].astype(str)))
+    if assembled.empty or assembled_assets != [asset_id]:
+        raise CleanV2DataError(
+            "Bounded production assembly did not preserve the requested asset: "
+            f"expected={[asset_id]}, actual={assembled_assets}"
+        )
     return {
         "classification": "DS24_CLEAN_V2_BOUNDED_READER_PREFLIGHT_PASS",
         "run_id": load_contract("tournament_contract.json")["run_id"],
@@ -121,6 +128,8 @@ def run(*, family: str, asset_id: str, year: int) -> dict[str, Any]:
         "training_session_dates": package.training_session_dates,
         "score_session_dates": package.score_session_dates,
         "production_reader_rows": int(len(production)),
+        "production_assembly_rows": int(len(assembled)),
+        "production_assembly_assets": assembled_assets,
         "clean_source_hash": clean_source_hash(),
         "static_authority_bundle_sha256": authority_bundle()["bundle_sha256"],
         "model_fit_performed": False,

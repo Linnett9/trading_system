@@ -152,6 +152,8 @@ def test_actual_first_aapl_2016_production_reader_path_is_bounded_and_passes() -
     assert report["data_written"] is False
     assert report["refit_ordinal"] == 0
     assert report["refit_timestamp"] == "2016-02-02T14:35:00+00:00"
+    assert report["production_assembly_rows"] == 1949
+    assert report["production_assembly_assets"] == ["AAPL"]
     assert diagnostics["base_rows_requested"] == 4226
     assert diagnostics["legacy_sidecar_rows_selected"] == 4225
     assert diagnostics["legacy_unmatched_base_key_count"] == 1
