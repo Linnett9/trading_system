@@ -1,57 +1,84 @@
 # DS24 CLEAN V2 Manual Terminal Commands
 
-Classification before these commands:
+Current classification:
 
-`DS24_CLEAN_V2_IMPLEMENTATION_READY_MANUAL_DATA_BUILD_REQUIRED`
+`DS24_CLEAN_V2_CONFIGURATION_RECONCILED_MANUAL_CERTIFICATION_AND_LAUNCH_REQUIRED`
 
-Run A through J in the same Windows PowerShell session on the Dell. Commands A and C are resumable and safe to repeat against the already-complete manifests. Command E deliberately performs the full materialized-authority scan and may run for a long time. Do not run F or G unless E exits successfully.
+The V2 feature sidecar and target extension are complete. Do not run either builder with `--build`; do not edit or republish completed partitions. Full materialized certification, preflight admission, launch, and monitoring remain manual terminal actions.
 
 Frozen identities:
 
-- source implementation commit: `dfa9aec45f0dc3f97d02c1ad7dbdfc7563e7779c`
-- clean source hash: `fa3b8fe8f6769d07b578d292cc583f28331a65813f8f1f8d1d1586aeae841619`
-- static authority bundle: `6fa25f60c3685cbd278bfd505fe9623b7079eefc6fad538216d82e64b4f2e87d`
+- source implementation commit: `a1dbbe97fd3f2c4200559d6a552cfee7b9075991`
+- clean source hash: `c1be76c4630eefd5496e75a758a182d28be343c338b919126afdca2974ab1edf`
+- static authority bundle: `4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc`
+- model-registry file / logical hash: `e57926407bb34f253c49d1c5a8541f1f233b4d1770e27bdab1f406b8e2045742` / `0421b56cc534a5cd86f15e8a208929cf5ff2205a68069bcca71fa49e626f49b5`
+- tournament-contract file / logical hash: `15cf8aec7b1ef81e6682c0c82886255f0e80ebe1acdb2abf6d618ae4b1fcd5bb` / `c8307036d89fed26d6081838414d6a5e6a29d7101bfa8ef4080d7b75a8f6ec53`
 - feature authority: `ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d`
 - target authority: `41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1`
 - refit policy: `REFIT_EVERY_5_TRADING_SESSIONS_V1`
 
-## A. Resume/build V2 feature sidecar
+## Reconciled XENDCG authority
 
-```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
-python .\scripts\local\ds24_clean_v2_build_sidecar.py --build --workers 2
-if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 feature-sidecar build failed.' }
-```
+The prior `24 / 0.08 / 7 / 2` entry was traced to the generic daily stock-level `fixed_rank_xendcg_configuration`; it was not the recovered DS24 Mac producer and is rejected for this tournament.
 
-## B. Monitor sidecar progress
+The sole carry-forward `lightgbm_rank_xendcg` candidate now ports frozen producer function `core.research.ml.ds24.mac_aux_queue_r44f2._fit_lightgbm`, source SHA-256 `5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d`. Its model parameters are `n_estimators=25`, `learning_rate=0.05`, `num_leaves=15`, `min_child_samples=10`, `random_state=1729`, and four LightGBM threads.
+
+The preserved producer semantics are:
+
+- stable ordering by decision timestamp and asset;
+- a row-level `tail(24000)` cap, which may leave the oldest query group partial;
+- `+/-inf -> NaN -> 0.0` preprocessing with no fitted imputer;
+- one query group per decision timestamp;
+- within-timestamp `rank(method="first", pct=True)` labels transformed by `floor(rank * 4.999)` into relevance values 0 through 4.
+
+The CLEAN V2 qualifier scores this model on every registered five-minute timestamp in the frozen qualifier years. That wrapper creates new clean evidence; it does not reuse the producer's old once-per-session OOF results. No second XENDCG candidate exists.
+
+## Concrete tournament budget
+
+The registered SPY decision spine contains 2,695 sessions and 177,072 timestamps from `2016-01-04T14:35:00Z` through `2026-09-23T19:00:00Z`. The qualifier dates remain exactly 2017, 2019, 2020, 2022, and 2024: five complete calendar-year surfaces totalling 1,259 sessions, 82,669 timestamps, and 255 refit packages. This is not a smoke test.
+
+`none` means no configured sample cap. All fitted candidates use `REFIT_EVERY_5_TRADING_SESSIONS_V1`; controls use the same five-session scoring packages but perform no fit.
+
+| Candidate | Host | Lane | Lookback sessions | Scoring sessions | Scoring timestamps | Expected fits | Sample cap | Refit schedule |
+|---|---|---|---:|---:|---:|---:|---|---|
+| random_forest | dell | FULL_CLEAN | 20 | 2,675 | 175,752 | 535 | none | every 5 sessions |
+| transformer | dell | FULL_CLEAN | 20 | 2,675 | 175,752 | 535 | 24,000 training examples | every 5 sessions |
+| huber | dell | FULL_CLEAN | 20 | 2,675 | 175,752 | 535 | none | every 5 sessions |
+| ridge_C5 | dell | FULL_CLEAN | 20 | 2,675 | 175,752 | 535 | none | every 5 sessions |
+| gradient_boosting_C0 | dell | FULL_CLEAN | 20 | 2,675 | 175,752 | 535 | none | every 5 sessions |
+| elastic_net_C5 | dell | SHORT_REQUALIFICATION | 20 | 1,259 | 82,669 | 255 | none | every 5 sessions; restart by qualifier year |
+| elastic_net_C6 | dell | SHORT_REQUALIFICATION | 20 | 1,259 | 82,669 | 255 | none | every 5 sessions; restart by qualifier year |
+| gradient_boosting_C0_W20 | dell | SHORT_REQUALIFICATION | 20 | 1,259 | 82,669 | 255 | none | every 5 sessions; restart by qualifier year |
+| gradient_boosting_C0_W40 | dell | SHORT_REQUALIFICATION | 40 | 1,259 | 82,669 | 255 | none | every 5 sessions; restart by qualifier year |
+| gradient_boosting_C0_W80 | dell | SHORT_REQUALIFICATION | 80 | 1,259 | 82,669 | 255 | none | every 5 sessions; restart by qualifier year |
+| lightgbm_rank_xendcg | mac | SHORT_REQUALIFICATION | 20 | 1,259 | 82,669 | 255 | 24,000 training rows | every 5 sessions; restart by qualifier year |
+| momentum_transformer | mac | UNSCORED_DISCOVERY | 20 | 1,259 | 82,669 | 255 | 24,000 training examples | every 5 sessions; restart by qualifier year |
+| market_context_encoder | mac | UNSCORED_DISCOVERY | 20 | 1,259 | 82,669 | 255 | 24,000 training examples | every 5 sessions; restart by qualifier year |
+| temporal_fusion_transformer | mac | UNSCORED_DISCOVERY | 20 | 1,259 | 82,669 | 255 | 24,000 training examples | every 5 sessions; restart by qualifier year |
+| momentum | dell | CONTROLS | 20 | 2,675 | 175,752 | 0 | not applicable | five-session score packages; no fit |
+| equal_weight_no_model | dell | CONTROLS | 20 | 2,675 | 175,752 | 0 | not applicable | five-session score packages; no fit |
+
+`iTransformer` remains retired source-only: no registry family, lane, host ownership, command, or automatic continuation.
+
+## Gradient Boosting C0 / C0_W20 reuse decision
+
+Reuse is not allowed. The two entries share the data authority, lookback, estimator parameters, preprocessing, and seed, but the full schedule continues its five-session phase across calendar-year boundaries while the qualifier schedule restarts inside each frozen qualifier year. Only 51 of 255 qualifier refit boundaries align; 1,008 of 1,259 qualifier sessions therefore use a different fit boundary and different training rows. Family identity and policy hash also make the evaluation keys different. Both executions are required.
+
+## 1. Optional one-shot completion check
+
+These commands are status-only. Do not add `--build`.
 
 ```powershell
 Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
 python .\scripts\local\ds24_clean_v2_build_sidecar.py --status
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 feature-sidecar status failed.' }
-```
-
-The terminal state must report `5,654 / 5,654`, `manifest_complete: true`, and logical SHA-256 `ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d`.
-
-## C. Resume/build target delta
-
-```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
-python .\scripts\local\ds24_clean_v2_build_target_delta.py --build --workers 2
-if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 target-delta build failed.' }
-```
-
-## D. Monitor target progress
-
-```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
 python .\scripts\local\ds24_clean_v2_build_target_delta.py --status
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 target-delta status failed.' }
 ```
 
-The terminal state must report `514 / 514`, `manifest_complete: true`, and logical SHA-256 `41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1`.
+The reports must remain `5,654 / 5,654` and `514 / 514`, with logical hashes equal to the frozen feature and target authorities above.
 
-## E. Run final causality/data certification
+## 2. Run full causality/data certification
 
 ```powershell
 Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
@@ -61,7 +88,9 @@ if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 full causality/data certification fail
 
 This must end with `passed: true`, `certification_scope: FULL_MATERIALIZED_AUTHORITY`, and `101 / 101 FEATURES CAUSAL UNDER FUTURE-BAR PERTURBATION`.
 
-## F. Inspect clean tournament preflight and publish manual admission
+## 3. Publish Dell manual admission
+
+Do not proceed unless step 2 passed.
 
 ```powershell
 Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
@@ -69,9 +98,9 @@ python .\scripts\local\ds24_clean_v2_supervisor.py --host dell --preflight --wri
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Dell preflight failed. Do not launch.' }
 ```
 
-Proceed only when the output classification is `DS24_CLEAN_V2_READY_FOR_MANUAL_TOURNAMENT_LAUNCH`, `ready` is `true`, and `blocking_reasons` is empty.
+Require classification `DS24_CLEAN_V2_READY_FOR_MANUAL_TOURNAMENT_LAUNCH`, `ready: true`, and no blocking reasons.
 
-## G. Launch Dell clean supervisor
+## 4. Launch Dell
 
 ```powershell
 Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
@@ -79,43 +108,33 @@ python .\scripts\local\ds24_clean_v2_supervisor.py --host dell --launch
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Dell supervisor launch failed.' }
 ```
 
-## H. Monitor Dell clean tournament
+One-shot status:
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
 python .\scripts\local\ds24_clean_v2_monitor.py --host dell
-if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Dell monitor failed.' }
 ```
 
-## I. Stop Dell clean tournament safely
+Safe stop and resume:
 
 ```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
 python .\scripts\local\ds24_clean_v2_supervisor.py --host dell --stop
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Dell safe-stop request failed.' }
 python .\scripts\local\ds24_clean_v2_monitor.py --host dell
-```
-
-Wait until H reports `DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE` before using J.
-
-## J. Resume Dell clean tournament
-
-```powershell
-Set-Location -LiteralPath 'C:\Users\Brandon\trading_system'
+# Resume only after the monitor reports DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE.
 python .\scripts\local\ds24_clean_v2_supervisor.py --host dell --resume
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Dell supervisor resume failed.' }
 ```
 
-## K. Mac preflight
+## 5. Mac preflight and launch
 
-Run this from Windows PowerShell after the repository, completed V2 data authorities, and passing certificate are present at the Mac repository path.
+Run after this commit, the completed V2 data authorities, and the passing certificate are present at the Mac repository path.
 
 ```powershell
 $MacHost = Read-Host 'Mac SSH host (for example user@hostname)'
 $MacRepo = Read-Host 'Absolute Mac trading_system path'
-$ExpectedSourceCommit = 'dfa9aec45f0dc3f97d02c1ad7dbdfc7563e7779c'
-$ExpectedSourceHash = 'fa3b8fe8f6769d07b578d292cc583f28331a65813f8f1f8d1d1586aeae841619'
-$ExpectedBundleHash = '6fa25f60c3685cbd278bfd505fe9623b7079eefc6fad538216d82e64b4f2e87d'
+$ExpectedSourceCommit = 'a1dbbe97fd3f2c4200559d6a552cfee7b9075991'
+$ExpectedSourceHash = 'c1be76c4630eefd5496e75a758a182d28be343c338b919126afdca2974ab1edf'
+$ExpectedBundleHash = '4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc'
 $ExpectedFeatureHash = 'ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d'
 $ExpectedTargetHash = '41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1'
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_mac_preflight.py --expected-source-commit '$ExpectedSourceCommit' --expected-source-hash '$ExpectedSourceHash' --expected-bundle-hash '$ExpectedBundleHash' --expected-feature-hash '$ExpectedFeatureHash' --expected-target-authority-hash '$ExpectedTargetHash'"
@@ -124,33 +143,24 @@ if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Mac preflight failed. Do not launch th
 
 Proceed only when the Mac output has `ready: true`, no blocking reasons, and a `manual_admission_path`.
 
-## L. Launch Mac clean tournament
-
 ```powershell
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_supervisor.py --host mac --launch"
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Mac supervisor launch failed.' }
 ```
 
-## M. Monitor Mac clean tournament
+One-shot status:
 
 ```powershell
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_monitor.py --host mac"
-if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Mac monitor failed.' }
 ```
 
-## N. Mac safe stop/resume
-
-Safe stop:
+Safe stop and resume:
 
 ```powershell
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_supervisor.py --host mac --stop"
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Mac safe-stop request failed.' }
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_monitor.py --host mac"
-```
-
-Wait until M reports `DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE`, then resume:
-
-```powershell
+# Resume only after the monitor reports DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE.
 ssh $MacHost "cd -- '$MacRepo' && python3 scripts/local/ds24_clean_v2_supervisor.py --host mac --resume"
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 Mac supervisor resume failed.' }
 ```
