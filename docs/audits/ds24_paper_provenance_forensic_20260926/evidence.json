@@ -1,0 +1,1234 @@
+{
+  "audit_id": "DS24_PAPER_PROVENANCE_FORENSIC_20260926",
+  "feature_authority": {
+    "feature_implementation": {
+      "bytes": 14647,
+      "path": "core/research/ml/ds24/master_5m_validation_stats.py",
+      "sha256": "a29c1dfbf6e06425b35cd141a0cd164324493d92b9eaca4e68f8228066685e10"
+    },
+    "feature_order_sha256_expected": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+    "feature_order_sha256_recomputed": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+    "leaked_predictors_in_manifest": [
+      "overnight_gap",
+      "previous_session_return",
+      "two_session_return"
+    ],
+    "manifest_hash_recomputed": "d21722c41f0e54edc02519184a10596a2847091f0c04e80e4a0503251ffb60ca",
+    "manifest_hash_recorded": "d21722c41f0e54edc02519184a10596a2847091f0c04e80e4a0503251ffb60ca",
+    "persisted_example": {
+      "all_values_match_future_close_calculation": true,
+      "decision_timestamp": "2024-01-02T14:35:00+00:00",
+      "feature_file": {
+        "bytes": 15862555,
+        "path": "data/processed/ml_features/five_minute/version=canonical_5m_feature_authority_full_v1/run=ds24_p8_r2_local_20260821T000000Z/stock/asset=AAPL/year=2024/features.parquet",
+        "sha256": "82405caa37ba964bd573879e0f506932f44992dd182b7bf17a7c15db4d49ae77"
+      },
+      "future_last_close": 183.23,
+      "future_source_timestamp": "2024-01-02T23:55:00+00:00",
+      "persisted_values": {
+        "overnight_gap": 0.03356437385082245,
+        "previous_session_return": -0.03247439116239548,
+        "two_session_return": 0.013098292052745819
+      },
+      "raw_bar_file": {
+        "bytes": 2996195,
+        "path": "data/processed/alpaca/symbol_bars/sip/5m/symbol=AAPL/year=2024/bars.parquet",
+        "sha256": "1e6ba03390fd6c5dab9dae4a330213c9c994a4113922b26747ca8d61fe68ae11"
+      },
+      "values_recomputed_with_future_close": {
+        "overnight_gap": 0.033564372646400775,
+        "previous_session_return": -0.03247439011511255,
+        "two_session_return": 0.0130982917644491
+      }
+    },
+    "predictor_count": 101,
+    "predictor_manifest": {
+      "bytes": 3004,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r3_20260822T000000Z/07_predictor_manifest.json",
+      "sha256": "b225048d0e2c593b66c4eedb696f5e47af16057456c16afd0acacb825fc2796a"
+    },
+    "synthetic_future_perturbation": {
+      "all_leaked_predictors_change": true,
+      "causal_control_ret_5m": {
+        "after": 5.5660692418912916e-05,
+        "before": 5.5660692418912916e-05,
+        "unchanged": true
+      },
+      "decision_timestamp": "2024-01-02T14:35:00+00:00",
+      "mutated_future_timestamp": "2024-01-02T23:55:00+00:00",
+      "predictors": {
+        "overnight_gap": {
+          "after": -0.33333333333333337,
+          "before": -0.00990099009900991,
+          "changed_when_only_future_final_bar_changed": true
+        },
+        "previous_session_return": {
+          "after": 0.5,
+          "before": 0.010000000000000009,
+          "changed_when_only_future_final_bar_changed": true
+        },
+        "two_session_return": {
+          "after": -0.3308379888268157,
+          "before": -0.0061950329111123414,
+          "changed_when_only_future_final_bar_changed": true
+        }
+      }
+    }
+  },
+  "generated_at_utc": "2026-09-26T15:21:21.808960+00:00",
+  "key_authorities": {
+    "certification_architecture": {
+      "bytes": 2109,
+      "path": "docs/architecture/certification_and_promotion.md",
+      "sha256": "f7f42020a2f117909901c48e394ae3536204cb19a5e1968dfa240b0f5e76f9c2"
+    },
+    "cost_aware_candidate_registry": {
+      "bytes": 4906,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/cost_aware_policy_experiment/cost_aware_policy_terminal_r4_20260917T141014Z/candidate_registry.json",
+      "sha256": "9ca398da91f3a175992b2e8bf0ede55bde110b0e2af2740765f46787215ebdf1"
+    },
+    "cost_aware_programme_state": {
+      "bytes": 9388,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/cost_aware_policy_experiment/cost_aware_policy_terminal_r4_20260917T141014Z/current_programme_state.json",
+      "sha256": "1200bd2ee1439917c181ae6a9894afb67cbcadc34f51a4824a540ff81be326a0"
+    },
+    "elastic_adapter_source": {
+      "bytes": 4251,
+      "path": "scripts/local/ds24_elastic_net_adapter.py",
+      "sha256": "c7efc68b7045df64e1040782fe7bf675ba21b4da85dd0a872af53a588eed714c"
+    },
+    "elastic_estimator_source": {
+      "bytes": 5806,
+      "path": "core/research/ml/stock_level_benchmark_models.py",
+      "sha256": "c0122d8c62ec10448d6e1aca1dc6fff826245928ce4ce58ebb6305737690c0d6"
+    },
+    "extended_model_data_authority": {
+      "bytes": 1039,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/92_r7_r1_extended_model_data_authority.json",
+      "sha256": "6597b5f379cc3f5213f06eadc9df9cdc174f139f355fcb0429562f63a96b77f8"
+    },
+    "extended_model_data_partition_manifest": {
+      "bytes": 2868991,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/91_r7_r1_extended_model_data_partition_manifest.csv",
+      "sha256": "661460bb297f45278a08b05afbc5ef888016445de74a16e091a8a9230488c7bc"
+    },
+    "feature_contract": {
+      "bytes": 146008,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/r7_master_feature_contract.json",
+      "sha256": "65172f51140f7c178320e10ce6cf22209a0dc8a1059db448fac89de33e2578cc"
+    },
+    "huber_estimator_source": {
+      "bytes": 14748,
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r10_zero_engineering_disposition.py",
+      "sha256": "658806c1f788e376e873f639f2cf2c751cb5662588be875ca06f943437303d2c"
+    },
+    "huber_r36_containment": {
+      "bytes": 25128,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R36_04_huber_fatal_and_namespace_audit.json",
+      "sha256": "a57c1fd4e3d1c6c7750ad2696448e2764325b2fd6de4effbab46ed9da049dd4e"
+    },
+    "huber_r37_lineage": {
+      "bytes": 8113,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R37_03_namespace_lineage.json",
+      "sha256": "849953e0c062643cad2534f938237d9b5941891a9a200e14b6691bf7a4ea6caf"
+    },
+    "metrics_evaluator_source": {
+      "bytes": 156002,
+      "path": "core/research/ml/ds24_metrics_only_evaluator.py",
+      "sha256": "4c87c896b05e2caad38a5cd6126d03ec2fdf06e8d0d691fa6b54e79285bf9764"
+    },
+    "paper_architecture": {
+      "bytes": 1979,
+      "path": "docs/architecture/paper_trading_architecture.md",
+      "sha256": "699d8fd97ccb5ef1aee9e4acb1d9637e2b1401e2dbd70af1865119c2feac826d"
+    },
+    "pit_validation": {
+      "bytes": 1637,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/r6_pit_validation.json",
+      "sha256": "2b95e9063f6bb89875fd0966b414052f419fa094135613be68240ed6d8635b0c"
+    },
+    "point_in_time_architecture": {
+      "bytes": 2932,
+      "path": "docs/architecture/point_in_time_and_lineage.md",
+      "sha256": "12343d93eb6e782aa4745b40f24e1675c34c04db54d4a16045b0c8a1559628c0"
+    },
+    "policy_authority": {
+      "bytes": 3554,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R7_R14_01_policy_authority.json",
+      "sha256": "8a5cd1a5ff8e041b93171ff8ad3933860d11b6679812f6b2215b4715ec0f09d7"
+    },
+    "policy_worker_source": {
+      "bytes": 76231,
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py",
+      "sha256": "ac04613043660b894d1780369cf15b6eaa4db48462801239fecb90d6be5d91bb"
+    },
+    "target_builder_source": {
+      "bytes": 73941,
+      "path": "core/research/ml/five_minute_target_dataset.py",
+      "sha256": "85c131ea8484da683d9d9274e54f1f3794704b9d4fe45811d6d90bc370a98757"
+    }
+  },
+  "models": {
+    "elastic_net": {
+      "complete_sleeve_ledger_summary_comparison": {
+        "all_match": false,
+        "fields": {
+          "rank_ic.mean_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.4632185165883415,
+            "saved": 0.4632185165883415
+          },
+          "rank_ic.median_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.46563026817639613,
+            "saved": 0.46563026817639613
+          },
+          "rank_ic.newey_west.lower": {
+            "matches": true,
+            "recomputed": 0.4581371813856948,
+            "saved": 0.4581371813856948
+          },
+          "rank_ic.newey_west.upper": {
+            "matches": true,
+            "recomputed": 0.4682998517909882,
+            "saved": 0.4682998517909882
+          },
+          "rank_ic.positive_fraction": {
+            "matches": true,
+            "recomputed": 0.9953134153485648,
+            "saved": 0.9953134153485648
+          },
+          "rank_ic.valid_timestamps": {
+            "matches": true,
+            "recomputed": 20484,
+            "saved": 20484
+          },
+          "resolved_performance_rows": {
+            "matches": true,
+            "recomputed": 24216,
+            "saved": 24216
+          },
+          "returns.annualized_return": {
+            "matches": false,
+            "recomputed": 1.4970467616435188,
+            "saved": 1.4983844449054737
+          },
+          "returns.annualized_volatility": {
+            "matches": false,
+            "recomputed": 0.18322834069864738,
+            "saved": 0.1836165502039565
+          },
+          "returns.cumulative_net_return": {
+            "matches": false,
+            "recomputed": 2.9642692006173634,
+            "saved": 2.9457300801370416
+          },
+          "returns.daily_return_rows": {
+            "matches": false,
+            "recomputed": 235,
+            "saved": 234
+          },
+          "returns.daily_sharpe": {
+            "matches": false,
+            "recomputed": 8.170388685152625,
+            "saved": 8.160399720183758
+          },
+          "returns.maximum_drawdown": {
+            "matches": true,
+            "recomputed": -0.0009051097625262239,
+            "saved": -0.0009051097625262239
+          },
+          "returns.mean_turnover": {
+            "matches": true,
+            "recomputed": 0.44120416253716555,
+            "saved": 0.44120416253716555
+          },
+          "returns.total_estimated_costs": {
+            "matches": true,
+            "recomputed": 0.0,
+            "saved": 0.0
+          }
+        }
+      },
+      "family": "elastic_net",
+      "log_verification": {
+        "daily_portfolio_returns_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 102953,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/daily_portfolio_returns_v3_manifest.json",
+            "sha256": "74ad7dbf7d9771ef2731f2fd86505ce68231050c73f1456f97f771273bbf8393"
+          },
+          "part_count": 234,
+          "part_record_digest": "a53594ed980781b05f9e399a5d37a78fcb6b028c7fa8c820319c58c3d8eeeb66",
+          "row_count": 234
+        },
+        "rank_ic_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 132814,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/rank_ic_v3_manifest.json",
+            "sha256": "8596a2437138c616b50cfa48f8a028d379b6e88e6c50122db0e86e8a39b14f3d"
+          },
+          "part_count": 312,
+          "part_record_digest": "dd0371f00243e5e9512679d818f936c8f884a9795c6077d07392893618453b4e",
+          "row_count": 24216
+        },
+        "refit_events_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 117528,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/refit_events_v3_manifest.json",
+            "sha256": "9a4e4e0cd689fbb08f0ce956abc55b38ceceb1761ed25bf74f875d188080f736"
+          },
+          "part_count": 312,
+          "part_record_digest": "1be5139e35d0b18e4670490784577505b49c6ef36920234d3c511f8cb1b08359",
+          "row_count": 312
+        },
+        "sleeve_maturity_ledger_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 137509,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/sleeve_maturity_ledger_v3_manifest.json",
+            "sha256": "ca4b7c79cd37f38ee2d48a607a2b9ff752226bad3d053291e3d97b15646eeff0"
+          },
+          "part_count": 312,
+          "part_record_digest": "bbf488fd13b865a54aacb61936690c27181c78778d8dd8bd0d70639bfff13321",
+          "row_count": 24216
+        },
+        "transaction_costs_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 135943,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/transaction_costs_v3_manifest.json",
+            "sha256": "c50d1fdc502e59c2b9040f853556dee28842241fafdad1a1da28e35464b5eb64"
+          },
+          "part_count": 312,
+          "part_record_digest": "43f55e2dc49621b5b8d61fc2bff44dd158b5d8b2ae1fa972fc0cf0719d3f9f96",
+          "row_count": 24216
+        }
+      },
+      "model_artifacts": {
+        "all_referenced_model_hashes_match": true,
+        "checked_models": 312,
+        "expected_unique_models": 312,
+        "failures": []
+      },
+      "namespace": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net",
+      "namespace_verification": {
+        "daily_duplicate_session_dates": 0,
+        "daily_recomputed_from_sleeves": {
+          "field_comparison": {
+            "gross_daily_return": {
+              "max_abs_difference": 6.938893903907228e-18,
+              "mismatched_rows": 1
+            },
+            "matured_sleeve_decisions": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            },
+            "max_simultaneous_capital_fraction": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            },
+            "mean_turnover": {
+              "max_abs_difference": 2.220446049250313e-16,
+              "mismatched_rows": 1
+            },
+            "net_daily_return": {
+              "max_abs_difference": 6.938893903907228e-18,
+              "mismatched_rows": 1
+            },
+            "transaction_cost_drag": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            }
+          },
+          "missing_or_extra_rows": [
+            {
+              "ledger_matured_sleeve_decisions": 6,
+              "ledger_net_daily_return": 0.00469852729502412,
+              "presence": "right_only",
+              "saved_net_daily_return": null,
+              "session_date": "2026-06-30"
+            }
+          ],
+          "row_count_matches": false
+        },
+        "locked_holdout_score_rows": 24216,
+        "nonzero_transaction_cost_rows": 0,
+        "persisted_training_cutoff_equal_first_score_count": 312,
+        "persisted_training_cutoff_strictly_before_first_score_count": 0,
+        "rank_ic_duplicate_decision_timestamps": 0,
+        "refit_count": 312,
+        "refit_duplicate_keys": 0,
+        "reported_chronology_violation_count_sum": 0,
+        "reported_duplicate_count_sum": 0,
+        "simultaneous_capital_fraction_max": 1.0,
+        "sleeve_capital_fraction_values": [
+          0.08333333333333333
+        ],
+        "sleeve_count_values": [
+          12
+        ],
+        "sleeve_duplicate_decision_timestamps": 0,
+        "target_contract_values": [
+          "forward_return_60m__decision_5m"
+        ],
+        "transaction_cost_bps_values": [
+          0.0
+        ]
+      },
+      "recomputed_summary_from_complete_sleeve_ledger": {
+        "rank_ic": {
+          "daily_ic_rows": 312,
+          "daily_mean_spearman_rank_ic": 0.46329484664624954,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.4581371813856948,
+            "mean": 0.4632185165883415,
+            "observations": 20484,
+            "standard_error": 0.002592517960534033,
+            "upper": 0.4682998517909882
+          },
+          "mean_spearman_rank_ic": 0.4632185165883415,
+          "median_spearman_rank_ic": 0.46563026817639613,
+          "positive_fraction": 0.9953134153485648,
+          "valid_timestamps": 20484
+        },
+        "resolved_performance_rows": 24216,
+        "returns": {
+          "annualized_return_from_daily_returns": 1.4970467616435188,
+          "annualized_volatility_from_daily_returns": 0.18322834069864738,
+          "cumulative_gross_return": 2.9642692006173665,
+          "cumulative_net_return": 2.9642692006173634,
+          "daily_return_rows": 235,
+          "daily_sharpe": 8.170388685152625,
+          "last_daily_net_return": 0.00469852729502412,
+          "maximum_drawdown": -0.0009051097625262239,
+          "mean_turnover": 0.44120416253716555,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9744680851063829
+        }
+      },
+      "recomputed_summary_from_published_daily_log": {
+        "rank_ic": {
+          "daily_ic_rows": 312,
+          "daily_mean_spearman_rank_ic": 0.46329484664624954,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.4581371813856948,
+            "mean": 0.4632185165883415,
+            "observations": 20484,
+            "standard_error": 0.002592517960534033,
+            "upper": 0.4682998517909882
+          },
+          "mean_spearman_rank_ic": 0.4632185165883415,
+          "median_spearman_rank_ic": 0.46563026817639613,
+          "positive_fraction": 0.9953134153485648,
+          "valid_timestamps": 20484
+        },
+        "resolved_performance_rows": 24216,
+        "returns": {
+          "annualized_return_from_daily_returns": 1.4983844449054737,
+          "annualized_volatility_from_daily_returns": 0.1836165502039565,
+          "cumulative_gross_return": 2.9457300801370416,
+          "cumulative_net_return": 2.9457300801370416,
+          "daily_return_rows": 234,
+          "daily_sharpe": 8.160399720183758,
+          "last_daily_net_return": 0.007551024756771216,
+          "maximum_drawdown": -0.0009051097625262239,
+          "mean_turnover": 0.44120416253716555,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9743589743589743
+        }
+      },
+      "saved_status": "PROVISIONAL",
+      "saved_summary": {
+        "coverage": {
+          "eligible_resolved_fraction": 0.7491970693471443,
+          "pending_score_rows": 0,
+          "terminal_censored_rows": 12
+        },
+        "created_at_utc": "2026-09-12T04:10:41.651605+00:00",
+        "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "evaluation_contract_version": "V3",
+        "first_resolved_decision_timestamp": "2025-04-02T13:35:00+00:00",
+        "last_resolved_decision_timestamp": "2026-06-30T19:00:00+00:00",
+        "rank_ic": {
+          "daily_ic_rows": 312,
+          "daily_mean_spearman_rank_ic": 0.46329484664624954,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.4581371813856948,
+            "mean": 0.4632185165883415,
+            "observations": 20484,
+            "standard_error": 0.0025925179605340333,
+            "upper": 0.4682998517909882
+          },
+          "inference_method": "newey_west_hac_lag_12_for_overlapping_60m_targets",
+          "mean_spearman_rank_ic": 0.4632185165883415,
+          "median_spearman_rank_ic": 0.46563026817639613,
+          "positive_fraction": 0.9953134153485648,
+          "valid_timestamps": 20484
+        },
+        "resolved_performance_rows": 24216,
+        "returns": {
+          "annualized_return_from_daily_returns": 1.4983844449054737,
+          "annualized_volatility_from_daily_returns": 0.1836165502039565,
+          "cumulative_gross_return": 2.9457300801370416,
+          "cumulative_net_return": 2.9457300801370416,
+          "daily_return_rows": 234,
+          "daily_sharpe": 8.160399720183758,
+          "last_daily_net_return": 0.007551024756771216,
+          "maximum_drawdown": -0.0009051097625262239,
+          "mean_turnover": 0.44120416253716555,
+          "portfolio_contract": "twelve_staggered_equal_capital_sleeves",
+          "raw_overlapping_forward_returns_annualized": false,
+          "simultaneous_capital_limit": 1.0,
+          "sleeve_count": 12,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9743589743589743
+        },
+        "status": "PROVISIONAL"
+      },
+      "saved_summary_comparison": {
+        "all_match": true,
+        "fields": {
+          "rank_ic.mean_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.4632185165883415,
+            "saved": 0.4632185165883415
+          },
+          "rank_ic.median_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.46563026817639613,
+            "saved": 0.46563026817639613
+          },
+          "rank_ic.newey_west.lower": {
+            "matches": true,
+            "recomputed": 0.4581371813856948,
+            "saved": 0.4581371813856948
+          },
+          "rank_ic.newey_west.upper": {
+            "matches": true,
+            "recomputed": 0.4682998517909882,
+            "saved": 0.4682998517909882
+          },
+          "rank_ic.positive_fraction": {
+            "matches": true,
+            "recomputed": 0.9953134153485648,
+            "saved": 0.9953134153485648
+          },
+          "rank_ic.valid_timestamps": {
+            "matches": true,
+            "recomputed": 20484,
+            "saved": 20484
+          },
+          "resolved_performance_rows": {
+            "matches": true,
+            "recomputed": 24216,
+            "saved": 24216
+          },
+          "returns.annualized_return": {
+            "matches": true,
+            "recomputed": 1.4983844449054737,
+            "saved": 1.4983844449054737
+          },
+          "returns.annualized_volatility": {
+            "matches": true,
+            "recomputed": 0.1836165502039565,
+            "saved": 0.1836165502039565
+          },
+          "returns.cumulative_net_return": {
+            "matches": true,
+            "recomputed": 2.9457300801370416,
+            "saved": 2.9457300801370416
+          },
+          "returns.daily_return_rows": {
+            "matches": true,
+            "recomputed": 234,
+            "saved": 234
+          },
+          "returns.daily_sharpe": {
+            "matches": true,
+            "recomputed": 8.160399720183758,
+            "saved": 8.160399720183758
+          },
+          "returns.maximum_drawdown": {
+            "matches": true,
+            "recomputed": -0.0009051097625262239,
+            "saved": -0.0009051097625262239
+          },
+          "returns.mean_turnover": {
+            "matches": true,
+            "recomputed": 0.44120416253716555,
+            "saved": 0.44120416253716555
+          },
+          "returns.total_estimated_costs": {
+            "matches": true,
+            "recomputed": 0.0,
+            "saved": 0.0
+          }
+        }
+      },
+      "summary": {
+        "bytes": 1985,
+        "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/elastic_net/metrics_only_v3_r40_elastic_net/resolved_performance_summary_v3.json",
+        "sha256": "b31417b9b6165143cf6c5084f10d7b5a4e62fcf2922af47b95603cf060b7128d"
+      }
+    },
+    "huber": {
+      "complete_sleeve_ledger_summary_comparison": {
+        "all_match": false,
+        "fields": {
+          "rank_ic.mean_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.5023150228928017,
+            "saved": 0.5023150228928017
+          },
+          "rank_ic.median_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.5016080591079984,
+            "saved": 0.5016080591079984
+          },
+          "rank_ic.newey_west.lower": {
+            "matches": true,
+            "recomputed": 0.5006995950985389,
+            "saved": 0.5006995950985389
+          },
+          "rank_ic.newey_west.upper": {
+            "matches": true,
+            "recomputed": 0.5039304506870645,
+            "saved": 0.5039304506870645
+          },
+          "rank_ic.positive_fraction": {
+            "matches": true,
+            "recomputed": 0.9985919016891361,
+            "saved": 0.9985919016891361
+          },
+          "rank_ic.valid_timestamps": {
+            "matches": true,
+            "recomputed": 171863,
+            "saved": 171863
+          },
+          "resolved_performance_rows": {
+            "matches": true,
+            "recomputed": 203271,
+            "saved": 203271
+          },
+          "returns.annualized_return": {
+            "matches": false,
+            "recomputed": 0.9969503308289204,
+            "saved": 0.9964717113372477
+          },
+          "returns.annualized_volatility": {
+            "matches": false,
+            "recomputed": 0.108545949667732,
+            "saved": 0.10856706868311893
+          },
+          "returns.cumulative_net_return": {
+            "matches": false,
+            "recomputed": 1572.3598063521358,
+            "saved": 1560.6235653754982
+          },
+          "returns.daily_return_rows": {
+            "matches": false,
+            "recomputed": 1875,
+            "saved": 1874
+          },
+          "returns.daily_sharpe": {
+            "matches": false,
+            "recomputed": 9.184592643766686,
+            "saved": 9.17839749588992
+          },
+          "returns.maximum_drawdown": {
+            "matches": true,
+            "recomputed": -0.010197421011264862,
+            "saved": -0.010197421011264862
+          },
+          "returns.mean_turnover": {
+            "matches": true,
+            "recomputed": 0.4861027888877411,
+            "saved": 0.4861027888877411
+          },
+          "returns.total_estimated_costs": {
+            "matches": true,
+            "recomputed": 0.0,
+            "saved": 0.0
+          }
+        }
+      },
+      "family": "huber",
+      "log_verification": {
+        "daily_portfolio_returns_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 789498,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/daily_portfolio_returns_v3_manifest.json",
+            "sha256": "873d322d109cc78747c433dc3ce5ea2ce6c3eb508effedd1de1ef4f2f3f37255"
+          },
+          "part_count": 1800,
+          "part_record_digest": "20ab7d28aa4add3c98c843940e45f61090318de78181b477fc67d8fba9a6fcf8",
+          "row_count": 1874
+        },
+        "rank_ic_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 1110600,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/rank_ic_v3_manifest.json",
+            "sha256": "0ff6f3a84cc4feeea0ae02b950fd56f90d53fc02d8e1dd237db42fb8992fd036"
+          },
+          "part_count": 2616,
+          "part_record_digest": "0102f7a4db93729836826d322e751a2ebeb96775dfbc6f8ab2b49552ad16b7e7",
+          "row_count": 203271
+        },
+        "refit_events_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 982418,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/refit_events_v3_manifest.json",
+            "sha256": "0a7e061ba31a5908aca892bfff58a0177a4ad54234736bae7f1b707589988751"
+          },
+          "part_count": 2616,
+          "part_record_digest": "e9008d7cbb47af80509d562eb9ff757fdb4dc7cb48a172fc6d1d3480992af27e",
+          "row_count": 2616
+        },
+        "sleeve_maturity_ledger_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 1149855,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/sleeve_maturity_ledger_v3_manifest.json",
+            "sha256": "38e245b68e73e0ea6a4d44ccb6c59f587028c347108c64aed04e58f83e000f6f"
+          },
+          "part_count": 2616,
+          "part_record_digest": "44e45fbd0f6290843924e43bb56e67bdcb506bcaa85ca54562752c4bbb2a66c4",
+          "row_count": 203271
+        },
+        "transaction_costs_v3": {
+          "all_part_hashes_and_rows_match": true,
+          "failures": [],
+          "manifest": {
+            "bytes": 1136769,
+            "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/transaction_costs_v3_manifest.json",
+            "sha256": "85e2076e9ceb6feca39a99d91e8ea4fa6b613dbf22a279265fdb4c2f38e2b6c7"
+          },
+          "part_count": 2616,
+          "part_record_digest": "eeb307225cfbc47a27b2fe851ec025ba333ab07724889a32cc92cd847e23d6a7",
+          "row_count": 203271
+        }
+      },
+      "model_artifacts": {
+        "all_referenced_model_hashes_match": true,
+        "checked_models": 2616,
+        "expected_unique_models": 2616,
+        "failures": []
+      },
+      "namespace": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay",
+      "namespace_verification": {
+        "daily_duplicate_session_dates": 0,
+        "daily_recomputed_from_sleeves": {
+          "field_comparison": {
+            "gross_daily_return": {
+              "max_abs_difference": 2.7755575615628914e-17,
+              "mismatched_rows": 1
+            },
+            "matured_sleeve_decisions": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            },
+            "max_simultaneous_capital_fraction": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            },
+            "mean_turnover": {
+              "max_abs_difference": 2.220446049250313e-16,
+              "mismatched_rows": 1
+            },
+            "net_daily_return": {
+              "max_abs_difference": 2.7755575615628914e-17,
+              "mismatched_rows": 1
+            },
+            "transaction_cost_drag": {
+              "max_abs_difference": 0.0,
+              "mismatched_rows": 1
+            }
+          },
+          "missing_or_extra_rows": [
+            {
+              "ledger_matured_sleeve_decisions": 8,
+              "ledger_net_daily_return": 0.007515409754857164,
+              "presence": "right_only",
+              "saved_net_daily_return": null,
+              "session_date": "2026-06-30"
+            }
+          ],
+          "row_count_matches": false
+        },
+        "locked_holdout_score_rows": 24216,
+        "nonzero_transaction_cost_rows": 0,
+        "persisted_training_cutoff_equal_first_score_count": 2613,
+        "persisted_training_cutoff_strictly_before_first_score_count": 0,
+        "rank_ic_duplicate_decision_timestamps": 0,
+        "refit_count": 2616,
+        "refit_duplicate_keys": 0,
+        "reported_chronology_violation_count_sum": 0,
+        "reported_duplicate_count_sum": 0,
+        "simultaneous_capital_fraction_max": 1.0,
+        "sleeve_capital_fraction_values": [
+          0.08333333333333333
+        ],
+        "sleeve_count_values": [
+          12
+        ],
+        "sleeve_duplicate_decision_timestamps": 0,
+        "target_contract_values": [
+          "forward_return_60m__decision_5m"
+        ],
+        "transaction_cost_bps_values": [
+          0.0
+        ]
+      },
+      "recomputed_summary_from_complete_sleeve_ledger": {
+        "rank_ic": {
+          "daily_ic_rows": 2616,
+          "daily_mean_spearman_rank_ic": 0.5023390517458678,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.5006995950985389,
+            "mean": 0.5023150228928017,
+            "observations": 171863,
+            "standard_error": 0.0008241978542157471,
+            "upper": 0.5039304506870645
+          },
+          "mean_spearman_rank_ic": 0.5023150228928017,
+          "median_spearman_rank_ic": 0.5016080591079984,
+          "positive_fraction": 0.9985919016891361,
+          "valid_timestamps": 171863
+        },
+        "resolved_performance_rows": 203271,
+        "returns": {
+          "annualized_return_from_daily_returns": 0.9969503308289204,
+          "annualized_volatility_from_daily_returns": 0.108545949667732,
+          "cumulative_gross_return": 1572.3598063521358,
+          "cumulative_net_return": 1572.3598063521358,
+          "daily_return_rows": 1875,
+          "daily_sharpe": 9.184592643766686,
+          "last_daily_net_return": 0.007515409754857164,
+          "maximum_drawdown": -0.010197421011264862,
+          "mean_turnover": 0.4861027888877411,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9738666666666667
+        }
+      },
+      "recomputed_summary_from_published_daily_log": {
+        "rank_ic": {
+          "daily_ic_rows": 2616,
+          "daily_mean_spearman_rank_ic": 0.5023390517458678,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.5006995950985389,
+            "mean": 0.5023150228928017,
+            "observations": 171863,
+            "standard_error": 0.0008241978542157471,
+            "upper": 0.5039304506870645
+          },
+          "mean_spearman_rank_ic": 0.5023150228928017,
+          "median_spearman_rank_ic": 0.5016080591079984,
+          "positive_fraction": 0.9985919016891361,
+          "valid_timestamps": 171863
+        },
+        "resolved_performance_rows": 203271,
+        "returns": {
+          "annualized_return_from_daily_returns": 0.9964717113372477,
+          "annualized_volatility_from_daily_returns": 0.10856706868311893,
+          "cumulative_gross_return": 1560.6235653754982,
+          "cumulative_net_return": 1560.6235653754982,
+          "daily_return_rows": 1874,
+          "daily_sharpe": 9.17839749588992,
+          "last_daily_net_return": 0.011316686551107933,
+          "maximum_drawdown": -0.010197421011264862,
+          "mean_turnover": 0.4861027888877411,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9738527214514408
+        }
+      },
+      "saved_status": "PROVISIONAL",
+      "saved_summary": {
+        "coverage": {
+          "eligible_resolved_fraction": 0.75432938645037,
+          "pending_score_rows": 0,
+          "terminal_censored_rows": 12
+        },
+        "created_at_utc": "2026-09-06T19:39:07.103761+00:00",
+        "evaluation_contract_hash": "c5d24ca5ba4182d6e9080a7ca98b0c32a054bffe77a56fd09052de516cae84bc",
+        "evaluation_contract_id": "DS24_RESOLVED_PERFORMANCE_V3_STAGGERED_SLEEVE_RANK_IC_CONTRACT",
+        "evaluation_contract_version": "V3",
+        "first_resolved_decision_timestamp": "2016-02-02T14:35:00+00:00",
+        "last_resolved_decision_timestamp": "2026-06-30T19:00:00+00:00",
+        "rank_ic": {
+          "daily_ic_rows": 2616,
+          "daily_mean_spearman_rank_ic": 0.5023390517458678,
+          "dependence_aware_95_ci": {
+            "lag": 12,
+            "lower": 0.5006995950985389,
+            "mean": 0.5023150228928017,
+            "observations": 171863,
+            "standard_error": 0.0008241978542157471,
+            "upper": 0.5039304506870645
+          },
+          "inference_method": "newey_west_hac_lag_12_for_overlapping_60m_targets",
+          "mean_spearman_rank_ic": 0.5023150228928017,
+          "median_spearman_rank_ic": 0.5016080591079984,
+          "positive_fraction": 0.9985919016891361,
+          "valid_timestamps": 171863
+        },
+        "resolved_performance_rows": 203271,
+        "returns": {
+          "annualized_return_from_daily_returns": 0.9964717113372477,
+          "annualized_volatility_from_daily_returns": 0.10856706868311893,
+          "cumulative_gross_return": 1560.6235653754982,
+          "cumulative_net_return": 1560.6235653754982,
+          "daily_return_rows": 1874,
+          "daily_sharpe": 9.17839749588992,
+          "last_daily_net_return": 0.011316686551107933,
+          "maximum_drawdown": -0.010197421011264862,
+          "mean_turnover": 0.4861027888877411,
+          "portfolio_contract": "twelve_staggered_equal_capital_sleeves",
+          "raw_overlapping_forward_returns_annualized": false,
+          "simultaneous_capital_limit": 1.0,
+          "sleeve_count": 12,
+          "total_estimated_costs": 0.0,
+          "win_rate": 0.9738527214514408
+        },
+        "status": "PROVISIONAL"
+      },
+      "saved_summary_comparison": {
+        "all_match": true,
+        "fields": {
+          "rank_ic.mean_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.5023150228928017,
+            "saved": 0.5023150228928017
+          },
+          "rank_ic.median_spearman_rank_ic": {
+            "matches": true,
+            "recomputed": 0.5016080591079984,
+            "saved": 0.5016080591079984
+          },
+          "rank_ic.newey_west.lower": {
+            "matches": true,
+            "recomputed": 0.5006995950985389,
+            "saved": 0.5006995950985389
+          },
+          "rank_ic.newey_west.upper": {
+            "matches": true,
+            "recomputed": 0.5039304506870645,
+            "saved": 0.5039304506870645
+          },
+          "rank_ic.positive_fraction": {
+            "matches": true,
+            "recomputed": 0.9985919016891361,
+            "saved": 0.9985919016891361
+          },
+          "rank_ic.valid_timestamps": {
+            "matches": true,
+            "recomputed": 171863,
+            "saved": 171863
+          },
+          "resolved_performance_rows": {
+            "matches": true,
+            "recomputed": 203271,
+            "saved": 203271
+          },
+          "returns.annualized_return": {
+            "matches": true,
+            "recomputed": 0.9964717113372477,
+            "saved": 0.9964717113372477
+          },
+          "returns.annualized_volatility": {
+            "matches": true,
+            "recomputed": 0.10856706868311893,
+            "saved": 0.10856706868311893
+          },
+          "returns.cumulative_net_return": {
+            "matches": true,
+            "recomputed": 1560.6235653754982,
+            "saved": 1560.6235653754982
+          },
+          "returns.daily_return_rows": {
+            "matches": true,
+            "recomputed": 1874,
+            "saved": 1874
+          },
+          "returns.daily_sharpe": {
+            "matches": true,
+            "recomputed": 9.17839749588992,
+            "saved": 9.17839749588992
+          },
+          "returns.maximum_drawdown": {
+            "matches": true,
+            "recomputed": -0.010197421011264862,
+            "saved": -0.010197421011264862
+          },
+          "returns.mean_turnover": {
+            "matches": true,
+            "recomputed": 0.4861027888877411,
+            "saved": 0.4861027888877411
+          },
+          "returns.total_estimated_costs": {
+            "matches": true,
+            "recomputed": 0.0,
+            "saved": 0.0
+          }
+        }
+      },
+      "summary": {
+        "bytes": 1984,
+        "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/huber/metrics_only_v3_r37_huber_replay/resolved_performance_summary_v3.json",
+        "sha256": "6e2c3d8374453dede892b72a5d1b0d714db008b5961ab3a4f38ef79572f84604"
+      }
+    },
+    "lightgbm_rank_xendcg": {
+      "family": "lightgbm_rank_xendcg",
+      "fixture_hash_verification": {
+        "000002": {
+          "actual_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+          "actual_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+          "expected_model_sha256": "840e33a95a31375f7a50a78a9e549e0e8f809211d1cd959c688c4567098e4e8e",
+          "expected_oof_sha256": "a650331dedf1f17339026243000486761af416cc219c154b57e41920eb8be0ff",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=000002.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2016-01-05/part-refit=000002.parquet"
+        },
+        "001132": {
+          "actual_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+          "actual_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+          "expected_model_sha256": "88d899e3f8be70d6ce3f5c559ca2cdc6d7832eb1355f754ea4202e653fb51243",
+          "expected_oof_sha256": "4247b1311d1a0034677e4265901eea882728764cd4ef783a126f1e6e84f7b04e",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=001132.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2020-07-01/part-refit=001132.parquet"
+        },
+        "002263": {
+          "actual_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+          "actual_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+          "expected_model_sha256": "9622e8d9e4e9473dfbae830e9455d924aaebc91aec9291e554539d04d420c6ff",
+          "expected_oof_sha256": "e50eaf50c98c75f41d0c7445e7a37ad7a12004d944a8322ec1d4de75c99a404b",
+          "model_hash_match": true,
+          "model_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts/lightgbm_rank_xendcg_refit=002263.pkl",
+          "oof_hash_match": true,
+          "oof_path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_v2/decision_date=2024-12-31/part-refit=002263.parquet"
+        }
+      },
+      "import_authority": {
+        "authority_hash_matches": true,
+        "file": {
+          "bytes": 11577,
+          "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R47A_xendcg_import_authority.json",
+          "sha256": "e2fdb969741605232f2f80f905219efdf070de191f6a22860a02aa0ef26d9db6"
+        },
+        "recomputed_authority_hash": "09610dfdae3bee537f73240618db05ba7736aaca9a87e258eb5ee1371c0e6f61",
+        "recomputed_stable_artifact_hash": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+        "recorded_authority_hash": "09610dfdae3bee537f73240618db05ba7736aaca9a87e258eb5ee1371c0e6f61",
+        "recorded_stable_artifact_hash": "c69017c3a0cda44755696d6cc84a2a7aaaf9b805f88cd13b4d7d632588dc8b85",
+        "stable_artifact_hash_matches": true,
+        "validation_file": {
+          "bytes": 7113,
+          "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/R47A_xendcg_artifact_validation.json",
+          "sha256": "5313bc2e42c1cce47ca6ec2a00e827060fcc2feb879fd37809bb6d101e3e808c"
+        }
+      },
+      "metrics": {
+        "decision_trace": {
+          "bytes": 364538,
+          "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/decision_trace.parquet",
+          "sha256": "ca3fcff04efd2876f992e13d07ed39805da996a936f169cc7b26bfb9d65c5d58"
+        },
+        "per_t_metrics": {
+          "bytes": 517653,
+          "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/per_t_metrics.parquet",
+          "sha256": "2d80b33a3e95f9ed626c4c4b82dbb34507aa37e86568f7f1214313d421efcf00"
+        },
+        "recomputed": {
+          "annual_volatility": 0.13411798427845345,
+          "annualized_arithmetic_return": 1.774883897978135,
+          "daily_sharpe": 13.23375017546604,
+          "gross_net_max_abs_difference": 0.0,
+          "maximum_drawdown": -0.029690054963644852,
+          "mean_daily_net_return": 0.007043190071341805,
+          "mean_spearman_rank_ic": 0.25064654455439,
+          "positive_ic_fraction": 0.9716688800354139,
+          "rows": 2262,
+          "valid_rank_ic_rows": 2259
+        },
+        "saved": {
+          "decision_rows": 45240,
+          "family": "lightgbm_rank_xendcg",
+          "fit_wall_seconds_last_refit": 0.25136929197469726,
+          "holdout_rows": 0,
+          "live_orders": 0,
+          "mean_spearman_rank_ic": 0.2506464517395151,
+          "paper_orders": 0,
+          "rank_ic_rows": 2262,
+          "status": "PASS",
+          "target_contract": "forward_return_60m__decision_5m"
+        },
+        "summary": {
+          "bytes": 328,
+          "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/metrics_only_v3/resolved_performance_summary_v3.json",
+          "sha256": "95d86023e1c50fe8b2599668d7d8f3313eff8ce178e16e2c425601296c8c1a7c"
+        },
+        "transaction_cost_bps": 0.0
+      },
+      "model_inventory": {
+        "apple_double_sidecar_count": 8,
+        "duplicate_ordinal_count": 0,
+        "duplicate_ordinals": [],
+        "expected_first_ordinal": "000002",
+        "expected_genuine_pkl_count": 2262,
+        "expected_last_ordinal": "002263",
+        "first_ordinal": "000002",
+        "genuine_pkl_count": 2262,
+        "last_ordinal": "002263",
+        "missing_ordinal_count": 0,
+        "missing_ordinals": [],
+        "model_artifact_count": 2262,
+        "model_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+        "root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/model_artifacts",
+        "unexpected_filenames": []
+      },
+      "oof_manifest": {
+        "bytes": 1461711,
+        "path": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg/ensemble_oof_scores_manifest_v2.json",
+        "sha256": "65a49db5d67c0e6b165a00c432e5f75c68a47f6fccfbbeb90d6bdfa1a82514f6"
+      },
+      "oof_verification": {
+        "all_part_hashes_rows_and_keys_match": true,
+        "distinct_assets": 514,
+        "distinct_decision_timestamps": 2262,
+        "distinct_refit_ordinals": 2262,
+        "failures": [],
+        "listed_part_count": 2262,
+        "locked_holdout_score_rows": 0,
+        "manifest_provisional": true,
+        "part_record_digest": "54a9ecac077dcf8bda5904ee43de6f08ee2c6a395a8b7d2db4d16d04aa9e5e48",
+        "row_count": 1150792,
+        "strict_training_cutoff_before_score_count": 2262,
+        "terminal_completeness_state": "PARTIAL_RESUMABLE",
+        "verified_part_count": 2262
+      },
+      "producer_authority": {
+        "advertised_git_head": "b2ffdf0966c0424c82632ea21f83cefb29905cc1",
+        "feature_order_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+        "metrics_evaluator_source": {
+          "bytes": 156006,
+          "path": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1\\core\\research\\ml\\ds24_metrics_only_evaluator.py",
+          "sha256": "217c4a72f6b57b017363d0feef6194ffe37dd5f71c087cecdb0bd8848c23906a"
+        },
+        "parity": {
+          "bytes": 12802,
+          "path": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1\\three_refit_parity.json",
+          "sha256": "c2f8df6db8c491135e72d4a71a983fe33ead8d538b510af73506626573f88e39"
+        },
+        "prequential_engine_source": {
+          "bytes": 19403,
+          "path": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1\\core\\research\\ml\\ds24\\canonical_prequential_engine.py",
+          "sha256": "1d4917f05345aad355984be943fd4c94be69a302f16162ac4fe904640e6a7fa9"
+        },
+        "producer_hash_matches_manifest": true,
+        "producer_source": {
+          "bytes": 60789,
+          "path": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1\\core\\research\\ml\\ds24\\mac_aux_queue_r44f2.py",
+          "sha256": "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d"
+        },
+        "producer_source_classification": "MAC_WORKTREE_UNCOMMITTED_SOURCE_OVER_ADVERTISED_HEAD",
+        "runtime_arguments": {
+          "family": "lightgbm_rank_xendcg",
+          "lookback_sessions": 20,
+          "max_assets": null,
+          "max_refits": null,
+          "max_training_rows": 24000,
+          "repo_root": "/Users/brandonlinnett/Desktop/trading_system"
+        },
+        "source_manifest": {
+          "bytes": 10256,
+          "path": "C:\\Users\\Brandon\\Desktop\\ds24-prospective-paper\\authority\\xendcg\\ds24_xendcg_producer_authority_r1\\source_manifest.json",
+          "sha256": "5cb30e9629d681e86b44bf301af50b328b8d0f9e71929f1f9d00d9f98d0d4d7c"
+        }
+      },
+      "source_root": "mac_aux_runs/queue=DS24_MAC_AUX_NINE_FAMILY_R1/family=lightgbm_rank_xendcg"
+    }
+  },
+  "paper_binding": {
+    "active_candidate_source": "dual_momentum",
+    "active_costs_bps": {
+      "slippage": 5.0,
+      "transaction_cost": 10.0
+    },
+    "active_paper_broker": true,
+    "active_paper_config": {
+      "bytes": 1818,
+      "path": "configs/paper/alpaca_7day_trial.yaml",
+      "sha256": "f75bd5acf29a1e5f23a9c9fabdd99752340e148320c01831138f6822947bac29"
+    },
+    "active_submit_orders": true,
+    "audited_model_names_present_in_active_config": [],
+    "bound_incumbent": {
+      "authority_id": "DS24_5M_ECONOMIC_CANDIDATE_VALIDATED_V1",
+      "base_cost_one_way_bps": 10.0,
+      "cohort_policy": "DS24_60M_STAGGERED_COHORT_DIAGNOSTIC_V1",
+      "config_hash": "e9ed65f33adcad0d768077d6350737666ba5441a633afbdf6501952d2485f219",
+      "config_id": "C0",
+      "execution_proxy": "EXEC_5M_NEXT_BAR_OPEN_PROXY_V1",
+      "feature_authority": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V1",
+      "holding_minutes": 60,
+      "max_capital_allocation": 1.0,
+      "model": "sklearn GradientBoostingRegressor",
+      "model_dataset": "CANONICAL_5M_MODEL_DATASET_V1",
+      "predictors": 101,
+      "preprocessing": "median imputer",
+      "r8_classification": "DS24P8_R8_ECONOMIC_EDGE_CONFIRMED_RISK_METRICS_REVISED",
+      "r8_daily_sharpe": 27.678175927144864,
+      "r8_max_drawdown": -0.006782904258729516,
+      "r8_net_return": 0.6082972349340647,
+      "refit_cadence": "every 5 score sessions",
+      "selector": "TOP_DECILE_LONG_EQUAL_WEIGHT_V1",
+      "stress_cost_one_way_bps": 20.0,
+      "target": "forward_return_60m__decision_5m",
+      "training_policy_hash": "46426e0b4ff9e8948b089feb2d5192be0002a7e4f9a09479fa0b262d56344d21",
+      "training_window": "rolling 20 trading sessions"
+    },
+    "bound_incumbent_authority": {
+      "bytes": 1153,
+      "path": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r9_20260822T000000Z/01_r8_candidate_lock.json",
+      "sha256": "71ee035829cfc27ee951dfab37b716251ba4c991ae4fa3a4563161acb30586e5"
+    },
+    "ds24_order_adapter": {
+      "bytes": 10409,
+      "path": "core/paper/ds24_order_adapter.py",
+      "sha256": "f98476b9351a8301418a41d80803995fd28719d492672b889d71f7eb6521bfe2"
+    },
+    "ds24_order_adapter_config_hash": "e9ed65f33adcad0d768077d6350737666ba5441a633afbdf6501952d2485f219",
+    "ds24_order_adapter_training_policy_hash": "46426e0b4ff9e8948b089feb2d5192be0002a7e4f9a09479fa0b262d56344d21"
+  },
+  "repository_head": "afe9307cb1d5107f6ae343935a4f5e75232773c6",
+  "scope": {
+    "canonical_artifacts_modified": false,
+    "orders_placed": false,
+    "read_only_source_and_canonical_artifact_access": true,
+    "training_started": false
+  }
+}
