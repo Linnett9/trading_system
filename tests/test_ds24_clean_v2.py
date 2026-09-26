@@ -35,6 +35,7 @@ from core.research.ml.ds24.clean_v2_runtime import (
     validate_target_use,
 )
 from scripts.local.ds24_clean_v2_build_sidecar import _publish_partition, _read_raw_context
+from scripts.local.ds24_clean_v2_certify import _synthetic_semantic_checks
 from scripts.local.ds24_clean_v2_family_worker import build_clean_refit_schedule
 from scripts.local.ds24_clean_v2_mac_preflight import (
     clean_source_hash,
@@ -215,6 +216,16 @@ def test_all_101_features_are_invariant_to_future_bar_value_perturbation() -> No
         "101 / 101 FEATURES CAUSAL UNDER FUTURE-BAR PERTURBATION"
     )
     assert all(not case["changed_features"] for case in certificate["cases"])
+
+
+def test_all_eleven_repaired_formulas_have_independent_semantic_checks() -> None:
+    checks = _synthetic_semantic_checks(synthetic_multiyear_raw_frames())
+
+    assert checks["independent_formula_checks_passed"] is True
+    assert set(checks["independent_formula_check_details"]) == set(REPAIRED_FEATURES)
+    assert all(checks["independent_formula_check_details"].values())
+    assert checks["rth_extended_hours_semantics_passed"] is True
+    assert checks["calendar_state_semantics_passed"] is True
 
 
 def test_composite_sidecar_replaces_only_repaired_columns_and_requires_full_coverage() -> None:

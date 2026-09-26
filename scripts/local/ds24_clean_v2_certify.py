@@ -70,7 +70,7 @@ def _inventory_valid(
 
 def _synthetic_semantic_checks(
     frames: dict[str, pd.DataFrame],
-) -> dict[str, bool]:
+) -> dict[str, Any]:
     frame = frames["AAA"]
     repaired = compute_repaired_session_features(frame)
     sessions = frame["session_date"].drop_duplicates().tolist()
@@ -82,29 +82,78 @@ def _synthetic_semantic_checks(
     two_back = frame[(frame["session_date"] == sessions[0]) & rth]
     row_index = current_indices[10]
     current = frame.loc[row_index]
-    formula_checks = [
-        np.isclose(
-            repaired.loc[row_index, "overnight_gap"],
-            frame.loc[current_indices[0], "open"] / prior.iloc[-1]["close"] - 1.0,
-        ),
-        np.isclose(
-            repaired.loc[row_index, "previous_session_return"],
-            prior.iloc[-1]["close"] / prior.iloc[0]["open"] - 1.0,
-        ),
-        np.isclose(
-            repaired.loc[row_index, "two_session_return"],
-            current["close"] / two_back.iloc[-1]["close"] - 1.0,
-        ),
-    ]
-    extended = frame["session_type"].isin(["PRE_MARKET", "AFTER_HOURS"])
-    rth_semantics = bool(
-        repaired.loc[extended, list(REPAIRED_FEATURES)].isna().all().all()
-    )
     normal = frame[
         (frame["session_date"] == "2017-11-22")
         & (frame["session_type"] == "REGULAR")
     ]
     normal_repaired = repaired.loc[normal.index]
+    sixth = normal.index[5]
+    opening_window = normal.iloc[:6]
+    opening_denominator = (
+        opening_window["high"].max() - opening_window["low"].min()
+    )
+    expected_opening_position = (
+        (normal.loc[sixth, "close"] - opening_window["low"].min())
+        / opening_denominator
+    )
+    early = frame[
+        (frame["session_date"] == "2017-11-24")
+        & (frame["session_type"] == "EARLY_CLOSE")
+    ]
+    early_repaired = repaired.loc[early.index]
+    formula_checks = {
+        "overnight_gap": bool(np.isclose(
+            repaired.loc[row_index, "overnight_gap"],
+            frame.loc[current_indices[0], "open"] / prior.iloc[-1]["close"] - 1.0,
+        )),
+        "previous_session_return": bool(np.isclose(
+            repaired.loc[row_index, "previous_session_return"],
+            prior.iloc[-1]["close"] / prior.iloc[0]["open"] - 1.0,
+        )),
+        "two_session_return": bool(np.isclose(
+            repaired.loc[row_index, "two_session_return"],
+            current["close"] / two_back.iloc[-1]["close"] - 1.0,
+        )),
+        "opening_range_position": bool(np.isclose(
+            repaired.loc[sixth, "opening_range_position"],
+            expected_opening_position,
+        )),
+        "session_return_30m": bool(np.isclose(
+            repaired.loc[sixth, "session_return_30m"],
+            normal.loc[sixth, "close"] / normal.iloc[5]["close"] - 1.0,
+        )),
+        "opening_return_30m": bool(np.isclose(
+            repaired.loc[sixth, "opening_return_30m"],
+            normal.iloc[5]["close"] / normal.iloc[0]["open"] - 1.0,
+        )),
+        "minutes_since_open": bool(
+            np.isclose(normal_repaired.iloc[0]["minutes_since_open"], 5.0)
+            and np.isclose(early_repaired.iloc[0]["minutes_since_open"], 5.0)
+        ),
+        "minutes_until_close": bool(
+            np.isclose(normal_repaired.iloc[0]["minutes_until_close"], 385.0)
+            and np.isclose(normal_repaired.iloc[-1]["minutes_until_close"], 0.0)
+            and np.isclose(early_repaired.iloc[0]["minutes_until_close"], 205.0)
+            and np.isclose(early_repaired.iloc[-1]["minutes_until_close"], 0.0)
+        ),
+        "session_progress": bool(
+            np.isclose(normal_repaired.iloc[-1]["session_progress"], 1.0)
+            and np.isclose(early_repaired.iloc[-1]["session_progress"], 1.0)
+        ),
+        "early_close_session_flag": bool(
+            (normal_repaired["early_close_session_flag"] == 0.0).all()
+            and (early_repaired["early_close_session_flag"] == 1.0).all()
+        ),
+        "opening_period_flag": bool(
+            np.isclose(normal_repaired.iloc[0]["opening_period_flag"], 1.0)
+            and np.isclose(normal_repaired.iloc[5]["opening_period_flag"], 0.0)
+            and np.isclose(early_repaired.iloc[0]["opening_period_flag"], 1.0)
+        ),
+    }
+    extended = frame["session_type"].isin(["PRE_MARKET", "AFTER_HOURS"])
+    rth_semantics = bool(
+        repaired.loc[extended, list(REPAIRED_FEATURES)].isna().all().all()
+    )
     calendar_semantics = bool(
         np.isclose(normal_repaired.iloc[0]["minutes_since_open"], 5.0)
         and np.isclose(normal_repaired.iloc[0]["minutes_until_close"], 385.0)
@@ -112,7 +161,8 @@ def _synthetic_semantic_checks(
         and np.isclose(normal_repaired.iloc[-1]["session_progress"], 1.0)
     )
     return {
-        "independent_formula_checks_passed": all(formula_checks),
+        "independent_formula_check_details": formula_checks,
+        "independent_formula_checks_passed": all(formula_checks.values()),
         "rth_extended_hours_semantics_passed": rth_semantics,
         "calendar_state_semantics_passed": calendar_semantics,
     }
