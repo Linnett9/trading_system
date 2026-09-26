@@ -13,6 +13,7 @@ from core.research.ml.ds24.clean_v2_certification import (
     synthetic_multiyear_raw_frames,
 )
 from core.research.ml.ds24.clean_v2_contracts import CONFIG_ROOT, authority_bundle, load_contract
+from core.research.ml.ds24.clean_v2_data import CleanV2CompositeData
 from core.research.ml.ds24.clean_v2_features import (
     REPAIRED_FEATURES,
     SOURCE_TIMESTAMP_SUFFIX,
@@ -34,8 +35,15 @@ from core.research.ml.ds24.clean_v2_runtime import (
     validate_target_use,
 )
 from scripts.local.ds24_clean_v2_build_sidecar import _publish_partition, _read_raw_context
-from scripts.local.ds24_clean_v2_mac_preflight import partition_file_hashes_match
-from scripts.local.ds24_clean_v2_supervisor import _partition_inventory_matches
+from scripts.local.ds24_clean_v2_family_worker import build_clean_refit_schedule
+from scripts.local.ds24_clean_v2_mac_preflight import (
+    clean_source_hash,
+    partition_file_hashes_match,
+)
+from scripts.local.ds24_clean_v2_supervisor import (
+    _launch_families,
+    _partition_inventory_matches,
+)
 from scripts.local import ds24_clean_v2_build_target_delta as target_delta_builder
 
 
@@ -147,6 +155,30 @@ def test_bulk_sidecar_reader_preserves_session_type(tmp_path: Path) -> None:
     assert result["session_type"].tolist() == ["REGULAR"]
 
 
+def test_composite_reader_handles_string_timestamp_parquet_filter_fallback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "targets.parquet"
+    pd.DataFrame(
+        {
+            "decision_timestamp": [
+                "2024-01-02T14:35:00+00:00",
+                "2024-01-03T14:35:00+00:00",
+            ],
+            "target_value": [0.1, 0.2],
+        }
+    ).to_parquet(path, index=False)
+
+    frame = CleanV2CompositeData._read_timestamp_slice(
+        path,
+        columns=["decision_timestamp", "target_value"],
+        start=pd.Timestamp("2024-01-03", tz="UTC"),
+        end=pd.Timestamp("2024-01-04", tz="UTC"),
+    )
+
+    assert frame["target_value"].tolist() == [0.2]
+
+
 def test_sidecar_publication_accepts_null_canonical_symbol_partition(tmp_path: Path) -> None:
     base_path = tmp_path / "base" / "stock" / "asset=BBWI" / "year=2016" / "features.parquet"
     base_path.parent.mkdir(parents=True)
@@ -233,7 +265,7 @@ def test_target_contract_and_train_score_chronology_fail_closed() -> None:
 def test_five_session_refit_has_no_daily_fallback() -> None:
     sessions = pd.bdate_range("2024-01-02", periods=35, tz="UTC") + pd.Timedelta(hours=14, minutes=35)
     schedule = clean_refit_schedule(sessions)
-    assert REFIT_POLICY_ID == "EVERY_5_TRADING_SESSIONS_V1"
+    assert REFIT_POLICY_ID == "REFIT_EVERY_5_TRADING_SESSIONS_V1"
     assert schedule
     assert all(len(spec.score_session_dates) == 5 for spec in schedule)
     assert [spec.ordinal for spec in schedule] == list(range(len(schedule)))
@@ -249,6 +281,102 @@ def test_ownership_qualifier_and_order_guards_are_frozen() -> None:
     duplicate = {"dell": ["transformer"], "mac": ["transformer"]}
     with pytest.raises(CleanRuntimeError, match="both"):
         validate_ownership(duplicate)
+
+
+def test_amended_registry_lanes_retire_itransformer_and_primary_elastic_net() -> None:
+    models = load_contract("model_registry.json")
+    tournament = load_contract("tournament_contract.json")
+    ownership = load_contract("cross_host_ownership.json")
+    scheduled = {
+        family for families in tournament["lanes"].values() for family in families
+    }
+    owned = {
+        family for families in ownership["hosts"].values() for family in families
+    }
+
+    assert tournament["lanes"]["FULL_CLEAN"] == [
+        "random_forest",
+        "transformer",
+        "huber",
+        "ridge_C5",
+        "gradient_boosting_C0",
+    ]
+    assert {"elastic_net_C5", "elastic_net_C6"} <= set(
+        tournament["lanes"]["SHORT_REQUALIFICATION"]
+    )
+    assert tournament["lanes"]["UNSCORED_DISCOVERY"] == [
+        "momentum_transformer",
+        "market_context_encoder",
+        "temporal_fusion_transformer",
+    ]
+    assert "itransformer" not in scheduled | owned | set(models["families"])
+    assert "itransformer" in models["preserved_but_not_scheduled"]
+    assert "elastic_net" not in scheduled | owned | set(models["families"])
+    assert "elastic_net" in models["preserved_but_not_scheduled"]
+    assert ownership["rules"]["automatic_continuation_allowed"] is False
+
+
+def test_preregistered_gbdt_hypotheses_do_not_reintroduce_daily_refits() -> None:
+    models = load_contract("model_registry.json")
+    tournament = load_contract("tournament_contract.json")
+    evidence = load_contract("prior_evidence_manifest.json")
+
+    assert evidence["classification"] == "PREREGISTERED_CONFIGURATION_HYPOTHESES_ONLY"
+    assert [row["prior_rank_ic"] for row in evidence["gbdt_structural_hypotheses"][:3]] == [
+        0.4470758692,
+        0.4740403016,
+        0.4720688783,
+    ]
+    assert evidence["gbdt_structural_hypotheses"][3]["prior_rank_ic"] == 0.4554969492
+    assert tournament["refit_policy"]["id"] == REFIT_POLICY_ID
+    assert tournament["refit_policy"]["daily_refit_fallback_allowed"] is False
+    assert "daily_session_v1" in tournament["refit_policy"]["forbidden_policy_ids"]
+    assert models["families"]["gradient_boosting_C0"]["training"][
+        "lookback_sessions"
+    ] == 20
+    assert models["families"]["gradient_boosting_C0_W40"]["training"][
+        "lookback_sessions"
+    ] == 40
+    assert models["families"]["gradient_boosting_C0_W80"]["training"][
+        "lookback_sessions"
+    ] == 80
+    assert models["preregistered_unresolved_hypotheses"]["gradient_boosting_C7"][
+        "automatic_admission"
+    ] is False
+
+
+def test_clean_worker_schedule_uses_five_score_sessions_and_frozen_years() -> None:
+    spine = list(
+        pd.bdate_range("2016-11-01", "2017-03-31", tz="UTC")
+        + pd.Timedelta(hours=14, minutes=35)
+    )
+    schedule = build_clean_refit_schedule(
+        spine,
+        lookback_sessions=40,
+        qualifier_years=[2017],
+    )
+
+    assert schedule
+    assert all(len(row.training_session_dates) == 40 for row in schedule)
+    assert all(1 <= len(row.score_session_dates) <= 5 for row in schedule)
+    assert all(
+        all(date.startswith("2017-") for date in row.score_session_dates)
+        for row in schedule
+    )
+    assert all(row.policy_hash == schedule[0].policy_hash for row in schedule)
+
+
+def test_supervisor_binds_only_clean_v2_workers() -> None:
+    tournament = load_contract("tournament_contract.json")
+    for host in ("dell", "mac"):
+        commands = tournament["worker_commands"][host]
+        assert set(commands) == set(_launch_families(host))
+        assert all(
+            "ds24_clean_v2_family_worker.py" in " ".join(command)
+            for command in commands.values()
+        )
+    assert isinstance(clean_source_hash(), str)
+    assert len(clean_source_hash()) == 64
 
 
 def test_resume_and_metric_keys_are_deterministic_and_idempotent() -> None:

@@ -294,14 +294,40 @@ def _build_asset_star(args: tuple[str, list[str], str, str, str, bool]) -> list[
     return _build_asset(*args)
 
 
+def status() -> dict[str, Any]:
+    base, _raw, output = _feature_paths()
+    expected = len(_partitions(base))
+    published = list(output.glob("stock/asset=*/year=*/pit_repair.parquet"))
+    manifest_path = output / "authority_manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
+    return {
+        "classification": (
+            "DS24_CLEAN_V2_FEATURE_SIDECAR_COMPLETE"
+            if manifest.get("complete") is True and len(published) == expected
+            else "DS24_CLEAN_V2_FEATURE_SIDECAR_IN_PROGRESS"
+        ),
+        "published_partitions": len(published),
+        "expected_partitions": expected,
+        "manifest_complete": manifest.get("complete") is True,
+        "manifest_logical_sha256": manifest.get("logical_sha256"),
+        "row_count": manifest.get("row_count"),
+        "output_root": output.relative_to(ROOT).as_posix(),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the immutable DS24 clean-V2 repair sidecar.")
     parser.add_argument("--build", action="store_true", help="Materialize sidecar partitions; default is estimate only.")
+    parser.add_argument("--status", action="store_true")
     parser.add_argument("--maximum-partitions", type=int)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
-    result = (
+    result = status() if args.status else (
         build(
             maximum_partitions=args.maximum_partitions,
             resume=not args.no_resume,

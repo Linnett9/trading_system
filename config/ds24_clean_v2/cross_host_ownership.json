@@ -1,17 +1,19 @@
 {
-  "authority_id": "DS24_CLEAN_V2_CROSS_HOST_OWNERSHIP_V1",
+  "authority_id": "DS24_CLEAN_V2_CROSS_HOST_OWNERSHIP_V2",
   "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
   "hosts": {
-    "dell": ["random_forest", "elastic_net", "huber", "ridge_C5", "gradient_boosting_C0", "transformer", "momentum", "equal_weight_no_model", "elastic_net_C5", "elastic_net_C6"],
-    "mac": ["lightgbm_rank_xendcg", "itransformer", "momentum_transformer", "market_context_encoder", "temporal_fusion_transformer"]
+    "dell": ["random_forest", "transformer", "huber", "ridge_C5", "gradient_boosting_C0", "elastic_net_C5", "elastic_net_C6", "gradient_boosting_C0_W20", "gradient_boosting_C0_W40", "gradient_boosting_C0_W80", "momentum", "equal_weight_no_model"],
+    "mac": ["lightgbm_rank_xendcg", "momentum_transformer", "market_context_encoder", "temporal_fusion_transformer"]
   },
-  "excluded_unresolved": ["ordered_logit"],
+  "excluded_unresolved": ["gradient_boosting_C7", "ordered_logit"],
+  "retired_source_only": ["elastic_net", "itransformer", "dlinear", "patchtst", "mlp", "lightgbm_lambdarank", "rff_ridge", "pca_ridge", "spline_additive_ridge", "extra_trees"],
   "rules": {
     "single_owner_per_family": true,
     "mac_max_heavy_workers": 1,
     "semantic_change_for_host_compatibility_allowed": false,
     "authority_hash_match_required": true,
     "old_fitted_weight_reuse_allowed": false,
-    "old_performance_reuse_allowed": false
+    "old_performance_reuse_allowed": false,
+    "automatic_continuation_allowed": false
   }
 }

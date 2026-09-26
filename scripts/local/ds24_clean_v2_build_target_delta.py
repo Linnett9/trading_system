@@ -190,14 +190,46 @@ def build(
     return manifest
 
 
+def status() -> dict[str, Any]:
+    expected = len(_symbols())
+    published = list(
+        OUTPUT_ROOT.glob(
+            f"target_id={TARGET_ID}/symbol=*/year=2026/target_rows.parquet"
+        )
+    )
+    manifest_path = OUTPUT_ROOT / "authority_manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
+    return {
+        "classification": (
+            "DS24_CLEAN_V2_TARGET_DELTA_COMPLETE"
+            if manifest.get("complete") is True and len(published) == expected
+            else "DS24_CLEAN_V2_TARGET_DELTA_IN_PROGRESS"
+        ),
+        "published_symbols": len(published),
+        "expected_symbols": expected,
+        "manifest_complete": manifest.get("complete") is True,
+        "manifest_logical_sha256": manifest.get("logical_sha256"),
+        "row_count": manifest.get("row_count"),
+        "trainable_row_count": manifest.get("trainable_row_count"),
+        "output_root": OUTPUT_ROOT.relative_to(ROOT).as_posix(),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the DS24 clean-V2 2026 target delta.")
     parser.add_argument("--build", action="store_true")
+    parser.add_argument("--status", action="store_true")
     parser.add_argument("--maximum-symbols", type=int)
     parser.add_argument("--no-resume", action="store_true")
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
-    if not args.build:
+    if args.status:
+        payload = status()
+    elif not args.build:
         payload = {
             "symbol_count": len(_symbols()),
             "start_date": START_DATE,
