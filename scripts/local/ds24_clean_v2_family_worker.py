@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 
 from core.research.ml.ds24.clean_v2_contracts import (
     authority_bundle,
+    clean_source_hash,
     file_sha256,
     load_contract,
     stable_hash,
@@ -84,6 +85,8 @@ def _validate_worker_admission(host: str) -> dict[str, Any]:
         "bundle_sha256"
     ]:
         raise CleanV2WorkerError("Manual supervisor admission bundle is stale")
+    if admission.get("clean_source_hash") != clean_source_hash():
+        raise CleanV2WorkerError("Manual supervisor admission source hash is stale")
     return {**admission, "admission_token": token}
 
 
@@ -508,6 +511,8 @@ def _state_payload(
     completed_refits: Sequence[str],
     completed_timestamps: set[str],
     terminal_state: str,
+    attempt_generation: int,
+    attempt_id: str,
     error: str | None = None,
 ) -> dict[str, Any]:
     return {
@@ -521,6 +526,8 @@ def _state_payload(
         "latest_completed_refit": completed_refits[-1] if completed_refits else None,
         "latest_scored_decision": max(completed_timestamps) if completed_timestamps else None,
         "metrics_cursor": len(completed_timestamps),
+        "attempt_generation": attempt_generation,
+        "attempt_id": attempt_id,
         "terminal_state": terminal_state,
         "error": error,
         "heartbeat_utc": _utc_now(),
@@ -531,6 +538,15 @@ def _state_payload(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     admission = _validate_worker_admission(args.host)
+    attempt_generation = max(1, int(args.resume_generation))
+    attempt_id = stable_hash(
+        {
+            "run_id": RUN_ID,
+            "family": args.family,
+            "host": args.host,
+            "attempt_generation": attempt_generation,
+        }
+    )
     config, lane = _family_contract(args.family)
     ownership = load_contract("cross_host_ownership.json")
     if args.family not in ownership["hosts"][args.host]:
@@ -550,6 +566,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "target_authority_hash": target_hash,
         "target_contract_hash": data.target_contract["resolved_contract_sha256"],
         "model_config_hash": model_config_hash,
+        "clean_source_hash": clean_source_hash(),
         "static_authority_bundle_sha256": authority_bundle()["bundle_sha256"],
         "refit_policy_hash": stable_hash(
             {
@@ -575,6 +592,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if state_path.is_file():
         prior = json.loads(state_path.read_text(encoding="utf-8"))
         for key, value in authority.items():
+            if (
+                key == "clean_source_hash"
+                and prior.get(key) is None
+                and not prior.get("completed_refits")
+                and int(prior.get("metrics_cursor", 0) or 0) == 0
+            ):
+                continue
             if prior.get(key) != value:
                 raise CleanV2WorkerError(f"Resume state authority mismatch: {key}")
         completed_refits = list(prior.get("completed_refits", []))
@@ -588,6 +612,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             completed_refits=completed_refits,
             completed_timestamps=completed,
             terminal_state="RUNNING",
+            attempt_generation=attempt_generation,
+            attempt_id=attempt_id,
         ),
     )
 
@@ -743,6 +769,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     completed_refits=completed_refits,
                     completed_timestamps=completed,
                     terminal_state="RUNNING",
+                    attempt_generation=attempt_generation,
+                    attempt_id=attempt_id,
                 ),
             )
         refit_iso = package.refit_T.isoformat()
@@ -758,6 +786,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 completed_refits=completed_refits,
                 completed_timestamps=completed,
                 terminal_state="RUNNING",
+                attempt_generation=attempt_generation,
+                attempt_id=attempt_id,
             ),
         )
 
@@ -769,9 +799,104 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         completed_refits=completed_refits,
         completed_timestamps=completed,
         terminal_state="COMPLETE",
+        attempt_generation=attempt_generation,
+        attempt_id=attempt_id,
     )
     _write_json_atomic(state_path, final)
     return final
+
+
+def _record_worker_failure(args: argparse.Namespace, exc: Exception) -> dict[str, Any]:
+    family_root = (
+        ROOT
+        / "research_runs"
+        / "ds24_clean_v2"
+        / RUN_ID
+        / f"family={args.family}"
+    )
+    state_path = family_root / "resume_state.json"
+    prior = (
+        json.loads(state_path.read_text(encoding="utf-8"))
+        if state_path.is_file()
+        else {}
+    )
+    attempt_generation = max(1, int(getattr(args, "resume_generation", 1)))
+    attempt_id = stable_hash(
+        {
+            "run_id": RUN_ID,
+            "family": args.family,
+            "host": args.host,
+            "attempt_generation": attempt_generation,
+        }
+    )
+    failed_at = _utc_now()
+    error = f"{type(exc).__name__}:{exc}"
+    log_path = (
+        ROOT
+        / "research_runs"
+        / "ds24_clean_v2"
+        / RUN_ID
+        / "logs"
+        / args.host
+        / f"{args.family}.log"
+    )
+    relative_log_path = log_path.relative_to(ROOT).as_posix()
+    failure = {
+        "run_id": RUN_ID,
+        "family": args.family,
+        "host": args.host,
+        "attempt_generation": attempt_generation,
+        "attempt_id": attempt_id,
+        "classification": "DS24_CLEAN_V2_WORKER_FAILED_CLOSED",
+        "terminal_state": "FAILED_CLOSED",
+        "error": error,
+        "failed_at_utc": failed_at,
+        "log_path": relative_log_path,
+        "completed_refits": list(prior.get("completed_refits", [])),
+        "metrics_cursor": int(prior.get("metrics_cursor", 0) or 0),
+        "paper_orders": 0,
+        "live_orders": 0,
+    }
+    _write_json_atomic(
+        family_root / f"worker_failure_attempt={attempt_generation}.json",
+        failure,
+    )
+
+    state_identity_matches = not prior or (
+        prior.get("run_id") == RUN_ID
+        and prior.get("family") == args.family
+        and prior.get("owner_host") == args.host
+    )
+    prior_generation = int(prior.get("attempt_generation", 0) or 0)
+    stale_attempt = prior_generation > attempt_generation or (
+        prior_generation >= attempt_generation
+        and prior.get("terminal_state") == "COMPLETE"
+    )
+    if state_identity_matches and not stale_attempt:
+        _write_json_atomic(family_root / "worker_failure.json", failure)
+        failed_state = {
+            **prior,
+            "run_id": RUN_ID,
+            "family": args.family,
+            "owner_host": args.host,
+            "attempt_generation": attempt_generation,
+            "attempt_id": attempt_id,
+            "terminal_state": "FAILED_CLOSED",
+            "terminal_failure_classification": failure["classification"],
+            "error": error,
+            "failure_timestamp": failed_at,
+            "failure_log_path": relative_log_path,
+            "completed_refits": list(prior.get("completed_refits", [])),
+            "metrics_cursor": int(prior.get("metrics_cursor", 0) or 0),
+            "heartbeat_utc": failed_at,
+            "paper_orders": 0,
+            "live_orders": 0,
+        }
+        _write_json_atomic(state_path, failed_state)
+        failure["current_failure_pointer_updated"] = True
+    else:
+        failure["current_failure_pointer_updated"] = False
+    return failure
 
 
 def main() -> int:
@@ -788,26 +913,7 @@ def main() -> int:
     try:
         result = run(args)
     except Exception as exc:
-        family_root = (
-            ROOT
-            / "research_runs"
-            / "ds24_clean_v2"
-            / RUN_ID
-            / f"family={args.family}"
-        )
-        _write_json_atomic(
-            family_root / "worker_failure.json",
-            {
-                "run_id": RUN_ID,
-                "family": args.family,
-                "host": args.host,
-                "classification": "DS24_CLEAN_V2_WORKER_FAILED_CLOSED",
-                "error": f"{type(exc).__name__}:{exc}",
-                "failed_at_utc": _utc_now(),
-                "paper_orders": 0,
-                "live_orders": 0,
-            },
-        )
+        _record_worker_failure(args, exc)
         raise
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

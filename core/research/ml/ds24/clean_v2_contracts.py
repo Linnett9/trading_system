@@ -8,6 +8,20 @@ from typing import Any, Mapping
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_ROOT = REPOSITORY_ROOT / "config" / "ds24_clean_v2"
+CLEAN_SOURCE_PATHS = (
+    "core/research/ml/ds24/clean_v2_certification.py",
+    "core/research/ml/ds24/clean_v2_contracts.py",
+    "core/research/ml/ds24/clean_v2_data.py",
+    "core/research/ml/ds24/clean_v2_features.py",
+    "core/research/ml/ds24/clean_v2_runtime.py",
+    "scripts/local/ds24_clean_v2_certify.py",
+    "scripts/local/ds24_clean_v2_family_worker.py",
+    "scripts/local/ds24_clean_v2_mac_preflight.py",
+    "scripts/local/ds24_clean_v2_monitor.py",
+    "scripts/local/ds24_clean_v2_reader_preflight.py",
+    "scripts/local/ds24_clean_v2_reconcile_failures.py",
+    "scripts/local/ds24_clean_v2_supervisor.py",
+)
 
 
 class CleanV2ContractError(ValueError):
@@ -28,6 +42,17 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def clean_source_hash(*, repository_root: Path = REPOSITORY_ROOT) -> str:
+    """Return the cross-host identity of the complete CLEAN V2 runtime."""
+
+    return stable_hash(
+        {
+            relative: file_sha256(repository_root / relative)
+            for relative in CLEAN_SOURCE_PATHS
+        }
+    )
 
 
 def load_contract(name: str, *, config_root: Path = CONFIG_ROOT) -> dict[str, Any]:

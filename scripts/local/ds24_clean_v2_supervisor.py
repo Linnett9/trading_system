@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from core.research.ml.ds24.clean_v2_contracts import (
     authority_bundle,
+    clean_source_hash,
     load_contract,
     stable_hash,
 )
@@ -358,6 +359,7 @@ def preflight(host: str, *, write_admission: bool = False) -> dict[str, Any]:
         "target_authority_hash": target_delta.get("logical_sha256"),
         "target_contract_hash": target["resolved_contract_sha256"],
         "static_authority_bundle_sha256": bundle["bundle_sha256"],
+        "clean_source_hash": clean_source_hash(),
         "results_ledger_hash": load_contract("prior_evidence_manifest.json")[
             "workbook"
         ]["captured_xlsx_export_sha256"],
@@ -385,6 +387,7 @@ def preflight(host: str, *, write_admission: bool = False) -> dict[str, Any]:
             "static_authority_bundle_sha256": report[
                 "static_authority_bundle_sha256"
             ],
+            "clean_source_hash": report["clean_source_hash"],
             "refit_policy": REFIT_POLICY_ID,
             "launch_families": launch_families,
             "issued_at_utc": _utc_now(),
@@ -433,6 +436,7 @@ def _validated_admission(host: str) -> dict[str, Any]:
         "static_authority_bundle_sha256": report[
             "static_authority_bundle_sha256"
         ],
+        "clean_source_hash": report["clean_source_hash"],
         "refit_policy": report["refit_policy"],
         "launch_families": report["launch_families"],
     }
@@ -455,6 +459,7 @@ def _queue_status(
     queued: list[str],
     complete: list[str],
     failed: Mapping[str, int],
+    attempt_generation: int,
     blocking_reasons: list[str] | None = None,
 ) -> dict[str, Any]:
     disk_free, ram_available = _resource_snapshot()
@@ -464,8 +469,13 @@ def _queue_status(
         "hostname": socket.gethostname(),
         "classification": classification,
         "supervisor_pid": os.getpid(),
+        "attempt_generation": attempt_generation,
         "active_workers": [
-            {"family": family, "pid": process.pid}
+            {
+                "family": family,
+                "pid": process.pid,
+                "attempt_generation": attempt_generation,
+            }
             for family, process in sorted(active.items())
         ],
         "queued_families": queued,
@@ -490,6 +500,7 @@ def run_queue(host: str, admission_token: str) -> int:
     stop_path = _host_path("stop_request", host)
     if stop_path.exists():
         stop_path.unlink()
+    attempt_generation = time.time_ns()
     _write_json_atomic(
         lease_path,
         {
@@ -498,7 +509,7 @@ def run_queue(host: str, admission_token: str) -> int:
             "hostname": socket.gethostname(),
             "host_role": host,
             "started_at_utc": _utc_now(),
-            "generation": int(time.time()),
+            "generation": attempt_generation,
             "adopted_r40_state": False,
             "admission_token": admission_token,
         },
@@ -535,10 +546,13 @@ def run_queue(host: str, admission_token: str) -> int:
                         queued=[
                             family
                             for family in queue
-                            if family not in active and family not in complete
+                            if family not in active
+                            and family not in complete
+                            and family not in failed
                         ],
                         complete=complete,
                         failed=failed,
+                        attempt_generation=attempt_generation,
                         blocking_reasons=["WORKER_EXIT_NONZERO"],
                     ),
                 )
@@ -566,17 +580,23 @@ def run_queue(host: str, admission_token: str) -> int:
                         queued=[family for family in queue if family not in complete],
                         complete=complete,
                         failed={},
+                        attempt_generation=attempt_generation,
                     ),
                 )
                 return 0
             pending = [
                 family
                 for family in queue
-                if family not in active and family not in complete
+                if family not in active
+                and family not in complete
+                and family not in failed
             ]
             while pending and len(active) < limit:
                 family = pending.pop(0)
                 command = list(commands[family])
+                command.extend(
+                    ["--resume-generation", str(attempt_generation)]
+                )
                 log_path = log_root / f"{family}.log"
                 log_handle = log_path.open("a", encoding="utf-8")
                 worker_environment = os.environ.copy()
@@ -600,6 +620,7 @@ def run_queue(host: str, admission_token: str) -> int:
                         queued=[],
                         complete=complete,
                         failed={},
+                        attempt_generation=attempt_generation,
                     ),
                 )
                 return 0
@@ -612,6 +633,7 @@ def run_queue(host: str, admission_token: str) -> int:
                     queued=pending,
                     complete=complete,
                     failed={},
+                    attempt_generation=attempt_generation,
                 ),
             )
             time.sleep(QUEUE_POLL_SECONDS)

@@ -16,6 +16,12 @@ class CleanV2DataError(RuntimeError):
     """Raised when the immutable V2 composite data authority is inconsistent."""
 
 
+IDENTITY_COLUMNS = ("asset_id", "decision_timestamp")
+REGULAR_SESSION_TYPES = frozenset(
+    {"rth", "regular", "regular_session", "early_close"}
+)
+
+
 @dataclass(frozen=True)
 class CleanV2Partition:
     asset_id: str
@@ -48,6 +54,276 @@ def _logical_manifest_valid(payload: Mapping[str, Any]) -> bool:
     return expected == stable_hash(
         {key: value for key, value in payload.items() if key != "logical_sha256"}
     )
+
+
+def _normalize_identity_keys(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    missing = sorted(set(IDENTITY_COLUMNS) - set(frame.columns))
+    if missing:
+        raise CleanV2DataError(f"{label} is missing identity columns: {missing}")
+    key_dtypes = {column: str(frame[column].dtype) for column in IDENTITY_COLUMNS}
+    null_counts = {
+        column: int(frame[column].isna().sum()) for column in IDENTITY_COLUMNS
+    }
+    if any(null_counts.values()):
+        raise CleanV2DataError(
+            f"{label} has null identity keys: {null_counts}"
+        )
+    normalized = frame.copy()
+    try:
+        normalized["decision_timestamp"] = pd.to_datetime(
+            normalized["decision_timestamp"], utc=True, errors="raise"
+        )
+    except (TypeError, ValueError) as exc:
+        raise CleanV2DataError(
+            f"{label} has invalid decision_timestamp values"
+        ) from exc
+    observed_assets = sorted(set(normalized["asset_id"].astype(str)))
+    if len(observed_assets) > 1:
+        raise CleanV2DataError(
+            f"{label} contains multiple asset identities: {observed_assets[:5]}"
+        )
+    duplicate_count = int(normalized.duplicated(list(IDENTITY_COLUMNS)).sum())
+    if duplicate_count:
+        raise CleanV2DataError(
+            f"{label} has duplicate identity keys: {duplicate_count}"
+        )
+    return normalized, {
+        "key_dtypes": key_dtypes,
+        "null_identity_counts": null_counts,
+        "duplicate_identity_count": duplicate_count,
+        "observed_asset_ids": observed_assets,
+    }
+
+
+def _repair_missingness_summary(
+    joined: pd.DataFrame,
+    *,
+    repaired: Sequence[str],
+    provenance: Sequence[str],
+    partition_label: str,
+) -> dict[str, Any]:
+    if "session_type" not in joined:
+        raise CleanV2DataError(
+            f"Base feature partition lacks session_type: {partition_label}"
+        )
+    normalized_session_type = (
+        joined["session_type"].astype(str).str.strip().str.lower()
+    )
+    regular_mask = normalized_session_type.isin(REGULAR_SESSION_TYPES)
+    extended_mask = ~regular_mask
+    contract_columns = [*repaired, *provenance]
+    extended_non_null = {
+        column: int(joined.loc[extended_mask, column].notna().sum())
+        for column in contract_columns
+    }
+    if any(extended_non_null.values()):
+        raise CleanV2DataError(
+            "Extended-hours V2 repair values must remain null: "
+            f"{partition_label}:{extended_non_null}"
+        )
+    required_regular_features = (
+        "minutes_since_open",
+        "minutes_until_close",
+        "session_progress",
+        "early_close_session_flag",
+        "opening_period_flag",
+    )
+    regular_required_nulls = {
+        feature: int(joined.loc[regular_mask, feature].isna().sum())
+        for feature in required_regular_features
+    }
+    if any(regular_required_nulls.values()):
+        raise CleanV2DataError(
+            "Regular-session calendar repairs must be populated: "
+            f"{partition_label}:{regular_required_nulls}"
+        )
+    value_without_provenance = {
+        feature: int(
+            (
+                joined[feature].notna()
+                & joined[source_column].isna()
+            ).sum()
+        )
+        for feature, source_column in zip(repaired, provenance)
+    }
+    if any(value_without_provenance.values()):
+        raise CleanV2DataError(
+            "V2 repair value lacks provenance timestamp: "
+            f"{partition_label}:{value_without_provenance}"
+        )
+    provenance_without_value = {
+        feature: int(
+            (
+                joined[feature].isna()
+                & joined[source_column].notna()
+            ).sum()
+        )
+        for feature, source_column in zip(repaired, provenance)
+    }
+    ordered_regular = joined.loc[regular_mask].sort_values(
+        ["session_date", "decision_timestamp"], kind="mergesort"
+    )
+    opening_position = ordered_regular.groupby(
+        "session_date", sort=False
+    ).cumcount()
+    opening_window = ordered_regular.loc[opening_position < 5]
+    opening_features = (
+        "opening_range_position",
+        "session_return_30m",
+        "opening_return_30m",
+    )
+    opening_window_non_null = {
+        feature: int(opening_window[feature].notna().sum())
+        for feature in opening_features
+    }
+    if any(opening_window_non_null.values()):
+        raise CleanV2DataError(
+            "Opening-window repairs populated before the sixth finalized bar: "
+            f"{partition_label}:{opening_window_non_null}"
+        )
+    first_session = str(joined["session_date"].astype(str).min())
+    first_history = joined["session_date"].astype(str).eq(first_session)
+    history_features = (
+        "overnight_gap",
+        "previous_session_return",
+        "two_session_return",
+    )
+    return {
+        "regular_session_rows": int(regular_mask.sum()),
+        "extended_hours_rows": int(extended_mask.sum()),
+        "matched_rows_with_any_null_repair_value": int(
+            joined.loc[:, list(repaired)].isna().any(axis=1).sum()
+        ),
+        "repair_null_counts": {
+            feature: int(joined[feature].isna().sum()) for feature in repaired
+        },
+        "extended_non_null_counts": extended_non_null,
+        "regular_required_null_counts": regular_required_nulls,
+        "value_without_provenance_counts": value_without_provenance,
+        "provenance_without_value_counts": provenance_without_value,
+        "opening_window_rows": int(len(opening_window)),
+        "opening_window_non_null_counts": opening_window_non_null,
+        "earliest_selected_session": first_session,
+        "earliest_session_history_null_counts": {
+            feature: int(joined.loc[first_history, feature].isna().sum())
+            for feature in history_features
+        },
+    }
+
+
+def _join_repaired_features(
+    base: pd.DataFrame,
+    sidecar: pd.DataFrame,
+    *,
+    repaired: Sequence[str],
+    source_timestamp_suffix: str,
+    partition_label: str,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    provenance = tuple(f"{name}{source_timestamp_suffix}" for name in repaired)
+    required_sidecar = {*IDENTITY_COLUMNS, *repaired, *provenance}
+    missing_sidecar = sorted(required_sidecar - set(sidecar.columns))
+    if missing_sidecar:
+        raise CleanV2DataError(
+            f"V2 sidecar is missing required columns: {missing_sidecar}"
+        )
+    normalized_base, base_identity = _normalize_identity_keys(
+        base,
+        label=f"base feature partition {partition_label}",
+    )
+    normalized_sidecar, sidecar_identity = _normalize_identity_keys(
+        sidecar,
+        label=f"V2 sidecar partition {partition_label}",
+    )
+    if (
+        sidecar_identity["observed_asset_ids"]
+        and base_identity["observed_asset_ids"]
+        != sidecar_identity["observed_asset_ids"]
+    ):
+        raise CleanV2DataError(
+            f"Base/sidecar asset identity mismatch for {partition_label}: "
+            f"base={base_identity['observed_asset_ids']}, "
+            f"sidecar={sidecar_identity['observed_asset_ids']}"
+        )
+    for source_column in provenance:
+        raw_source = normalized_sidecar[source_column]
+        source = pd.to_datetime(raw_source, utc=True, errors="coerce")
+        invalid = raw_source.notna() & source.isna()
+        if bool(invalid.any()):
+            raise CleanV2DataError(
+                f"Invalid source timestamp in {partition_label}:{source_column}"
+            )
+        future = source.notna() & (
+            source > normalized_sidecar["decision_timestamp"]
+        )
+        if bool(future.any()):
+            raise CleanV2DataError(
+                f"Future source timestamp in {partition_label}:{source_column}"
+            )
+        normalized_sidecar[source_column] = source
+
+    replacement = normalized_sidecar[
+        [*IDENTITY_COLUMNS, *repaired, *provenance]
+    ].copy()
+    replacement["__v2_sidecar_present"] = True
+    retained = normalized_base.drop(columns=list(repaired))
+    joined = retained.merge(
+        replacement,
+        on=list(IDENTITY_COLUMNS),
+        how="left",
+        validate="one_to_one",
+        indicator="__v2_join_status",
+        sort=False,
+    )
+    unmatched = joined["__v2_sidecar_present"].isna()
+    unmatched_count = int(unmatched.sum())
+    unmatched_examples = (
+        joined.loc[
+            unmatched,
+            [*IDENTITY_COLUMNS, "session_date", "session_type"],
+        ]
+        .head(5)
+        .assign(
+            decision_timestamp=lambda rows: rows["decision_timestamp"].map(
+                lambda value: pd.Timestamp(value).isoformat()
+            )
+        )
+        .to_dict("records")
+    )
+    if len(joined) != len(normalized_base) or unmatched_count:
+        raise CleanV2DataError(
+            "V2 sidecar does not fully cover base rows: "
+            f"{partition_label}; base_rows={len(normalized_base)}; "
+            f"unmatched_keys={unmatched_count}; examples={unmatched_examples}"
+        )
+    missingness = _repair_missingness_summary(
+        joined,
+        repaired=repaired,
+        provenance=provenance,
+        partition_label=partition_label,
+    )
+    report = {
+        "base_rows": int(len(normalized_base)),
+        "sidecar_rows_selected": int(len(normalized_sidecar)),
+        "matched_rows": int(len(joined) - unmatched_count),
+        "unmatched_base_key_count": unmatched_count,
+        "unmatched_base_key_examples": unmatched_examples,
+        "base_identity": base_identity,
+        "sidecar_identity": sidecar_identity,
+        **missingness,
+    }
+    returned = joined.drop(
+        columns=[
+            *provenance,
+            "session_type",
+            "__v2_sidecar_present",
+            "__v2_join_status",
+        ]
+    )
+    return returned, report
 
 
 class CleanV2CompositeData:
@@ -178,15 +454,17 @@ class CleanV2CompositeData:
             decisions = pd.to_datetime(frame["decision_timestamp"], utc=True)
             return frame[(decisions >= start) & (decisions < end)].copy()
 
-    def _read_feature_partition(
-        self, partition: CleanV2Partition, session_dates: Sequence[str]
+    def _read_base_feature_slice(
+        self,
+        partition: CleanV2Partition,
+        session_dates: Sequence[str],
     ) -> pd.DataFrame:
-        start, end = self._date_bounds(session_dates)
         base_columns = [
             "asset_id",
             "canonical_symbol",
             "decision_timestamp",
             "session_date",
+            "session_type",
             *self.stock_predictors,
         ]
         try:
@@ -203,12 +481,31 @@ class CleanV2CompositeData:
         ):
             base = pd.read_parquet(partition.base_feature_path, columns=base_columns)
             base = base[base["session_date"].astype(str).isin(session_dates)].copy()
+        return base
+
+    def _feature_partition_inputs(
+        self,
+        partition: CleanV2Partition,
+        session_dates: Sequence[str],
+    ) -> tuple[pd.DataFrame, pd.DataFrame, tuple[str, ...], tuple[str, ...]]:
+        base = self._read_base_feature_slice(partition, session_dates)
         if base.empty:
-            return base
+            return base, pd.DataFrame(), (), ()
+        base["decision_timestamp"] = pd.to_datetime(
+            base["decision_timestamp"], utc=True, errors="raise"
+        )
         repaired = tuple(self.feature_contract["sidecar"]["repair_columns"])
         provenance = tuple(
             f"{name}{self.feature_contract['sidecar']['source_timestamp_suffix']}"
             for name in repaired
+        )
+        # Session labels are exchange dates, while extended-hours timestamps can
+        # cross a UTC midnight. Bound the read by the exact selected base keys;
+        # session-date midnights are not valid timestamp coverage bounds.
+        start = pd.Timestamp(base["decision_timestamp"].min()).tz_convert("UTC")
+        end = (
+            pd.Timestamp(base["decision_timestamp"].max()).tz_convert("UTC")
+            + pd.Timedelta(microseconds=1)
         )
         sidecar = self._read_timestamp_slice(
             partition.sidecar_path,
@@ -216,31 +513,154 @@ class CleanV2CompositeData:
             start=start,
             end=end,
         )
-        sidecar["decision_timestamp"] = pd.to_datetime(
-            sidecar["decision_timestamp"], utc=True
+        return base, sidecar, repaired, provenance
+
+    def _read_feature_partition(
+        self, partition: CleanV2Partition, session_dates: Sequence[str]
+    ) -> pd.DataFrame:
+        base, sidecar, repaired, _provenance = self._feature_partition_inputs(
+            partition, session_dates
         )
-        base["decision_timestamp"] = pd.to_datetime(base["decision_timestamp"], utc=True)
-        for source_column in provenance:
-            source = pd.to_datetime(sidecar[source_column], utc=True, errors="coerce")
-            if bool((source.notna() & (source > sidecar["decision_timestamp"])).any()):
-                raise CleanV2DataError(
-                    f"Future source timestamp in {partition.sidecar_path}:{source_column}"
-                )
-        replacement = sidecar[["asset_id", "decision_timestamp", *repaired]].copy()
-        if replacement.duplicated(["asset_id", "decision_timestamp"]).any():
-            raise CleanV2DataError(f"Duplicate V2 sidecar key: {partition.sidecar_path}")
-        base = base.drop(columns=list(repaired))
-        joined = base.merge(
-            replacement,
-            on=["asset_id", "decision_timestamp"],
-            how="inner",
-            validate="one_to_one",
+        if base.empty:
+            return base
+        joined, _report = _join_repaired_features(
+            base,
+            sidecar,
+            repaired=repaired,
+            source_timestamp_suffix=self.feature_contract["sidecar"][
+                "source_timestamp_suffix"
+            ],
+            partition_label=f"{partition.asset_id}/{partition.year}",
         )
-        if len(joined) != len(base):
-            raise CleanV2DataError(
-                f"V2 sidecar does not fully cover base rows: {partition.asset_id}/{partition.year}"
-            )
         return joined
+
+    def diagnose_feature_partition(
+        self,
+        partition: CleanV2Partition,
+        session_dates: Sequence[str],
+    ) -> dict[str, Any]:
+        """Compare the rejected session-date bounds with exact key coverage."""
+
+        base, exact_sidecar, repaired, provenance = self._feature_partition_inputs(
+            partition, session_dates
+        )
+        if base.empty:
+            raise CleanV2DataError(
+                f"No base rows selected for {partition.asset_id}/{partition.year}"
+            )
+        legacy_start, legacy_end = self._date_bounds(session_dates)
+        legacy_sidecar = self._read_timestamp_slice(
+            partition.sidecar_path,
+            columns=[*IDENTITY_COLUMNS, *repaired, *provenance],
+            start=legacy_start,
+            end=legacy_end,
+        )
+        base_keys = base[
+            [*IDENTITY_COLUMNS, "session_date", "session_type"]
+        ].copy()
+        base_keys["decision_timestamp"] = pd.to_datetime(
+            base_keys["decision_timestamp"], utc=True, errors="raise"
+        )
+        legacy_keys = legacy_sidecar[[*IDENTITY_COLUMNS]].copy()
+        legacy_keys["decision_timestamp"] = pd.to_datetime(
+            legacy_keys["decision_timestamp"], utc=True, errors="raise"
+        )
+        legacy_keys["__legacy_present"] = True
+        legacy_join = base_keys.merge(
+            legacy_keys,
+            on=list(IDENTITY_COLUMNS),
+            how="left",
+            validate="one_to_one",
+            sort=False,
+        )
+        legacy_unmatched = legacy_join["__legacy_present"].isna()
+        offending_keys = legacy_join.loc[
+            legacy_unmatched,
+            [*IDENTITY_COLUMNS, "session_date", "session_type"],
+        ].copy()
+        exact_lookup = exact_sidecar[
+            [*IDENTITY_COLUMNS, *repaired, *provenance]
+        ].copy()
+        exact_lookup["decision_timestamp"] = pd.to_datetime(
+            exact_lookup["decision_timestamp"], utc=True, errors="raise"
+        )
+        offending_values = offending_keys.merge(
+            exact_lookup,
+            on=list(IDENTITY_COLUMNS),
+            how="left",
+            validate="one_to_one",
+            sort=False,
+        )
+        _joined, exact_report = _join_repaired_features(
+            base,
+            exact_sidecar,
+            repaired=repaired,
+            source_timestamp_suffix=self.feature_contract["sidecar"][
+                "source_timestamp_suffix"
+            ],
+            partition_label=f"{partition.asset_id}/{partition.year}",
+        )
+        regular = (
+            base["session_type"].astype(str).str.strip().str.lower()
+        ).isin(REGULAR_SESSION_TYPES)
+        example_columns = [
+            *IDENTITY_COLUMNS,
+            "session_date",
+            "session_type",
+            *repaired,
+            *provenance,
+        ]
+        examples = offending_values.loc[:, example_columns].head(5).copy()
+        examples["decision_timestamp"] = examples["decision_timestamp"].map(
+            lambda value: pd.Timestamp(value).isoformat()
+        )
+        return {
+            "partition": f"{partition.asset_id}/{partition.year}",
+            "session_dates": list(session_dates),
+            "base_rows_requested": int(len(base)),
+            "legacy_sidecar_rows_selected": int(len(legacy_sidecar)),
+            "exact_key_range_sidecar_rows_selected": int(len(exact_sidecar)),
+            "join_keys": list(IDENTITY_COLUMNS),
+            "base_key_dtypes": {
+                column: str(base[column].dtype) for column in IDENTITY_COLUMNS
+            },
+            "sidecar_key_dtypes": {
+                column: str(exact_sidecar[column].dtype)
+                for column in IDENTITY_COLUMNS
+            },
+            "base_null_identity_counts": {
+                column: int(base[column].isna().sum())
+                for column in IDENTITY_COLUMNS
+            },
+            "sidecar_null_identity_counts": {
+                column: int(exact_sidecar[column].isna().sum())
+                for column in IDENTITY_COLUMNS
+            },
+            "base_duplicate_identity_count": int(
+                base.duplicated(list(IDENTITY_COLUMNS)).sum()
+            ),
+            "sidecar_duplicate_identity_count": int(
+                exact_sidecar.duplicated(list(IDENTITY_COLUMNS)).sum()
+            ),
+            "regular_session_rows": int(regular.sum()),
+            "extended_hours_rows": int((~regular).sum()),
+            "legacy_unmatched_base_key_count": int(legacy_unmatched.sum()),
+            "legacy_unmatched_examples_with_exact_sidecar_values": examples.to_dict(
+                "records"
+            ),
+            "legacy_failing_predicate": (
+                "len(inner_join(base_session_dates, "
+                "sidecar_timestamp_between_session_midnights)) != len(base)"
+            ),
+            "legacy_predicate_value": (
+                f"{int((~legacy_unmatched).sum())} != {len(base)}"
+            ),
+            "exact_identity_coverage_passed": (
+                exact_report["unmatched_base_key_count"] == 0
+            ),
+            "production_reader_passed": True,
+            **exact_report,
+        }
 
     def _read_targets(
         self, partition: CleanV2Partition, session_dates: Sequence[str]

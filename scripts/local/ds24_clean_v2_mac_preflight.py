@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from core.research.ml.ds24.clean_v2_contracts import (
     authority_bundle,
+    clean_source_hash,
     file_sha256,
     stable_hash,
 )
@@ -81,27 +82,6 @@ def partition_file_hashes_match(
         if file_sha256(candidate) != expected:
             return False
     return True
-
-
-def clean_source_hash() -> str:
-    relative_paths = [
-        "core/research/ml/ds24/clean_v2_certification.py",
-        "core/research/ml/ds24/clean_v2_contracts.py",
-        "core/research/ml/ds24/clean_v2_data.py",
-        "core/research/ml/ds24/clean_v2_features.py",
-        "core/research/ml/ds24/clean_v2_runtime.py",
-        "scripts/local/ds24_clean_v2_certify.py",
-        "scripts/local/ds24_clean_v2_family_worker.py",
-        "scripts/local/ds24_clean_v2_mac_preflight.py",
-        "scripts/local/ds24_clean_v2_monitor.py",
-        "scripts/local/ds24_clean_v2_supervisor.py",
-    ]
-    return stable_hash(
-        {
-            relative: file_sha256(ROOT / relative)
-            for relative in relative_paths
-        }
-    )
 
 
 def main() -> int:
