@@ -8,8 +8,8 @@ The V2 feature sidecar and target extension are complete and unchanged. Do not r
 
 Frozen identities:
 
-- source implementation commit: `10f332c70aca9c503f0e8ee0d4fbf5e484c0f663`
-- clean source hash: `9d4305c9a81045c231fc33dfa6392d70b669839a6c20321c491858147c17b612`
+- source implementation commit: `5093782de4a2542f1993e45b6c11dc104a786d2f`
+- clean source hash: `00b56411c667a196cca6a22c682a89c9282b12baeb5a23557edc9b453c175f3a`
 - static authority bundle: `4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc`
 - model-registry file / logical hash: `e57926407bb34f253c49d1c5a8541f1f233b4d1770e27bdab1f406b8e2045742` / `0421b56cc534a5cd86f15e8a208929cf5ff2205a68069bcca71fa49e626f49b5`
 - tournament-contract file / logical hash: `15cf8aec7b1ef81e6682c0c82886255f0e80ebe1acdb2abf6d618ae4b1fcd5bb` / `c8307036d89fed26d6081838414d6a5e6a29d7101bfa8ef4080d7b75a8f6ec53`
@@ -31,6 +31,8 @@ The retired reader converted exchange `session_date` labels into a half-open UTC
 That key exists in the immutable sidecar. Its eleven repair values and eleven provenance timestamps are correctly null because extended-hours rows are not admitted to the repaired regular-session formulas. Across the requested package, all 4,226 exact keys match; 2,548 matched rows legitimately have at least one null repair value. Identity columns have no nulls or duplicates and both sides use the same hashed asset ID plus `datetime64[us, UTC]` timestamp precision.
 
 The repaired reader bounds sidecar IO from the selected base timestamps, then performs a one-to-one left join with an explicit presence marker. It validates identity coverage independently from repair missingness, never restores a V1 repair value, and still fails closed for null, duplicate, mismatched, or genuinely absent keys. The materialized sidecar and target data require no repair.
+
+The required one-asset `assemble_sessions` check then exposed a second, downstream reader compatibility failure: all-null legacy breadth-context columns load as object dtype, and current pandas rejects assigning those objects into newly created numeric panel columns. Context predictors are now explicitly coerced to numeric, preserving missing values as `NaN` without filling or changing model-specific preprocessing. The bounded AAPL assembly completes with 1,949 target-eligible regular-session rows.
 
 The preserved `random_forest` and `transformer` failures are now reconciled to `FAILED_CLOSED`, retaining the original exception, timestamp, log path, completed-refit list, and metrics cursor. Retry attempts receive a new host/run/attempt generation; stale failures cannot override a newer running or completed attempt. The monitor reads only `supervisor_status_<host>.json` and filters current ownership, so the older generic status cannot reintroduce `iTransformer` or another retired family.
 
@@ -103,7 +105,7 @@ python .\scripts\local\ds24_clean_v2_reader_preflight.py --family random_forest 
 if ($LASTEXITCODE -ne 0) { throw 'DS24 V2 bounded production-reader preflight failed. Do not resume.' }
 ```
 
-Require `DS24_CLEAN_V2_BOUNDED_READER_PREFLIGHT_PASS`, `production_reader_rows: 4226`, exact key coverage, `model_fit_performed: false`, and `data_written: false`.
+Require `DS24_CLEAN_V2_BOUNDED_READER_PREFLIGHT_PASS`, `production_reader_rows: 4226`, `production_assembly_rows: 1949`, `production_assembly_assets: ["AAPL"]`, exact key coverage, `model_fit_performed: false`, and `data_written: false`.
 
 ## 3. Preserve the existing full certificate
 
@@ -153,8 +155,8 @@ Run after this commit, the completed V2 data authorities, and the passing certif
 ```powershell
 $MacHost = Read-Host 'Mac SSH host (for example user@hostname)'
 $MacRepo = Read-Host 'Absolute Mac trading_system path'
-$ExpectedSourceCommit = '10f332c70aca9c503f0e8ee0d4fbf5e484c0f663'
-$ExpectedSourceHash = '9d4305c9a81045c231fc33dfa6392d70b669839a6c20321c491858147c17b612'
+$ExpectedSourceCommit = '5093782de4a2542f1993e45b6c11dc104a786d2f'
+$ExpectedSourceHash = '00b56411c667a196cca6a22c682a89c9282b12baeb5a23557edc9b453c175f3a'
 $ExpectedBundleHash = '4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc'
 $ExpectedFeatureHash = 'ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d'
 $ExpectedTargetHash = '41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1'
