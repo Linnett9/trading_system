@@ -119,6 +119,11 @@ def build_clean_refit_schedule(
     timestamps = [pd.Timestamp(value).tz_convert("UTC") for value in spine]
     sessions = _session_dates(timestamps)
     positions = {session: index for index, session in enumerate(sessions)}
+    first_timestamp_by_session: dict[str, pd.Timestamp] = {}
+    for timestamp in timestamps:
+        first_timestamp_by_session.setdefault(
+            timestamp.date().isoformat(), timestamp
+        )
     groups: list[list[str]] = []
     if qualifier_years is None:
         score_sessions = sessions[lookback_sessions:]
@@ -158,11 +163,7 @@ def build_clean_refit_schedule(
         ]
         if len(training_sessions) != lookback_sessions:
             continue
-        refit_t = min(
-            timestamp
-            for timestamp in timestamps
-            if timestamp.date().isoformat() == score_sessions[0]
-        )
+        refit_t = first_timestamp_by_session[score_sessions[0]]
         out.append(
             RefitPackageSpec(
                 ordinal=len(out),
@@ -294,7 +295,71 @@ def _rank_labels(train: pd.DataFrame) -> pd.Series:
     ranks = train.groupby("decision_timestamp", sort=False)["target_value"].rank(
         method="first", pct=True
     )
-    return np.minimum(np.ceil(ranks * 5.0).astype(int) - 1, 4).clip(lower=0)
+    labels = np.floor(ranks.to_numpy(dtype=float) * 4.999).astype(int)
+    return pd.Series(labels, index=train.index, dtype=int)
+
+
+def _prepare_xendcg_training_inputs(
+    train: pd.DataFrame,
+    predictors: Sequence[str],
+    *,
+    maximum_rows: int,
+) -> tuple[pd.DataFrame, np.ndarray, list[int]]:
+    """Reproduce the frozen Mac producer's ranker inputs exactly."""
+
+    if maximum_rows <= 0:
+        raise CleanV2WorkerError("XENDCG training-row cap must be positive")
+    ordered = train.sort_values(
+        ["decision_timestamp", "asset_id"], kind="mergesort"
+    ).reset_index(drop=True)
+    if len(ordered) > maximum_rows:
+        # The recovered producer applies tail(max_training_rows) to rows, not
+        # complete query groups. Its retained artifacts prove that the oldest
+        # query can therefore be partial; changing this changes the fit.
+        ordered = ordered.tail(maximum_rows).reset_index(drop=True)
+    matrix = (
+        ordered.loc[:, list(predictors)]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+    labels = _rank_labels(ordered).to_numpy(dtype=int)
+    groups = (
+        ordered.groupby("decision_timestamp", sort=False).size().astype(int).tolist()
+    )
+    return matrix, labels, groups
+
+
+def _prepare_xendcg_scoring_inputs(
+    score_panel: pd.DataFrame, predictors: Sequence[str]
+) -> pd.DataFrame:
+    return (
+        score_panel.loc[:, list(predictors)]
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+    )
+
+
+def _fit_xendcg(
+    config: Mapping[str, Any],
+    train: pd.DataFrame,
+    predictors: Sequence[str],
+) -> tuple[Any, dict[str, Any]]:
+    try:
+        import lightgbm as lgb
+    except ImportError as exc:
+        raise CleanV2WorkerError("LightGBM dependency is unavailable") from exc
+    matrix, labels, groups = _prepare_xendcg_training_inputs(
+        train,
+        predictors,
+        maximum_rows=int(config["training"]["max_training_rows"]),
+    )
+    model = lgb.LGBMRanker(**dict(config["parameters"]))
+    model.fit(matrix, labels, group=groups)
+    return model, {
+        "kind": "ranker",
+        "training_rows": len(matrix),
+        "training_groups": len(groups),
+    }
 
 
 def _fit_model(
@@ -325,40 +390,7 @@ def _fit_model(
             "training_examples": len(sequences),
         }
     if family == "lightgbm_rank_xendcg":
-        try:
-            import lightgbm as lgb
-        except ImportError as exc:
-            raise CleanV2WorkerError("LightGBM dependency is unavailable") from exc
-        ordered = train.sort_values(
-            ["decision_timestamp", "asset_id"], kind="mergesort"
-        ).copy()
-        cap = int(config["training"]["max_training_rows"])
-        if len(ordered) > cap:
-            keep_timestamps: list[pd.Timestamp] = []
-            row_count = 0
-            for timestamp, group in reversed(
-                list(ordered.groupby("decision_timestamp", sort=True))
-            ):
-                if keep_timestamps and row_count + len(group) > cap:
-                    break
-                keep_timestamps.append(pd.Timestamp(timestamp))
-                row_count += len(group)
-            ordered = ordered[
-                ordered["decision_timestamp"].isin(keep_timestamps)
-            ].copy()
-        imputer = SimpleImputer(strategy="median")
-        matrix = imputer.fit_transform(ordered[list(predictors)])
-        labels = _rank_labels(ordered).to_numpy(dtype=int)
-        groups = (
-            ordered.groupby("decision_timestamp", sort=False).size().astype(int).tolist()
-        )
-        model = lgb.LGBMRanker(**dict(config["parameters"]))
-        model.fit(matrix, labels, group=groups, eval_at=config["parameters"]["eval_at"])
-        return (imputer, model), {
-            "kind": "ranker",
-            "training_rows": len(ordered),
-            "training_groups": len(groups),
-        }
+        return _fit_xendcg(config, train, predictors)
     estimator = _tabular_estimator(family, config)
     estimator.fit(train[list(predictors)], train["target_value"].astype(float))
     return estimator, {"kind": "tabular", "training_rows": len(train)}
@@ -390,9 +422,8 @@ def _score_model(
         values = pd.Series(model.predict(sequences), dtype=float)
         asset_ids = rows["asset_id"].astype(str)
     elif family == "lightgbm_rank_xendcg":
-        imputer, ranker = model
         values = pd.Series(
-            ranker.predict(imputer.transform(score_panel[list(predictors)])),
+            model.predict(_prepare_xendcg_scoring_inputs(score_panel, predictors)),
             dtype=float,
         )
         asset_ids = score_panel["asset_id"].astype(str).reset_index(drop=True)

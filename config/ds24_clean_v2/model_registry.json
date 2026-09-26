@@ -1,5 +1,5 @@
 {
-  "authority_id": "DS24_CLEAN_V2_MODEL_REGISTRY_V2",
+  "authority_id": "DS24_CLEAN_V2_MODEL_REGISTRY_V3",
   "selection_rule": "Results Ledger evidence preregisters configuration hypotheses only; historical metrics are never model inputs, clean performance evidence, or tuning feedback",
   "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1",
   "families": {
@@ -96,10 +96,41 @@
     },
     "lightgbm_rank_xendcg": {
       "lane": "SHORT_REQUALIFICATION",
-      "status": "EXACT_RECOVERED",
-      "implementation": "core.research.ml.stock_level.lightgbm_rank_xendcg_selector:fixed_rank_xendcg_configuration",
+      "status": "EXACT_RECOVERED_MAC_PRODUCER_PORT",
+      "implementation": "scripts.local.ds24_clean_v2_family_worker:_fit_xendcg",
+      "recovered_producer_authority": {
+        "classification": "MAC_WORKTREE_UNCOMMITTED_SOURCE_OVER_ADVERTISED_HEAD",
+        "advertised_mac_head": "b2ffdf0966c0424c82632ea21f83cefb29905cc1",
+        "producer_function": "core.research.ml.ds24.mac_aux_queue_r44f2._fit_lightgbm",
+        "producer_source_sha256": "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d",
+        "source_manifest_file_sha256": "5cb30e9629d681e86b44bf301af50b328b8d0f9e71929f1f9d00d9f98d0d4d7c",
+        "three_refit_parity_file_sha256": "c2f8df6db8c491135e72d4a71a983fe33ead8d538b510af73506626573f88e39",
+        "parity_classification": "XENDCG_PRODUCTION_PARITY_PASS",
+        "parity_refit_ordinals": [2, 1132, 2263],
+        "ordered_predictor_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+        "discrepancy_resolution": "The rejected 24/0.08/7/2 payload came from the generic daily stock-level fixed_rank_xendcg_configuration and was never the recovered DS24 Mac producer. This candidate is the single carry-forward XENDCG entry and ports the frozen Mac producer semantics."
+      },
+      "preprocessing": [
+        "sort rows by decision_timestamp then asset_id",
+        "apply tail(max_training_rows) at row level; the oldest query group may be partial",
+        "replace positive and negative infinity with NaN",
+        "fill NaN with 0.0 without a fitted imputer"
+      ],
+      "grouping": {
+        "query_key": "decision_timestamp",
+        "query_order": "ascending decision_timestamp after stable asset_id tie-break",
+        "group_sizes": "ordered row counts per decision_timestamp after the row-level training cap"
+      },
+      "rank_labels": {
+        "source": "target_value",
+        "within": "decision_timestamp",
+        "rank_method": "first",
+        "percentile": true,
+        "transform": "floor(percentile_rank * 4.999)",
+        "relevance_values": [0, 1, 2, 3, 4]
+      },
       "training": {"lookback_sessions": 20, "max_training_rows": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
-      "parameters": {"objective": "rank_xendcg", "metric": "ndcg", "eval_at": [1, 3, 5], "n_estimators": 24, "learning_rate": 0.08, "num_leaves": 7, "max_depth": 3, "min_child_samples": 2, "reg_alpha": 0.05, "reg_lambda": 0.2, "max_bin": 31, "subsample": 1.0, "colsample_bytree": 1.0, "deterministic": true, "force_col_wise": true, "random_state": 1729, "bagging_seed": 1729, "feature_fraction_seed": 1729, "data_random_seed": 1729, "n_jobs": 1, "verbosity": -1}
+      "parameters": {"objective": "rank_xendcg", "n_estimators": 25, "learning_rate": 0.05, "num_leaves": 15, "min_child_samples": 10, "n_jobs": 4, "num_threads": 4, "random_state": 1729, "verbose": -1}
     },
     "momentum_transformer": {
       "lane": "UNSCORED_DISCOVERY",

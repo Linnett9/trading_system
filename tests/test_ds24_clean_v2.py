@@ -36,7 +36,11 @@ from core.research.ml.ds24.clean_v2_runtime import (
 )
 from scripts.local.ds24_clean_v2_build_sidecar import _publish_partition, _read_raw_context
 from scripts.local.ds24_clean_v2_certify import _synthetic_semantic_checks
-from scripts.local.ds24_clean_v2_family_worker import build_clean_refit_schedule
+from scripts.local.ds24_clean_v2_family_worker import (
+    _prepare_xendcg_scoring_inputs,
+    _prepare_xendcg_training_inputs,
+    build_clean_refit_schedule,
+)
 from scripts.local.ds24_clean_v2_mac_preflight import (
     clean_source_hash,
     partition_file_hashes_match,
@@ -354,6 +358,131 @@ def test_preregistered_gbdt_hypotheses_do_not_reintroduce_daily_refits() -> None
     assert models["preregistered_unresolved_hypotheses"]["gradient_boosting_C7"][
         "automatic_admission"
     ] is False
+
+
+def test_xendcg_registry_ports_the_frozen_mac_producer_not_generic_selector() -> None:
+    model = load_contract("model_registry.json")["families"][
+        "lightgbm_rank_xendcg"
+    ]
+
+    assert model["status"] == "EXACT_RECOVERED_MAC_PRODUCER_PORT"
+    assert "fixed_rank_xendcg_configuration" not in model["implementation"]
+    assert model["parameters"] == {
+        "objective": "rank_xendcg",
+        "n_estimators": 25,
+        "learning_rate": 0.05,
+        "num_leaves": 15,
+        "min_child_samples": 10,
+        "n_jobs": 4,
+        "num_threads": 4,
+        "random_state": 1729,
+        "verbose": -1,
+    }
+    assert model["rank_labels"]["transform"] == "floor(percentile_rank * 4.999)"
+    assert model["grouping"]["query_key"] == "decision_timestamp"
+    authority = model["recovered_producer_authority"]
+    assert authority["producer_source_sha256"] == (
+        "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d"
+    )
+    assert authority["ordered_predictor_sha256"] == (
+        "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0"
+    )
+
+
+def test_xendcg_inputs_preserve_zero_fill_row_cap_groups_and_rank_labels() -> None:
+    first = pd.Timestamp("2024-01-02T14:35:00Z")
+    second = pd.Timestamp("2024-01-02T14:40:00Z")
+    training = pd.DataFrame(
+        {
+            "decision_timestamp": [second, first, second, first, second, first],
+            "asset_id": ["M", "Z", "A", "A", "Z", "M"],
+            "feature": [2.0, np.inf, np.nan, 1.0, -np.inf, 3.0],
+            "target_value": [2.0, 30.0, 1.0, 10.0, 3.0, 20.0],
+        }
+    )
+
+    matrix, labels, groups = _prepare_xendcg_training_inputs(
+        training, ["feature"], maximum_rows=4
+    )
+
+    assert groups == [1, 3]
+    assert labels.tolist() == [4, 1, 3, 4]
+    assert matrix["feature"].tolist() == [0.0, 0.0, 2.0, 0.0]
+    assert np.isfinite(matrix.to_numpy(dtype=float)).all()
+    scoring = _prepare_xendcg_scoring_inputs(training.iloc[:2], ["feature"])
+    assert scoring["feature"].tolist() == [2.0, 0.0]
+
+
+def test_execution_budget_covers_every_runnable_candidate_and_blocks_gbdt_reuse() -> None:
+    tournament = load_contract("tournament_contract.json")
+    ownership = load_contract("cross_host_ownership.json")
+    budget = tournament["execution_budget"]
+    rows = {row["family"]: row for row in budget["candidates"]}
+    scheduled = {
+        family for families in tournament["lanes"].values() for family in families
+    }
+    owned = {family for families in ownership["hosts"].values() for family in families}
+
+    assert set(rows) == scheduled == owned
+    assert "itransformer" not in rows
+    assert budget["classification"] == (
+        "FIVE_COMPLETE_CALENDAR_YEAR_QUALIFIER_NOT_A_SMOKE_TEST"
+    )
+    assert budget["qualifier_surface"] == {
+        "calendar_years": [2017, 2019, 2020, 2022, 2024],
+        "scoring_session_count": 1259,
+        "scoring_timestamp_count": 82669,
+        "refit_package_count": 255,
+        "by_year": {
+            "2017": {
+                "scoring_sessions": 251,
+                "scoring_timestamps": 16494,
+                "refit_packages": 51,
+            },
+            "2019": {
+                "scoring_sessions": 252,
+                "scoring_timestamps": 16519,
+                "refit_packages": 51,
+            },
+            "2020": {
+                "scoring_sessions": 253,
+                "scoring_timestamps": 16602,
+                "refit_packages": 51,
+            },
+            "2022": {
+                "scoring_sessions": 251,
+                "scoring_timestamps": 16530,
+                "refit_packages": 51,
+            },
+            "2024": {
+                "scoring_sessions": 252,
+                "scoring_timestamps": 16524,
+                "refit_packages": 51,
+            },
+        },
+    }
+    assert all(
+        {
+            "host",
+            "lane",
+            "training_lookback_sessions",
+            "scoring_session_count",
+            "scoring_timestamp_count",
+            "expected_fit_count",
+            "sample_cap",
+            "refit_schedule",
+        }
+        <= set(row)
+        for row in rows.values()
+    )
+    assert rows["gradient_boosting_C0"]["expected_fit_count"] == 535
+    assert rows["gradient_boosting_C0_W20"]["expected_fit_count"] == 255
+    reuse = budget["gradient_boosting_C0_W20_reuse"]
+    assert reuse["reuse_allowed"] is False
+    assert reuse["matching_qualifier_refit_boundaries"] == 51
+    assert reuse["total_qualifier_refit_boundaries"] == 255
+    assert reuse["identical_training_rows"] is False
+    assert reuse["identical_evaluation_keys"] is False
 
 
 def test_clean_worker_schedule_uses_five_score_sessions_and_frozen_years() -> None:

@@ -1,5 +1,5 @@
 {
-  "authority_id": "DS24_CLEAN_V2_TOURNAMENT_CONTRACT_V2",
+  "authority_id": "DS24_CLEAN_V2_TOURNAMENT_CONTRACT_V3",
   "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
   "result_root": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
   "feature_authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V2_PIT_REPAIRED",
@@ -26,6 +26,71 @@
     "automatic_full_continuation": false,
     "elastic_net_continuation": "only one of elastic_net_C5 and elastic_net_C6 receives full history unless clean common-sample evidence justifies both",
     "terminal_decisions": ["RECOMMEND_FULL_CLEAN_CONTINUATION", "DO_NOT_SPEND_FULL_HISTORY_COMPUTE"]
+  },
+  "execution_budget": {
+    "authority_id": "DS24_CLEAN_V2_PRELAUNCH_EXECUTION_BUDGET_V1",
+    "classification": "FIVE_COMPLETE_CALENDAR_YEAR_QUALIFIER_NOT_A_SMOKE_TEST",
+    "decision_spine": {
+      "reference_asset": "SPY",
+      "target_id": "forward_return_60m__decision_5m",
+      "session_count": 2695,
+      "timestamp_count": 177072,
+      "first_timestamp": "2016-01-04T14:35:00+00:00",
+      "last_timestamp": "2026-09-23T19:00:00+00:00",
+      "timestamp_sequence_sha256": "2365fae9b8ec1f320cb0b13d13fd19daa80b8d453033e2bcc1adacb134fd1a1c",
+      "session_date_sequence_sha256": "ce0abcad8ca857042e3f4f40557b1a5ebd400a6f82e837c33e133195bf0b68b9",
+      "feature_authority_logical_sha256": "ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d",
+      "target_authority_logical_sha256": "41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1"
+    },
+    "qualifier_surface": {
+      "calendar_years": [2017, 2019, 2020, 2022, 2024],
+      "scoring_session_count": 1259,
+      "scoring_timestamp_count": 82669,
+      "refit_package_count": 255,
+      "by_year": {
+        "2017": {"scoring_sessions": 251, "scoring_timestamps": 16494, "refit_packages": 51},
+        "2019": {"scoring_sessions": 252, "scoring_timestamps": 16519, "refit_packages": 51},
+        "2020": {"scoring_sessions": 253, "scoring_timestamps": 16602, "refit_packages": 51},
+        "2022": {"scoring_sessions": 251, "scoring_timestamps": 16530, "refit_packages": 51},
+        "2024": {"scoring_sessions": 252, "scoring_timestamps": 16524, "refit_packages": 51}
+      }
+    },
+    "candidates": [
+      {"family": "random_forest", "host": "dell", "lane": "FULL_CLEAN", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 535, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "transformer", "host": "dell", "lane": "FULL_CLEAN", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 535, "sample_cap": 24000, "sample_cap_unit": "training_examples", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "huber", "host": "dell", "lane": "FULL_CLEAN", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 535, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "ridge_C5", "host": "dell", "lane": "FULL_CLEAN", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 535, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "gradient_boosting_C0", "host": "dell", "lane": "FULL_CLEAN", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 535, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "elastic_net_C5", "host": "dell", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "elastic_net_C6", "host": "dell", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "gradient_boosting_C0_W20", "host": "dell", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "gradient_boosting_C0_W40", "host": "dell", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 40, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "gradient_boosting_C0_W80", "host": "dell", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 80, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": null, "sample_cap_unit": "none", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "lightgbm_rank_xendcg", "host": "mac", "lane": "SHORT_REQUALIFICATION", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": 24000, "sample_cap_unit": "training_rows", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "momentum_transformer", "host": "mac", "lane": "UNSCORED_DISCOVERY", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": 24000, "sample_cap_unit": "training_examples", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "market_context_encoder", "host": "mac", "lane": "UNSCORED_DISCOVERY", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": 24000, "sample_cap_unit": "training_examples", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "temporal_fusion_transformer", "host": "mac", "lane": "UNSCORED_DISCOVERY", "training_lookback_sessions": 20, "scoring_session_count": 1259, "scoring_timestamp_count": 82669, "expected_fit_count": 255, "sample_cap": 24000, "sample_cap_unit": "training_examples", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      {"family": "momentum", "host": "dell", "lane": "CONTROLS", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 0, "sample_cap": null, "sample_cap_unit": "not_applicable_no_fit", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1_SCORING_PACKAGES_ONLY"},
+      {"family": "equal_weight_no_model", "host": "dell", "lane": "CONTROLS", "training_lookback_sessions": 20, "scoring_session_count": 2675, "scoring_timestamp_count": 175752, "expected_fit_count": 0, "sample_cap": null, "sample_cap_unit": "not_applicable_no_fit", "refit_schedule": "REFIT_EVERY_5_TRADING_SESSIONS_V1_SCORING_PACKAGES_ONLY"}
+    ],
+    "xendcg_evaluation_wrapper": "The clean tournament scores every registered five-minute timestamp in the frozen qualifier years. This creates new clean evidence; it does not reuse the recovered producer's once-per-session legacy OOF results. Model construction, preprocessing, query grouping and relevance-label semantics remain the recovered producer's.",
+    "gradient_boosting_C0_W20_reuse": {
+      "reuse_allowed": false,
+      "disposition": "BOTH_EXECUTIONS_REQUIRED",
+      "same_data_authority": true,
+      "same_declared_lookback": true,
+      "same_estimator_parameters": true,
+      "same_preprocessing": true,
+      "same_seed": true,
+      "identical_fit_boundaries": false,
+      "identical_training_rows": false,
+      "identical_evaluation_keys": false,
+      "matching_qualifier_refit_boundaries": 51,
+      "total_qualifier_refit_boundaries": 255,
+      "qualifier_sessions_with_matching_full_run_fit_boundary": 251,
+      "total_qualifier_sessions": 1259,
+      "reason": "FULL_CLEAN packages continue their five-session phase across year boundaries, while SHORT_REQUALIFICATION restarts the phase inside each frozen qualifier year. Family identity and policy hash also participate in evaluation identity. Reuse would therefore misstate fit provenance for 204 of 255 qualifier fits."
+    }
   },
   "measurement_policy": {
     "classification": "NOT_PAPER_POLICY",
