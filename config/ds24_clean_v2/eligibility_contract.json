@@ -1,0 +1,17 @@
+{
+  "authority_id": "DS24_CLEAN_V2_ELIGIBILITY_CONTRACT_V1",
+  "population_authority": "the exact 514-asset physical V2 base snapshot; no outcome-conditioned additions or removals",
+  "row_identity": ["asset_id", "canonical_symbol", "decision_timestamp"],
+  "decision_time_rule": "decision_timestamp = source five-minute bar start + 5 minutes",
+  "session_rule": "XNYS regular session only, including calendar-declared early-close sessions; pre-market and after-hours rows are ineligible",
+  "identity_rule": "require admitted canonical asset identity and unique asset_id/decision_timestamp",
+  "feature_rule": "V2 composite row exists and all non-null values are finite; natural lookback nulls use only the frozen family preprocessing",
+  "training_rule": "target_is_trainable is true, target resolution is MATURED_VALID, decision_timestamp < refit_T, and target_available_timestamp <= refit_T",
+  "scoring_rule": "feature row is available at score T; target maturity is not required at score time",
+  "ranking_rule": "at least two eligible assets at a decision timestamp; no silent population fill",
+  "short_lane_common_sample_rule": "intersection of eligible decision timestamps and assets across compared qualifier families where input semantics permit",
+  "qualifier_years": [2017, 2019, 2020, 2022, 2024],
+  "missing_bar_rule": "target authority classification is preserved; missing required bars are never silently skipped into MATURED_VALID",
+  "future_holdout_rule": "all history through 2026-09-23 is development; prospective validation begins 2026-09-24",
+  "paper_or_live_admission": false
+}

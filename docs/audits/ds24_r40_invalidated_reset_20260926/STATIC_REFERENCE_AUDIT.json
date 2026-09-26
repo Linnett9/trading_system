@@ -1,0 +1,931 @@
+{
+  "active_clean_v2_runtime_dependencies": [],
+  "audit_id": "DS24_CLEAN_V2_DELETED_STAGE_REFERENCE_AUDIT_V1",
+  "pass": true,
+  "reference_count": 229,
+  "references": [
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/feature_schema_r6.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/master_5m_validation_r7v.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/model_package_output_contract_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_family_queue.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_tft.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_tft_r44c.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_tft_r44d.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_tft_r44e.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/remote_tft_r44f.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/vast_b2_bootstrap_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/vast_budget_benchmark.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/vast_gpu_live_launch_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/vast_reverse_queue_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/ds24/vast_soft_review_transition.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "core/research/ml/five_minute_feature_authority/r5_launch_package.py"
+    },
+    {
+      "classification": "PRESERVED_FORENSIC_AUDIT",
+      "path": "scripts/audits/ds24_paper_provenance_forensic.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_dream_system_master_programme_reconciliation_r7.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds24_execution_surface_completion.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds24_programme_policy_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds24_survivor_resolution_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds29_candidate_freeze_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_candidate_population_authority_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_locked_holdout_gate_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_locked_holdout_gate_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_locked_holdout_input_manifest_authority_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_native_5m_holdout_source_snapshot_authority_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_ds30_outcome_blind_pit_eligibility_design_authority_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_final_model_candidate_gate_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/build_master_dataset_final_two_estate_binding_contract_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/daily_final_d3_h10_h20_resource_precondition_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/ds14_ds20_r2_risk_numeric_parameter_evidence_binding.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/ds21c_strategic_tactical_control_authority_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/daily_final_d3_local_capacity_recovery_target_materialisation_and_execution_continuation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/daily_final_d3_r2_local_reclamation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/daily_final_d3_storage_numeric_target_repair_and_conditional_resume.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/dream_system_master_programme_reconciliation_r6.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds21a_audit_daily_selector_5m_execution.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds23_r1_historical_microstructure_source_authority_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_build_historical_5m_feature_authority.py"
+    },
+    {
+      "classification": "CLEAN_V2_GUARD_OR_AUDIT_TOOLING",
+      "path": "scripts/local/ds24_clean_v2_finalize_reset.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_completed_model_training_history_audit_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_cost_aware_r2_admission.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_cost_aware_r4_prepare.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_cost_aware_reconstruct_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_cost_aware_xendcg_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_elastic_net_r1_authority_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_full_family_readiness_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_huber_economic_realism_red_team_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_huber_exact_security_attribution_r2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_lightgbm_ranking_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_low_usage_classical_family_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_low_usage_elastic_net_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_low_usage_sequence_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p2_build.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p4_build.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p5_source_authority.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_build.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_cap1_storage_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r2_storage_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r3_estate_reconciliation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r4_external_storage_preflight.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r5_external_storage_compatibility.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r6_capacity_reassessment.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r6_feature_schema.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p6_r7_master_5m_schema.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_final_5m_model_ready_campaign.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r10_prospective_paper_campaign.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r11_authorise_paper_path.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r12_deterministic_sampling.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r13_l1_launch_r10_tier2_paper_evidence.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r13_l2_valid_session_paper_launch.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r13_l3_valid_session_r10_paper_launch.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r13_launch_r10_tier2_paper_evidence.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e1_model_universe_execution.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e2_oof_breadth_executor_repair.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3_resume_full_model_universe.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3b_full_model_universe_completion_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3c_full_model_universe_reconstruction.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3d_turnover_reauthority_and_dense_5m_execution.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3e_material_adapters_dense_v2_execution.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3f_full_dense_5m_training.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c1_dataset_scale_expansion.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_full_canonical_execution.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r1_full_canonical_worker.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r1_publish_running_gate.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r2_publish_contracts.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r2_publish_running_gate.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r2_true_full_fold_scheduler.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r3_prequential_scheduler.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r3_publish_prequential_authority.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r3_publish_running_gate.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r4_publish_gates.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r5_full_development_prequential_worker.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r5_publish_gates.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r6_publish_continuous_authority.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_2026_feature_extension.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_family_certifier_supervisor.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_policy_queue_supervisor.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r10_zero_engineering_disposition.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r11_final_blocker_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r12_postlaunch_validation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r12_recovery_manifest.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r13_blocked_family_repair.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_authority_and_launch.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r14_postlaunch_snapshot.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r15_first_commit_certification.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r16_publish_from_evidence.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r16_resource_governor.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r19_storage_emergency.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r1_bind_and_gate.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r20_compact_legacy_predictions.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r25_legacy_predictions_to_metrics.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r28_cadence_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r2_exact_core_launch_gate.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r30_feature_gap_repair.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r31_terminal_convergence.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r32_resolved_performance_v2.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r33_transient_disk_and_metric_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r34_v3_reactivation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r35_eta_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r3_exact_pit_stream_repair.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r41_performance_metrics_recovery.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r42_performance_validity.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r43_mlp_recovery.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r44_controlled_quiesce_adoption.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r44a_disk_capacity_stabilisation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r4_build_prequential_engine.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r5_memory_bounded_runtime.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r6_stream_burn_in_runtime.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r7_full_burn_in_worker.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r7_publish_live_status.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r8_family_tournament_activation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_c2_r7_r9_publish_core_preserved_blocked.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_e3g_full_v2_tournament.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r14_model_universe_preflight.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r2_model_data_continuation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r3_full_model_dataset_qualifier.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r4_qualifier_forensics.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r5_gbdt_family_development.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r6_training_window_refit_cadence.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r7_execution_aware_economics.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r8_candidate_confirmation_audit.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_p8_r9_tier2_execution_readiness.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r20_completion_equivalence_legacy_retirement_daily_final_gate_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r20_r2_completion_checkpoint_recovery.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r20_r3_missing_compact_payload_forensic_recovery.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r20_recoverable_checkpoint_repair_resume_settlement_and_r1a_reentry.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r38_live_safe_storage_recovery.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r4_external_storage_plan.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r53_tournament_results_consolidation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_r5_generate_stage_outputs.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/ds24_v3_sequence_policy_worker.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/monitor_ds24_full_family_tournament.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/monitor_ds24_p8_r14_e3g_c2_r7.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/publish_broad_daily_authority_final_closeout_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/publish_dream_system_trial_accounting_and_chaos_r1.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/research_memory_consolidation.py"
+    },
+    {
+      "classification": "RETIRED_LEGACY_GENERATOR_OR_RUNTIME_NOT_USED_BY_CLEAN_V2",
+      "path": "scripts/local/safe_local_capacity_r1a_ds24_settlement_and_daily_final_resume.py"
+    },
+    {
+      "classification": "RETIRED_V1_STATIC_CONFIG",
+      "path": "config/ds24/historical_5m_feature_authority_v1.yaml"
+    },
+    {
+      "classification": "RETIRED_V1_STATIC_CONFIG",
+      "path": "config/ds24/storage_retention_r1.json"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds21a_current_state_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_clean_v2.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p2_alignment.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p4_historical_features.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p5_source_authority.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_cap1_storage_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_preholdout_features.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r1_storage_repair.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r2_storage_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r3_estate_reconciliation.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r4_external_storage_preflight.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r6_capacity_reassessment.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r6_feature_schema.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p6_r7_master_5m_schema.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r10_prospective_paper_campaign.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r11_authorise_paper_path.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r12_deterministic_sampling.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r13_l1_launch_r10_tier2_paper_evidence.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r13_l2_valid_session_paper_launch.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r13_l3_valid_session_r10_paper_launch.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r13_launch_r10_tier2_paper_evidence.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e1_model_universe_execution.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e2_oof_breadth_executor_repair.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3_resume_full_model_universe.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3b_full_model_universe_completion_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3c_full_model_universe_reconstruction.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3d_turnover_reauthority_and_dense_5m_execution.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3e_material_adapters_dense_v2_execution.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3f_full_dense_5m_training.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c1_dataset_scale_expansion.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_full_canonical_execution.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r1_live_worker.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r2_true_full_fold_contract.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r3_prequential.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r4_full_session.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r5_full_development.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r6_continuous_authority.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_2026_feature_extension.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r10_zero_engineering_disposition.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r11_final_blocker_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r12_recovery.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r13_blocked_family_repair.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r14_policy_authority.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r15_first_commit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r16_resource_governor.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r1_bind_and_gate.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r2_exact_core_launch_gate.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r3_exact_pit_stream_repair.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r44b_vast_tft.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r44e2_vast_soft_review_transition.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r44f_vast_morning_launch_pack.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r4_build_prequential_engine.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r5_memory_bounded_runtime.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r6_stream_burn_in_runtime.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r7_live_tournament.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r8_family_tournament_activation.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_c2_r7_r9_core_preserved_blocked.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_e3g_full_v2_tournament.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r14_model_universe_preflight.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r3_authority.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r4_forensics.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r5_gbdt_family_development.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r6_training_window_refit_cadence.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r7_execution_aware_economics.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r8_candidate_confirmation_audit.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_p8_r9_tier2_execution_readiness.py"
+    },
+    {
+      "classification": "LEGACY_CHARACTERISATION_OR_CLEAN_REGRESSION_TEST",
+      "path": "tests/test_ds24_r4_external_storage_plan.py"
+    }
+  ],
+  "searched_roots": [
+    "application",
+    "core",
+    "scripts",
+    "config",
+    "tests"
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "active_workers_stopped": [],
+  "additional_features_repaired_after_stronger_gate": [
+    "opening_range_position",
+    "session_return_30m",
+    "opening_return_30m"
+  ],
+  "additional_future_timestamp_source_repairs": [
+    "minutes_since_open",
+    "minutes_until_close",
+    "session_progress",
+    "early_close_session_flag",
+    "opening_period_flag"
+  ],
+  "affected_feature_authority": {
+    "authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V1",
+    "authority_identity": "2c2a8818495732c8a46ce34ce8cac14e2ff14de90a64487b3291819151041383",
+    "classification": "RETIRED_FOR_MODEL_TRAINING_DUE_TO_FEATURE_PIT_LEAK",
+    "predictor_manifest_sha256": "d21722c41f0e54edc02519184a10596a2847091f0c04e80e4a0503251ffb60ca"
+  },
+  "autostart": {
+    "action": "DISABLED_BY_RECOVERABLE_RENAME",
+    "scheduled_task": "DreamSystem_DS24_TournamentSupervisor",
+    "scheduled_task_state": "ABSENT",
+    "startup_disabled_path": "C:/Users/Brandon/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/DreamSystem_DS24_TournamentSupervisor.cmd.disabled-20260926",
+    "startup_original_path": "C:/Users/Brandon/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/DreamSystem_DS24_TournamentSupervisor.cmd",
+    "startup_sha256": "6834f634741986eae5a0d5bda800b08aa529348cd4b44b9a863b7e1497be6bbf"
+  },
+  "created_at_utc": "2026-09-26T18:12:36.614922+00:00",
+  "deleted_path_state_at_reset": "ALREADY_ABSENT_FROM_WORKTREE; PRE-EXISTING TRACKED DELETIONS PRESERVED",
+  "forensic_audit_commit": "d29fb4488",
+  "forensic_audit_paths_and_hashes": {
+    "REPORT.md": "a7fdf452cc105ff2204e8b1dd2236d93310ee9497a50482743f0552745da6daf",
+    "evidence.json": "fd96713e8a62b816f7220b50605586c6488093ccfb475baa0d2d2869f2351724"
+  },
+  "git_head_at_reset": "d29fb448841c228a06ca178a52d5fb7f11d6fcaa",
+  "known_contaminated_features": [
+    "overnight_gap",
+    "previous_session_return",
+    "two_session_return"
+  ],
+  "live_orders": 0,
+  "manifest_id": "DS24_R40_INVALIDATED_RESET_20260926",
+  "migrated_static_authority_bundle_sha256": "72807406e0642f0ab20123beebfcbd65c92c8f9351cf95cf7545a3f671209385",
+  "migrated_static_authority_files": {
+    "cross_host_ownership.json": {
+      "file_sha256": "e6c688c0181cccb76aa4ecfb4c7c6a996962d39626dd9cc6d7db7203deb9ff41",
+      "logical_sha256": "ef915de901f8cc148a33ab7ca34bfb1ede76c3a7cd4fa26a7f67d79df4c82599"
+    },
+    "eligibility_contract.json": {
+      "file_sha256": "6b5d501bbec8d64e57f08877c6222443c58d16580513b1a6b2ec13c8cafb0ae1",
+      "logical_sha256": "037286e5ead861b3c11caf5145c259b31b019907bb250cce8ad96aed158e4bfa"
+    },
+    "feature_authority.json": {
+      "file_sha256": "68fe7b695b6c1499cfdb0f57e0d4e35cb42743444e7ae5b69e872f5a32a61864",
+      "logical_sha256": "a370fe363ee3b5a4401aebf3730ea83215efc4577e9bfa6942428803c95bcdec"
+    },
+    "model_registry.json": {
+      "file_sha256": "9c2f588c6aa16d6d189da510e905189a699e26338ccae4cf4cdb6a47f249bf83",
+      "logical_sha256": "88169c1a506012134db1bf942cccbb14cebda4f58b4575f05d8cc893f18db59f"
+    },
+    "predictor_manifest.json": {
+      "file_sha256": "5d8ecda9218d9b39f94b21ad88f78cf3433ce1e216d7cc81c8ca54c140d47c0e",
+      "logical_sha256": "3777bc8ef530eeb4770c720bff402665c0eb71d91b68e097a8db457d8a8e2dc2"
+    },
+    "prior_evidence_manifest.json": {
+      "file_sha256": "01723a0110be44f53142f6dc10a03a6ac799956bd713f054f2720f6c3c9dacf1",
+      "logical_sha256": "65b8b19b51c3d74f086a36b125dbb08b69fbe5feddffa2ee634952b7b2a03d39"
+    },
+    "target_contract.json": {
+      "file_sha256": "b2643388cd7edec08411c36dca93dd87acbe93d743edc19d05eaca8f48523890",
+      "logical_sha256": "a3476fb05a7b497f0775e29749e43289ea58f81e903f6dc1e468b6fde2ba0901"
+    },
+    "tournament_contract.json": {
+      "file_sha256": "291ce21f5408fd8eaace2b279c1af84d70c2de4304860b870336efb05f102a84",
+      "logical_sha256": "2ffca842e94a70c914b6b636f3f29a92769a1ea76bb6422b67502735a9c378ad"
+    }
+  },
+  "old_controlling_run_ids": [
+    "ds24_p8_r14_e3g_c2_20260824T000000Z",
+    "ds24_p8_r14_e3g_c2_r7_r27_20260826T000000Z",
+    "R40/R45 tournament supervisor lineage"
+  ],
+  "paper_orders": 0,
+  "paths_deleted": [
+    "docs/dream_system/components/DS-24_independent_five_minute_selector"
+  ],
+  "preserved_paths": [
+    "docs/audits",
+    "data",
+    "mac_aux_runs",
+    "source code",
+    "tests",
+    "configs"
+  ],
+  "reason_for_invalidation": "shared value-level point-in-time leakage in the V1 101-feature authority",
+  "results_ledger_drive_file_id": "17JodwxaribSPojog9KjKqgPxHC6JTnmaYu2y9nTUmoA",
+  "results_ledger_xlsx_export_sha256": "2497b99c865dfb9c5392b999a13febee875eea665ade56381ef51b5cdfd02032",
+  "stop_evidence": {
+    "current_matching_processes": [],
+    "scan_result": "NO_ACTIVE_OBSOLETE_DS24_TOURNAMENT_PROCESS_FOUND",
+    "scan_time_utc": "2026-09-26T18:12:36.653571+00:00",
+    "stale_last_known_worker_records": [
+      {
+        "command": "",
+        "family": "exact_ridge_pca",
+        "historical_status_only": true,
+        "last_checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/33_global_progress.json",
+        "last_cursor": "2026-06-30T19:00:00+00:00",
+        "last_heartbeat": "2026-08-27T13:17:53.047196+00:00",
+        "recorded_pid": 7876,
+        "start_time": null
+      },
+      {
+        "command": "ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family ridge_policy_v1_control checkpoint_pid=2632",
+        "family": "ridge_policy_v1_control",
+        "historical_status_only": true,
+        "last_checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/ridge_policy_v1_control/progress.json",
+        "last_cursor": "2026-06-30T20:00:00+00:00",
+        "last_heartbeat": "2026-08-27T17:24:38.184337+00:00",
+        "recorded_pid": 2632,
+        "start_time": "2026-08-27T18:02:50.5448534Z"
+      },
+      {
+        "command": "ds24_p8_r14_e3g_c2_r7_r14_policy_worker.py --family pca_ridge_policy_v1_control checkpoint_pid=444",
+        "family": "pca_ridge_policy_v1_control",
+        "historical_status_only": true,
+        "last_checkpoint": "docs/dream_system/components/DS-24_independent_five_minute_selector/stage_outputs/ds24_p8_r14_e3g_c2_20260824T000000Z/r7_r14_policy_workers/pca_ridge_policy_v1_control/progress.json",
+        "last_cursor": "2026-06-29T20:00:00+00:00",
+        "last_heartbeat": "2026-08-27T18:04:47.374082+00:00",
+        "recorded_pid": 444,
+        "start_time": "2026-08-27T14:48:42.7506579Z"
+      }
+    ]
+  }
+}

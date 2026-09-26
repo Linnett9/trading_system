@@ -1,0 +1,59 @@
+{
+  "authority_id": "DS24_CLEAN_V2_TOURNAMENT_CONTRACT_V1",
+  "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+  "result_root": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+  "feature_authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V2_PIT_REPAIRED",
+  "target_id": "forward_return_60m__decision_5m",
+  "refit_policy": {
+    "id": "EVERY_5_TRADING_SESSIONS_V1",
+    "training_sessions": 20,
+    "score_sessions_per_refit": 5,
+    "score_cadence": "registered five-minute decision spine",
+    "training_rule": "decision_timestamp < refit_T and target_available_timestamp <= refit_T",
+    "daily_refit_fallback_allowed": false
+  },
+  "lanes": {
+    "FULL_CLEAN": ["random_forest", "elastic_net", "huber", "ridge_C5", "gradient_boosting_C0", "transformer"],
+    "SHORT_REQUALIFICATION": ["lightgbm_rank_xendcg", "elastic_net_C5", "elastic_net_C6"],
+    "UNSCORED_DISCOVERY": ["itransformer", "momentum_transformer", "market_context_encoder", "temporal_fusion_transformer"]
+  },
+  "qualifier": {
+    "calendar_years": [2017, 2019, 2020, 2022, 2024],
+    "selection_timing": "frozen before V2 repaired outcome observation",
+    "common_population_rule": "same eligible decision timestamps and asset population wherever model input semantics permit",
+    "automatic_full_continuation": false,
+    "terminal_decisions": ["RECOMMEND_FULL_CLEAN_CONTINUATION", "DO_NOT_SPEND_FULL_HISTORY_COMPUTE"]
+  },
+  "measurement_policy": {
+    "classification": "NOT_PAPER_POLICY",
+    "primary_metrics": ["mean_spearman_rank_ic", "median_rank_ic", "ic_positive_fraction", "newey_west_hac_interval_60m_overlap", "yearly_rank_ic", "top_5_spread", "top_10_spread", "top_20_spread", "bottom_n_comparison", "long_short_spread", "prediction_rank_correlations", "top_n_overlap", "turnover", "capital_constrained_portfolio_return", "sharpe", "maximum_drawdown", "win_rate"],
+    "cost_bps_scenarios": [0, 5, 10, 20],
+    "primary_cost_bps": 10,
+    "zero_cost_is_diagnostic_only": true,
+    "capital_accounting": "12 overlapping sleeves for 60-minute horizon at five-minute cadence where applicable",
+    "overlapping_outcome_rule": "do not annualise raw overlapping forward outcomes as independent returns"
+  },
+  "order_policy": {"paper_orders_allowed": false, "live_orders_allowed": false},
+  "storage": {
+    "metrics_only": true,
+    "permanent_full_prediction_matrices": false,
+    "checkpoint_retention": "latest + previous; sparse reproducibility anchors optional",
+    "closed_logs": "compressed",
+    "audit_samples": "bounded",
+    "duplicate_model_artifact_per_score_timestamp": false,
+    "projected_sidecar_gib_upper_bound": 12.0,
+    "projected_tournament_gib_upper_bound": 8.0,
+    "minimum_post_launch_free_gib": 15.0
+  },
+  "runtime": {
+    "dell_max_model_workers": 2,
+    "mac_max_heavy_model_workers": 1,
+    "resume_required": true,
+    "adopt_r40_checkpoints": false,
+    "inherit_certified_ready_flags": false,
+    "paper_execution": false,
+    "live_execution": false
+  },
+  "worker_commands": {"dell": {}, "mac": {}},
+  "worker_binding_status": "UNRESOLVED: legacy R40 workers read V1/docs state directly and are intentionally not rebound until a clean composite V2 data adapter is independently tested"
+}

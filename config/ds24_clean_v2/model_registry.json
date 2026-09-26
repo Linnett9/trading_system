@@ -1,0 +1,125 @@
+{
+  "authority_id": "DS24_CLEAN_V2_MODEL_REGISTRY_V1",
+  "selection_rule": "prior evidence chooses families only; no V1 performance is clean evidence and no post-leak tuning is permitted",
+  "families": {
+    "random_forest": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_RECOVERED",
+      "implementation": "scripts.local.ds24_classical_tree_adapters:classical_tree_estimator",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.RandomForestRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"n_estimators": 100, "max_depth": 6, "min_samples_leaf": 20, "max_features": 0.8, "n_jobs": 1, "random_state": 23}
+    },
+    "elastic_net": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_CURRENT_PRIMARY_RECOVERED",
+      "implementation": "scripts.local.ds24_elastic_net_adapter:elastic_net_estimator",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "target_transformer": "StandardScaler()",
+      "estimator": "sklearn.linear_model.ElasticNet",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"alpha": 0.001, "l1_ratio": 0.25, "max_iter": 5000, "random_state": 23}
+    },
+    "huber": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_CURRENT_RECOVERED",
+      "implementation": "scripts.local.ds24_p8_r14_e3g_c2_r7_r10_zero_engineering_disposition:estimator",
+      "preprocessing": ["SimpleImputer(strategy='mean')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.HuberRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"alpha": 0.0001, "max_iter": 35}
+    },
+    "ridge_C5": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_FINALIST_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.Ridge",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"alpha": 500.0},
+      "frozen_config_hash": "31afb5ff925fa1599f8ebf0667d198d7e800d011c3acc5503b21849e39f6631f"
+    },
+    "gradient_boosting_C0": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_FINALIST_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"learning_rate": 0.05, "max_depth": 2, "n_estimators": 50, "random_state": 240803},
+      "frozen_config_hash": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345"
+    },
+    "transformer": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "scripts.local.ds24_v3_sequence_policy_worker:sequence_regressor_config",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "transformer", "sequence_length": 32, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 32, "nhead": 4, "num_layers": 2, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "elastic_net_C5": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_FINALIST_PARAMS_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.ElasticNet",
+      "parameters": {"alpha": 0.001, "l1_ratio": 0.85},
+      "execution_parameters": {"max_iter": 3000, "random_state": 240803},
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "frozen_config_hash": "be121d6484103c69c8fd10bcaa873b01808e8894f3b902fb0e4a1e5f5ece9f69",
+      "reason": "materially differs from current primary and cannot be promoted using contaminated outcomes"
+    },
+    "elastic_net_C6": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_FINALIST_PARAMS_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.ElasticNet",
+      "parameters": {"alpha": 0.01, "l1_ratio": 0.15},
+      "execution_parameters": {"max_iter": 3000, "random_state": 240803},
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "frozen_config_hash": "759b0b0eb6254d03545901dc889ae3c556aa7516e95e4d51aa6ed8811e85a29e",
+      "reason": "materially differs from current primary and cannot be promoted using contaminated outcomes"
+    },
+    "lightgbm_rank_xendcg": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_RECOVERED",
+      "implementation": "core.research.ml.stock_level.lightgbm_rank_xendcg_selector:fixed_rank_xendcg_configuration",
+      "training": {"lookback_sessions": 20, "max_training_rows": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"objective": "rank_xendcg", "metric": "ndcg", "eval_at": [1, 3, 5], "n_estimators": 24, "learning_rate": 0.08, "num_leaves": 7, "max_depth": 3, "min_child_samples": 2, "reg_alpha": 0.05, "reg_lambda": 0.2, "max_bin": 31, "subsample": 1.0, "colsample_bytree": 1.0, "deterministic": true, "force_col_wise": true, "random_state": 1729, "bagging_seed": 1729, "feature_fraction_seed": 1729, "data_random_seed": 1729, "n_jobs": 1, "verbosity": -1}
+    },
+    "ordered_logit": {
+      "lane": "EXCLUDED",
+      "status": "UNRESOLVED_NO_EXACT_DS24_5M_IMPLEMENTATION",
+      "reason": "repository preflight records NOT_ADMITTED_TARGET_SEMANTICS and no registered continuous-60m-to-ordinal transformation"
+    },
+    "itransformer": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "scripts.local.ds24_v3_sequence_policy_worker:sequence_regressor_config",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "itransformer", "sequence_length": 64, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 64, "nhead": 4, "num_layers": 2, "dim_feedforward": 128, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "momentum_transformer": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "scripts.local.ds24_v3_sequence_policy_worker:sequence_regressor_config",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "momentum_transformer", "sequence_length": 64, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 64, "nhead": 4, "num_layers": 2, "dim_feedforward": 128, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "market_context_encoder": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "scripts.local.ds24_v3_sequence_policy_worker:sequence_regressor_config",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "market_context_encoder", "sequence_length": 32, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 32, "nhead": 4, "num_layers": 1, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "temporal_fusion_transformer": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "scripts.local.ds24_v3_sequence_policy_worker:sequence_regressor_config",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "temporal_fusion_transformer", "sequence_length": 64, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0005, "random_seed": 63, "d_model": 64, "nhead": 4, "num_layers": 1, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    }
+  },
+  "controls": ["momentum", "equal_weight_no_model"],
+  "preserved_but_not_scheduled": ["dlinear", "patchtst", "mlp", "lightgbm_lambdarank", "rff_ridge", "pca_ridge", "spline_additive_ridge", "extra_trees"],
+  "additional_genuinely_registered_never_scored_families": [],
+  "source_repairs_preserved": ["DLinear sequence-window repairs", "Temporal Fusion Transformer sequence-window repairs"]
+}

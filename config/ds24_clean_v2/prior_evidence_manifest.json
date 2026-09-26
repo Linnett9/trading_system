@@ -1,0 +1,42 @@
+{
+  "authority_id": "DS24_CLEAN_V2_PRIOR_EVIDENCE_MANIFEST_V1",
+  "classification": "PRIOR_EVIDENCE_ONLY",
+  "prohibition": "historical metrics must not be numerically blended into V2 tournament results",
+  "workbook": {
+    "title": "Results Ledger",
+    "mime_type": "application/vnd.google-apps.spreadsheet",
+    "google_drive_file_id": "17JodwxaribSPojog9KjKqgPxHC6JTnmaYu2y9nTUmoA",
+    "source_url": "https://docs.google.com/spreadsheets/d/17JodwxaribSPojog9KjKqgPxHC6JTnmaYu2y9nTUmoA",
+    "modified_time_utc": "2026-09-17T11:31:37.499Z",
+    "captured_xlsx_export_sha256": "2497b99c865dfb9c5392b999a13febee875eea665ade56381ef51b5cdfd02032",
+    "captured_xlsx_export_bytes": 323673,
+    "hash_note": "SHA-256 is for the exact XLSX export bytes captured during this reset; future Google export ZIP metadata may change byte identity without changing sheet values"
+  },
+  "tabs_read": [
+    {"title": "Authoritative Experiments", "sheet_id": 1304582826},
+    {"title": "Selected Candidates", "sheet_id": 762149407},
+    {"title": "Final Model Decisions", "sheet_id": 765007402}
+  ],
+  "family_decisions": {
+    "random_forest": "CARRY_FORWARD_FULL_CLEAN: prior extreme-top-tail/economic evidence despite weak whole-cross-section IC",
+    "elastic_net": "CARRY_FORWARD_FULL_CLEAN: preferred PIT-clean linear survivor",
+    "huber": "CARRY_FORWARD_FULL_CLEAN: robust-objective reference with weaker historical economics",
+    "ridge_C5": "CARRY_FORWARD_FULL_CLEAN: exact low-complexity DS24 finalist",
+    "gradient_boosting_C0": "CARRY_FORWARD_FULL_CLEAN: exact regime-sensitive DS24 finalist",
+    "transformer": "CARRY_FORWARD_FULL_CLEAN: complementary/residual prior DS28 evidence; mixed standalone economics",
+    "ordered_logit": "EXCLUDE_UNRESOLVED: strong daily reference but no exact admitted DS24 continuous-60m five-minute implementation",
+    "lightgbm_rank_xendcg": "SHORT_REQUALIFICATION_ONLY: clean daily evidence weak/negative; contaminated R40 signal is not evidence",
+    "itransformer": "UNSCORED_DISCOVERY",
+    "momentum_transformer": "UNSCORED_DISCOVERY",
+    "market_context_encoder": "UNSCORED_DISCOVERY",
+    "temporal_fusion_transformer": "UNSCORED_DISCOVERY"
+  },
+  "preserve_implementations_without_automatic_rerun": ["dlinear", "patchtst", "mlp", "lightgbm_lambdarank", "rff_ridge", "pca_ridge", "spline_additive_ridge", "extra_trees"],
+  "recovered_finalist_config_hashes": {
+    "ridge_C5": "31afb5ff925fa1599f8ebf0667d198d7e800d011c3acc5503b21849e39f6631f",
+    "gradient_boosting_C0": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345",
+    "elastic_net_C5": "be121d6484103c69c8fd10bcaa873b01808e8894f3b902fb0e4a1e5f5ece9f69",
+    "elastic_net_C6": "759b0b0eb6254d03545901dc889ae3c556aa7516e95e4d51aa6ed8811e85a29e"
+  },
+  "invalidated_evidence": ["all R40/R45 V1-fitted weights", "all V1 predictions", "all V1 IC and rank metrics", "all V1 Sharpe/portfolio-return evidence", "all V1-based PAPER-readiness conclusions"]
+}
