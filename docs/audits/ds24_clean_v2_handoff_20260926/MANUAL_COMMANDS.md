@@ -8,8 +8,8 @@ Run A through J in the same Windows PowerShell session on the Dell. Commands A a
 
 Frozen identities:
 
-- source implementation commit: `2d62d9bc4398440b9603ee43f01e51312c30b2ac`
-- clean source hash: `854f2ec5528f89bbee44ce691fd6b4a22d1847a5c0dee70e7066416a9174f4f2`
+- source implementation commit: `dfa9aec45f0dc3f97d02c1ad7dbdfc7563e7779c`
+- clean source hash: `fa3b8fe8f6769d07b578d292cc583f28331a65813f8f1f8d1d1586aeae841619`
 - static authority bundle: `6fa25f60c3685cbd278bfd505fe9623b7079eefc6fad538216d82e64b4f2e87d`
 - feature authority: `ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d`
 - target authority: `41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1`
@@ -113,8 +113,8 @@ Run this from Windows PowerShell after the repository, completed V2 data authori
 ```powershell
 $MacHost = Read-Host 'Mac SSH host (for example user@hostname)'
 $MacRepo = Read-Host 'Absolute Mac trading_system path'
-$ExpectedSourceCommit = '2d62d9bc4398440b9603ee43f01e51312c30b2ac'
-$ExpectedSourceHash = '854f2ec5528f89bbee44ce691fd6b4a22d1847a5c0dee70e7066416a9174f4f2'
+$ExpectedSourceCommit = 'dfa9aec45f0dc3f97d02c1ad7dbdfc7563e7779c'
+$ExpectedSourceHash = 'fa3b8fe8f6769d07b578d292cc583f28331a65813f8f1f8d1d1586aeae841619'
 $ExpectedBundleHash = '6fa25f60c3685cbd278bfd505fe9623b7079eefc6fad538216d82e64b4f2e87d'
 $ExpectedFeatureHash = 'ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d'
 $ExpectedTargetHash = '41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1'
