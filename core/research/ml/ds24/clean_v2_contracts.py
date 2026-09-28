@@ -10,10 +10,13 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_ROOT = REPOSITORY_ROOT / "config" / "ds24_clean_v2"
 CLEAN_SOURCE_PATHS = (
     "core/research/ml/ds24/clean_v2_certification.py",
+    "core/research/ml/ds24/clean_v2_checkpoint_compatibility.py",
     "core/research/ml/ds24/clean_v2_contracts.py",
     "core/research/ml/ds24/clean_v2_data.py",
     "core/research/ml/ds24/clean_v2_features.py",
+    "core/research/ml/ds24/clean_v2_resources.py",
     "core/research/ml/ds24/clean_v2_runtime.py",
+    "core/research/ml/ds24_metrics_only_evaluator.py",
     "scripts/local/ds24_clean_v2_certify.py",
     "scripts/local/ds24_clean_v2_family_worker.py",
     "scripts/local/ds24_clean_v2_mac_preflight.py",

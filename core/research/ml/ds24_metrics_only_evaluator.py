@@ -43,10 +43,10 @@ TRANSIENT_STORAGE_CONTRACT_V1_VERSION = "V1"
 MAX_TEMPORARY_DISK_BYTES_PER_WORKER = 1 * 1024**3
 PREFERRED_TEMPORARY_DISK_BYTES_PER_WORKER = 512 * 1024**2
 MAX_AGGREGATE_TOURNAMENT_TEMPORARY_DISK_BYTES = 3 * 1024**3
-MIN_EXECUTION_FREE_DISK_BYTES = 12 * 1024**3
-CLEAN_ADMISSION_FREE_DISK_BYTES = 15 * 1024**3
-THREE_WORKER_REACTIVATION_FREE_DISK_BYTES = 18 * 1024**3
-MIN_PROJECTED_POST_LAUNCH_FREE_DISK_BYTES = 15 * 1024**3
+MIN_EXECUTION_FREE_DISK_BYTES = 3 * 1024**3
+CLEAN_ADMISSION_FREE_DISK_BYTES = 4 * 1024**3
+THREE_WORKER_REACTIVATION_FREE_DISK_BYTES = 4 * 1024**3
+MIN_PROJECTED_POST_LAUNCH_FREE_DISK_BYTES = 4 * 1024**3
 TOP_N_COST_BPS_PER_UNIT_TURNOVER = 0.0
 TRADING_SESSIONS_PER_YEAR = 252
 NAMESPACE_WRITER_LEASE_NAME = "namespace_writer_lease.json"
@@ -1379,6 +1379,15 @@ def deduplicate_pending_scores(frame: pd.DataFrame) -> pd.DataFrame:
         return frame
     work = frame.copy()
     key_cols = ["family", "decision_timestamp", "asset_id"]
+    # Parquet restores timestamps as Timestamp values while a replayed batch is
+    # built with ISO strings.  Canonicalise before key comparison so an
+    # interrupted commit cannot reintroduce the same prediction under a
+    # representation-only difference.
+    work["family"] = work["family"].astype(str)
+    work["decision_timestamp"] = _normalise_timestamp_series(
+        work["decision_timestamp"]
+    )
+    work["asset_id"] = work["asset_id"].astype(str)
     duplicated = work.duplicated(key_cols, keep=False)
     if not duplicated.any():
         return work
