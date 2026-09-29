@@ -322,6 +322,65 @@ def _primary_family_capacity_deferred(
     )
 
 
+def _capacity_deferred_family_rotates_to_back(host: str, family: str) -> bool:
+    """Preserve the progressed Dell RF position across capacity deferrals."""
+
+    return not (host == "dell" and family == PRIMARY_DELL_FAMILY)
+
+
+def _apply_capacity_deferral_queue_policy(
+    *,
+    queue: list[str],
+    host: str,
+    family: str,
+) -> bool:
+    """Apply fair rotation and report whether this pass must stop admitting."""
+
+    if _capacity_deferred_family_rotates_to_back(host, family):
+        _move_family_to_queue_back(queue, family)
+        return False
+    return True
+
+
+def _launched_family_requires_admission_barrier(
+    host: str,
+    family: str,
+    complete: set[str],
+) -> bool:
+    """Give progressed Dell RF one scheduler poll to acquire its first stage."""
+
+    return (
+        host == "dell"
+        and family == PRIMARY_DELL_FAMILY
+        and PRIMARY_DELL_FAMILY not in complete
+    )
+
+
+def _partition_pinned_primary_pairing_candidates(
+    *,
+    host: str,
+    pending: list[str],
+    active: Mapping[str, Any],
+    complete: set[str],
+) -> tuple[list[str], list[str]]:
+    """Allow only measured-compatible control fillers beside active Dell RF."""
+
+    if (
+        host != "dell"
+        or PRIMARY_DELL_FAMILY not in active
+        or PRIMARY_DELL_FAMILY in complete
+    ):
+        return list(pending), []
+    compatible = [
+        family
+        for family in pending
+        if family_scheduling_profile(family).workload_class == "CONTROL"
+    ]
+    compatible_set = set(compatible)
+    blocked = [family for family in pending if family not in compatible_set]
+    return compatible, blocked
+
+
 def _resource_snapshot() -> tuple[int, Any]:
     disk_free = int(shutil.disk_usage(ROOT.anchor or ROOT).free)
     return disk_free, system_memory_snapshot()
@@ -1635,7 +1694,11 @@ def run_queue(
                         ),
                         "resource_policy": recovery_policy_payload(),
                     }
-                    _move_family_to_queue_back(queue, family)
+                    _apply_capacity_deferral_queue_policy(
+                        queue=queue,
+                        host=host,
+                        family=family,
+                    )
                 elif disposition == "RESOURCE_LIMIT_NO_AUTOMATIC_RETRY" and (
                     exit_code == RESOURCE_PRESSURE_EXIT_CODE
                 ):
@@ -2012,6 +2075,23 @@ def run_queue(
                         "resource_policy": recovery_policy_payload(),
                     }
                 pending = []
+            pending, primary_pairing_blocked = (
+                _partition_pinned_primary_pairing_candidates(
+                    host=host,
+                    pending=pending,
+                    active=active,
+                    complete=complete,
+                )
+            )
+            for waiting_family in primary_pairing_blocked:
+                queued_wait_reasons[waiting_family] = {
+                    "classification": "PINNED_PRIMARY_PAIRING_INCOMPATIBLE",
+                    "blocking_reasons": [
+                        "PINNED_PRIMARY_PAIRING_INCOMPATIBLE"
+                    ],
+                    "primary_family": PRIMARY_DELL_FAMILY,
+                    "resource_policy": recovery_policy_payload(),
+                }
             bypasses_this_pass = 0
             for pending_index, family in enumerate(list(pending)):
                 if len(active) >= active_worker_limit:
@@ -2058,7 +2138,24 @@ def run_queue(
                             capacity_before=reservation_ledger.capacity_snapshot(),
                             evidence=evidence,
                         )
-                        _move_family_to_queue_back(queue, family)
+                        primary_deferral_blocks_pass = (
+                            _apply_capacity_deferral_queue_policy(
+                                queue=queue,
+                                host=host,
+                                family=family,
+                            )
+                        )
+                        if primary_deferral_blocks_pass:
+                            for waiting_family in pending[pending_index + 1 :]:
+                                queued_wait_reasons[waiting_family] = {
+                                    "classification": "PINNED_PRIMARY_CAPACITY_WAIT",
+                                    "blocking_reasons": [
+                                        "PINNED_PRIMARY_CAPACITY_WAIT"
+                                    ],
+                                    "primary_family": PRIMARY_DELL_FAMILY,
+                                    "resource_policy": recovery_policy_payload(),
+                                }
+                            break
                     bypasses_this_pass += 1
                     if (
                         bypasses_this_pass
@@ -2132,6 +2229,19 @@ def run_queue(
                 active[family] = owned_worker
                 queued_wait_reasons.pop(family, None)
                 pending.remove(family)
+                if _launched_family_requires_admission_barrier(
+                    host, family, complete
+                ):
+                    for waiting_family in pending:
+                        queued_wait_reasons[waiting_family] = {
+                            "classification": "PINNED_PRIMARY_STARTUP_BARRIER",
+                            "blocking_reasons": [
+                                "PINNED_PRIMARY_STARTUP_BARRIER"
+                            ],
+                            "primary_family": PRIMARY_DELL_FAMILY,
+                            "resource_policy": recovery_policy_payload(),
+                        }
+                    break
             if not active and not pending and not deferred:
                 _write_json_atomic(
                     status_path,

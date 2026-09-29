@@ -46,8 +46,12 @@ from scripts.local.ds24_clean_v2_mac_preflight import (
     partition_file_hashes_match,
 )
 from scripts.local.ds24_clean_v2_supervisor import (
+    _apply_capacity_deferral_queue_policy,
+    _capacity_deferred_family_rotates_to_back,
     _launch_families,
+    _launched_family_requires_admission_barrier,
     _partition_inventory_matches,
+    _partition_pinned_primary_pairing_candidates,
     _primary_family_capacity_deferred,
 )
 from scripts.local import ds24_clean_v2_build_target_delta as target_delta_builder
@@ -556,6 +560,53 @@ def test_dell_primary_capacity_deferral_blocks_replacement_workers() -> None:
     assert not _primary_family_capacity_deferred(
         "mac", {"random_forest": {"classification": "deferred"}}, set()
     )
+    assert not _capacity_deferred_family_rotates_to_back(
+        "dell", "random_forest"
+    )
+    assert _capacity_deferred_family_rotates_to_back("dell", "ridge_C5")
+    assert _capacity_deferred_family_rotates_to_back("mac", "random_forest")
+
+    dell_queue = ["random_forest", "ridge_C5", "momentum"]
+    assert _apply_capacity_deferral_queue_policy(
+        queue=dell_queue,
+        host="dell",
+        family="random_forest",
+    )
+    assert dell_queue == ["random_forest", "ridge_C5", "momentum"]
+
+    assert not _apply_capacity_deferral_queue_policy(
+        queue=dell_queue,
+        host="dell",
+        family="ridge_C5",
+    )
+    assert dell_queue == ["random_forest", "momentum", "ridge_C5"]
+    assert _launched_family_requires_admission_barrier(
+        "dell", "random_forest", set()
+    )
+    assert not _launched_family_requires_admission_barrier(
+        "dell", "ridge_C5", set()
+    )
+    assert not _launched_family_requires_admission_barrier(
+        "dell", "random_forest", {"random_forest"}
+    )
+
+    compatible, blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["ridge_C5", "momentum", "equal_weight_no_model"],
+        active={"random_forest": object()},
+        complete=set(),
+    )
+    assert compatible == ["momentum", "equal_weight_no_model"]
+    assert blocked == ["ridge_C5"]
+
+    unrestricted, blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["ridge_C5", "momentum"],
+        active={},
+        complete=set(),
+    )
+    assert unrestricted == ["ridge_C5", "momentum"]
+    assert blocked == []
 
 
 def test_resume_and_metric_keys_are_deterministic_and_idempotent() -> None:
