@@ -32,7 +32,7 @@ DELL_WORKER_THREAD_ENVIRONMENT: Mapping[str, str] = {
 class CleanV2ResourcePolicy:
     """One versioned operational policy for every clean-V2 runtime surface."""
 
-    policy_id: str = "DS24_CLEAN_V2_OPERATIONAL_MEMORY_POLICY_V3"
+    policy_id: str = "DS24_CLEAN_V2_OPERATIONAL_MEMORY_POLICY_V4"
     target_available_physical_gib: int = 5
     warning_available_physical_gib: int = 6
     emergency_available_physical_gib: int = 4
@@ -44,7 +44,7 @@ class CleanV2ResourcePolicy:
     maximum_dell_model_workers: int = 3
     dell_canary_active_worker_limit: int = 2
     maximum_mac_model_workers: int = 1
-    maximum_admission_bypasses: int = 1
+    maximum_admission_bypasses: int = 12
     allocation_request_poll_seconds: float = 0.25
     allocation_request_timeout_seconds: int = 35
     resource_deferral_cooldown_seconds: int = 30
@@ -80,6 +80,7 @@ class CleanV2ResourcePolicy:
                 DELL_WORKER_THREAD_ENVIRONMENT
             ),
             "family_resource_profiles": resource_profile_registry_payload(),
+            "family_scheduling_profiles": scheduling_profile_registry_payload(),
             "supervisor_reserved_allocation_stages": [
                 "panel_assembly",
                 "preprocessing",
@@ -983,6 +984,18 @@ class FamilyResourceProfile:
         }
 
 
+@dataclass(frozen=True)
+class FamilySchedulingProfile:
+    """Measured scheduling traits; admission safety remains ledger-owned."""
+
+    workload_class: str
+    bounded_fit_wall_seconds: float
+    evidence: str
+
+    def payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 _DEFAULT_TABULAR_PROFILE = FamilyResourceProfile(
     profile_id="ORDINARY_TABULAR_STATIC_V1",
     fit_required=True,
@@ -1023,6 +1036,56 @@ FAMILY_RESOURCE_PROFILES: Mapping[str, FamilyResourceProfile] = {
 }
 
 
+_FAMILY_SCHEDULING_PROFILES: Mapping[str, FamilySchedulingProfile] = {
+    "ridge_C5": FamilySchedulingProfile(
+        "LIGHT_PREDICTIVE",
+        0.093,
+        "20260929 bounded real-authority benchmark; 9,332 training rows",
+    ),
+    "elastic_net_C5": FamilySchedulingProfile(
+        "LIGHT_PREDICTIVE",
+        0.085,
+        "20260929 bounded real-authority benchmark; 8,325 training rows",
+    ),
+    "elastic_net_C6": FamilySchedulingProfile(
+        "LIGHT_PREDICTIVE",
+        0.093,
+        "20260929 bounded real-authority benchmark; 8,325 training rows",
+    ),
+    "huber": FamilySchedulingProfile(
+        "LIGHT_PREDICTIVE",
+        0.290,
+        "20260929 bounded real-authority benchmark; convergence warning retained",
+    ),
+    "gradient_boosting_C0_W20": FamilySchedulingProfile(
+        "TREE_PREDICTIVE", 6.892, "20260929 bounded real-authority benchmark"
+    ),
+    "gradient_boosting_C0": FamilySchedulingProfile(
+        "TREE_PREDICTIVE", 7.522, "20260929 bounded real-authority benchmark"
+    ),
+    "gradient_boosting_C0_W40": FamilySchedulingProfile(
+        "TREE_PREDICTIVE", 14.240, "20260929 bounded real-authority benchmark"
+    ),
+    "gradient_boosting_C0_W80": FamilySchedulingProfile(
+        "TREE_PREDICTIVE", 28.661, "20260929 bounded real-authority benchmark"
+    ),
+    "random_forest": FamilySchedulingProfile(
+        "TREE_PREDICTIVE", 21.639, "20260929 bounded benchmark; progressed worker pinned"
+    ),
+    "transformer": FamilySchedulingProfile(
+        "SEQUENCE_PREDICTIVE",
+        5.287,
+        "20260929 one-asset checkpoint smoke; not cross-family throughput comparable",
+    ),
+    "momentum": FamilySchedulingProfile(
+        "CONTROL", 0.0, "NO_ESTIMATOR_FIT"
+    ),
+    "equal_weight_no_model": FamilySchedulingProfile(
+        "CONTROL", 0.0, "NO_ESTIMATOR_FIT"
+    ),
+}
+
+
 def family_resource_profile(family: str) -> FamilyResourceProfile:
     if family in FAMILY_RESOURCE_PROFILES:
         return FAMILY_RESOURCE_PROFILES[family]
@@ -1036,6 +1099,21 @@ def family_resource_profile(family: str) -> FamilyResourceProfile:
     return _DEFAULT_TABULAR_PROFILE
 
 
+def family_scheduling_profile(family: str) -> FamilySchedulingProfile:
+    if family in _FAMILY_SCHEDULING_PROFILES:
+        return _FAMILY_SCHEDULING_PROFILES[family]
+    profile = family_resource_profile(family)
+    return FamilySchedulingProfile(
+        workload_class=(
+            "SEQUENCE_PREDICTIVE"
+            if profile.profile_id.startswith("SEQUENCE")
+            else ("PREDICTIVE" if profile.fit_required else "CONTROL")
+        ),
+        bounded_fit_wall_seconds=1.0e12,
+        evidence="NO_COMPARABLE_BOUNDED_BENCHMARK",
+    )
+
+
 def resource_profile_registry_payload() -> dict[str, Any]:
     return {
         "default_tabular": _DEFAULT_TABULAR_PROFILE.payload(),
@@ -1044,6 +1122,13 @@ def resource_profile_registry_payload() -> dict[str, Any]:
             family: profile.payload()
             for family, profile in sorted(FAMILY_RESOURCE_PROFILES.items())
         },
+    }
+
+
+def scheduling_profile_registry_payload() -> dict[str, Any]:
+    return {
+        family: profile.payload()
+        for family, profile in sorted(_FAMILY_SCHEDULING_PROFILES.items())
     }
 
 

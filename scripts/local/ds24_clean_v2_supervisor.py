@@ -54,6 +54,7 @@ from core.research.ml.ds24.clean_v2_resources import (
     create_worker_containment,
     estimate_worker_peak_allocation,
     evaluate_memory,
+    family_scheduling_profile,
     process_identity,
     process_identity_matches,
     process_memory_snapshot,
@@ -273,26 +274,36 @@ def _launch_families(host: str) -> list[str]:
     launchable = [family for family in ordered if family in owned]
     if host != "dell":
         return launchable
-    # Preserve the progressed RF worker first, then probe the cheapest
-    # no-estimator controls before ordinary tabular and sequence families.
-    # This is an operational admission order only; it does not alter any
-    # family's scientific configuration, schedule, or evidence namespace.
-    resource_priority = [
-        "random_forest",
-        "equal_weight_no_model",
-        "momentum",
-        "ridge_C5",
-        "elastic_net_C5",
-        "elastic_net_C6",
-    ]
-    priority = {family: index for index, family in enumerate(resource_priority)}
+    # Keep the progressed RF authority first, then establish predictive
+    # coverage before controls.  Within a workload class, bounded measured fit
+    # time and the guarded memory envelope determine order.  The reservation
+    # ledger remains the final compatibility gate and may bypass an unsafe
+    # candidate to use otherwise-idle capacity without starving predictors.
+    workload_priority = {
+        "LIGHT_PREDICTIVE": 0,
+        "TREE_PREDICTIVE": 1,
+        "PREDICTIVE": 1,
+        "SEQUENCE_PREDICTIVE": 2,
+        "CONTROL": 3,
+    }
     original = {family: index for index, family in enumerate(launchable)}
+
+    def scheduling_key(family: str) -> tuple[int, int, float, int, int]:
+        if family == PRIMARY_DELL_FAMILY:
+            return (0, 0, 0.0, 0, original[family])
+        scheduling = family_scheduling_profile(family)
+        guarded = estimate_worker_peak_allocation(family).guarded()
+        return (
+            1,
+            workload_priority.get(scheduling.workload_class, 2),
+            round(scheduling.bounded_fit_wall_seconds, 1),
+            max(guarded.physical_bytes, guarded.commit_bytes),
+            original[family],
+        )
+
     return sorted(
         launchable,
-        key=lambda family: (
-            priority.get(family, len(resource_priority)),
-            original[family],
-        ),
+        key=scheduling_key,
     )
 
 

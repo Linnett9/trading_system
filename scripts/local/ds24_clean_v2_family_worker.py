@@ -42,6 +42,10 @@ from core.research.ml.ds24.clean_v2_checkpoint_compatibility import (
     validate_no_model_control_resume_identity,
 )
 from core.research.ml.ds24.clean_v2_data import CleanV2CompositeData
+from core.research.ml.ds24.clean_v2_package_cache import (
+    PanelPackageKey,
+    SharedPanelPackageCache,
+)
 from core.research.ml.ds24.clean_v2_runtime import (
     MAX_DELL_MODEL_WORKERS,
     QUALIFIER_YEARS,
@@ -634,6 +638,16 @@ def _tabular_estimator(family: str, config: Mapping[str, Any]) -> Any:
     raise CleanV2WorkerError(f"No tabular estimator for {family}")
 
 
+def _contiguous_predictor_matrix(
+    frame: pd.DataFrame, predictors: Sequence[str]
+) -> np.ndarray:
+    """Materialize one deterministic C-contiguous float64 model boundary."""
+
+    return np.ascontiguousarray(
+        frame.loc[:, list(predictors)].to_numpy(dtype=np.float64, copy=False)
+    )
+
+
 def _sequence_examples(
     panel: pd.DataFrame,
     predictors: Sequence[str],
@@ -643,7 +657,7 @@ def _sequence_examples(
     include_targets: bool,
     maximum_examples: int | None = None,
     reservation_client: FileReservationClient | None = None,
-) -> tuple[list[list[list[float]]], list[float], pd.DataFrame]:
+) -> tuple[np.ndarray, list[float], pd.DataFrame]:
     if maximum_examples is not None and maximum_examples <= 0:
         raise CleanV2WorkerError("Sequence example cap must be positive")
     with _allocation_guard(
@@ -687,9 +701,13 @@ def _sequence_examples(
         for asset_id, offset in selected:
             selected_offsets.setdefault(asset_id, []).append(offset)
 
-        examples: list[list[list[float]]] = []
+        examples = np.empty(
+            (len(selected), sequence_length, len(predictors)),
+            dtype=np.float32,
+        )
         targets: list[float] = []
         metadata: list[dict[str, str]] = []
+        example_index = 0
         for asset_id, asset in work.groupby("asset_id", sort=False):
             offsets = selected_offsets.get(str(asset_id), [])
             if not offsets:
@@ -699,7 +717,8 @@ def _sequence_examples(
             for offset in offsets:
                 row = asset.iloc[offset]
                 window = values[offset - sequence_length + 1 : offset + 1]
-                examples.append(window.astype(float).tolist())
+                examples[example_index] = window
+                example_index += 1
                 if include_targets:
                     targets.append(float(row["target_value"]))
                 metadata.append(
@@ -710,6 +729,10 @@ def _sequence_examples(
                         ).isoformat(),
                     }
                 )
+        if example_index != len(selected):
+            raise CleanV2WorkerError(
+                "Sequence candidate/materialization count mismatch"
+            )
     return examples, targets, pd.DataFrame(metadata)
 
 
@@ -804,7 +827,7 @@ def _fit_model(
             maximum_examples=int(config["training"]["max_training_examples"]),
             reservation_client=reservation_client,
         )
-        if not sequences:
+        if len(sequences) == 0:
             raise CleanV2WorkerError(f"No sequence training examples for {family}")
         with _allocation_guard(
             reservation_client,
@@ -842,7 +865,11 @@ def _fit_model(
         ),
     ):
         estimator = _tabular_estimator(family, config)
-        estimator.fit(train[list(predictors)], train["target_value"].astype(float))
+        training_matrix = _contiguous_predictor_matrix(train, predictors)
+        targets = np.ascontiguousarray(
+            train["target_value"].to_numpy(dtype=np.float64, copy=False)
+        )
+        estimator.fit(training_matrix, targets)
     return estimator, {"kind": "tabular", "training_rows": len(train)}
 
 
@@ -933,10 +960,18 @@ def _score_model(
             ),
         ):
             stage_started = time.perf_counter()
-            scoring_matrix = score_panel[list(predictors)]
             if isinstance(model, Pipeline):
+                first_transformer = model.steps[0][1]
+                scoring_matrix: pd.DataFrame | np.ndarray = (
+                    score_panel.loc[:, list(predictors)]
+                    if hasattr(first_transformer, "feature_names_in_")
+                    else _contiguous_predictor_matrix(score_panel, predictors)
+                )
                 transformed = model[:-1].transform(scoring_matrix)
             else:
+                scoring_matrix = _contiguous_predictor_matrix(
+                    score_panel, predictors
+                )
                 transformed = scoring_matrix
             timings["preprocessing"] = time.perf_counter() - stage_started
             stage_started = time.perf_counter()
@@ -1055,6 +1090,50 @@ def _preprocessing_identity_hash(
     )
 
 
+def _model_artifact_payload(
+    *,
+    model: Any,
+    identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    artifact: dict[str, Any] = {"identity": dict(identity)}
+    if isinstance(model, TorchSequenceReturnRegressor):
+        artifact.update(
+            {
+                "model_serialization": TorchSequenceReturnRegressor.CHECKPOINT_SCHEMA,
+                "model_checkpoint": model.checkpoint_payload(),
+            }
+        )
+    else:
+        artifact["model_serialization"] = "PYTHON_PICKLE_V1"
+        artifact["model"] = model
+    return artifact
+
+
+def _restore_model_artifact(
+    artifact: Mapping[str, Any],
+    *,
+    expected_identity: Mapping[str, Any],
+) -> Any:
+    if artifact.get("identity") != dict(expected_identity):
+        raise CleanV2WorkerError("Resume model artifact identity mismatch")
+    if artifact.get("model_serialization") == (
+        TorchSequenceReturnRegressor.CHECKPOINT_SCHEMA
+    ):
+        try:
+            checkpoint = artifact["model_checkpoint"]
+            if not isinstance(checkpoint, Mapping):
+                raise TypeError("Sequence model checkpoint is not a mapping")
+            return TorchSequenceReturnRegressor.from_checkpoint_payload(checkpoint)
+        except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+            raise CleanV2WorkerError(
+                "Resume sequence model artifact is invalid"
+            ) from exc
+    model = artifact.get("model")
+    if model is None:
+        raise CleanV2WorkerError("Resume model artifact payload is missing")
+    return model
+
+
 def _save_model(
     family_root: Path,
     *,
@@ -1068,7 +1147,10 @@ def _save_model(
     path = model_root / f"{family}_{refit_t.strftime('%Y%m%dT%H%M%SZ')}.pkl"
     temporary = path.with_suffix(".pkl.partial")
     with temporary.open("wb") as handle:
-        pickle.dump({"identity": dict(identity), "model": model}, handle)
+        pickle.dump(
+            _model_artifact_payload(model=model, identity=identity),
+            handle,
+        )
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
@@ -1127,8 +1209,12 @@ def _load_resume_model(
         raise CleanV2WorkerError("Resume model artifact is missing or changed")
     with path.open("rb") as handle:
         artifact = pickle.load(handle)
-    if artifact.get("identity") != checkpoint_identity:
-        raise CleanV2WorkerError("Resume model artifact identity mismatch")
+    if not isinstance(artifact, Mapping):
+        raise CleanV2WorkerError("Resume model artifact payload is invalid")
+    loaded_model = _restore_model_artifact(
+        artifact,
+        expected_identity=checkpoint_identity,
+    )
     verified_evidence = {
         **evidence,
         "artifact_identity_verification": "VERIFIED",
@@ -1136,7 +1222,7 @@ def _load_resume_model(
     }
     _write_json_atomic(compatibility_evidence_path, verified_evidence)
     return (
-        artifact["model"],
+        loaded_model,
         path,
         str(checkpoint["model_hash"]),
         verified_evidence,
@@ -1442,6 +1528,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     feature_hash = str(data.sidecar_manifest["logical_sha256"])
     target_hash = str(data.delta_target_manifest["logical_sha256"])
     model_config_hash = stable_hash(config)
+    shared_package_cache = (
+        None
+        if args.family in CONTROL_FAMILIES
+        else SharedPanelPackageCache(
+            ROOT
+            / "research_runs"
+            / "ds24_clean_v2"
+            / RUN_ID
+            / "shared_panel_package_cache"
+            / f"source={clean_source_hash()[:16]}"
+        )
+    )
     authority = {
         "feature_authority_hash": feature_hash,
         "target_authority_hash": target_hash,
@@ -1581,12 +1679,45 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 column_count=len(data.predictors) + 12,
             ),
         ):
-            panel = data.assemble_sessions(dates, maximum_assets=args.maximum_assets)
+            if shared_package_cache is None:
+                panel = data.assemble_sessions(
+                    dates,
+                    maximum_assets=args.maximum_assets,
+                )
+                cache_result = None
+            else:
+                cache_result = shared_package_cache.get_or_build(
+                    PanelPackageKey(
+                        feature_authority_hash=feature_hash,
+                        target_authority_hash=target_hash,
+                        static_authority_bundle_sha256=str(
+                            authority["static_authority_bundle_sha256"]
+                        ),
+                        predictor_order_hash=stable_hash(list(data.predictors)),
+                        assembly_source_hash=str(authority["clean_source_hash"]),
+                        session_dates=tuple(dates),
+                        maximum_assets=args.maximum_assets,
+                    ),
+                    lambda: data.assemble_sessions(
+                        dates,
+                        maximum_assets=args.maximum_assets,
+                    ),
+                )
+                panel = cache_result.frame
         throughput_profiler.record_package_stage(
             refit_timestamp=package.refit_T.isoformat(),
             stage="partition_reads_panel_assembly_and_feature_target_joins",
             elapsed_seconds=time.perf_counter() - stage_started,
         )
+        if cache_result is not None:
+            throughput_profiler.record_package_stage(
+                refit_timestamp=package.refit_T.isoformat(),
+                stage=f"shared_package_cache_{cache_result.disposition.lower()}",
+                elapsed_seconds=(
+                    cache_result.read_wall_seconds
+                    + cache_result.write_wall_seconds
+                ),
+            )
         if panel.empty:
             raise CleanV2WorkerError(f"Empty refit package: {package.refit_T}")
         stage_started = time.perf_counter()
@@ -1804,8 +1935,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             batch_prediction_timestamps = pd.to_datetime(
                 batch_predictions["decision_timestamp"], utc=True
             )
+            prediction_batches: list[pd.DataFrame] = []
+            target_batches: list[pd.DataFrame] = []
+            expected_assets_by_timestamp: dict[str, tuple[str, ...]] = {}
             for timestamp in timestamp_batch:
-                timestamp_started = time.perf_counter()
                 indexes = scoring_timestamp_rows.get(timestamp)
                 if indexes is None or len(indexes) == 0:
                     raise CleanV2WorkerError(f"Empty score timestamp: {timestamp}")
@@ -1817,144 +1950,154 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     raise CleanV2WorkerError(
                         f"Empty prediction timestamp: {timestamp}"
                     )
-                targets = score_at_t[
+                prediction_batches.append(predictions)
+                target_batches.append(score_at_t[
                     [
                         "asset_id",
                         "decision_timestamp",
                         "target_value",
                         "target_available_timestamp",
                     ]
-                ]
-                commit_result = writer.commit_predictions(
-                    predictions,
-                    targets=targets,
-                    expected_assets=sorted(
-                        score_at_t["asset_id"].astype(str).unique()
-                    ),
-                    metadata={
-                        "model_hash": model_hash,
-                        "model_vintage_id": stable_hash(
-                            {
-                                "family": args.family,
-                                "refit_T": package.refit_T.isoformat(),
-                                "model_hash": model_hash,
-                            }
-                        ),
-                        "preprocessing_hash": preprocessing_hash,
-                        "policy_hash": package.policy_hash,
-                        "training_cutoff": package.refit_T.isoformat(),
-                        "prediction_timestamp": _utc_now(),
-                        "refit_policy": REFIT_POLICY_ID,
-                        "attempt_generation": str(attempt_generation),
-                        "clean_source_hash": authority["clean_source_hash"],
-                        "feature_authority_hash": feature_hash,
-                        "target_authority_hash": target_hash,
-                        "target_contract_hash": data.target_contract[
-                            "resolved_contract_sha256"
-                        ],
-                        "static_authority_bundle_sha256": authority[
-                            "static_authority_bundle_sha256"
-                        ],
-                    },
+                ].copy())
+                expected_assets_by_timestamp[timestamp.isoformat()] = tuple(
+                    sorted(score_at_t["asset_id"].astype(str).unique())
                 )
+
+            commit_started = time.perf_counter()
+            commit_result = writer.commit_prediction_batches(
+                prediction_batches,
+                target_batches=target_batches,
+                expected_assets_by_timestamp=expected_assets_by_timestamp,
+                metadata={
+                    "model_hash": model_hash,
+                    "model_vintage_id": stable_hash(
+                        {
+                            "family": args.family,
+                            "refit_T": package.refit_T.isoformat(),
+                            "model_hash": model_hash,
+                        }
+                    ),
+                    "preprocessing_hash": preprocessing_hash,
+                    "policy_hash": package.policy_hash,
+                    "training_cutoff": package.refit_T.isoformat(),
+                    "prediction_timestamp": _utc_now(),
+                    "refit_policy": REFIT_POLICY_ID,
+                    "attempt_generation": str(attempt_generation),
+                    "clean_source_hash": authority["clean_source_hash"],
+                    "feature_authority_hash": feature_hash,
+                    "target_authority_hash": target_hash,
+                    "target_contract_hash": data.target_contract[
+                        "resolved_contract_sha256"
+                    ],
+                    "static_authority_bundle_sha256": authority[
+                        "static_authority_bundle_sha256"
+                    ],
+                },
+            )
+            commit_wall = time.perf_counter() - commit_started
+            if not commit_result.get("committed"):
+                raise CleanV2WorkerError(
+                    f"Score batch was not committed: {commit_result}"
+                )
+            for timestamp in timestamp_batch:
                 completed.add(timestamp.isoformat())
-                state_publish_started = time.perf_counter()
-                _write_json_atomic(
-                    state_path,
-                    _state_payload(
-                        family=args.family,
-                        host=args.host,
-                        authority=authority,
-                        expected_refits=len(schedule),
-                        completed_refits=completed_refits,
-                        completed_timestamps=completed,
-                        terminal_state="RUNNING",
-                        attempt_generation=attempt_generation,
-                        attempt_id=attempt_id,
-                        operational_identity=operational_identity,
-                        checkpoint_compatibility=latest_checkpoint_compatibility,
-                        control_scientific_identity=control_scientific_identity,
-                        completed_scoring_packages=completed_scoring_packages,
-                    ),
+            state_publish_started = time.perf_counter()
+            _write_json_atomic(
+                state_path,
+                _state_payload(
+                    family=args.family,
+                    host=args.host,
+                    authority=authority,
+                    expected_refits=len(schedule),
+                    completed_refits=completed_refits,
+                    completed_timestamps=completed,
+                    terminal_state="RUNNING",
+                    attempt_generation=attempt_generation,
+                    attempt_id=attempt_id,
+                    operational_identity=operational_identity,
+                    checkpoint_compatibility=latest_checkpoint_compatibility,
+                    control_scientific_identity=control_scientific_identity,
+                    completed_scoring_packages=completed_scoring_packages,
+                ),
+            )
+            state_publish_seconds = time.perf_counter() - state_publish_started
+            resolved_timings = dict(
+                commit_result.get("resolved_performance_v3", {}).get(
+                    "stage_timings_seconds", {}
                 )
-                state_publish_seconds = time.perf_counter() - state_publish_started
-                timestamp_wall = (
-                    time.perf_counter() - timestamp_started
-                    + batch_score_wall / timestamp_count
-                )
-                resolved_timings = dict(
-                    commit_result.get("resolved_performance_v3", {}).get(
-                        "stage_timings_seconds", {}
+            )
+            writer_timings = dict(
+                commit_result.get("stage_timings_seconds", {})
+            )
+            per_timestamp_wall = (
+                batch_score_wall + commit_wall + state_publish_seconds
+            ) / timestamp_count
+            profile_stages = {
+                **shared_score_stages,
+                "partition_and_history_reads": (
+                    float(resolved_timings.get("historical_log_reads", 0.0))
+                    + float(
+                        writer_timings.get(
+                            "metrics_history_and_deduplication", 0.0
+                        )
                     )
-                )
-                writer_timings = dict(
-                    commit_result.get("stage_timings_seconds", {})
-                )
-                profile_stages = {
-                    **shared_score_stages,
-                    "partition_and_history_reads": (
-                        float(resolved_timings.get("historical_log_reads", 0.0))
-                        + float(
-                            writer_timings.get(
-                                "metrics_history_and_deduplication", 0.0
-                            )
-                        )
-                    ),
-                    "pending_ledger_operations": float(
-                        resolved_timings.get("pending_ledger_operations", 0.0)
-                    ),
-                    "target_resolution": float(
-                        resolved_timings.get("target_resolution", 0.0)
-                    ),
-                    "rank_selection_and_resolved_metrics": float(
+                ) / timestamp_count,
+                "pending_ledger_operations": float(
+                    resolved_timings.get("pending_ledger_operations", 0.0)
+                ) / timestamp_count,
+                "target_resolution": float(
+                    resolved_timings.get("target_resolution", 0.0)
+                ) / timestamp_count,
+                "rank_selection_and_resolved_metrics": float(
+                    resolved_timings.get(
+                        "rank_selection_and_metrics_evaluation", 0.0
+                    )
+                ) / timestamp_count,
+                "metrics_evaluation": (
+                    float(
                         resolved_timings.get(
-                            "rank_selection_and_metrics_evaluation", 0.0
+                            "summary_evaluation_and_publication", 0.0
                         )
-                    ),
-                    "metrics_evaluation": (
-                        float(
-                            resolved_timings.get(
-                                "summary_evaluation_and_publication", 0.0
-                            )
+                    )
+                    + float(
+                        writer_timings.get(
+                            "per_timestamp_metrics_evaluation", 0.0
                         )
-                        + float(
-                            writer_timings.get(
-                                "per_timestamp_metrics_evaluation", 0.0
-                            )
+                    )
+                ) / timestamp_count,
+                "parquet_and_json_writes": (
+                    float(
+                        resolved_timings.get(
+                            "parquet_and_pending_publication", 0.0
                         )
-                    ),
-                    "parquet_and_json_writes": (
-                        float(
-                            resolved_timings.get(
-                                "parquet_and_pending_publication", 0.0
-                            )
+                    )
+                    + float(
+                        writer_timings.get(
+                            "metrics_parquet_publication", 0.0
                         )
-                        + float(
-                            writer_timings.get(
-                                "metrics_parquet_publication", 0.0
-                            )
+                    )
+                ) / timestamp_count,
+                "checkpoint_and_resume_state_publication": (
+                    float(
+                        resolved_timings.get(
+                            "checkpoint_publication", 0.0
                         )
-                    ),
-                    "checkpoint_and_resume_state_publication": (
-                        float(
-                            resolved_timings.get(
-                                "checkpoint_publication", 0.0
-                            )
+                    )
+                    + float(
+                        writer_timings.get(
+                            "metrics_checkpoint_publication", 0.0
                         )
-                        + float(
-                            writer_timings.get(
-                                "metrics_checkpoint_publication", 0.0
-                            )
-                        )
-                        + state_publish_seconds
-                    ),
-                }
-                profile_stages["miscellaneous"] = max(
-                    0.0, timestamp_wall - sum(profile_stages.values())
-                )
+                    )
+                    + state_publish_seconds
+                ) / timestamp_count,
+            }
+            profile_stages["miscellaneous"] = max(
+                0.0, per_timestamp_wall - sum(profile_stages.values())
+            )
+            for timestamp in timestamp_batch:
                 throughput_profiler.record_timestamp(
                     decision_timestamp=timestamp.isoformat(),
-                    wall_seconds=timestamp_wall,
+                    wall_seconds=per_timestamp_wall,
                     stages=profile_stages,
                 )
         refit_iso = package.refit_T.isoformat()

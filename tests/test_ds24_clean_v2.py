@@ -522,13 +522,19 @@ def test_supervisor_binds_only_clean_v2_workers() -> None:
             "ds24_clean_v2_family_worker.py" in " ".join(command)
             for command in commands.values()
         )
-    assert _launch_families("dell")[:6] == [
+    assert _launch_families("dell") == [
         "random_forest",
-        "equal_weight_no_model",
-        "momentum",
         "ridge_C5",
         "elastic_net_C5",
         "elastic_net_C6",
+        "huber",
+        "gradient_boosting_C0_W20",
+        "gradient_boosting_C0",
+        "gradient_boosting_C0_W40",
+        "gradient_boosting_C0_W80",
+        "transformer",
+        "momentum",
+        "equal_weight_no_model",
     ]
     mac_owned = set(load_contract("cross_host_ownership.json")["hosts"]["mac"])
     assert _launch_families("mac") == [

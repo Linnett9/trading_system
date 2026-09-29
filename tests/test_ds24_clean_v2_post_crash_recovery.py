@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import numpy as np
 import os
 from pathlib import Path
 import subprocess
@@ -433,7 +434,11 @@ def test_sequence_cap_is_applied_before_window_materialization(
         maximum_examples=2,
     )
 
-    assert examples == [[[11.0], [12.0]], [[12.0], [13.0]]]
+    assert examples.dtype == np.float32
+    np.testing.assert_array_equal(
+        examples,
+        np.asarray([[[11.0], [12.0]], [[12.0], [13.0]]], dtype=np.float32),
+    )
     assert targets == [6.0, 7.0]
     assert metadata["asset_id"].tolist() == ["ZZZ", "ZZZ"]
     assert guarded[-1] == (

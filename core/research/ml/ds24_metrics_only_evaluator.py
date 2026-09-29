@@ -1160,7 +1160,22 @@ def compute_per_t_metrics(
     *,
     top_n: int = 20,
     expected_assets: Sequence[str] | None = None,
+    expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if expected_assets is not None and expected_assets_by_timestamp is not None:
+        raise ValueError(
+            "Specify either expected_assets or expected_assets_by_timestamp, not both"
+        )
+    canonical_expected_assets = (
+        {
+            _canonical_pending_timestamp(timestamp, field="decision_timestamp"): tuple(
+                str(asset) for asset in assets
+            )
+            for timestamp, assets in expected_assets_by_timestamp.items()
+        }
+        if expected_assets_by_timestamp is not None
+        else None
+    )
     if predictions.empty:
         return pd.DataFrame(), pd.DataFrame()
     frame = predictions.copy()
@@ -1177,7 +1192,21 @@ def compute_per_t_metrics(
     metric_rows: list[dict[str, Any]] = []
     decision_rows: list[dict[str, Any]] = []
     for (family, timestamp), group in frame.groupby(["family", "decision_timestamp"], sort=True):
-        validation = validate_prediction_frame(group, expected_timestamp=timestamp, expected_assets=expected_assets)
+        timestamp_expected_assets = expected_assets
+        if canonical_expected_assets is not None:
+            timestamp_key = _canonical_pending_timestamp(
+                timestamp, field="decision_timestamp"
+            )
+            if timestamp_key not in canonical_expected_assets:
+                raise ValueError(
+                    f"Missing expected assets for prediction timestamp: {timestamp_key}"
+                )
+            timestamp_expected_assets = canonical_expected_assets[timestamp_key]
+        validation = validate_prediction_frame(
+            group,
+            expected_timestamp=timestamp,
+            expected_assets=timestamp_expected_assets,
+        )
         dist = score_distribution(group["prediction"])
         metric: dict[str, Any] = {
             "policy_id": POLICY_ID,
@@ -1185,8 +1214,16 @@ def compute_per_t_metrics(
             "family": family,
             "decision_timestamp": pd.Timestamp(timestamp).isoformat(),
             "prediction_rows_generated": int(len(group)),
-            "eligible_assets": int(len(expected_assets) if expected_assets is not None else group["asset_id"].nunique()),
-            "prediction_coverage": float(len(group) / len(expected_assets)) if expected_assets else 1.0,
+            "eligible_assets": int(
+                len(timestamp_expected_assets)
+                if timestamp_expected_assets is not None
+                else group["asset_id"].nunique()
+            ),
+            "prediction_coverage": (
+                float(len(group) / len(timestamp_expected_assets))
+                if timestamp_expected_assets
+                else 1.0
+            ),
             "missing_prediction_count": validation["missing_prediction_count"],
             "duplicate_prediction_count": validation["duplicate_prediction_count"],
             **dist,
@@ -2677,6 +2714,13 @@ class ResolvedPerformanceV3Writer:
     _persisted_authority_identity: dict[str, str] = field(
         default_factory=dict, init=False, repr=False
     )
+    _batch_log_frames: dict[str, list[pd.DataFrame]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_pending_after: pd.DataFrame | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_failed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -3038,6 +3082,23 @@ class ResolvedPerformanceV3Writer:
                 {"appended": False, "rows": 0, "bytes": 0, "parts": []},
                 retained,
             )
+        if self._batch_log_frames is not None:
+            # Batch mode retains the same row-level idempotency indexes as the
+            # single-timestamp writer, but delays physical publication until
+            # the session boundary.  Subsequent timestamps therefore observe
+            # the exact state they would have seen after a durable append.
+            self._log_cache.record_key_rows(stem, retained)
+            self._batch_log_frames.setdefault(stem, []).append(retained.copy())
+            return (
+                {
+                    "appended": True,
+                    "rows": int(len(retained)),
+                    "bytes": 0,
+                    "parts": [],
+                    "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+                },
+                retained,
+            )
         publication = append_parquet_log_idempotent(
             self.root,
             stem,
@@ -3050,6 +3111,87 @@ class ResolvedPerformanceV3Writer:
             history_cache=self._log_cache,
         )
         return publication, retained
+
+    def _append_pending_ledger_log(
+        self, frame: pd.DataFrame
+    ) -> dict[str, Any]:
+        if frame.empty:
+            return {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+        if self._batch_log_frames is not None:
+            self._batch_log_frames.setdefault(
+                "pending_outcome_ledger_v3", []
+            ).append(frame.copy())
+            return {
+                "appended": True,
+                "rows": int(len(frame)),
+                "bytes": 0,
+                "parts": [],
+                "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+            }
+        publication = append_parquet_log(
+            self.root,
+            "pending_outcome_ledger_v3",
+            frame,
+            timestamp_col="resolution_timestamp",
+            temp_root=self.transient_root,
+            history_cache=self._log_cache,
+        )
+        self._log_cache.record_publication(
+            "pending_outcome_ledger_v3", publication
+        )
+        return publication
+
+    def _flush_batch_logs(self) -> dict[str, dict[str, Any]]:
+        if self._batch_log_frames is None:
+            return {}
+        # Every timestamp was evaluated sequentially before reaching here.
+        # Side evidence is durable before the rank-IC marker.  A restart can
+        # consequently distinguish a complete batch from orphaned side rows.
+        publication_order = (
+            "decision_trace_v3",
+            "sleeve_maturity_ledger_v3",
+            "transaction_costs_v3",
+            "rank_ic_audit_sample_v3",
+            "terminal_censored_v3",
+            "rank_ic_v3",
+            "pending_outcome_ledger_v3",
+            "refit_events_v3",
+            "daily_portfolio_returns_v3",
+        )
+        publications: dict[str, dict[str, Any]] = {}
+        for stem in publication_order:
+            frames = self._batch_log_frames.get(stem, [])
+            if not frames:
+                publications[stem] = {
+                    "appended": False,
+                    "rows": 0,
+                    "bytes": 0,
+                    "parts": [],
+                }
+                continue
+            frame = pd.concat(frames, ignore_index=True)
+            timestamp_col = (
+                "resolution_timestamp"
+                if stem == "pending_outcome_ledger_v3"
+                else (
+                    "session_date"
+                    if stem == "daily_portfolio_returns_v3"
+                    else "decision_timestamp"
+                )
+            )
+            publication = append_parquet_log(
+                self.root,
+                stem,
+                frame,
+                timestamp_col=timestamp_col,
+                temp_root=self.transient_root,
+                history_cache=self._log_cache,
+            )
+            # Indexed keys were recorded when each timestamp was evaluated.
+            # Only durable counters and the evidence chain advance here.
+            self._log_cache.record_publication(stem, publication)
+            publications[stem] = publication
+        return publications
 
     def _persist_incremental_state(
         self,
@@ -3179,6 +3321,88 @@ class ResolvedPerformanceV3Writer:
         row["row_hash"] = stable_hash(row)
         return row
 
+    def commit_prediction_batches(
+        self,
+        prediction_batches: Sequence[pd.DataFrame],
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Commit ordered timestamp frames with one physical publication.
+
+        Resolution remains timestamp-by-timestamp.  Only immutable Parquet
+        parts and replaceable checkpoints are coalesced, so portfolio state,
+        maturity chronology, hashes, and idempotent replay match the legacy
+        single-timestamp path.
+        """
+
+        if self._batch_failed:
+            raise RuntimeError("RESOLVED_PERFORMANCE_V3_BATCH_WRITER_RESTART_REQUIRED")
+        batches = [frame.copy() for frame in prediction_batches if not frame.empty]
+        if not batches:
+            return {
+                "committed": False,
+                "reason": "empty_predictions",
+                "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
+            }
+        timestamps: list[pd.Timestamp] = []
+        for frame in batches:
+            if "decision_timestamp" not in frame:
+                raise ValueError("RESOLVED_PERFORMANCE_V3_BATCH_TIMESTAMP_MISSING")
+            frame_timestamps = _normalise_timestamp_series(
+                frame["decision_timestamp"]
+            ).drop_duplicates()
+            if len(frame_timestamps) != 1:
+                raise ValueError(
+                    "RESOLVED_PERFORMANCE_V3_BATCH_REQUIRES_ONE_TIMESTAMP_PER_FRAME"
+                )
+            timestamps.append(pd.Timestamp(frame_timestamps.iloc[0]))
+        if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+            raise ValueError(
+                "RESOLVED_PERFORMANCE_V3_BATCH_TIMESTAMPS_MUST_BE_STRICTLY_INCREASING"
+            )
+
+        with AtomicJsonProcessLock(
+            self.root / APPEND_COMMIT_LOCK_NAME,
+            family=self.family,
+            purpose="resolved_performance_v3_batch_commit",
+            namespace=str(self.root.resolve()),
+            timeout_seconds=0.0,
+        ):
+            self._batch_log_frames = {}
+            self._batch_pending_after = None
+            results: list[dict[str, Any]] = []
+            try:
+                for index, frame in enumerate(batches):
+                    results.append(
+                        self._commit_predictions_unlocked(
+                            frame,
+                            metadata=metadata,
+                            finalize_batch=index == len(batches) - 1,
+                        )
+                    )
+            except Exception:
+                # In-memory indexes may already include buffered rows.  A new
+                # writer must bootstrap from the durable logs before retrying.
+                self._batch_failed = True
+                raise
+            finally:
+                self._batch_log_frames = None
+                self._batch_pending_after = None
+
+        result = dict(results[-1])
+        combined_timings: dict[str, float] = {}
+        for item in results:
+            for name, value in dict(
+                item.get("stage_timings_seconds", {})
+            ).items():
+                combined_timings[name] = combined_timings.get(name, 0.0) + float(
+                    value
+                )
+        result["stage_timings_seconds"] = combined_timings
+        result["batched_timestamp_count"] = len(batches)
+        result["publication_disposition"] = "BATCHED_TIMESTAMP_EQUIVALENT"
+        return result
+
     def commit_predictions(self, predictions: pd.DataFrame, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
         with AtomicJsonProcessLock(
             self.root / APPEND_COMMIT_LOCK_NAME,
@@ -3189,7 +3413,13 @@ class ResolvedPerformanceV3Writer:
         ):
             return self._commit_predictions_unlocked(predictions, metadata=metadata)
 
-    def _commit_predictions_unlocked(self, predictions: pd.DataFrame, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def _commit_predictions_unlocked(
+        self,
+        predictions: pd.DataFrame,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        finalize_batch: bool = False,
+    ) -> dict[str, Any]:
         commit_started = time.perf_counter()
         stage_timings: dict[str, float] = {}
         if predictions.empty:
@@ -3202,7 +3432,12 @@ class ResolvedPerformanceV3Writer:
         existing_timestamps = set(self._committed_rank_hashes)
         new_pending = build_pending_score_frame_v3(predictions, family=self.family, metadata=metadata)
         new_pending = new_pending[~_normalise_timestamp_series(new_pending["decision_timestamp"]).map(lambda ts: ts.isoformat()).isin(existing_timestamps)].copy()
-        existing_pending = self._read_existing(self.pending_scores_path)
+        existing_pending = (
+            self._batch_pending_after.copy()
+            if self._batch_log_frames is not None
+            and self._batch_pending_after is not None
+            else self._read_existing(self.pending_scores_path)
+        )
         combined_pending = pd.concat([existing_pending, new_pending], ignore_index=True) if not existing_pending.empty else new_pending
         combined_pending = deduplicate_pending_scores(combined_pending)
         if len(combined_pending) > self.pending_score_limit_rows:
@@ -3290,7 +3525,19 @@ class ResolvedPerformanceV3Writer:
         rank_pub, rank_retained = self._append_indexed_log(
             "rank_ic_v3", resolved["rank_ic"]
         )
-        pending_pub = publish_parquet_atomic(self.pending_scores_path, pending_after, temp_root=self.transient_root)
+        if self._batch_log_frames is not None:
+            self._batch_pending_after = pending_after.copy()
+            pending_pub = {
+                "published": False,
+                "bytes": 0,
+                "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+            }
+        else:
+            pending_pub = publish_parquet_atomic(
+                self.pending_scores_path,
+                pending_after,
+                temp_root=self.transient_root,
+            )
         pending_ledger_row = self._pending_ledger_row(
             resolution_timestamp=resolution_timestamp,
             pending_after=pending_after,
@@ -3310,16 +3557,8 @@ class ResolvedPerformanceV3Writer:
                 "reason": "DUPLICATE_RESOLUTION_TIMESTAMP",
             }
         else:
-            pending_ledger_pub = append_parquet_log(
-                self.root,
-                "pending_outcome_ledger_v3",
-                pd.DataFrame([pending_ledger_row]),
-                timestamp_col="resolution_timestamp",
-                temp_root=self.transient_root,
-                history_cache=self._log_cache,
-            )
-            self._log_cache.record_publication(
-                "pending_outcome_ledger_v3", pending_ledger_pub
+            pending_ledger_pub = self._append_pending_ledger_log(
+                pd.DataFrame([pending_ledger_row])
             )
             self._pending_ledger_resolutions.add(pending_ledger_resolution)
         refit_pub = self._append_refit_event(predictions, metadata)
@@ -3399,6 +3638,29 @@ class ResolvedPerformanceV3Writer:
                 ~maturity_dates.isin(published_daily_dates)
             ].copy()
 
+        if self._batch_log_frames is not None and finalize_batch:
+            flush_started = time.perf_counter()
+            batch_publications = self._flush_batch_logs()
+            trace_pub = batch_publications["decision_trace_v3"]
+            sleeve_pub = batch_publications["sleeve_maturity_ledger_v3"]
+            cost_pub = batch_publications["transaction_costs_v3"]
+            sample_pub = batch_publications["rank_ic_audit_sample_v3"]
+            terminal_pub = batch_publications["terminal_censored_v3"]
+            rank_pub = batch_publications["rank_ic_v3"]
+            pending_ledger_pub = batch_publications[
+                "pending_outcome_ledger_v3"
+            ]
+            refit_pub = batch_publications["refit_events_v3"]
+            daily_pub = batch_publications["daily_portfolio_returns_v3"]
+            pending_pub = publish_parquet_atomic(
+                self.pending_scores_path,
+                pending_after,
+                temp_root=self.transient_root,
+            )
+            stage_timings["parquet_and_pending_publication"] += (
+                time.perf_counter() - flush_started
+            )
+
         self._summary_state.add_rank_rows(rank_retained)
         self._summary_state.add_sleeve_rows(newly_committed_sleeves)
         self._summary_state.add_daily_rows(daily_retained)
@@ -3411,7 +3673,8 @@ class ResolvedPerformanceV3Writer:
             pending_rows=int(len(pending_after)),
             created_at_utc=_utc_now_iso(),
         )
-        write_json_atomic(self.summary_path, summary, advisory=False)
+        if self._batch_log_frames is None or finalize_batch:
+            write_json_atomic(self.summary_path, summary, advisory=False)
         stage_timings["summary_evaluation_and_publication"] = (
             time.perf_counter() - stage_started
         )
@@ -3504,12 +3767,13 @@ class ResolvedPerformanceV3Writer:
             ),
             "checkpoint_utc": pd.Timestamp.now("UTC").isoformat(),
         }
-        write_json_atomic(self.checkpoint_path, checkpoint, advisory=False)
-        self._persist_incremental_state(
-            metadata=metadata,
-            resolution_timestamp=resolution_timestamp,
-            pending_after=pending_after,
-        )
+        if self._batch_log_frames is None or finalize_batch:
+            write_json_atomic(self.checkpoint_path, checkpoint, advisory=False)
+            self._persist_incremental_state(
+                metadata=metadata,
+                resolution_timestamp=resolution_timestamp,
+                pending_after=pending_after,
+            )
         stage_timings["checkpoint_publication"] = (
             time.perf_counter() - stage_started
         )
@@ -4368,6 +4632,48 @@ class MetricsOnlyEvidenceWriter:
             return False
         return self._namespace_lease.release()
 
+    def commit_prediction_batches(
+        self,
+        prediction_batches: Sequence[pd.DataFrame],
+        *,
+        target_batches: Sequence[pd.DataFrame] | None = None,
+        expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Commit a chronological score batch with timestamp-equivalent rows."""
+
+        batches = [frame.copy() for frame in prediction_batches if not frame.empty]
+        if not batches:
+            return {"committed": False, "reason": "empty_predictions"}
+        if self._resolved_v2_writer is not None:
+            raise RuntimeError(
+                "METRICS_ONLY_BATCH_COMMIT_REQUIRES_RESOLVED_PERFORMANCE_V3"
+            )
+        predictions = pd.concat(batches, ignore_index=True)
+        targets = None
+        if target_batches is not None:
+            nonempty_targets = [frame.copy() for frame in target_batches if not frame.empty]
+            targets = (
+                pd.concat(nonempty_targets, ignore_index=True)
+                if nonempty_targets
+                else pd.DataFrame()
+            )
+        v3_result: dict[str, Any] = {}
+        if self._resolved_v3_writer is not None:
+            v3_result = self._resolved_v3_writer.commit_prediction_batches(
+                batches, metadata=metadata
+            )
+        result = self.commit_predictions(
+            predictions,
+            targets=targets,
+            expected_assets_by_timestamp=expected_assets_by_timestamp,
+            metadata=metadata,
+            _resolved_v3_result=v3_result,
+        )
+        result["batched_timestamp_count"] = len(batches)
+        result["publication_disposition"] = "BATCHED_TIMESTAMP_EQUIVALENT"
+        return result
+
     @property
     def metrics_path(self) -> Path:
         return self.root / "per_t_metrics.parquet"
@@ -4417,7 +4723,9 @@ class MetricsOnlyEvidenceWriter:
         *,
         targets: pd.DataFrame | None = None,
         expected_assets: Sequence[str] | None = None,
+        expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        _resolved_v3_result: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         commit_started = time.perf_counter()
         stage_timings: dict[str, float] = {}
@@ -4439,12 +4747,24 @@ class MetricsOnlyEvidenceWriter:
         if self._resolved_v2_writer is not None:
             v2_result = self._resolved_v2_writer.commit_predictions(predictions, metadata=metadata)
         if self._resolved_v3_writer is not None:
-            v3_result = self._resolved_v3_writer.commit_predictions(predictions, metadata=metadata)
+            v3_result = (
+                dict(_resolved_v3_result)
+                if _resolved_v3_result is not None
+                else self._resolved_v3_writer.commit_predictions(
+                    predictions, metadata=metadata
+                )
+            )
         stage_timings["resolved_performance_commit"] = (
             time.perf_counter() - stage_started
         )
         stage_started = time.perf_counter()
-        metrics, decisions = compute_per_t_metrics(predictions, targets, top_n=self.top_n, expected_assets=expected_assets)
+        metrics, decisions = compute_per_t_metrics(
+            predictions,
+            targets,
+            top_n=self.top_n,
+            expected_assets=expected_assets,
+            expected_assets_by_timestamp=expected_assets_by_timestamp,
+        )
         stage_timings["per_timestamp_metrics_evaluation"] = (
             time.perf_counter() - stage_started
         )
@@ -4543,6 +4863,13 @@ class MetricsOnlyEvidenceWriter:
             metric_pub = publish_parquet_atomic(self.metrics_path, combined_metrics) if not combined_metrics.empty else {}
             decision_pub = publish_parquet_atomic(self.decisions_path, combined_decisions) if not combined_decisions.empty else {}
         pending = predictions.copy()
+        if _resolved_v3_result is not None:
+            pending_timestamps = _normalise_timestamp_series(
+                pending["decision_timestamp"]
+            )
+            pending = pending[
+                pending_timestamps == pending_timestamps.max()
+            ].copy()
         pending["committed_at_utc"] = pd.Timestamp.now("UTC").isoformat()
         pending["policy_id"] = POLICY_ID
         pending["policy_hash"] = policy_hash()
