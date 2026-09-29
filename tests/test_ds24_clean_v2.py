@@ -48,6 +48,7 @@ from scripts.local.ds24_clean_v2_mac_preflight import (
 from scripts.local.ds24_clean_v2_supervisor import (
     _launch_families,
     _partition_inventory_matches,
+    _primary_family_capacity_deferred,
 )
 from scripts.local import ds24_clean_v2_build_target_delta as target_delta_builder
 
@@ -508,6 +509,12 @@ def test_clean_worker_schedule_uses_five_score_sessions_and_frozen_years() -> No
 
 def test_supervisor_binds_only_clean_v2_workers() -> None:
     tournament = load_contract("tournament_contract.json")
+    lane_order = [
+        *tournament["lanes"]["FULL_CLEAN"],
+        *tournament["lanes"]["SHORT_REQUALIFICATION"],
+        *tournament["lanes"]["UNSCORED_DISCOVERY"],
+        *tournament["lanes"]["CONTROLS"],
+    ]
     for host in ("dell", "mac"):
         commands = tournament["worker_commands"][host]
         assert set(commands) == set(_launch_families(host))
@@ -515,8 +522,34 @@ def test_supervisor_binds_only_clean_v2_workers() -> None:
             "ds24_clean_v2_family_worker.py" in " ".join(command)
             for command in commands.values()
         )
+    assert _launch_families("dell")[:6] == [
+        "random_forest",
+        "equal_weight_no_model",
+        "momentum",
+        "ridge_C5",
+        "elastic_net_C5",
+        "elastic_net_C6",
+    ]
+    mac_owned = set(load_contract("cross_host_ownership.json")["hosts"]["mac"])
+    assert _launch_families("mac") == [
+        family for family in lane_order if family in mac_owned
+    ]
     assert isinstance(clean_source_hash(), str)
     assert len(clean_source_hash()) == 64
+
+
+def test_dell_primary_capacity_deferral_blocks_replacement_workers() -> None:
+    assert _primary_family_capacity_deferred(
+        "dell", {"random_forest": {"classification": "deferred"}}, set()
+    )
+    assert not _primary_family_capacity_deferred(
+        "dell",
+        {"random_forest": {"classification": "deferred"}},
+        {"random_forest"},
+    )
+    assert not _primary_family_capacity_deferred(
+        "mac", {"random_forest": {"classification": "deferred"}}, set()
+    )
 
 
 def test_resume_and_metric_keys_are_deterministic_and_idempotent() -> None:

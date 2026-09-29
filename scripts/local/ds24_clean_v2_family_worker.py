@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from contextlib import contextmanager
+import gc
 import json
 import os
 import pickle
@@ -29,12 +32,45 @@ from core.research.ml.ds24.clean_v2_contracts import (
     load_contract,
     stable_hash,
 )
+from core.research.ml.ds24.clean_v2_checkpoint_compatibility import (
+    SCIENTIFIC_IDENTITY_VERSION,
+    CheckpointCompatibilityError,
+    assess_checkpoint_compatibility,
+    make_checkpoint_identity,
+    make_no_model_control_resume_identity,
+    no_model_control_config,
+    validate_no_model_control_resume_identity,
+)
 from core.research.ml.ds24.clean_v2_data import CleanV2CompositeData
 from core.research.ml.ds24.clean_v2_runtime import (
+    MAX_DELL_MODEL_WORKERS,
     QUALIFIER_YEARS,
     REFIT_POLICY_ID,
     RUN_ID,
     validate_target_use,
+)
+from core.research.ml.ds24.clean_v2_resources import (
+    DELL_WORKER_THREAD_ENVIRONMENT,
+    RECOVERY_RESOURCE_POLICY_ID,
+    RESOURCE_CAPACITY_DEFERRED_EXIT_CODE,
+    RESOURCE_PRESSURE_EXIT_CODE,
+    AllocationEstimate,
+    CleanV2ResourcePressure,
+    FileReservationClient,
+    ResourceReservationUnavailable,
+    WorkerReservationOwner,
+    allocation_failure_decision,
+    is_resource_allocation_failure,
+    panel_allocation_estimate,
+    panel_slice_allocation_estimate,
+    process_identity,
+    read_json_object_with_retry,
+    recovery_policy_payload,
+    reservation_payload_is_local_capacity_deferral,
+    require_memory,
+    sequence_allocation_estimate,
+    tabular_fit_allocation_estimate,
+    write_json_object_atomic,
 )
 from core.research.ml.ds24.comparable_policy import RefitPackageSpec
 from core.research.ml.stock_level.stock_level_sequence_regressors import (
@@ -56,10 +92,129 @@ SEQUENCE_FAMILIES = {
 }
 CONTROL_FAMILIES = {"momentum", "equal_weight_no_model"}
 SHORT_LANES = {"SHORT_REQUALIFICATION", "UNSCORED_DISCOVERY"}
+TABULAR_SCORING_BATCH_TIMESTAMPS = 78
 
 
 class CleanV2WorkerError(RuntimeError):
     """Raised when a clean V2 worker cannot safely continue."""
+
+
+class ScoringThroughputProfiler:
+    """Bounded operational timing evidence, isolated by source identity."""
+
+    MAX_SAMPLES = 256
+    MAX_PACKAGE_EVENTS = 64
+
+    def __init__(self, path: Path, *, family: str, source_hash: str) -> None:
+        self.path = Path(path)
+        self.family = str(family)
+        self.source_hash = str(source_hash)
+        self.samples: list[dict[str, Any]] = []
+        self.package_events: list[dict[str, Any]] = []
+        if self.path.is_file():
+            try:
+                existing = json.loads(self.path.read_text(encoding="utf-8"))
+            except Exception:
+                existing = {}
+            if (
+                existing.get("family") == self.family
+                and existing.get("clean_source_hash") == self.source_hash
+            ):
+                self.samples = list(existing.get("samples") or [])[
+                    -self.MAX_SAMPLES :
+                ]
+                self.package_events = list(existing.get("package_events") or [])[
+                    -self.MAX_PACKAGE_EVENTS :
+                ]
+
+    def record_package_stage(
+        self,
+        *,
+        refit_timestamp: str,
+        stage: str,
+        elapsed_seconds: float,
+    ) -> None:
+        self.package_events.append(
+            {
+                "refit_timestamp": refit_timestamp,
+                "stage": stage,
+                "elapsed_seconds": float(elapsed_seconds),
+                "recorded_at_utc": _utc_now(),
+            }
+        )
+        self.package_events = self.package_events[-self.MAX_PACKAGE_EVENTS :]
+        self._publish()
+
+    def record_timestamp(
+        self,
+        *,
+        decision_timestamp: str,
+        wall_seconds: float,
+        stages: Mapping[str, float],
+    ) -> None:
+        self.samples.append(
+            {
+                "decision_timestamp": decision_timestamp,
+                "wall_seconds": float(wall_seconds),
+                "stages_seconds": {
+                    str(name): float(value) for name, value in stages.items()
+                },
+                "recorded_at_utc": _utc_now(),
+            }
+        )
+        self.samples = self.samples[-self.MAX_SAMPLES :]
+        self._publish()
+
+    def _publish(self) -> None:
+        walls = [float(sample["wall_seconds"]) for sample in self.samples]
+        stage_totals: dict[str, float] = {}
+        for sample in self.samples:
+            for name, value in dict(sample.get("stages_seconds") or {}).items():
+                stage_totals[name] = stage_totals.get(name, 0.0) + float(value)
+        total_wall = sum(walls)
+        stage_summary = {
+            name: {
+                "total_seconds": value,
+                "mean_seconds_per_timestamp": (
+                    value / len(walls) if walls else None
+                ),
+                "percentage_of_wall": (
+                    100.0 * value / total_wall if total_wall > 0 else None
+                ),
+            }
+            for name, value in sorted(stage_totals.items())
+        }
+        payload = {
+            "profile_version": "DS24_CLEAN_V2_SCORING_THROUGHPUT_PROFILE_V1",
+            "family": self.family,
+            "clean_source_hash": self.source_hash,
+            "sample_count": len(walls),
+            "first_decision_timestamp": (
+                self.samples[0]["decision_timestamp"] if self.samples else None
+            ),
+            "latest_decision_timestamp": (
+                self.samples[-1]["decision_timestamp"] if self.samples else None
+            ),
+            "mean_seconds_per_timestamp": (
+                float(np.mean(walls)) if walls else None
+            ),
+            "median_seconds_per_timestamp": (
+                float(np.median(walls)) if walls else None
+            ),
+            "p95_seconds_per_timestamp": (
+                float(np.percentile(walls, 95)) if walls else None
+            ),
+            "timestamps_per_hour": (
+                3600.0 / float(np.mean(walls))
+                if walls and float(np.mean(walls)) > 0
+                else None
+            ),
+            "stage_summary": stage_summary,
+            "package_events": self.package_events,
+            "samples": self.samples,
+            "updated_at_utc": _utc_now(),
+        }
+        _write_json_atomic(self.path, payload)
 
 
 def _validate_worker_admission(host: str) -> dict[str, Any]:
@@ -87,6 +242,16 @@ def _validate_worker_admission(host: str) -> dict[str, Any]:
         raise CleanV2WorkerError("Manual supervisor admission bundle is stale")
     if admission.get("clean_source_hash") != clean_source_hash():
         raise CleanV2WorkerError("Manual supervisor admission source hash is stale")
+    expected_workers = MAX_DELL_MODEL_WORKERS if host == "dell" else 1
+    if admission.get("maximum_model_workers") != expected_workers:
+        raise CleanV2WorkerError("Manual supervisor admission worker limit is stale")
+    resource_policy = admission.get("resource_policy") or {}
+    if resource_policy != recovery_policy_payload():
+        raise CleanV2WorkerError("Manual supervisor resource policy is stale")
+    if os.environ.get("DS24_CLEAN_V2_RESOURCE_POLICY_ID") != (
+        RECOVERY_RESOURCE_POLICY_ID
+    ):
+        raise CleanV2WorkerError("Supervisor resource policy propagation is missing")
     return {**admission, "admission_token": token}
 
 
@@ -94,14 +259,80 @@ def _utc_now() -> str:
     return pd.Timestamp.now("UTC").isoformat()
 
 
-def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".partial")
-    temporary.write_text(
-        json.dumps(dict(payload), indent=2, sort_keys=True, default=str) + "\n",
-        encoding="utf-8",
+def _release_disposable_caches() -> None:
+    """Release runtime caches only at an already committed package boundary."""
+
+    gc.collect()
+    torch_module = sys.modules.get("torch")
+    cuda = getattr(torch_module, "cuda", None)
+    if cuda is not None and callable(getattr(cuda, "is_available", None)):
+        if cuda.is_available():
+            cuda.empty_cache()
+
+
+@contextmanager
+def _allocation_guard(
+    client: FileReservationClient | None,
+    *,
+    stage: str,
+    estimate: AllocationEstimate,
+) -> Iterable[None]:
+    """Hold supervisor authorization for the complete allocation lifetime."""
+
+    if client is None:
+        require_memory(
+            stage=stage,
+            estimated_allocation_bytes=estimate.physical_bytes,
+        )
+        yield
+        return
+    with client.reserve(stage=stage, estimate=estimate):
+        yield
+
+
+def _reservation_client(
+    *, family: str, host: str, attempt_generation: int
+) -> FileReservationClient:
+    reservation_root = os.environ.get("DS24_CLEAN_V2_RESERVATION_ROOT", "")
+    if not reservation_root:
+        raise CleanV2WorkerError("Supervisor reservation controller is missing")
+    identity = process_identity(os.getpid())
+    if not identity.alive or not identity.creation_time_utc:
+        raise CleanV2WorkerError("Worker reservation identity is unavailable")
+    if host == "dell":
+        invalid = [
+            name
+            for name, expected in DELL_WORKER_THREAD_ENVIRONMENT.items()
+            if os.environ.get(name) != expected
+        ]
+        if invalid:
+            raise CleanV2WorkerError(
+                "Dell worker thread-cap propagation is invalid:" + ",".join(invalid)
+            )
+    return FileReservationClient(
+        Path(reservation_root),
+        WorkerReservationOwner(
+            family=family,
+            attempt_generation=attempt_generation,
+            pid=os.getpid(),
+            process_creation_time_utc=identity.creation_time_utc,
+        ),
     )
-    os.replace(temporary, path)
+
+
+def _log_runtime_file_retry(event: Mapping[str, Any]) -> None:
+    print(
+        json.dumps({**dict(event), "component": "worker"}, sort_keys=True),
+        flush=True,
+    )
+
+
+def _read_runtime_json(path: Path) -> dict[str, Any]:
+    return read_json_object_with_retry(path, on_retry=_log_runtime_file_retry)
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    write_json_object_atomic(path, payload, on_retry=_log_runtime_file_retry)
 
 
 def _session_dates(spine: Iterable[pd.Timestamp]) -> list[str]:
@@ -181,21 +412,150 @@ def build_clean_refit_schedule(
     return out
 
 
+def _schedule_identity(
+    *,
+    schedule: Sequence[RefitPackageSpec],
+    lane: str,
+    lookback_sessions: int,
+    qualifier_years: Sequence[int] | None,
+) -> tuple[dict[str, Any], str]:
+    packages = [
+        {
+            "ordinal": package.ordinal,
+            "refit_T": package.refit_T.isoformat(),
+            "training_session_dates": list(package.training_session_dates),
+            "score_session_dates": list(package.score_session_dates),
+            "policy_hash": package.policy_hash,
+        }
+        for package in schedule
+    ]
+    contract = {
+        "run_id": RUN_ID,
+        "lane": lane,
+        "refit_policy_id": REFIT_POLICY_ID,
+        "lookback_sessions": int(lookback_sessions),
+        "score_sessions_per_refit": 5,
+        "score_cadence": "registered five-minute decision spine",
+        "qualifier_years": (
+            list(map(int, qualifier_years)) if qualifier_years else None
+        ),
+        "expected_refits": len(schedule),
+        "package_contract_hashes": {
+            str(package["refit_T"]): stable_hash(package) for package in packages
+        },
+    }
+    return contract, stable_hash({"contract": contract, "packages": packages})
+
+
+def _scientific_checkpoint_identity(
+    *,
+    family: str,
+    config: Mapping[str, Any],
+    predictors: Sequence[str],
+    feature_authority_hash: str,
+    target_authority_hash: str,
+    target_contract_hash: str,
+    static_authority_bundle_sha256: str,
+    schedule_contract: Mapping[str, Any],
+    schedule_hash: str,
+    package: RefitPackageSpec,
+) -> dict[str, Any]:
+    training = dict(config.get("training", {}))
+    predictor_order = list(map(str, predictors))
+    predictor_manifest = load_contract("predictor_manifest.json")
+    return {
+        "scientific_identity_version": SCIENTIFIC_IDENTITY_VERSION,
+        "family": family,
+        "model_config_hash": stable_hash(config),
+        "feature_authority_hash": feature_authority_hash,
+        "predictor_order_hash": stable_hash(predictor_order),
+        "predictor_manifest_hash": stable_hash(predictor_manifest),
+        "target_authority_hash": target_authority_hash,
+        "target_contract_hash": target_contract_hash,
+        "training_lookback_sessions": int(training["lookback_sessions"]),
+        "training_sample_contract": {
+            "sample_cap": training.get("sample_cap"),
+            "max_training_examples": training.get("max_training_examples"),
+            "max_training_rows": training.get("max_training_rows"),
+        },
+        "refit_policy_id": REFIT_POLICY_ID,
+        "refit_policy_hash": stable_hash(
+            {
+                "id": REFIT_POLICY_ID,
+                "lookback_sessions": training["lookback_sessions"],
+            }
+        ),
+        "schedule_contract": dict(schedule_contract),
+        "schedule_hash": schedule_hash,
+        "estimator_contract": {
+            key: config.get(key)
+            for key in (
+                "status",
+                "implementation",
+                "estimator",
+                "parameters",
+                "execution",
+            )
+        },
+        "preprocessing_semantics": config.get("preprocessing", []),
+        "static_authority_bundle_sha256": static_authority_bundle_sha256,
+        "package_contract": {
+            "ordinal": package.ordinal,
+            "refit_T": package.refit_T.isoformat(),
+            "training_session_dates": list(package.training_session_dates),
+            "score_session_dates": list(package.score_session_dates),
+            "policy_hash": package.policy_hash,
+        },
+    }
+
+
+def _operational_checkpoint_identity(
+    *,
+    admission: Mapping[str, Any],
+    host: str,
+    attempt_generation: int,
+    attempt_id: str,
+) -> dict[str, Any]:
+    identity = process_identity(os.getpid())
+    if not identity.alive or not identity.creation_time_utc:
+        raise CleanV2WorkerError("Worker operational identity is unavailable")
+    resource_policy = admission.get("resource_policy")
+    if not isinstance(resource_policy, dict):
+        raise CleanV2WorkerError("Worker resource policy provenance is missing")
+    return {
+        "clean_source_hash": clean_source_hash(),
+        "resource_policy_id": str(resource_policy["resource_policy_id"]),
+        "resource_policy_hash": stable_hash(resource_policy),
+        "maximum_model_workers": int(admission["maximum_model_workers"]),
+        "attempt_generation": int(attempt_generation),
+        "attempt_id": attempt_id,
+        "host": host,
+        "pid": os.getpid(),
+        "process_creation_time_utc": identity.creation_time_utc,
+    }
+
+
+def _package_score_is_complete(
+    score_timestamps: Sequence[pd.Timestamp], completed: set[str]
+) -> bool:
+    score_keys = {
+        pd.Timestamp(timestamp).tz_convert("UTC").isoformat()
+        for timestamp in score_timestamps
+    }
+    return bool(score_keys and score_keys <= completed)
+
+
 def _family_contract(family: str) -> tuple[dict[str, Any], str]:
     models = load_contract("model_registry.json")
     tournament = load_contract("tournament_contract.json")
     if family in models["families"]:
         config = dict(models["families"][family])
     elif family in models["controls"]:
-        config = {
-            "lane": "CONTROLS",
-            "status": "FIXED_NO_FIT_CONTROL",
-            "training": {
-                "lookback_sessions": 20,
-                "refit_policy": REFIT_POLICY_ID,
-            },
-            "parameters": {},
-        }
+        config = no_model_control_config(
+            family=family,
+            model_registry=models,
+            refit_policy_id=REFIT_POLICY_ID,
+        )
     else:
         raise CleanV2WorkerError(f"Family is not admitted: {family}")
     lane_matches = [
@@ -208,6 +568,31 @@ def _family_contract(family: str) -> tuple[dict[str, Any], str]:
     if config["training"]["refit_policy"] != REFIT_POLICY_ID:
         raise CleanV2WorkerError(f"Forbidden refit policy for {family}")
     return config, str(config["lane"])
+
+
+def _control_resume_identity(
+    *,
+    family: str,
+    config: Mapping[str, Any],
+    feature_authority_hash: str,
+    target_authority_hash: str,
+    target_contract_hash: str,
+    static_authority_bundle_sha256: str,
+) -> dict[str, Any] | None:
+    if family not in CONTROL_FAMILIES:
+        return None
+    return make_no_model_control_resume_identity(
+        family=family,
+        model_config=config,
+        feature_authority_hash=feature_authority_hash,
+        target_authority_hash=target_authority_hash,
+        target_contract_hash=target_contract_hash,
+        static_authority_bundle_sha256=static_authority_bundle_sha256,
+        predictor_manifest=load_contract("predictor_manifest.json"),
+        eligibility_contract=load_contract("eligibility_contract.json"),
+        tournament_contract=load_contract("tournament_contract.json"),
+        evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+    )
 
 
 def _tabular_estimator(family: str, config: Mapping[str, Any]) -> Any:
@@ -257,40 +642,74 @@ def _sequence_examples(
     eligible_mask: pd.Series,
     include_targets: bool,
     maximum_examples: int | None = None,
+    reservation_client: FileReservationClient | None = None,
 ) -> tuple[list[list[list[float]]], list[float], pd.DataFrame]:
-    work = panel.reset_index(drop=True).copy()
-    if len(eligible_mask) != len(work):
-        raise CleanV2WorkerError("Sequence eligible-mask length mismatch")
-    work["sequence_eligible"] = (
-        eligible_mask.reset_index(drop=True).fillna(False).astype(bool).to_numpy()
-    )
-    work = work.sort_values(["asset_id", "decision_timestamp"], kind="mergesort")
-    examples: list[list[list[float]]] = []
-    targets: list[float] = []
-    metadata: list[dict[str, str]] = []
-    for _asset_id, asset in work.groupby("asset_id", sort=False):
-        asset = asset.sort_values("decision_timestamp", kind="mergesort")
-        values = asset[list(predictors)].to_numpy(dtype=np.float32, copy=True)
-        rows = list(asset.itertuples(index=False))
-        for offset, row in enumerate(rows):
-            if not bool(getattr(row, "sequence_eligible")) or offset + 1 < sequence_length:
+    if maximum_examples is not None and maximum_examples <= 0:
+        raise CleanV2WorkerError("Sequence example cap must be positive")
+    with _allocation_guard(
+        reservation_client,
+        stage="sequence_candidate_index",
+        estimate=tabular_fit_allocation_estimate(
+            row_count=len(panel), predictor_count=len(predictors)
+        ),
+    ):
+        work = panel.reset_index(drop=True).copy()
+        if len(eligible_mask) != len(work):
+            raise CleanV2WorkerError("Sequence eligible-mask length mismatch")
+        work["sequence_eligible"] = (
+            eligible_mask.reset_index(drop=True).fillna(False).astype(bool).to_numpy()
+        )
+        work = work.sort_values(["asset_id", "decision_timestamp"], kind="mergesort")
+        candidates: list[tuple[str, int]] | deque[tuple[str, int]]
+        if maximum_examples is None:
+            candidates = []
+        else:
+            candidates = deque(maxlen=maximum_examples)
+        for asset_id, asset in work.groupby("asset_id", sort=False):
+            asset = asset.sort_values("decision_timestamp", kind="mergesort")
+            eligible = asset["sequence_eligible"].to_numpy(dtype=bool, copy=False)
+            for offset, is_eligible in enumerate(eligible):
+                if not is_eligible or offset + 1 < sequence_length:
+                    continue
+                candidates.append((str(asset_id), offset))
+
+    selected = list(candidates)
+    with _allocation_guard(
+        reservation_client,
+        stage="sequence_window_and_tensor_materialization",
+        estimate=sequence_allocation_estimate(
+            example_count=len(selected),
+            sequence_length=sequence_length,
+            predictor_count=len(predictors),
+        ),
+    ):
+        selected_offsets: dict[str, list[int]] = {}
+        for asset_id, offset in selected:
+            selected_offsets.setdefault(asset_id, []).append(offset)
+
+        examples: list[list[list[float]]] = []
+        targets: list[float] = []
+        metadata: list[dict[str, str]] = []
+        for asset_id, asset in work.groupby("asset_id", sort=False):
+            offsets = selected_offsets.get(str(asset_id), [])
+            if not offsets:
                 continue
-            window = values[offset - sequence_length + 1 : offset + 1]
-            examples.append(window.astype(float).tolist())
-            if include_targets:
-                targets.append(float(getattr(row, "target_value")))
-            metadata.append(
-                {
-                    "asset_id": str(getattr(row, "asset_id")),
-                    "decision_timestamp": pd.Timestamp(
-                        getattr(row, "decision_timestamp")
-                    ).isoformat(),
-                }
-            )
-    if maximum_examples and len(examples) > maximum_examples:
-        examples = examples[-maximum_examples:]
-        targets = targets[-maximum_examples:] if include_targets else targets
-        metadata = metadata[-maximum_examples:]
+            asset = asset.sort_values("decision_timestamp", kind="mergesort")
+            values = asset[list(predictors)].to_numpy(dtype=np.float32, copy=True)
+            for offset in offsets:
+                row = asset.iloc[offset]
+                window = values[offset - sequence_length + 1 : offset + 1]
+                examples.append(window.astype(float).tolist())
+                if include_targets:
+                    targets.append(float(row["target_value"]))
+                metadata.append(
+                    {
+                        "asset_id": str(row["asset_id"]),
+                        "decision_timestamp": pd.Timestamp(
+                            row["decision_timestamp"]
+                        ).isoformat(),
+                    }
+                )
     return examples, targets, pd.DataFrame(metadata)
 
 
@@ -370,6 +789,7 @@ def _fit_model(
     config: Mapping[str, Any],
     train: pd.DataFrame,
     predictors: Sequence[str],
+    reservation_client: FileReservationClient | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     if family in SEQUENCE_FAMILIES:
         parameters = dict(config["parameters"])
@@ -382,20 +802,47 @@ def _fit_model(
             eligible_mask=mask,
             include_targets=True,
             maximum_examples=int(config["training"]["max_training_examples"]),
+            reservation_client=reservation_client,
         )
         if not sequences:
             raise CleanV2WorkerError(f"No sequence training examples for {family}")
-        model = TorchSequenceReturnRegressor(sequence_config)
-        model.fit(sequences, targets)
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{family}_fit",
+            estimate=sequence_allocation_estimate(
+                example_count=len(sequences),
+                sequence_length=sequence_config.sequence_length,
+                predictor_count=len(predictors),
+            ),
+        ):
+            model = TorchSequenceReturnRegressor(sequence_config)
+            model.fit(sequences, targets)
         return model, {
             "kind": "sequence",
             "sequence_length": sequence_config.sequence_length,
             "training_examples": len(sequences),
         }
     if family == "lightgbm_rank_xendcg":
-        return _fit_xendcg(config, train, predictors)
-    estimator = _tabular_estimator(family, config)
-    estimator.fit(train[list(predictors)], train["target_value"].astype(float))
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{family}_fit",
+            estimate=tabular_fit_allocation_estimate(
+                row_count=min(
+                    len(train), int(config["training"]["max_training_rows"])
+                ),
+                predictor_count=len(predictors),
+            ),
+        ):
+            return _fit_xendcg(config, train, predictors)
+    with _allocation_guard(
+        reservation_client,
+        stage=f"{family}_fit",
+        estimate=tabular_fit_allocation_estimate(
+            row_count=len(train), predictor_count=len(predictors)
+        ),
+    ):
+        estimator = _tabular_estimator(family, config)
+        estimator.fit(train[list(predictors)], train["target_value"].astype(float))
     return estimator, {"kind": "tabular", "training_rows": len(train)}
 
 
@@ -406,14 +853,30 @@ def _score_model(
     full_panel: pd.DataFrame,
     predictors: Sequence[str],
     metadata: Mapping[str, Any],
+    reservation_client: FileReservationClient | None = None,
+    stage_timings: dict[str, float] | None = None,
 ) -> pd.DataFrame:
+    timings = stage_timings if stage_timings is not None else {}
     if family == "momentum":
+        stage_started = time.perf_counter()
         values = pd.to_numeric(score_panel["ret_60m"], errors="coerce").fillna(0.0)
         asset_ids = score_panel["asset_id"].astype(str).reset_index(drop=True)
+        decision_timestamps = pd.to_datetime(
+            score_panel["decision_timestamp"], utc=True
+        ).reset_index(drop=True)
+        timings["preprocessing"] = time.perf_counter() - stage_started
+        timings["model_prediction"] = 0.0
     elif family == "equal_weight_no_model":
+        stage_started = time.perf_counter()
         values = pd.Series(np.zeros(len(score_panel), dtype=float))
         asset_ids = score_panel["asset_id"].astype(str).reset_index(drop=True)
+        decision_timestamps = pd.to_datetime(
+            score_panel["decision_timestamp"], utc=True
+        ).reset_index(drop=True)
+        timings["preprocessing"] = time.perf_counter() - stage_started
+        timings["model_prediction"] = 0.0
     elif family in SEQUENCE_FAMILIES:
+        stage_started = time.perf_counter()
         mask = full_panel["decision_timestamp"].isin(score_panel["decision_timestamp"])
         sequences, _targets, rows = _sequence_examples(
             full_panel,
@@ -421,30 +884,173 @@ def _score_model(
             sequence_length=int(metadata["sequence_length"]),
             eligible_mask=mask,
             include_targets=False,
+            reservation_client=reservation_client,
         )
-        values = pd.Series(model.predict(sequences), dtype=float)
+        timings["preprocessing"] = time.perf_counter() - stage_started
+        stage_started = time.perf_counter()
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{family}_score_predict",
+            estimate=sequence_allocation_estimate(
+                example_count=len(sequences),
+                sequence_length=int(metadata["sequence_length"]),
+                predictor_count=len(predictors),
+            ),
+        ):
+            values = pd.Series(model.predict(sequences), dtype=float)
+        timings["model_prediction"] = time.perf_counter() - stage_started
         asset_ids = rows["asset_id"].astype(str)
+        decision_timestamps = pd.to_datetime(
+            rows["decision_timestamp"], utc=True
+        )
     elif family == "lightgbm_rank_xendcg":
-        values = pd.Series(
-            model.predict(_prepare_xendcg_scoring_inputs(score_panel, predictors)),
-            dtype=float,
-        )
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{family}_score_matrix",
+            estimate=tabular_fit_allocation_estimate(
+                row_count=len(score_panel), predictor_count=len(predictors)
+            ),
+        ):
+            stage_started = time.perf_counter()
+            prepared = _prepare_xendcg_scoring_inputs(score_panel, predictors)
+            timings["preprocessing"] = time.perf_counter() - stage_started
+            stage_started = time.perf_counter()
+            values = pd.Series(
+                model.predict(prepared),
+                dtype=float,
+            )
+            timings["model_prediction"] = time.perf_counter() - stage_started
         asset_ids = score_panel["asset_id"].astype(str).reset_index(drop=True)
+        decision_timestamps = pd.to_datetime(
+            score_panel["decision_timestamp"], utc=True
+        ).reset_index(drop=True)
     else:
-        values = pd.Series(
-            model.predict(score_panel[list(predictors)]), dtype=float
-        )
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{family}_score_matrix",
+            estimate=tabular_fit_allocation_estimate(
+                row_count=len(score_panel), predictor_count=len(predictors)
+            ),
+        ):
+            stage_started = time.perf_counter()
+            scoring_matrix = score_panel[list(predictors)]
+            if isinstance(model, Pipeline):
+                transformed = model[:-1].transform(scoring_matrix)
+            else:
+                transformed = scoring_matrix
+            timings["preprocessing"] = time.perf_counter() - stage_started
+            stage_started = time.perf_counter()
+            estimator = model.steps[-1][1] if isinstance(model, Pipeline) else model
+            values = pd.Series(estimator.predict(transformed), dtype=float)
+            timings["model_prediction"] = time.perf_counter() - stage_started
         asset_ids = score_panel["asset_id"].astype(str).reset_index(drop=True)
+        decision_timestamps = pd.to_datetime(
+            score_panel["decision_timestamp"], utc=True
+        ).reset_index(drop=True)
     return pd.DataFrame(
         {
             "family": family,
-            "decision_timestamp": [
-                pd.Timestamp(score_panel["decision_timestamp"].iloc[0]).isoformat()
-            ]
-            * len(values),
+            "decision_timestamp": decision_timestamps.map(
+                lambda value: pd.Timestamp(value).isoformat()
+            ).to_numpy(),
             "asset_id": asset_ids.to_numpy(),
             "prediction": values.to_numpy(dtype=float),
             "eligible": True,
+        }
+    )
+
+
+def _scoring_timestamp_batches(
+    family: str,
+    timestamps: Sequence[pd.Timestamp],
+    completed: set[str],
+) -> list[tuple[pd.Timestamp, ...]]:
+    """Return bounded, session-local batches without changing score order."""
+
+    maximum = 1 if family in SEQUENCE_FAMILIES else TABULAR_SCORING_BATCH_TIMESTAMPS
+    batches: list[tuple[pd.Timestamp, ...]] = []
+    current: list[pd.Timestamp] = []
+    current_session: object | None = None
+    for raw_timestamp in timestamps:
+        timestamp = pd.Timestamp(raw_timestamp).tz_convert("UTC")
+        if timestamp.isoformat() in completed:
+            continue
+        session = timestamp.date()
+        if current and (
+            session != current_session or len(current) >= maximum
+        ):
+            batches.append(tuple(current))
+            current = []
+        current.append(timestamp)
+        current_session = session
+    if current:
+        batches.append(tuple(current))
+    return batches
+
+
+def _package_assembly_dates(
+    family: str,
+    package: RefitPackageSpec,
+) -> list[str]:
+    """Return the minimum package sessions required by each family.
+
+    Fitted families require the full training window.  No-model controls do
+    not fit and therefore need only their score sessions plus the immediately
+    preceding session.  That prior session preserves target lookup coverage
+    for the preceding package's bounded 60-minute pending-outcome tail.
+    """
+
+    if family not in CONTROL_FAMILIES:
+        return list(
+            dict.fromkeys(
+                [
+                    *package.training_session_dates,
+                    *package.score_session_dates,
+                ]
+            )
+        )
+    if not package.training_session_dates:
+        raise CleanV2WorkerError(
+            f"Control package has no preceding session: {package.refit_T}"
+        )
+    return list(
+        dict.fromkeys(
+            [
+                package.training_session_dates[-1],
+                *package.score_session_dates,
+            ]
+        )
+    )
+
+
+def _preprocessing_identity_hash(
+    *,
+    family: str,
+    predictors: Sequence[str],
+    config: Mapping[str, Any],
+) -> str:
+    """Hash scientific preprocessing semantics, independent of load history.
+
+    ``fit_metadata["kind"]`` describes how the model entered the current
+    process (for example ``resumed_model``), so it is operational provenance.
+    Pending-score identity must instead remain stable when the exact fitted
+    checkpoint is replayed after an interrupted commit.
+    """
+
+    if family in CONTROL_FAMILIES:
+        estimator_kind = "control"
+    elif family in SEQUENCE_FAMILIES:
+        estimator_kind = "sequence"
+    elif family == "lightgbm_rank_xendcg":
+        estimator_kind = "ranker"
+    else:
+        estimator_kind = "tabular"
+    return stable_hash(
+        {
+            "family": family,
+            "predictors": list(predictors),
+            "config": config.get("preprocessing", []),
+            "kind": estimator_kind,
         }
     )
 
@@ -477,21 +1083,86 @@ def _save_model(
 
 
 def _load_resume_model(
-    checkpoint_path: Path, expected_identity: Mapping[str, Any]
-) -> tuple[Any, Path, str] | None:
+    checkpoint_path: Path,
+    *,
+    expected_scientific_identity: Mapping[str, Any],
+    current_operational_identity: Mapping[str, Any],
+    completed_refits: Sequence[str],
+    compatibility_evidence_path: Path,
+) -> tuple[Any | None, Path | None, str, dict[str, Any]] | None:
     if not checkpoint_path.is_file():
         return None
     checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-    if checkpoint.get("identity") != dict(expected_identity):
-        raise CleanV2WorkerError("Resume checkpoint authority identity mismatch")
+    checkpoint_identity = checkpoint.get("identity")
+    if not isinstance(checkpoint_identity, dict):
+        raise CleanV2WorkerError("Resume checkpoint identity is missing")
+    try:
+        assessment = assess_checkpoint_compatibility(
+            checkpoint_identity=checkpoint_identity,
+            expected_scientific_identity=expected_scientific_identity,
+            current_operational_identity=current_operational_identity,
+            completed_refits=completed_refits,
+        )
+    except CheckpointCompatibilityError as exc:
+        raise CleanV2WorkerError(
+            f"Resume checkpoint scientific compatibility failed: {exc}"
+        ) from exc
+    evidence = {
+        **assessment.payload(),
+        "checkpoint_path": checkpoint_path.relative_to(ROOT).as_posix(),
+        "model_path": checkpoint.get("model_path"),
+        "model_hash": checkpoint.get("model_hash"),
+        "artifact_identity_verification": (
+            "NOT_REQUIRED_PRIOR_COMPLETED_PACKAGE"
+            if assessment.prior_completed_package
+            else "PENDING_BEFORE_ARTIFACT_LOAD"
+        ),
+        "assessed_at_utc": _utc_now(),
+    }
+    _write_json_atomic(compatibility_evidence_path, evidence)
+    if not assessment.reusable:
+        return None, None, "", evidence
     path = ROOT / str(checkpoint["model_path"])
     if not path.is_file() or file_sha256(path) != checkpoint.get("model_hash"):
         raise CleanV2WorkerError("Resume model artifact is missing or changed")
     with path.open("rb") as handle:
         artifact = pickle.load(handle)
-    if artifact.get("identity") != dict(expected_identity):
+    if artifact.get("identity") != checkpoint_identity:
         raise CleanV2WorkerError("Resume model artifact identity mismatch")
-    return artifact["model"], path, str(checkpoint["model_hash"])
+    verified_evidence = {
+        **evidence,
+        "artifact_identity_verification": "VERIFIED",
+        "verified_at_utc": _utc_now(),
+    }
+    _write_json_atomic(compatibility_evidence_path, verified_evidence)
+    return (
+        artifact["model"],
+        path,
+        str(checkpoint["model_hash"]),
+        verified_evidence,
+    )
+
+
+def _resume_model_for_family(
+    family: str,
+    checkpoint_path: Path,
+    *,
+    expected_scientific_identity: Mapping[str, Any],
+    current_operational_identity: Mapping[str, Any],
+    completed_refits: Sequence[str],
+    compatibility_evidence_path: Path,
+) -> tuple[Any | None, Path | None, str, dict[str, Any]] | None:
+    """Load fitted state only for families whose scientific method has a fit."""
+
+    if family in CONTROL_FAMILIES:
+        return None
+    return _load_resume_model(
+        checkpoint_path,
+        expected_scientific_identity=expected_scientific_identity,
+        current_operational_identity=current_operational_identity,
+        completed_refits=completed_refits,
+        compatibility_evidence_path=compatibility_evidence_path,
+    )
 
 
 def _completed_timestamps(metrics_root: Path, family: str) -> set[str]:
@@ -499,7 +1170,172 @@ def _completed_timestamps(metrics_root: Path, family: str) -> set[str]:
     if metrics.empty:
         return set()
     rows = metrics[metrics["family"].astype(str) == family]
-    return set(pd.to_datetime(rows["decision_timestamp"], utc=True).map(lambda x: x.isoformat()))
+    return set(
+        pd.to_datetime(rows["decision_timestamp"], utc=True).map(
+            lambda value: value.isoformat()
+        )
+    )
+
+
+def _control_model_identity(
+    metrics_root: Path,
+    *,
+    family: str,
+    scientific_identity: Mapping[str, Any],
+    package: RefitPackageSpec,
+    score_timestamps: Sequence[pd.Timestamp],
+) -> tuple[str, str]:
+    """Return a restart-stable package identity for a no-model control.
+
+    Older CLEAN V2 workers derived this value from the complete checkpoint
+    identity, which also contains PID, attempt, and source provenance. Once a
+    package has durable evidence, preserve that one legacy value so an
+    interrupted append can be replayed exactly. New packages use only their
+    scientific identity and therefore remain stable across operational
+    restarts and source-bound admissions.
+    """
+
+    refit_timestamp = pd.Timestamp(package.refit_T).tz_convert("UTC")
+    events = read_parquet_log(
+        metrics_root,
+        "refit_events_v3",
+        columns=("family", "training_cutoff", "model_hash"),
+    )
+    if not events.empty:
+        event_refits = pd.to_datetime(events["training_cutoff"], utc=True)
+        matching_events = events[
+            (events["family"].astype(str) == family)
+            & (event_refits == refit_timestamp)
+        ]
+        event_hashes = {
+            str(value)
+            for value in matching_events["model_hash"].dropna()
+            if str(value)
+        }
+        if len(event_hashes) > 1:
+            raise CleanV2WorkerError(
+                "Control package has conflicting persisted model identities:"
+                f"{family}:{refit_timestamp.isoformat()}"
+            )
+        if event_hashes:
+            return event_hashes.pop(), "PERSISTED_REFIT_EVENT_COMPATIBILITY"
+
+    # A process can stop after publishing side evidence but before publishing
+    # the rank/refit commit markers. Recover the identity from that orphaned
+    # transaction as a bounded fallback for packages without a refit event.
+    score_keys = {
+        pd.Timestamp(timestamp).tz_convert("UTC").isoformat()
+        for timestamp in score_timestamps
+    }
+    recovered_hashes: set[str] = set()
+    for stem in ("rank_ic_v3", "sleeve_maturity_ledger_v3"):
+        evidence = read_parquet_log(
+            metrics_root,
+            stem,
+            columns=("family", "decision_timestamp", "model_hash"),
+        )
+        if evidence.empty:
+            continue
+        decisions = pd.to_datetime(evidence["decision_timestamp"], utc=True).map(
+            lambda value: value.isoformat()
+        )
+        matching = evidence[
+            (evidence["family"].astype(str) == family)
+            & decisions.isin(score_keys)
+        ]
+        recovered_hashes.update(
+            str(value)
+            for value in matching["model_hash"].dropna()
+            if str(value)
+        )
+    pending_path = metrics_root / "pending_scores_v3.parquet"
+    if pending_path.is_file():
+        pending = pd.read_parquet(
+            pending_path,
+            columns=["family", "decision_timestamp", "model_hash"],
+        )
+        if not pending.empty:
+            pending_decisions = pd.to_datetime(
+                pending["decision_timestamp"], utc=True
+            ).map(lambda value: value.isoformat())
+            matching_pending = pending[
+                (pending["family"].astype(str) == family)
+                & pending_decisions.isin(score_keys)
+            ]
+            recovered_hashes.update(
+                str(value)
+                for value in matching_pending["model_hash"].dropna()
+                if str(value)
+            )
+    if len(recovered_hashes) > 1:
+        raise CleanV2WorkerError(
+            "Control package has conflicting partial model identities:"
+            f"{family}:{refit_timestamp.isoformat()}"
+        )
+    if recovered_hashes:
+        return recovered_hashes.pop(), "PERSISTED_PARTIAL_EVIDENCE_COMPATIBILITY"
+    return stable_hash(scientific_identity), "SCIENTIFIC_PACKAGE_IDENTITY"
+
+
+def _estimated_panel_row_upper_bound(
+    *,
+    data: CleanV2CompositeData,
+    spine: Sequence[pd.Timestamp],
+    session_dates: Sequence[str],
+    maximum_assets: int | None,
+) -> int:
+    years = {int(value[:4]) for value in session_dates}
+    asset_count = len(
+        {partition.asset_id for partition in data.partitions if partition.year in years}
+    )
+    if maximum_assets is not None:
+        asset_count = min(asset_count, max(1, int(maximum_assets)))
+    selected_dates = set(session_dates)
+    timestamp_count = sum(
+        pd.Timestamp(timestamp).date().isoformat() in selected_dates
+        for timestamp in spine
+    )
+    return asset_count * timestamp_count
+
+
+def _validate_resume_authority(
+    *,
+    prior: Mapping[str, Any],
+    authority: Mapping[str, Any],
+    attempt_generation: int,
+    control_scientific_identity: Mapping[str, Any] | None = None,
+) -> None:
+    prior_generation = int(prior.get("attempt_generation", 0) or 0)
+    for key, value in authority.items():
+        if key == "clean_source_hash" and prior.get(key) != value:
+            if attempt_generation <= prior_generation:
+                raise CleanV2WorkerError(
+                    "Resume source transition requires a newer attempt generation"
+                )
+            continue
+        if (
+            key == "clean_source_hash"
+            and prior.get(key) is None
+            and not prior.get("completed_refits")
+            and int(prior.get("metrics_cursor", 0) or 0) == 0
+        ):
+            continue
+        if prior.get(key) != value:
+            raise CleanV2WorkerError(f"Resume state authority mismatch: {key}")
+    if control_scientific_identity is not None:
+        observed = prior.get("control_scientific_identity")
+        if not isinstance(observed, Mapping):
+            raise CleanV2WorkerError(
+                "Resume control scientific identity is missing"
+            )
+        try:
+            validate_no_model_control_resume_identity(
+                observed, control_scientific_identity
+            )
+        except CheckpointCompatibilityError as exc:
+            raise CleanV2WorkerError(
+                f"Resume control scientific identity mismatch: {exc}"
+            ) from exc
 
 
 def _state_payload(
@@ -513,32 +1349,71 @@ def _state_payload(
     terminal_state: str,
     attempt_generation: int,
     attempt_id: str,
+    operational_identity: Mapping[str, Any] | None = None,
+    checkpoint_compatibility: Mapping[str, Any] | None = None,
+    control_scientific_identity: Mapping[str, Any] | None = None,
+    completed_scoring_packages: Sequence[str] = (),
     error: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    is_control = family in CONTROL_FAMILIES
+    payload = {
         "run_id": RUN_ID,
         "family": family,
         "owner_host": host,
         **dict(authority),
         "refit_policy_id": REFIT_POLICY_ID,
-        "expected_refits": expected_refits,
-        "completed_refits": list(completed_refits),
-        "latest_completed_refit": completed_refits[-1] if completed_refits else None,
+        "expected_refits": 0 if is_control else expected_refits,
+        "completed_refits": [] if is_control else list(completed_refits),
+        "latest_completed_refit": (
+            None
+            if is_control or not completed_refits
+            else completed_refits[-1]
+        ),
         "latest_scored_decision": max(completed_timestamps) if completed_timestamps else None,
         "metrics_cursor": len(completed_timestamps),
         "attempt_generation": attempt_generation,
         "attempt_id": attempt_id,
+        "current_operational_identity": dict(operational_identity or {}),
+        "checkpoint_compatibility": dict(checkpoint_compatibility or {}),
         "terminal_state": terminal_state,
         "error": error,
         "heartbeat_utc": _utc_now(),
         "paper_orders": 0,
         "live_orders": 0,
     }
+    if is_control:
+        payload.update(
+            {
+                "expected_scoring_packages": expected_refits,
+                "completed_scoring_packages": list(completed_scoring_packages),
+                "latest_completed_scoring_package": (
+                    completed_scoring_packages[-1]
+                    if completed_scoring_packages
+                    else None
+                ),
+                "control_scientific_identity": dict(
+                    control_scientific_identity or {}
+                ),
+                "control_scientific_identity_hash": stable_hash(
+                    dict(control_scientific_identity or {})
+                ),
+            }
+        )
+    return payload
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     admission = _validate_worker_admission(args.host)
+    require_memory(
+        stage=f"{args.family}_worker_start",
+        estimated_allocation_bytes=0,
+    )
     attempt_generation = max(1, int(args.resume_generation))
+    reservation_client = _reservation_client(
+        family=args.family,
+        host=args.host,
+        attempt_generation=attempt_generation,
+    )
     attempt_id = stable_hash(
         {
             "run_id": RUN_ID,
@@ -546,6 +1421,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "host": args.host,
             "attempt_generation": attempt_generation,
         }
+    )
+    operational_identity = _operational_checkpoint_identity(
+        admission=admission,
+        host=args.host,
+        attempt_generation=attempt_generation,
+        attempt_id=attempt_id,
     )
     config, lane = _family_contract(args.family)
     ownership = load_contract("cross_host_ownership.json")
@@ -575,33 +1456,79 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             }
         ),
     }
+    control_scientific_identity = _control_resume_identity(
+        family=args.family,
+        config=config,
+        feature_authority_hash=feature_hash,
+        target_authority_hash=target_hash,
+        target_contract_hash=str(
+            data.target_contract["resolved_contract_sha256"]
+        ),
+        static_authority_bundle_sha256=str(
+            authority["static_authority_bundle_sha256"]
+        ),
+    )
     spine = data.decision_spine()
     qualifier_years = QUALIFIER_YEARS if lane in SHORT_LANES else None
-    schedule = build_clean_refit_schedule(
+    full_schedule = build_clean_refit_schedule(
         spine,
         lookback_sessions=int(config["training"]["lookback_sessions"]),
         qualifier_years=qualifier_years,
-        maximum_refits=args.maximum_refits,
+    )
+    schedule = (
+        full_schedule[: args.maximum_refits]
+        if args.maximum_refits is not None
+        else full_schedule
+    )
+    schedule_contract, schedule_hash = _schedule_identity(
+        schedule=full_schedule,
+        lane=lane,
+        lookback_sessions=int(config["training"]["lookback_sessions"]),
+        qualifier_years=qualifier_years,
     )
     family_root = ROOT / "research_runs" / "ds24_clean_v2" / RUN_ID / f"family={args.family}"
     metrics_root = family_root / "metrics"
     state_path = family_root / "resume_state.json"
     checkpoint_path = family_root / "model_checkpoint.json"
+    throughput_profiler = ScoringThroughputProfiler(
+        family_root
+        / (
+            "scoring_throughput_profile_source="
+            f"{authority['clean_source_hash'][:16]}.json"
+        ),
+        family=args.family,
+        source_hash=str(authority["clean_source_hash"]),
+    )
     completed = _completed_timestamps(metrics_root, args.family)
     completed_refits: list[str] = []
+    completed_scoring_packages: list[str] = []
+    latest_checkpoint_compatibility: dict[str, Any] = (
+        {
+            "classification": (
+                "NO_MODEL_CONTROL_FITTED_CHECKPOINT_NOT_APPLICABLE"
+            ),
+            "fitted_model_required": False,
+            "checkpoint_required": False,
+        }
+        if args.family in CONTROL_FAMILIES
+        else {}
+    )
     if state_path.is_file():
-        prior = json.loads(state_path.read_text(encoding="utf-8"))
-        for key, value in authority.items():
-            if (
-                key == "clean_source_hash"
-                and prior.get(key) is None
-                and not prior.get("completed_refits")
-                and int(prior.get("metrics_cursor", 0) or 0) == 0
-            ):
-                continue
-            if prior.get(key) != value:
-                raise CleanV2WorkerError(f"Resume state authority mismatch: {key}")
-        completed_refits = list(prior.get("completed_refits", []))
+        prior = _read_runtime_json(state_path)
+        _validate_resume_authority(
+            prior=prior,
+            authority=authority,
+            attempt_generation=attempt_generation,
+            control_scientific_identity=control_scientific_identity,
+        )
+        completed_refits = list(dict.fromkeys(prior.get("completed_refits", [])))
+        completed_scoring_packages = list(
+            dict.fromkeys(prior.get("completed_scoring_packages", []))
+        )
+        latest_checkpoint_compatibility = dict(
+            prior.get("checkpoint_compatibility")
+            or latest_checkpoint_compatibility
+        )
     _write_json_atomic(
         state_path,
         _state_payload(
@@ -614,35 +1541,78 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             terminal_state="RUNNING",
             attempt_generation=attempt_generation,
             attempt_id=attempt_id,
+            operational_identity=operational_identity,
+            checkpoint_compatibility=latest_checkpoint_compatibility,
+            control_scientific_identity=control_scientific_identity,
+            completed_scoring_packages=completed_scoring_packages,
         ),
     )
 
+    writer: MetricsOnlyEvidenceWriter | None = None
     for package in schedule:
         score_timestamps = [
             timestamp
             for timestamp in spine
             if timestamp.date().isoformat() in package.score_session_dates
         ]
-        score_keys = {timestamp.isoformat() for timestamp in score_timestamps}
-        if score_keys and score_keys <= completed:
+        if _package_score_is_complete(score_timestamps, completed):
             refit_iso = package.refit_T.isoformat()
-            if refit_iso not in completed_refits:
+            if (
+                args.family in CONTROL_FAMILIES
+                and refit_iso not in completed_scoring_packages
+            ):
+                completed_scoring_packages.append(refit_iso)
+            elif args.family not in CONTROL_FAMILIES and refit_iso not in completed_refits:
                 completed_refits.append(refit_iso)
             continue
-        dates = [*package.training_session_dates, *package.score_session_dates]
-        panel = data.assemble_sessions(dates, maximum_assets=args.maximum_assets)
+        dates = _package_assembly_dates(args.family, package)
+        estimated_panel_rows = _estimated_panel_row_upper_bound(
+            data=data,
+            spine=spine,
+            session_dates=dates,
+            maximum_assets=args.maximum_assets,
+        )
+        stage_started = time.perf_counter()
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{args.family}_panel_assembly",
+            estimate=panel_allocation_estimate(
+                row_count=estimated_panel_rows,
+                column_count=len(data.predictors) + 12,
+            ),
+        ):
+            panel = data.assemble_sessions(dates, maximum_assets=args.maximum_assets)
+        throughput_profiler.record_package_stage(
+            refit_timestamp=package.refit_T.isoformat(),
+            stage="partition_reads_panel_assembly_and_feature_target_joins",
+            elapsed_seconds=time.perf_counter() - stage_started,
+        )
         if panel.empty:
             raise CleanV2WorkerError(f"Empty refit package: {package.refit_T}")
-        training = panel[
-            panel["session_date"].astype(str).isin(package.training_session_dates)
-            & (panel["decision_timestamp"] < package.refit_T)
-            & panel["target_is_trainable"].fillna(False).astype(bool)
-            & (panel["target_available_timestamp"] <= package.refit_T)
-            & np.isfinite(pd.to_numeric(panel["target_value"], errors="coerce"))
-        ].copy()
-        scoring = panel[
-            panel["session_date"].astype(str).isin(package.score_session_dates)
-        ].copy()
+        stage_started = time.perf_counter()
+        with _allocation_guard(
+            reservation_client,
+            stage=f"{args.family}_training_and_scoring_population_slices",
+            estimate=panel_slice_allocation_estimate(
+                row_count=len(panel),
+                column_count=len(panel.columns),
+            ),
+        ):
+            training = panel[
+                panel["session_date"].astype(str).isin(package.training_session_dates)
+                & (panel["decision_timestamp"] < package.refit_T)
+                & panel["target_is_trainable"].fillna(False).astype(bool)
+                & (panel["target_available_timestamp"] <= package.refit_T)
+                & np.isfinite(pd.to_numeric(panel["target_value"], errors="coerce"))
+            ]
+            scoring = panel[
+                panel["session_date"].astype(str).isin(package.score_session_dates)
+            ]
+        throughput_profiler.record_package_stage(
+            refit_timestamp=package.refit_T.isoformat(),
+            stage="training_and_scoring_population_slices",
+            elapsed_seconds=time.perf_counter() - stage_started,
+        )
         validate_target_use(
             predictor_names=data.predictors,
             training_rows=training,
@@ -652,39 +1622,102 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if training.empty or scoring.empty:
             raise CleanV2WorkerError(f"Empty train/score population: {package.refit_T}")
 
-        identity = {
-            **authority,
-            "family": args.family,
-            "refit_T": package.refit_T.isoformat(),
-            "policy_hash": package.policy_hash,
-        }
-        resumed = _load_resume_model(checkpoint_path, identity)
+        scientific_identity = _scientific_checkpoint_identity(
+            family=args.family,
+            config=config,
+            predictors=data.predictors,
+            feature_authority_hash=feature_hash,
+            target_authority_hash=target_hash,
+            target_contract_hash=data.target_contract[
+                "resolved_contract_sha256"
+            ],
+            static_authority_bundle_sha256=authority[
+                "static_authority_bundle_sha256"
+            ],
+            schedule_contract=schedule_contract,
+            schedule_hash=schedule_hash,
+            package=package,
+        )
+        checkpoint_identity = make_checkpoint_identity(
+            scientific_identity=scientific_identity,
+            operational_identity=operational_identity,
+        )
+        compatibility_evidence_path = family_root / (
+            "checkpoint_compatibility_"
+            f"attempt={attempt_generation}_"
+            f"refit={package.refit_T.strftime('%Y%m%dT%H%M%SZ')}.json"
+        )
+        stage_started = time.perf_counter()
+        resumed = _resume_model_for_family(
+            args.family,
+            checkpoint_path,
+            expected_scientific_identity=scientific_identity,
+            current_operational_identity=operational_identity,
+            completed_refits=completed_refits,
+            compatibility_evidence_path=compatibility_evidence_path,
+        )
+        throughput_profiler.record_package_stage(
+            refit_timestamp=package.refit_T.isoformat(),
+            stage="model_loading_and_checkpoint_compatibility",
+            elapsed_seconds=time.perf_counter() - stage_started,
+        )
         fit_metadata: dict[str, Any]
         if args.family in CONTROL_FAMILIES:
-            model, model_path, model_hash = None, None, stable_hash(identity)
-            fit_metadata = {"kind": "control", "training_rows": 0}
-        elif resumed is not None:
-            model, model_path, model_hash = resumed
-            fit_metadata = {"kind": "resumed_model"}
+            model_hash, control_model_identity_source = _control_model_identity(
+                metrics_root,
+                family=args.family,
+                scientific_identity=scientific_identity,
+                package=package,
+                score_timestamps=score_timestamps,
+            )
+            model, model_path, model_hash = (
+                None,
+                None,
+                model_hash,
+            )
+            fit_metadata = {
+                "kind": "control",
+                "training_rows": 0,
+                "model_identity_source": control_model_identity_source,
+            }
+        elif resumed is not None and resumed[0] is not None:
+            model, model_path, model_hash, latest_checkpoint_compatibility = resumed
+            fit_metadata = {
+                "kind": "resumed_model",
+                "checkpoint_compatibility_classification": (
+                    latest_checkpoint_compatibility["classification"]
+                ),
+            }
         else:
+            if resumed is not None:
+                latest_checkpoint_compatibility = resumed[3]
             started = time.perf_counter()
             model, fit_metadata = _fit_model(
-                args.family, config, training, data.predictors
+                args.family,
+                config,
+                training,
+                data.predictors,
+                reservation_client=reservation_client,
             )
             fit_metadata["fit_wall_seconds"] = round(
                 time.perf_counter() - started, 6
+            )
+            throughput_profiler.record_package_stage(
+                refit_timestamp=package.refit_T.isoformat(),
+                stage="model_fit",
+                elapsed_seconds=float(fit_metadata["fit_wall_seconds"]),
             )
             model_path, model_hash = _save_model(
                 family_root,
                 family=args.family,
                 refit_t=package.refit_T,
                 model=model,
-                identity=identity,
+                identity=checkpoint_identity,
             )
             _write_json_atomic(
                 checkpoint_path,
                 {
-                    "identity": identity,
+                    "identity": checkpoint_identity,
                     "model_path": model_path.relative_to(ROOT).as_posix(),
                     "model_hash": model_hash,
                     "fit_metadata": fit_metadata,
@@ -692,89 +1725,245 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 },
             )
 
-        writer = MetricsOnlyEvidenceWriter(
-            metrics_root,
-            family=args.family,
-            top_n=10_000 if args.family == "equal_weight_no_model" else 20,
-            enable_resolved_performance_v3=True,
-            target_loader=lambda request, source=panel: data.target_loader_from_panel(
+        require_memory(
+            stage=f"{args.family}_post_fit_committed_checkpoint_boundary",
+            estimated_allocation_bytes=0,
+        )
+
+        package_target_loader = (
+            lambda request, source=panel: data.target_loader_from_panel(
                 source, request
-            ),
-            terminal_timestamp=max(spine).isoformat(),
-            namespace_lease_enabled=False,
-            resume_generation=args.resume_generation,
-            command_hash=stable_hash(" ".join(sys.argv)),
-            configuration_hash=model_config_hash,
-            evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+            )
         )
-        preprocessing_hash = stable_hash(
-            {
-                "family": args.family,
-                "predictors": list(data.predictors),
-                "config": config.get("preprocessing", []),
-                "kind": fit_metadata["kind"],
-            }
+        if writer is None:
+            writer = MetricsOnlyEvidenceWriter(
+                metrics_root,
+                family=args.family,
+                top_n=10_000 if args.family == "equal_weight_no_model" else 20,
+                enable_resolved_performance_v3=True,
+                target_loader=package_target_loader,
+                terminal_timestamp=max(spine).isoformat(),
+                namespace_lease_enabled=False,
+                resume_generation=args.resume_generation,
+                command_hash=stable_hash(" ".join(sys.argv)),
+                configuration_hash=model_config_hash,
+                evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+            )
+        else:
+            writer.set_target_loader(package_target_loader)
+        preprocessing_hash = _preprocessing_identity_hash(
+            family=args.family,
+            predictors=data.predictors,
+            config=config,
         )
-        for timestamp in score_timestamps:
-            timestamp = pd.Timestamp(timestamp).tz_convert("UTC")
-            if timestamp.isoformat() in completed:
-                continue
-            score_at_t = scoring[scoring["decision_timestamp"] == timestamp].copy()
-            if score_at_t.empty:
-                raise CleanV2WorkerError(f"Empty score timestamp: {timestamp}")
-            predictions = _score_model(
+        scoring_timestamp_rows = {
+            pd.Timestamp(timestamp).tz_convert("UTC"): indexes
+            for timestamp, indexes in scoring.groupby(
+                "decision_timestamp", sort=False
+            ).groups.items()
+        }
+        for timestamp_batch in _scoring_timestamp_batches(
+            args.family, score_timestamps, completed
+        ):
+            batch_indexes = [
+                index
+                for timestamp in timestamp_batch
+                for index in scoring_timestamp_rows.get(timestamp, [])
+            ]
+            score_batch = scoring.loc[batch_indexes].copy()
+            if score_batch.empty:
+                raise CleanV2WorkerError(
+                    f"Empty score timestamp batch: {timestamp_batch[0]}"
+                )
+            batch_score_started = time.perf_counter()
+            batch_score_timings: dict[str, float] = {}
+            batch_predictions = _score_model(
                 args.family,
                 model,
-                score_at_t,
+                score_batch,
                 panel,
                 data.predictors,
                 fit_metadata,
+                reservation_client=reservation_client,
+                stage_timings=batch_score_timings,
             )
-            targets = score_at_t[
-                [
-                    "asset_id",
-                    "decision_timestamp",
-                    "target_value",
-                    "target_available_timestamp",
+            batch_score_wall = time.perf_counter() - batch_score_started
+            timestamp_count = len(timestamp_batch)
+            shared_score_stages = {
+                name: value / timestamp_count
+                for name, value in batch_score_timings.items()
+            }
+            shared_score_stages["scheduler_and_reservation_overhead"] = max(
+                0.0,
+                (
+                    batch_score_wall
+                    - sum(batch_score_timings.values())
+                )
+                / timestamp_count,
+            )
+            batch_prediction_timestamps = pd.to_datetime(
+                batch_predictions["decision_timestamp"], utc=True
+            )
+            for timestamp in timestamp_batch:
+                timestamp_started = time.perf_counter()
+                indexes = scoring_timestamp_rows.get(timestamp)
+                if indexes is None or len(indexes) == 0:
+                    raise CleanV2WorkerError(f"Empty score timestamp: {timestamp}")
+                score_at_t = scoring.loc[indexes].copy()
+                predictions = batch_predictions[
+                    batch_prediction_timestamps == timestamp
+                ].copy()
+                if predictions.empty:
+                    raise CleanV2WorkerError(
+                        f"Empty prediction timestamp: {timestamp}"
+                    )
+                targets = score_at_t[
+                    [
+                        "asset_id",
+                        "decision_timestamp",
+                        "target_value",
+                        "target_available_timestamp",
+                    ]
                 ]
-            ]
-            writer.commit_predictions(
-                predictions,
-                targets=targets,
-                expected_assets=sorted(score_at_t["asset_id"].astype(str).unique()),
-                metadata={
-                    "model_hash": model_hash,
-                    "model_vintage_id": stable_hash(
-                        {
-                            "family": args.family,
-                            "refit_T": package.refit_T.isoformat(),
-                            "model_hash": model_hash,
-                        }
+                commit_result = writer.commit_predictions(
+                    predictions,
+                    targets=targets,
+                    expected_assets=sorted(
+                        score_at_t["asset_id"].astype(str).unique()
                     ),
-                    "preprocessing_hash": preprocessing_hash,
-                    "policy_hash": package.policy_hash,
-                    "training_cutoff": package.refit_T.isoformat(),
-                    "prediction_timestamp": _utc_now(),
-                    "refit_policy": REFIT_POLICY_ID,
-                },
-            )
-            completed.add(timestamp.isoformat())
-            _write_json_atomic(
-                state_path,
-                _state_payload(
-                    family=args.family,
-                    host=args.host,
-                    authority=authority,
-                    expected_refits=len(schedule),
-                    completed_refits=completed_refits,
-                    completed_timestamps=completed,
-                    terminal_state="RUNNING",
-                    attempt_generation=attempt_generation,
-                    attempt_id=attempt_id,
-                ),
-            )
+                    metadata={
+                        "model_hash": model_hash,
+                        "model_vintage_id": stable_hash(
+                            {
+                                "family": args.family,
+                                "refit_T": package.refit_T.isoformat(),
+                                "model_hash": model_hash,
+                            }
+                        ),
+                        "preprocessing_hash": preprocessing_hash,
+                        "policy_hash": package.policy_hash,
+                        "training_cutoff": package.refit_T.isoformat(),
+                        "prediction_timestamp": _utc_now(),
+                        "refit_policy": REFIT_POLICY_ID,
+                        "attempt_generation": str(attempt_generation),
+                        "clean_source_hash": authority["clean_source_hash"],
+                        "feature_authority_hash": feature_hash,
+                        "target_authority_hash": target_hash,
+                        "target_contract_hash": data.target_contract[
+                            "resolved_contract_sha256"
+                        ],
+                        "static_authority_bundle_sha256": authority[
+                            "static_authority_bundle_sha256"
+                        ],
+                    },
+                )
+                completed.add(timestamp.isoformat())
+                state_publish_started = time.perf_counter()
+                _write_json_atomic(
+                    state_path,
+                    _state_payload(
+                        family=args.family,
+                        host=args.host,
+                        authority=authority,
+                        expected_refits=len(schedule),
+                        completed_refits=completed_refits,
+                        completed_timestamps=completed,
+                        terminal_state="RUNNING",
+                        attempt_generation=attempt_generation,
+                        attempt_id=attempt_id,
+                        operational_identity=operational_identity,
+                        checkpoint_compatibility=latest_checkpoint_compatibility,
+                        control_scientific_identity=control_scientific_identity,
+                        completed_scoring_packages=completed_scoring_packages,
+                    ),
+                )
+                state_publish_seconds = time.perf_counter() - state_publish_started
+                timestamp_wall = (
+                    time.perf_counter() - timestamp_started
+                    + batch_score_wall / timestamp_count
+                )
+                resolved_timings = dict(
+                    commit_result.get("resolved_performance_v3", {}).get(
+                        "stage_timings_seconds", {}
+                    )
+                )
+                writer_timings = dict(
+                    commit_result.get("stage_timings_seconds", {})
+                )
+                profile_stages = {
+                    **shared_score_stages,
+                    "partition_and_history_reads": (
+                        float(resolved_timings.get("historical_log_reads", 0.0))
+                        + float(
+                            writer_timings.get(
+                                "metrics_history_and_deduplication", 0.0
+                            )
+                        )
+                    ),
+                    "pending_ledger_operations": float(
+                        resolved_timings.get("pending_ledger_operations", 0.0)
+                    ),
+                    "target_resolution": float(
+                        resolved_timings.get("target_resolution", 0.0)
+                    ),
+                    "rank_selection_and_resolved_metrics": float(
+                        resolved_timings.get(
+                            "rank_selection_and_metrics_evaluation", 0.0
+                        )
+                    ),
+                    "metrics_evaluation": (
+                        float(
+                            resolved_timings.get(
+                                "summary_evaluation_and_publication", 0.0
+                            )
+                        )
+                        + float(
+                            writer_timings.get(
+                                "per_timestamp_metrics_evaluation", 0.0
+                            )
+                        )
+                    ),
+                    "parquet_and_json_writes": (
+                        float(
+                            resolved_timings.get(
+                                "parquet_and_pending_publication", 0.0
+                            )
+                        )
+                        + float(
+                            writer_timings.get(
+                                "metrics_parquet_publication", 0.0
+                            )
+                        )
+                    ),
+                    "checkpoint_and_resume_state_publication": (
+                        float(
+                            resolved_timings.get(
+                                "checkpoint_publication", 0.0
+                            )
+                        )
+                        + float(
+                            writer_timings.get(
+                                "metrics_checkpoint_publication", 0.0
+                            )
+                        )
+                        + state_publish_seconds
+                    ),
+                }
+                profile_stages["miscellaneous"] = max(
+                    0.0, timestamp_wall - sum(profile_stages.values())
+                )
+                throughput_profiler.record_timestamp(
+                    decision_timestamp=timestamp.isoformat(),
+                    wall_seconds=timestamp_wall,
+                    stages=profile_stages,
+                )
         refit_iso = package.refit_T.isoformat()
-        if refit_iso not in completed_refits:
+        if (
+            args.family in CONTROL_FAMILIES
+            and refit_iso not in completed_scoring_packages
+        ):
+            completed_scoring_packages.append(refit_iso)
+        elif args.family not in CONTROL_FAMILIES and refit_iso not in completed_refits:
             completed_refits.append(refit_iso)
         _write_json_atomic(
             state_path,
@@ -788,8 +1977,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 terminal_state="RUNNING",
                 attempt_generation=attempt_generation,
                 attempt_id=attempt_id,
+                operational_identity=operational_identity,
+                checkpoint_compatibility=latest_checkpoint_compatibility,
+                control_scientific_identity=control_scientific_identity,
+                completed_scoring_packages=completed_scoring_packages,
             ),
         )
+        model = None
+        if writer is not None:
+            writer.set_target_loader(None)
+        training = pd.DataFrame()
+        scoring = pd.DataFrame()
+        panel = pd.DataFrame()
+        predictions = None
+        targets = None
+        score_at_t = None
+        _release_disposable_caches()
 
     final = _state_payload(
         family=args.family,
@@ -801,6 +2004,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         terminal_state="COMPLETE",
         attempt_generation=attempt_generation,
         attempt_id=attempt_id,
+        operational_identity=operational_identity,
+        checkpoint_compatibility=latest_checkpoint_compatibility,
+        control_scientific_identity=control_scientific_identity,
+        completed_scoring_packages=completed_scoring_packages,
     )
     _write_json_atomic(state_path, final)
     return final
@@ -816,7 +2023,7 @@ def _record_worker_failure(args: argparse.Namespace, exc: Exception) -> dict[str
     )
     state_path = family_root / "resume_state.json"
     prior = (
-        json.loads(state_path.read_text(encoding="utf-8"))
+        _read_runtime_json(state_path)
         if state_path.is_file()
         else {}
     )
@@ -899,6 +2106,153 @@ def _record_worker_failure(args: argparse.Namespace, exc: Exception) -> dict[str
     return failure
 
 
+def _record_resource_pause(
+    args: argparse.Namespace,
+    exc: CleanV2ResourcePressure | ResourceReservationUnavailable,
+    *,
+    classification: str = "DS24_CLEAN_V2_PAUSED_RESOURCE_PRESSURE",
+) -> dict[str, Any]:
+    family_root = (
+        ROOT
+        / "research_runs"
+        / "ds24_clean_v2"
+        / RUN_ID
+        / f"family={args.family}"
+    )
+    state_path = family_root / "resume_state.json"
+    prior = (
+        _read_runtime_json(state_path)
+        if state_path.is_file()
+        else {}
+    )
+    attempt_generation = max(1, int(getattr(args, "resume_generation", 1)))
+    paused_at = _utc_now()
+    evidence = {
+        "run_id": RUN_ID,
+        "family": args.family,
+        "host": args.host,
+        "attempt_generation": attempt_generation,
+        "terminal_state": "PAUSED_RESOURCE_PRESSURE",
+        "classification": classification,
+        "paused_at_utc": paused_at,
+        "resource_decision": (
+            exc.decision.payload()
+            if isinstance(exc, CleanV2ResourcePressure)
+            else {
+                "stage": exc.stage,
+                **exc.response,
+                "resource_policy": recovery_policy_payload(),
+            }
+        ),
+        "completed_refits": list(prior.get("completed_refits", [])),
+        "metrics_cursor": int(prior.get("metrics_cursor", 0) or 0),
+        "automatic_retry": False,
+        "paper_orders": 0,
+        "live_orders": 0,
+    }
+    _write_json_atomic(
+        family_root / f"resource_pause_attempt={attempt_generation}.json",
+        evidence,
+    )
+    prior_generation = int(prior.get("attempt_generation", 0) or 0)
+    if prior_generation <= attempt_generation and prior.get("terminal_state") != "COMPLETE":
+        _write_json_atomic(
+            state_path,
+            {
+                **prior,
+                "run_id": RUN_ID,
+                "family": args.family,
+                "owner_host": args.host,
+                "attempt_generation": attempt_generation,
+                "terminal_state": "PAUSED_RESOURCE_PRESSURE",
+                "resource_pause_classification": evidence["classification"],
+                "resource_pause_timestamp": paused_at,
+                "resource_decision": evidence["resource_decision"],
+                "completed_refits": evidence["completed_refits"],
+                "metrics_cursor": evidence["metrics_cursor"],
+                "heartbeat_utc": paused_at,
+                "paper_orders": 0,
+                "live_orders": 0,
+            },
+        )
+    return evidence
+
+
+def _record_capacity_deferral(
+    args: argparse.Namespace,
+    exc: ResourceReservationUnavailable,
+) -> dict[str, Any]:
+    """Persist a scheduling deferral without manufacturing a worker failure."""
+
+    resource_decision = {
+        "stage": exc.stage,
+        **exc.response,
+        "resource_policy": recovery_policy_payload(),
+    }
+    if not reservation_payload_is_local_capacity_deferral(resource_decision):
+        raise CleanV2WorkerError(
+            "Non-capacity reservation denial cannot be recorded as a deferral"
+        )
+    family_root = (
+        ROOT
+        / "research_runs"
+        / "ds24_clean_v2"
+        / RUN_ID
+        / f"family={args.family}"
+    )
+    state_path = family_root / "resume_state.json"
+    prior = (
+        _read_runtime_json(state_path)
+        if state_path.is_file()
+        else {}
+    )
+    attempt_generation = max(1, int(getattr(args, "resume_generation", 1)))
+    deferred_at = _utc_now()
+    evidence = {
+        "run_id": RUN_ID,
+        "family": args.family,
+        "host": args.host,
+        "attempt_generation": attempt_generation,
+        "terminal_state": "DEFERRED_RESOURCE_CAPACITY",
+        "classification": "DS24_CLEAN_V2_DEFERRED_RESOURCE_CAPACITY",
+        "deferred_at_utc": deferred_at,
+        "resource_decision": resource_decision,
+        "completed_refits": list(prior.get("completed_refits", [])),
+        "metrics_cursor": int(prior.get("metrics_cursor", 0) or 0),
+        "automatic_retry": False,
+        "scheduler_readmission_requires_material_capacity_change": True,
+        "paper_orders": 0,
+        "live_orders": 0,
+    }
+    event_path = family_root / (
+        f"resource_deferral_attempt={attempt_generation}_event={time.time_ns()}.json"
+    )
+    _write_json_atomic(event_path, evidence)
+    _write_json_atomic(family_root / "resource_deferral.json", evidence)
+    prior_generation = int(prior.get("attempt_generation", 0) or 0)
+    if prior_generation <= attempt_generation and prior.get("terminal_state") != "COMPLETE":
+        _write_json_atomic(
+            state_path,
+            {
+                **prior,
+                "run_id": RUN_ID,
+                "family": args.family,
+                "owner_host": args.host,
+                "attempt_generation": attempt_generation,
+                "terminal_state": "DEFERRED_RESOURCE_CAPACITY",
+                "resource_deferral_classification": evidence["classification"],
+                "resource_deferral_timestamp": deferred_at,
+                "resource_decision": resource_decision,
+                "completed_refits": evidence["completed_refits"],
+                "metrics_cursor": evidence["metrics_cursor"],
+                "heartbeat_utc": deferred_at,
+                "paper_orders": 0,
+                "live_orders": 0,
+            },
+        )
+    return evidence
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="DS24 clean-V2 metrics-only family worker."
@@ -912,7 +2266,38 @@ def main() -> int:
     args = parser.parse_args()
     try:
         result = run(args)
+    except ResourceReservationUnavailable as exc:
+        _release_disposable_caches()
+        if reservation_payload_is_local_capacity_deferral(exc.response):
+            result = _record_capacity_deferral(args, exc)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return RESOURCE_CAPACITY_DEFERRED_EXIT_CODE
+        result = _record_resource_pause(args, exc)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return RESOURCE_PRESSURE_EXIT_CODE
+    except CleanV2ResourcePressure as exc:
+        _release_disposable_caches()
+        result = _record_resource_pause(args, exc)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return RESOURCE_PRESSURE_EXIT_CODE
     except Exception as exc:
+        if is_resource_allocation_failure(exc):
+            _release_disposable_caches()
+            pressure = CleanV2ResourcePressure(
+                allocation_failure_decision(
+                    stage=f"{args.family}_allocation_failure",
+                    reason=(
+                        "WINDOWS_JOB_OR_SYSTEM_COMMITTED_MEMORY_ALLOCATION_FAILED"
+                    ),
+                )
+            )
+            result = _record_resource_pause(
+                args,
+                pressure,
+                classification="DS24_CLEAN_V2_PAUSED_RESOURCE_LIMIT",
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return RESOURCE_PRESSURE_EXIT_CODE
         _record_worker_failure(args, exc)
         raise
     print(json.dumps(result, indent=2, sort_keys=True))
