@@ -1,0 +1,247 @@
+{
+  "builder_import_closure": [
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_certification.py",
+      "sha256": "3b5d967260c5fe0afcc883db321b897d79e9e4e17ac72c9f3106b6b94a73b469"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_contracts.py",
+      "sha256": "c26306429923ca451032a9b90f5839e87597154639cd3274758688aa06f34a81"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_data.py",
+      "sha256": "bb9f9ce7086eeb16e7432a4562edaa3ef5582ad922b31c4de84135a2e6ffeae4"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_features.py",
+      "sha256": "63ec74fb36988b18ce0e585c368365b72ba1a34b34ca5136340a49e9278751fd"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/master_5m_validation_stats.py",
+      "sha256": "a29c1dfbf6e06425b35cd141a0cd164324493d92b9eaca4e68f8228066685e10"
+    },
+    {
+      "relative_path": "core/research/ml/five_minute_target_dataset.py",
+      "sha256": "85c131ea8484da683d9d9274e54f1f3794704b9d4fe45811d6d90bc370a98757"
+    },
+    {
+      "relative_path": "core/research/ml/target_authority.py",
+      "sha256": "f7c1c88884ae877f1f97243d379689ddd19a91b841addb6de0e6ea4ceb4b81fa"
+    },
+    {
+      "relative_path": "infrastructure/data/calendar_authority.py",
+      "sha256": "fd26d4106ef8ebc26c35f27ee215ad61e7fef90c4a771ae8f0bd88e247911fd6"
+    },
+    {
+      "relative_path": "infrastructure/data/market_sessions.py",
+      "sha256": "9264a7c8de0cfe6ac6e45d1aa9e70de2ceaad825fd8817ae6c4aa39f83ec1352"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_build_sidecar.py",
+      "sha256": "fd26d8f39595112f8213e67cdf33bc2239645347a39dab3de5f1eaf13e15e2d0"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_build_target_delta.py",
+      "sha256": "167d1e7792fafd09dc99cec199a7db0bcbe34de8dbbdd5a81fde788b56addf8f"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_certify.py",
+      "sha256": "818cf1cdca76c057d808c34e91ff4b7367d1e30b1083d7ee8ed8a1efed018276"
+    }
+  ],
+  "builder_import_edges": {
+    "core/research/ml/ds24/clean_v2_certification.py": [
+      "core/research/ml/ds24/clean_v2_features.py"
+    ],
+    "core/research/ml/ds24/clean_v2_contracts.py": [],
+    "core/research/ml/ds24/clean_v2_data.py": [
+      "core/research/ml/ds24/clean_v2_contracts.py"
+    ],
+    "core/research/ml/ds24/clean_v2_features.py": [
+      "core/research/ml/ds24/clean_v2_contracts.py",
+      "core/research/ml/ds24/master_5m_validation_stats.py",
+      "infrastructure/data/calendar_authority.py"
+    ],
+    "core/research/ml/ds24/master_5m_validation_stats.py": [],
+    "core/research/ml/five_minute_target_dataset.py": [
+      "core/research/ml/target_authority.py",
+      "infrastructure/data/calendar_authority.py",
+      "infrastructure/data/market_sessions.py"
+    ],
+    "core/research/ml/target_authority.py": [
+      "infrastructure/data/calendar_authority.py",
+      "infrastructure/data/market_sessions.py"
+    ],
+    "infrastructure/data/calendar_authority.py": [],
+    "infrastructure/data/market_sessions.py": [
+      "infrastructure/data/calendar_authority.py"
+    ],
+    "scripts/local/ds24_clean_v2_build_sidecar.py": [
+      "core/research/ml/ds24/clean_v2_contracts.py",
+      "core/research/ml/ds24/clean_v2_features.py"
+    ],
+    "scripts/local/ds24_clean_v2_build_target_delta.py": [
+      "core/research/ml/ds24/clean_v2_contracts.py",
+      "core/research/ml/five_minute_target_dataset.py"
+    ],
+    "scripts/local/ds24_clean_v2_certify.py": [
+      "core/research/ml/ds24/clean_v2_certification.py",
+      "core/research/ml/ds24/clean_v2_contracts.py",
+      "core/research/ml/ds24/clean_v2_features.py"
+    ]
+  },
+  "builder_roots": [
+    "scripts/local/ds24_clean_v2_build_sidecar.py",
+    "scripts/local/ds24_clean_v2_build_target_delta.py",
+    "scripts/local/ds24_clean_v2_certify.py",
+    "core/research/ml/ds24/clean_v2_data.py"
+  ],
+  "clean_source_paths": [
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_certification.py",
+      "sha256": "3b5d967260c5fe0afcc883db321b897d79e9e4e17ac72c9f3106b6b94a73b469"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_checkpoint_compatibility.py",
+      "sha256": "ab5502cd019cd0597c7c567ee7f30aae683d996ffc14564d14e914212e7571c9"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_contracts.py",
+      "sha256": "c26306429923ca451032a9b90f5839e87597154639cd3274758688aa06f34a81"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_data.py",
+      "sha256": "bb9f9ce7086eeb16e7432a4562edaa3ef5582ad922b31c4de84135a2e6ffeae4"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_features.py",
+      "sha256": "63ec74fb36988b18ce0e585c368365b72ba1a34b34ca5136340a49e9278751fd"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_package_cache.py",
+      "sha256": "8c8b8eadb3537a5a208852b9e9dd2e1f0c2d5dc13a9b82f0ed10c79dd8ecdc3a"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_resources.py",
+      "sha256": "20efa2ce0b8c402e255bd4b2c9890f830a876f419ab1f7869a09ca931857ede1"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/clean_v2_runtime.py",
+      "sha256": "1d840bc03ee9920a87db8df9df38119f1cc118047a3d1a6b5a4460c07d28385b"
+    },
+    {
+      "relative_path": "core/research/ml/ds24/incremental_evaluator_state.py",
+      "sha256": "dfddbfc1f8d4a33e19fb39a8742f5266b9833acf4a092e9d8ca6f497e423b891"
+    },
+    {
+      "relative_path": "core/research/ml/ds24_metrics_only_evaluator.py",
+      "sha256": "3169748b6308094062bd6cd2f882c4f95a55da71b2b1d58ddf7b9baaf7302351"
+    },
+    {
+      "relative_path": "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+      "sha256": "ad5f325d597e94cb449532839526617fb669a1fa9391115dc6d6c6f456c4d826"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_certify.py",
+      "sha256": "818cf1cdca76c057d808c34e91ff4b7367d1e30b1083d7ee8ed8a1efed018276"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_family_worker.py",
+      "sha256": "83f85b875b498003062428aa4a04943c1d17d0c0c7c04667b21c47f2addd3589"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_mac_preflight.py",
+      "sha256": "305ac9746b851be1ecad7be2efd32a31516f9b4d54f06532c9626eea4f2b53e6"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_monitor.py",
+      "sha256": "2eebc73572e2702c8af84d89ced249f9b45da9e7cc103445538375c489212b0a"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_reader_preflight.py",
+      "sha256": "6f8d5ac77acb61bd5350d0da008c4235f1751bdb0eb7c2069d7f276f6edb6f90"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_reconcile_failures.py",
+      "sha256": "1fd06a8d7c8da2d55239c0a3b8540688fc7188c96fded2ccf5e59144e77ab4db"
+    },
+    {
+      "relative_path": "scripts/local/ds24_clean_v2_supervisor.py",
+      "sha256": "f177c233f8e6d8bffb85ab8505e7bf7eeeb26628b69ce5ff0e3b3ac7184776cd"
+    },
+    {
+      "relative_path": "scripts/local/ds24_incremental_evaluator_state.py",
+      "sha256": "756ce3916a8accb75f07122f388bbb3dc328934763c66f205c673febedbaf144"
+    }
+  ],
+  "external_imports": [
+    "argparse",
+    "collections",
+    "concurrent",
+    "contextlib",
+    "csv",
+    "ctypes",
+    "dataclasses",
+    "datetime",
+    "functools",
+    "hashlib",
+    "importlib",
+    "json",
+    "math",
+    "numpy",
+    "os",
+    "pandas",
+    "pathlib",
+    "psutil",
+    "pyarrow",
+    "shutil",
+    "subprocess",
+    "sys",
+    "time",
+    "typing",
+    "zoneinfo"
+  ],
+  "frozen_authorities": {
+    "feature_authority_sha256": "ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d",
+    "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1",
+    "static_bundle_sha256": "4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc",
+    "target_authority_sha256": "41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1"
+  },
+  "package_versions_on_dell": {
+    "exchange-calendars": "4.13.2",
+    "numpy": "2.0.2",
+    "pandas": "3.0.3",
+    "psutil": "7.2.2",
+    "pyarrow": "24.0.0",
+    "python": "3.11.9"
+  },
+  "production_reader": "core/research/ml/ds24/clean_v2_data.py",
+  "publication": {
+    "branch": "clean-v2/mac-reconstruction-current",
+    "clean_source_hash": "8f4aa711a3150013e0ab30b6c272db50b94551e1ea724ff3e3253e02ca2dbaa8",
+    "source_snapshot_commit": "a0370e41ea37da720cc7cb122206820f4ccdf4e4"
+  },
+  "repaired_fields": [
+    "overnight_gap",
+    "previous_session_return",
+    "two_session_return",
+    "opening_range_position",
+    "session_return_30m",
+    "opening_return_30m",
+    "minutes_since_open",
+    "minutes_until_close",
+    "session_progress",
+    "early_close_session_flag",
+    "opening_period_flag"
+  ],
+  "schema_version": "ds24_clean_v2_mac_metadata.v1",
+  "source_repository": {
+    "dirty_entry_count": 2134,
+    "dirty_entry_count_with_untracked_files_all": 68786,
+    "dirty_status_sha256": "c4b9bed4e438ca7d2f94dd23293987f298a3d567213347cb86bcbbce95d0d250",
+    "dirty_worktree": true,
+    "git_branch": "ds24-mac-tournament-sync-20260901",
+    "git_head": "78e1bd97930124feb90e30f265cf60cc835b2425"
+  },
+  "target_builder_module": "core/research/ml/five_minute_target_dataset.py"
+}

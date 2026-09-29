@@ -1,0 +1,148 @@
+{
+  "calendar_state_semantics_passed": true,
+  "case_count": 9,
+  "cases": [
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-22T14:35:00+00:00",
+      "label": "2017_normal_open",
+      "passed": true,
+      "symbol": "AAA"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-22T17:30:00+00:00",
+      "label": "2017_normal_mid_session",
+      "passed": true,
+      "symbol": "BBB"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-22T20:55:00+00:00",
+      "label": "2017_normal_near_close",
+      "passed": true,
+      "symbol": "AAA"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-24T14:35:00+00:00",
+      "label": "2017_early_close_open",
+      "passed": true,
+      "symbol": "BBB"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-24T16:15:00+00:00",
+      "label": "2017_early_close_mid_session",
+      "passed": true,
+      "symbol": "AAA"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2017-11-24T17:55:00+00:00",
+      "label": "2017_early_close_near_close",
+      "passed": true,
+      "symbol": "BBB"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2024-11-26T14:35:00+00:00",
+      "label": "2024_normal_open",
+      "passed": true,
+      "symbol": "AAA"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2024-11-26T17:30:00+00:00",
+      "label": "2024_normal_mid_session",
+      "passed": true,
+      "symbol": "BBB"
+    },
+    {
+      "changed_features": [],
+      "decision_timestamp": "2024-11-29T17:55:00+00:00",
+      "label": "2024_early_close_near_close",
+      "passed": true,
+      "symbol": "AAA"
+    }
+  ],
+  "certificate_sha256": "1a3bb295e60f1c79d2e7446c151c2e7589872af6041344a584692d574eab1188",
+  "certification_id": "DS24_CLEAN_V2_FUTURE_BAR_PERTURBATION_V1",
+  "certification_scope": "FULL_MATERIALIZED_AUTHORITY",
+  "feature_authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V2_PIT_REPAIRED",
+  "fixture": {
+    "rows": 2856,
+    "session_types": [
+      "AFTER_HOURS",
+      "EARLY_CLOSE",
+      "PRE_MARKET",
+      "REGULAR"
+    ],
+    "symbols": [
+      "AAA",
+      "BBB",
+      "GLD",
+      "QQQ",
+      "SPY",
+      "TLT",
+      "XLK"
+    ],
+    "years": [
+      2017,
+      2024
+    ]
+  },
+  "full_sidecar_scan": {
+    "future_source_rows": 0,
+    "partition_count": 5654,
+    "passed": true,
+    "row_count": 114497377
+  },
+  "full_target_scan": {
+    "invalid_trainable_rows": 0,
+    "maturity_not_after_decision_rows": 0,
+    "partition_count": 6168,
+    "passed": true,
+    "row_count": 102431666,
+    "wrong_target_identity_rows": 0
+  },
+  "independent_formula_check_details": {
+    "early_close_session_flag": true,
+    "minutes_since_open": true,
+    "minutes_until_close": true,
+    "opening_period_flag": true,
+    "opening_range_position": true,
+    "opening_return_30m": true,
+    "overnight_gap": true,
+    "previous_session_return": true,
+    "session_progress": true,
+    "session_return_30m": true,
+    "two_session_return": true
+  },
+  "independent_formula_checks_passed": true,
+  "passed": true,
+  "physical_inventory_checks": {
+    "checks": {
+      "base_feature_file_inventory": true,
+      "base_target_file_inventory": true,
+      "sidecar_complete": true,
+      "sidecar_file_inventory": true,
+      "sidecar_partition_count": true,
+      "sidecar_row_count": true,
+      "sidecar_self_hash": true,
+      "target_delta_complete": true,
+      "target_delta_file_inventory": true,
+      "target_delta_self_hash": true,
+      "target_delta_symbol_count": true
+    },
+    "passed": true,
+    "sidecar_manifest_logical_sha256": "ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d",
+    "target_manifest_logical_sha256": "41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1"
+  },
+  "predictor_count": 101,
+  "rth_extended_hours_semantics_passed": true,
+  "static_authority_bundle_sha256": "4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc",
+  "target_maturity_checks_passed": true,
+  "terminal_classification": "101 / 101 FEATURES CAUSAL UNDER FUTURE-BAR PERTURBATION",
+  "zero_target_columns_in_model_inputs": true
+}

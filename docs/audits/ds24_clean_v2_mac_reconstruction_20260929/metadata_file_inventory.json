@@ -1,0 +1,98 @@
+{
+  "file_count": 18,
+  "files": [
+    {
+      "relative_path": "authority_contracts/cross_host_ownership.json",
+      "sha256": "a40fd409eebe6a6287525b86d0c9cf4799f7477c62d81e4eda03bdeb3bbcfc2b",
+      "size_bytes": 1067
+    },
+    {
+      "relative_path": "authority_contracts/eligibility_contract.json",
+      "sha256": "6b5d501bbec8d64e57f08877c6222443c58d16580513b1a6b2ec13c8cafb0ae1",
+      "size_bytes": 1605
+    },
+    {
+      "relative_path": "authority_contracts/feature_authority.json",
+      "sha256": "68fe7b695b6c1499cfdb0f57e0d4e35cb42743444e7ae5b69e872f5a32a61864",
+      "size_bytes": 4861
+    },
+    {
+      "relative_path": "authority_contracts/model_registry.json",
+      "sha256": "e57926407bb34f253c49d1c5a8541f1f233b4d1770e27bdab1f406b8e2045742",
+      "size_bytes": 12862
+    },
+    {
+      "relative_path": "authority_contracts/predictor_manifest.json",
+      "sha256": "5d8ecda9218d9b39f94b21ad88f78cf3433ce1e216d7cc81c8ca54c140d47c0e",
+      "size_bytes": 4020
+    },
+    {
+      "relative_path": "authority_contracts/prior_evidence_manifest.json",
+      "sha256": "0c16f74dd624e475d4357986c014f326e1f13e76d2d7fa30aa1a2feec3d60714",
+      "size_bytes": 4012
+    },
+    {
+      "relative_path": "authority_contracts/target_contract.json",
+      "sha256": "b2643388cd7edec08411c36dca93dd87acbe93d743edc19d05eaca8f48523890",
+      "size_bytes": 2971
+    },
+    {
+      "relative_path": "authority_contracts/tournament_contract.json",
+      "sha256": "15cf8aec7b1ef81e6682c0c82886255f0e80ebe1acdb2abf6d618ae4b1fcd5bb",
+      "size_bytes": 14026
+    },
+    {
+      "relative_path": "authority_manifests/feature_sidecar_authority_manifest.json",
+      "sha256": "c43a4e10bb68805495ffd969f4c3151b010706fc42260fc10a00ec1488b9abda",
+      "size_bytes": 2365784
+    },
+    {
+      "relative_path": "authority_manifests/target_delta_authority_manifest.json",
+      "sha256": "e8cd58751ccf16853f44c598242269cf5ce67402428b26b11ef0c24899fd0240",
+      "size_bytes": 1796415
+    },
+    {
+      "relative_path": "builder_source_information.json",
+      "sha256": "3f6b199f52adb06f4e7c269c49034d95f79c88a56d802d9720def846018d5c20",
+      "size_bytes": 9488
+    },
+    {
+      "relative_path": "causality_certificate.json",
+      "sha256": "198a68d15d68632f0a86e873dd9fc6205edd2b2ad9aeb4efca58d2d759fcf879",
+      "size_bytes": 4386
+    },
+    {
+      "relative_path": "export_summary.json",
+      "sha256": "2d619a5139562c885e997bcfd65eff5bc522e7bb4b2633ac9fc605a7557910ff",
+      "size_bytes": 2341
+    },
+    {
+      "relative_path": "inventories/feature_base.json",
+      "sha256": "6d877151cc8076342b72eb52ddbe330d31c6a4522f01fe45b94d80dccee126e8",
+      "size_bytes": 1279450
+    },
+    {
+      "relative_path": "inventories/feature_sidecar.json",
+      "sha256": "8ec7ee54cd12a732db75f1762d4d71e378864d8dc656cd321c621647bef46ab4",
+      "size_bytes": 1715017
+    },
+    {
+      "relative_path": "inventories/target_base.json",
+      "sha256": "b059e65e3948c716c47c378016d80bef4129721c7372b59cdcb87507d39c13b1",
+      "size_bytes": 1504938
+    },
+    {
+      "relative_path": "inventories/target_delta.json",
+      "sha256": "c648bf7ec9330b5e9654cb63c768a1e1ce84474ebdf889fd150e712b26fdbb09",
+      "size_bytes": 179224
+    },
+    {
+      "relative_path": "MAC_RECONSTRUCTION.md",
+      "sha256": "a67c1776ddb8387fd3675c6a6e48f11fb1e170258554e8500f41d09ccc59daa2",
+      "size_bytes": 1938
+    }
+  ],
+  "inventory_sha256": "406b8cdbef5fc7655b0675b88731801cbff8355fa40921138474aec18dda42e0",
+  "schema_version": "ds24_clean_v2_mac_metadata.v1",
+  "total_bytes": 8904405
+}

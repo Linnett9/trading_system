@@ -1,0 +1,56 @@
+{
+  "bulk_parquet_included": false,
+  "classification": "DS24_CLEAN_V2_MAC_RECONSTRUCTION_SOURCE_AND_METADATA_READY",
+  "frozen_authorities": {
+    "feature_authority_sha256": "ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d",
+    "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1",
+    "static_bundle_sha256": "4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc",
+    "target_authority_sha256": "41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1"
+  },
+  "inventories": {
+    "feature_base": {
+      "inventory_sha256": "f44823738a2e3fa6e302fe4d4a2a02521c191cd181524eaa9f55ff42a7be1f0b",
+      "partition_count": 5654,
+      "row_count": 114497377,
+      "total_bytes": 36970830328
+    },
+    "feature_sidecar": {
+      "inventory_sha256": "c81b9979373324a78ff477aa3cdc23103b78c9c3e20395f028fe74411c0ae373",
+      "partition_count": 5654,
+      "row_count": 114497377,
+      "total_bytes": 8427792776
+    },
+    "target_base": {
+      "inventory_sha256": "a7e358ad4ad9320e43021f2b903af1ed034920d9047374f6f6695ea65e80e8c7",
+      "partition_count": 5654,
+      "row_count": 100180654,
+      "total_bytes": 18820658712
+    },
+    "target_delta": {
+      "inventory_sha256": "b4573c3e15b9d39e9e5cda34bf4cf9fc13784f9ab6c93efdace70967f6cc243f",
+      "partition_count": 514,
+      "row_count": 2251012,
+      "total_bytes": 432608762
+    }
+  },
+  "mac_reconstruction_order": [
+    "reuse exact V1 partitions only when relative_path, size_bytes, and sha256 match",
+    "locally reconstruct any missing V1 feature/target base partitions",
+    "run scripts/local/ds24_clean_v2_build_sidecar.py",
+    "run scripts/local/ds24_clean_v2_build_target_delta.py",
+    "run scripts/local/ds24_clean_v2_certify.py --full-materialized-authority"
+  ],
+  "model_checkpoints_included": false,
+  "publication": {
+    "branch": "clean-v2/mac-reconstruction-current",
+    "clean_source_hash": "8f4aa711a3150013e0ab30b6c272db50b94551e1ea724ff3e3253e02ca2dbaa8",
+    "source_snapshot_commit": "a0370e41ea37da720cc7cb122206820f4ccdf4e4"
+  },
+  "research_metrics_included": false,
+  "runtime_state_included": false,
+  "schema_version": "ds24_clean_v2_mac_metadata.v1",
+  "target_delta_empty_symbols": [
+    "JHG"
+  ],
+  "target_delta_trainable_row_count": 1699821
+}

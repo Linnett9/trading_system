@@ -1,0 +1,59 @@
+{
+  "authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V2_PIT_REPAIRED",
+  "status": "BUILD_AND_CERTIFICATION_REQUIRED_BEFORE_TRAINING",
+  "immutability": "publish-once composite authority; never mutate V1 or published sidecar partitions",
+  "base_authority": {
+    "authority_id": "CANONICAL_5M_FEATURE_AUTHORITY_FULL_V1",
+    "authority_identity": "2c2a8818495732c8a46ce34ce8cac14e2ff14de90a64487b3291819151041383",
+    "aggregate_partition_hash_identity": "61cc4b00ebeaccc090fbce1eea04b6183ac3c22339718a881aca3a7c967b7491",
+    "path": "data/processed/ml_features/five_minute/version=canonical_5m_feature_authority_full_v1/run=ds24_p8_r2_local_20260821T000000Z",
+    "manifest_recorded_row_count": 100364219,
+    "manifest_recorded_stock_partitions": 5140,
+    "physical_snapshot_row_count": 114497377,
+    "physical_snapshot_stock_partitions": 5654,
+    "physical_snapshot_asset_count": 514,
+    "physical_snapshot_years": [2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026],
+    "physical_snapshot_maximum_bar_start": "2026-06-30T21:00:00Z",
+    "maximum_admitted_regular_session_decision": "2026-06-30T20:00:00Z",
+    "manifest_discrepancy": "the V1 authority_manifest.json was not updated after 2026 extension partitions were added; V2 freezes and hashes the exact physical partition population independently",
+    "classification": "RETIRED_FOR_MODEL_TRAINING_DUE_TO_FEATURE_PIT_LEAK",
+    "reuse_rule": "read-only physical snapshot only; eleven named columns must be replaced by the V2 sidecar; V2 manifest must enumerate and hash every admitted base partition"
+  },
+  "canonical_raw_source": {
+    "path": "data/processed/alpaca/symbol_bars/sip/5m",
+    "identity": "40f07fc3286462c0e0856ad43f151647758aabf9cd1f45dd8a14a1f424bb567e",
+    "timestamp_semantics": "timestamp_utc is five-minute bar start; conservative bar availability is timestamp_utc + 5 minutes"
+  },
+  "sidecar": {
+    "run_id": "DS24_CLEAN_V2_FEATURE_REPAIR_R1_20260926",
+    "path": "data/processed/ml_features/five_minute/version=canonical_5m_feature_authority_full_v2_pit_repaired/run=DS24_CLEAN_V2_FEATURE_REPAIR_R1_20260926",
+    "key": ["asset_id", "decision_timestamp"],
+    "repair_columns": ["overnight_gap", "previous_session_return", "two_session_return", "opening_range_position", "session_return_30m", "opening_return_30m", "minutes_since_open", "minutes_until_close", "session_progress", "early_close_session_flag", "opening_period_flag"],
+    "source_timestamp_suffix": "__max_source_timestamp",
+    "publication": "temporary partition -> validate key coverage/source timestamps -> atomic rename"
+  },
+  "confirmed_cross_session_defects": ["overnight_gap", "previous_session_return", "two_session_return"],
+  "additional_defects_found_by_future_value_perturbation": ["opening_range_position", "session_return_30m", "opening_return_30m"],
+  "additional_future_timestamp_source_defects": ["minutes_since_open", "minutes_until_close", "session_progress", "early_close_session_flag", "opening_period_flag"],
+  "repaired_formulas": {
+    "overnight_gap": "current_session_open / immediately_previous_completed_session_close - 1",
+    "previous_session_return": "immediately_previous_completed_session_close / immediately_previous_completed_session_open - 1",
+    "two_session_return": "current_finalized_bar_close / close_two_completed_sessions_ago - 1",
+    "opening_range_position": "(current_finalized_bar_close - first_30m_low) / (first_30m_high - first_30m_low), null until sixth bar finalizes",
+    "session_return_30m": "current_finalized_bar_close / sixth_session_bar_close - 1, null until sixth bar finalizes",
+    "opening_return_30m": "sixth_session_bar_close / current_session_open - 1, null until sixth bar finalizes",
+    "minutes_since_open": "decision_timestamp minus maintained XNYS scheduled open, regular-session rows only",
+    "minutes_until_close": "maintained XNYS scheduled close minus decision_timestamp, regular-session rows only",
+    "session_progress": "minutes_since_open / maintained scheduled session minutes",
+    "early_close_session_flag": "maintained XNYS calendar early-close designation",
+    "opening_period_flag": "minutes_since_open < 30 under the maintained XNYS schedule"
+  },
+  "exact_formula_source": {
+    "two_session_return": "core/research/ml/ds24/master_5m_schema_r7.py: close / close two completed sessions ago - 1",
+    "other_registered_formulas": "core/research/ml/ds24/feature_schema_r6.py"
+  },
+  "logical_composition": "V1 base minus eleven retired values plus keyed eleven-column V2 repair sidecar",
+  "predictor_manifest": "config/ds24_clean_v2/predictor_manifest.json",
+  "causality_gate": "101 / 101 FEATURES CAUSAL UNDER FUTURE-BAR PERTURBATION",
+  "training_admission": "requires materialized sidecar manifest and passing multi-symbol/multi-year normal/early-close perturbation certificate"
+}
