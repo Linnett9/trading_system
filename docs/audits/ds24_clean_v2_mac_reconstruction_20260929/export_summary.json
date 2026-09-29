@@ -43,8 +43,8 @@
   "model_checkpoints_included": false,
   "publication": {
     "branch": "clean-v2/mac-reconstruction-current",
-    "clean_source_hash": "8f4aa711a3150013e0ab30b6c272db50b94551e1ea724ff3e3253e02ca2dbaa8",
-    "source_snapshot_commit": "a0370e41ea37da720cc7cb122206820f4ccdf4e4"
+    "clean_source_hash": "a6a8bdfcf27b537b5010938ecdf734d5b3057140c2180e33b387cd05fe57356b",
+    "source_snapshot_commit": "2a29e83eec655b94b539c39bdbfbf185c3b5e6a8"
   },
   "research_metrics_included": false,
   "runtime_state_included": false,

@@ -53,7 +53,7 @@
     },
     {
       "relative_path": "builder_source_information.json",
-      "sha256": "3f6b199f52adb06f4e7c269c49034d95f79c88a56d802d9720def846018d5c20",
+      "sha256": "e604b17e0e2a3427530ec82ec117055aefba9a61d6ee46c59cda649a0943500e",
       "size_bytes": 9488
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "relative_path": "export_summary.json",
-      "sha256": "2d619a5139562c885e997bcfd65eff5bc522e7bb4b2633ac9fc605a7557910ff",
+      "sha256": "f7bfdd958215bb9ff3c1cd680e9538f485d9b287a2115996a60d9ea33b3b7266",
       "size_bytes": 2341
     },
     {
@@ -92,7 +92,7 @@
       "size_bytes": 1938
     }
   ],
-  "inventory_sha256": "406b8cdbef5fc7655b0675b88731801cbff8355fa40921138474aec18dda42e0",
+  "inventory_sha256": "581fc65039444d392e5a02f89e77b8cb1d11fd1fafcce9812160b75f46b57b71",
   "schema_version": "ds24_clean_v2_mac_metadata.v1",
   "total_bytes": 8904405
 }

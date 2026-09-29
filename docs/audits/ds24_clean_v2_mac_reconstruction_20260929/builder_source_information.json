@@ -163,11 +163,11 @@
     },
     {
       "relative_path": "scripts/local/ds24_clean_v2_reconcile_failures.py",
-      "sha256": "1fd06a8d7c8da2d55239c0a3b8540688fc7188c96fded2ccf5e59144e77ab4db"
+      "sha256": "5449ef07f8bc1f7e2d40d5bf4eecce55a45d1e54cb542db210682023b371ea3d"
     },
     {
       "relative_path": "scripts/local/ds24_clean_v2_supervisor.py",
-      "sha256": "f177c233f8e6d8bffb85ab8505e7bf7eeeb26628b69ce5ff0e3b3ac7184776cd"
+      "sha256": "8b2799740799756adb9619af5df15311266b239f4f27b9df22c62a21fb2470e9"
     },
     {
       "relative_path": "scripts/local/ds24_incremental_evaluator_state.py",
@@ -218,8 +218,8 @@
   "production_reader": "core/research/ml/ds24/clean_v2_data.py",
   "publication": {
     "branch": "clean-v2/mac-reconstruction-current",
-    "clean_source_hash": "8f4aa711a3150013e0ab30b6c272db50b94551e1ea724ff3e3253e02ca2dbaa8",
-    "source_snapshot_commit": "a0370e41ea37da720cc7cb122206820f4ccdf4e4"
+    "clean_source_hash": "a6a8bdfcf27b537b5010938ecdf734d5b3057140c2180e33b387cd05fe57356b",
+    "source_snapshot_commit": "2a29e83eec655b94b539c39bdbfbf185c3b5e6a8"
   },
   "repaired_fields": [
     "overnight_gap",
@@ -237,8 +237,8 @@
   "schema_version": "ds24_clean_v2_mac_metadata.v1",
   "source_repository": {
     "dirty_entry_count": 2134,
-    "dirty_entry_count_with_untracked_files_all": 68786,
-    "dirty_status_sha256": "c4b9bed4e438ca7d2f94dd23293987f298a3d567213347cb86bcbbce95d0d250",
+    "dirty_entry_count_with_untracked_files_all": 68827,
+    "dirty_status_sha256": "dfd2c2cf8621dcf567137185e7a39c58a0d178f16f8f7794df4e081037b73b6b",
     "dirty_worktree": true,
     "git_branch": "ds24-mac-tournament-sync-20260901",
     "git_head": "78e1bd97930124feb90e30f265cf60cc835b2425"

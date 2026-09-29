@@ -172,6 +172,19 @@ def _git_bytes(repository_root: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def _committed_blob_oid(commit: str, relative_path: str) -> str:
+    return _git(ROOT, "rev-parse", f"{commit}:{relative_path}")
+
+
+def _committed_blob_bytes(commit: str, relative_path: str) -> bytes:
+    return _git_bytes(
+        ROOT,
+        "cat-file",
+        "blob",
+        _committed_blob_oid(commit, relative_path),
+    )
+
+
 def _clean_source_hash_for(repository_root: Path) -> str:
     return stable_hash(
         {
@@ -185,7 +198,7 @@ def _clean_source_hash_from_commit(commit: str) -> str:
     return stable_hash(
         {
             relative: hashlib.sha256(
-                _git_bytes(ROOT, "show", f"{commit}:{relative}")
+                _committed_blob_bytes(commit, relative)
             ).hexdigest()
             for relative in CLEAN_SOURCE_PATHS
         }
@@ -507,13 +520,18 @@ def _source_information(
         for relative in import_closure
     ]
     for record in closure_records:
-        committed_bytes = _git_bytes(
-            ROOT,
-            "show",
-            f"{source_snapshot_commit}:{record['relative_path']}",
+        working_oid = _git(
+            source_repository,
+            "hash-object",
+            "--no-filters",
+            "--",
+            record["relative_path"],
         )
-        committed_sha256 = hashlib.sha256(committed_bytes).hexdigest()
-        if committed_sha256 != record["sha256"]:
+        committed_oid = _committed_blob_oid(
+            source_snapshot_commit,
+            record["relative_path"],
+        )
+        if committed_oid != working_oid:
             raise MacMetadataExportError(
                 "Publication commit does not reproduce builder dependency: "
                 f"{record['relative_path']}"
