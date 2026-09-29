@@ -70,6 +70,7 @@ from core.research.ml.ds24.clean_v2_resources import (
 from scripts.local.ds24_clean_v2_reconcile_failures import (
     FailureReconciliationError,
     reconcile_registered_control_resume_states,
+    reconcile_registered_predictor_resume_states,
     validate_registered_control_resume_states,
 )
 
@@ -338,6 +339,18 @@ def _reconcile_control_resume_states_for_preflight(
     )
 
 
+def _reconcile_predictor_resume_states_for_preflight(
+    host: str,
+) -> list[dict[str, Any]]:
+    """Archive obsolete zero-progress predictor placeholders while stopped."""
+
+    return reconcile_registered_predictor_resume_states(
+        host=host,
+        repository_root=ROOT,
+        current_source_hash=clean_source_hash(),
+    )
+
+
 def _validate_control_resume_states_for_live_runtime(
     host: str,
 ) -> list[dict[str, Any]]:
@@ -364,6 +377,7 @@ def _build_preflight_report(
     bundle = authority_bundle()
     reasons: list[str] = []
     control_reconciliation_reports: list[dict[str, Any]] = []
+    predictor_reconciliation_reports: list[dict[str, Any]] = []
     stopped_runtime: dict[str, Any] = {
         "stopped": False,
         "classification": "NOT_APPLICABLE_LIVE_RUNTIME_READ_ONLY",
@@ -374,6 +388,9 @@ def _build_preflight_report(
             if not stopped_runtime["stopped"]:
                 reasons.append(str(stopped_runtime["blocking_reason"]))
             else:
+                predictor_reconciliation_reports = (
+                    _reconcile_predictor_resume_states_for_preflight(host)
+                )
                 control_reconciliation_reports = (
                     _reconcile_control_resume_states_for_preflight(host)
                 )
@@ -383,7 +400,7 @@ def _build_preflight_report(
             )
     except FailureReconciliationError as exc:
         failure_classification = (
-            "CONTROL_RESUME_STATE_RECONCILIATION_FAILED"
+            "RESUME_STATE_RECONCILIATION_FAILED"
             if control_state_mode == "stopped_reconcile"
             else "CONTROL_RESUME_STATE_LIVE_VALIDATION_FAILED"
         )
@@ -653,6 +670,7 @@ def _build_preflight_report(
         "resource_policy": recovery_policy_payload(),
         "next_worker_memory_decision": memory_decision.payload(),
         "obsolete_ds24_processes": legacy_processes,
+        "predictor_resume_state_reconciliation": predictor_reconciliation_reports,
         "control_resume_state_reconciliation": control_reconciliation_reports,
         "control_resume_state_mode": control_state_mode,
         "stopped_runtime_reconciliation": stopped_runtime,

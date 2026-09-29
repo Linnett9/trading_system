@@ -18,6 +18,8 @@ from scripts.local.ds24_clean_v2_reconcile_failures import (
     FailureReconciliationError,
     ensure_zero_progress_control_resume_state,
     reconcile_registered_control_resume_states,
+    reconcile_registered_predictor_resume_states,
+    reconcile_legacy_zero_progress_predictor_resume_state,
     reconcile_zero_progress_no_model_control,
     validate_registered_control_resume_states,
 )
@@ -137,6 +139,31 @@ def _fixture(
     return family_root, run_root, deferred, random_forest_path.read_bytes()
 
 
+def _predictor_fixture(
+    root: Path,
+    *,
+    completed_refits: list[str] | None = None,
+    metrics_cursor: int = 0,
+    error: str = (
+        "CleanV2WorkerError:Resume state authority mismatch: "
+        "feature_authority_hash"
+    ),
+) -> tuple[Path, Path, bytes]:
+    family_root, run_root, _, random_forest_before = _fixture(
+        root,
+        family="ridge_C5",
+        feature_hash=None,
+        completed_refits=completed_refits,
+        metrics_cursor=metrics_cursor,
+        error=error,
+    )
+    state_path = family_root / "resume_state.json"
+    state = json.loads(state_path.read_text())
+    state["reconciled_from_legacy_resource_pause"] = True
+    _write_json(state_path, state)
+    return family_root, run_root, random_forest_before
+
+
 def test_zero_progress_v1_control_is_rejected_then_archived_and_reinitialized(
     tmp_path: Path,
 ) -> None:
@@ -177,6 +204,154 @@ def test_zero_progress_v1_control_is_rejected_then_archived_and_reinitialized(
     assert repaired["completed_refits"] == []
     assert repaired["completed_scoring_packages"] == []
     assert repaired["metrics_cursor"] == 0
+
+
+def test_zero_progress_legacy_predictor_placeholder_is_archived_and_removed(
+    tmp_path: Path,
+) -> None:
+    family_root, run_root, random_forest_before = _predictor_fixture(tmp_path)
+
+    report = reconcile_legacy_zero_progress_predictor_resume_state(
+        family="ridge_C5",
+        host=HOST,
+        repository_root=tmp_path,
+        current_source_hash="current-source",
+    )
+    archive = tmp_path / str(report["archive_path"])
+    status = json.loads(
+        (run_root / f"supervisor_status_{HOST}.json").read_text()
+    )
+
+    assert report["changed"] is True
+    assert report["committed_work_found"] is False
+    assert report["resume_state_removed"] is True
+    assert not (family_root / "resume_state.json").exists()
+    assert not (family_root / "worker_failure.json").exists()
+    assert (family_root / f"worker_failure_attempt={OLD_GENERATION}.json").is_file()
+    assert (archive / "resume.json").is_file()
+    assert (archive / "failure.json").is_file()
+    assert (archive / "manifest.json").is_file()
+    assert status["failed_families"] == {}
+    assert status["classification"] == (
+        "DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE_PREDICTOR_RECONCILED"
+    )
+    assert (
+        run_root / "family=random_forest" / "resume_state.json"
+    ).read_bytes() == random_forest_before
+
+
+@pytest.mark.parametrize(
+    ("completed_refits", "metrics_cursor"),
+    [(["2016-02-02T14:35:00+00:00"], 0), ([], 1)],
+)
+def test_legacy_predictor_placeholder_with_progress_is_never_removed(
+    tmp_path: Path,
+    completed_refits: list[str],
+    metrics_cursor: int,
+) -> None:
+    family_root, _, _ = _predictor_fixture(
+        tmp_path,
+        completed_refits=completed_refits,
+        metrics_cursor=metrics_cursor,
+    )
+    before = (family_root / "resume_state.json").read_bytes()
+
+    with pytest.raises(
+        FailureReconciliationError,
+        match="NONZERO_SCIENTIFIC_PROGRESS",
+    ):
+        reconcile_legacy_zero_progress_predictor_resume_state(
+            family="ridge_C5",
+            host=HOST,
+            repository_root=tmp_path,
+            current_source_hash="current-source",
+        )
+
+    assert (family_root / "resume_state.json").read_bytes() == before
+
+
+def test_genuine_predictor_failure_is_not_treated_as_legacy_migration(
+    tmp_path: Path,
+) -> None:
+    family_root, _, _ = _predictor_fixture(
+        tmp_path,
+        error="RuntimeError:model fit failed",
+    )
+    before = (family_root / "resume_state.json").read_bytes()
+
+    with pytest.raises(
+        FailureReconciliationError,
+        match="GENUINE_PREDICTOR_FAILURE_IS_NOT_REINITIALIZABLE",
+    ):
+        reconcile_legacy_zero_progress_predictor_resume_state(
+            family="ridge_C5",
+            host=HOST,
+            repository_root=tmp_path,
+            current_source_hash="current-source",
+        )
+
+    assert (family_root / "resume_state.json").read_bytes() == before
+
+
+def test_registered_predictor_migration_leaves_authoritative_state_unchanged(
+    tmp_path: Path,
+) -> None:
+    family_root, run_root, _ = _predictor_fixture(tmp_path)
+    random_forest_path = run_root / "family=random_forest" / "resume_state.json"
+    random_forest = json.loads(random_forest_path.read_text())
+    random_forest.update(
+        {
+            key: f"value-{key}"
+            for key in (
+                "feature_authority_hash",
+                "target_authority_hash",
+                "target_contract_hash",
+                "model_config_hash",
+                "clean_source_hash",
+                "static_authority_bundle_sha256",
+                "refit_policy_hash",
+            )
+        }
+    )
+    _write_json(random_forest_path, random_forest)
+    transformer_root = (
+        tmp_path
+        / "research_runs"
+        / "ds24_clean_v2"
+        / RUN_ID
+        / "family=transformer"
+    )
+    transformer_state = {
+        "run_id": RUN_ID,
+        "family": "transformer",
+        "owner_host": HOST,
+        "terminal_state": "DEFERRED_RESOURCE_CAPACITY",
+        **{key: f"value-{key}" for key in (
+            "feature_authority_hash",
+            "target_authority_hash",
+            "target_contract_hash",
+            "model_config_hash",
+            "clean_source_hash",
+            "static_authority_bundle_sha256",
+            "refit_policy_hash",
+        )},
+    }
+    _write_json(transformer_root / "resume_state.json", transformer_state)
+    transformer_before = (transformer_root / "resume_state.json").read_bytes()
+
+    reports = reconcile_registered_predictor_resume_states(
+        host=HOST,
+        repository_root=tmp_path,
+        current_source_hash="current-source",
+    )
+    by_family = {str(report["family"]): report for report in reports}
+
+    assert by_family["ridge_C5"]["changed"] is True
+    assert by_family["transformer"]["changed"] is False
+    assert not (family_root / "resume_state.json").exists()
+    assert (
+        transformer_root / "resume_state.json"
+    ).read_bytes() == transformer_before
 
 
 @pytest.mark.parametrize(

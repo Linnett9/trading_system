@@ -150,6 +150,26 @@ def _control_progress_inventory(
     }
 
 
+_PREDICTOR_RESUME_AUTHORITY_KEYS = (
+    "feature_authority_hash",
+    "target_authority_hash",
+    "target_contract_hash",
+    "model_config_hash",
+    "clean_source_hash",
+    "static_authority_bundle_sha256",
+    "refit_policy_hash",
+)
+
+
+def _legacy_predictor_resume_placeholder(state: Mapping[str, Any]) -> bool:
+    """Return whether state is the known pre-authority resource placeholder."""
+
+    return bool(
+        state.get("reconciled_from_legacy_resource_pause") is True
+        and not any(state.get(key) for key in _PREDICTOR_RESUME_AUTHORITY_KEYS)
+    )
+
+
 def _expected_control_state_authority(family: str) -> dict[str, Any]:
     model_registry = load_contract("model_registry.json")
     tournament = load_contract("tournament_contract.json")
@@ -814,6 +834,307 @@ def validate_registered_control_resume_states(
             repository_root=repository_root,
         )
         for family in model_registry.get("controls", [])
+        if family in owned
+    ]
+
+
+def reconcile_legacy_zero_progress_predictor_resume_state(
+    *,
+    family: str,
+    host: str,
+    repository_root: Path = ROOT,
+    current_source_hash: str | None = None,
+) -> dict[str, Any]:
+    """Archive one obsolete zero-progress predictor placeholder.
+
+    Historical supervisor recovery wrote operational resource-deferral fields into
+    ``resume_state.json`` before a predictor worker had established scientific
+    authority.  A current worker must reject that file.  While the runtime is
+    stopped, this migration preserves the placeholder as forensic evidence and
+    removes only its current pointer so the worker can initialize authoritative
+    state on its next admitted attempt.
+    """
+
+    model_registry = load_contract("model_registry.json")
+    ownership = load_contract("cross_host_ownership.json")
+    if family not in model_registry.get("families", {}):
+        raise FailureReconciliationError(
+            f"Family {family!r} is not a registered CLEAN V2 predictor"
+        )
+    if family not in ownership.get("hosts", {}).get(host, []):
+        raise FailureReconciliationError(
+            f"Predictor {family!r} is not owned by host {host!r}"
+        )
+
+    run_root = repository_root / "research_runs" / "ds24_clean_v2" / RUN_ID
+    family_root = run_root / f"family={family}"
+    state_path = family_root / "resume_state.json"
+    failure_path = family_root / "worker_failure.json"
+    status_path = run_root / f"supervisor_status_{host}.json"
+    state = _optional_json(state_path)
+    failure = _optional_json(failure_path)
+    status = _optional_json(status_path) or {
+        "run_id": RUN_ID,
+        "host_role": host,
+        "active_workers": [],
+        "failed_families": {},
+        "queued_families": [],
+        "deferred_resource_families": {},
+        "resource_paused_families": {},
+        "worker_reservations": {"active_worker_reservations": 0},
+    }
+    if status.get("run_id") != RUN_ID or status.get("host_role") != host:
+        raise FailureReconciliationError("Host-specific supervisor status is invalid")
+    _validate_stopped_control_reconciliation(
+        status=status,
+        run_root=run_root,
+        host=host,
+    )
+
+    if not state:
+        return {
+            "classification": "DS24_CLEAN_V2_PREDICTOR_RESUME_STATE_ABSENT",
+            "run_id": RUN_ID,
+            "family": family,
+            "host": host,
+            "changed": False,
+        }
+    expected_state_identity = {
+        "run_id": RUN_ID,
+        "family": family,
+        "owner_host": host,
+    }
+    for key, expected in expected_state_identity.items():
+        if state.get(key) != expected:
+            raise FailureReconciliationError(
+                f"Resume-state identity mismatch for {key}: {state.get(key)!r}"
+            )
+    missing_authority = [
+        key for key in _PREDICTOR_RESUME_AUTHORITY_KEYS if not state.get(key)
+    ]
+    if not missing_authority:
+        return {
+            "classification": "DS24_CLEAN_V2_PREDICTOR_RESUME_AUTHORITY_PRESENT",
+            "run_id": RUN_ID,
+            "family": family,
+            "host": host,
+            "changed": False,
+            "terminal_state": state.get("terminal_state"),
+        }
+    if not _legacy_predictor_resume_placeholder(state):
+        raise FailureReconciliationError(
+            "MALFORMED_PREDICTOR_RESUME_AUTHORITY_FAILS_CLOSED:"
+            + ",".join(sorted(missing_authority))
+        )
+    if state.get("terminal_state") == "COMPLETE":
+        raise FailureReconciliationError(
+            "COMPLETED_PREDICTOR_STATE_MUST_NOT_BE_REINITIALIZED"
+        )
+    if failure:
+        expected_failure_identity = {
+            "run_id": RUN_ID,
+            "family": family,
+            "host": host,
+        }
+        for key, expected in expected_failure_identity.items():
+            if failure.get(key) != expected:
+                raise FailureReconciliationError(
+                    f"Worker-failure identity mismatch for {key}: "
+                    f"{failure.get(key)!r}"
+                )
+
+    progress = _control_progress_inventory(family_root, state, failure)
+    if progress["committed_work"]:
+        raise FailureReconciliationError(
+            "NONZERO_SCIENTIFIC_PROGRESS_REQUIRES_NORMAL_CHECKPOINT_RECONCILIATION"
+        )
+    recorded_error = str(failure.get("error") or state.get("error") or "")
+    if recorded_error and "Resume state authority mismatch:" not in recorded_error:
+        raise FailureReconciliationError(
+            "GENUINE_PREDICTOR_FAILURE_IS_NOT_REINITIALIZABLE:" + recorded_error
+        )
+    failed_families = dict(status.get("failed_families") or {})
+    if failure and family not in failed_families:
+        raise FailureReconciliationError(
+            "Current failure is absent from host supervisor status"
+        )
+
+    source_hash = current_source_hash or clean_source_hash(
+        repository_root=repository_root
+    )
+    old_generation = int(
+        failure.get("attempt_generation")
+        or state.get("attempt_generation")
+        or 0
+    )
+    reconciliation_generation = time.time_ns()
+    reconciled_at = _utc_now()
+    archive_sources = [
+        path
+        for path in (
+            state_path,
+            failure_path,
+            family_root / f"worker_failure_attempt={old_generation}.json",
+            family_root / "resource_deferral.json",
+            status_path,
+            run_root / f"manual_admission_{host}.json",
+        )
+        if path.is_file()
+    ]
+    archive_sources.extend(
+        sorted(family_root.glob(f"resource_deferral_attempt={old_generation}_*.json"))
+    )
+    archive_root = (
+        run_root
+        / "_a"
+        / "p"
+        / stable_hash(family)[:8]
+        / f"{reconciliation_generation:x}"
+    )
+    archive_root.mkdir(parents=True, exist_ok=False)
+    archived_files = [
+        _copy_forensic_file(path, archive_root) for path in archive_sources
+    ]
+    archive_relative = archive_root.relative_to(repository_root).as_posix()
+    _write_json_atomic(
+        archive_root / "manifest.json",
+        {
+            "classification": (
+                "DS24_CLEAN_V2_OBSOLETE_ZERO_PROGRESS_PREDICTOR_STATE_ARCHIVE"
+            ),
+            "run_id": RUN_ID,
+            "family": family,
+            "host": host,
+            "archived_at_utc": reconciled_at,
+            "old_attempt_generation": old_generation,
+            "missing_authority_keys": sorted(missing_authority),
+            "progress_inventory": progress,
+            "clean_source_hash": source_hash,
+            "files": archived_files,
+        },
+    )
+
+    other_failures = dict(failed_families)
+    other_failures.pop(family, None)
+    queued = list(status.get("queued_families") or [])
+    if family not in queued:
+        queued.append(family)
+    blocking_reasons = [
+        reason
+        for reason in list(status.get("blocking_reasons") or [])
+        if reason != "WORKER_EXIT_NONZERO" or other_failures
+    ]
+    prior_reconciliations = list(
+        status.get("predictor_resume_reconciliations") or []
+    )
+    prior_reconciliations.append(
+        {
+            "family": family,
+            "classification": (
+                "ZERO_PROGRESS_LEGACY_PREDICTOR_PLACEHOLDER_ARCHIVED"
+            ),
+            "archive_path": archive_relative,
+        }
+    )
+    repaired_status = {
+        **status,
+        "classification": (
+            "DS24_CLEAN_V2_TOURNAMENT_FAILED_CLOSED"
+            if other_failures
+            else "DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE_PREDICTOR_RECONCILED"
+        ),
+        "attempt_generation": reconciliation_generation,
+        "supervisor_pid": None,
+        "supervisor_process_creation_time_utc": None,
+        "supervisor_identity_verified": False,
+        "supervisor_memory": None,
+        "active_workers": [],
+        "queued_families": queued,
+        "failed_families": other_failures,
+        "blocking_reasons": blocking_reasons,
+        "ready": False,
+        "worker_job": None,
+        "last_closed_worker_job_snapshot": status.get("worker_job"),
+        "heartbeat_utc": reconciled_at,
+        "predictor_resume_reconciliations": prior_reconciliations,
+    }
+    _write_json_atomic(status_path, repaired_status)
+
+    state_path.unlink()
+    if failure_path.is_file():
+        failure_path.unlink()
+    admission_path = run_root / f"manual_admission_{host}.json"
+    if admission_path.is_file():
+        admission_path.unlink()
+    deferred_before = dict(status.get("deferred_resource_families") or {})
+    if family not in deferred_before:
+        resource_deferral_path = family_root / "resource_deferral.json"
+        if resource_deferral_path.is_file():
+            resource_deferral_path.unlink()
+
+    random_forest = _optional_json(
+        run_root / "family=random_forest" / "resume_state.json"
+    )
+    report = {
+        "classification": (
+            "DS24_CLEAN_V2_ZERO_PROGRESS_PREDICTOR_PLACEHOLDER_ARCHIVED"
+        ),
+        "run_id": RUN_ID,
+        "family": family,
+        "host": host,
+        "changed": True,
+        "old_attempt_generation": old_generation,
+        "reconciliation_generation": reconciliation_generation,
+        "missing_authority_keys": sorted(missing_authority),
+        "committed_work_found": progress["committed_work"],
+        "progress_inventory": progress,
+        "archive_path": archive_relative,
+        "resume_state_removed": True,
+        "clean_source_hash": source_hash,
+        "random_forest_preservation": {
+            "completed_refits": len(random_forest.get("completed_refits") or []),
+            "score_timestamps": int(random_forest.get("metrics_cursor", 0) or 0),
+            "latest_scored_decision": random_forest.get(
+                "latest_scored_decision"
+            ),
+        },
+        "other_failed_families_preserved": other_failures,
+        "tournament_classification": repaired_status["classification"],
+        "manual_admission_invalidated": True,
+        "reconciled_at_utc": reconciled_at,
+    }
+    report_path = family_root / "predictor_resume_reconciliation.json"
+    _write_json_atomic(report_path, report)
+    _write_json_atomic(
+        family_root
+        / f"predictor_resume_reconciliation_generation={reconciliation_generation}.json",
+        report,
+    )
+    return report
+
+
+def reconcile_registered_predictor_resume_states(
+    *,
+    host: str,
+    repository_root: Path = ROOT,
+    current_source_hash: str | None = None,
+) -> list[dict[str, Any]]:
+    """Migrate obsolete zero-progress placeholders for owned predictors."""
+
+    model_registry = load_contract("model_registry.json")
+    ownership = load_contract("cross_host_ownership.json")
+    owned = set(ownership.get("hosts", {}).get(host, []))
+    source_hash = current_source_hash or clean_source_hash(
+        repository_root=repository_root
+    )
+    return [
+        reconcile_legacy_zero_progress_predictor_resume_state(
+            family=str(family),
+            host=host,
+            repository_root=repository_root,
+            current_source_hash=source_hash,
+        )
+        for family in model_registry.get("families", {})
         if family in owned
     ]
 
