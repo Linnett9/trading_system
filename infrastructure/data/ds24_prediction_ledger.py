@@ -208,6 +208,83 @@ class PredictionLedgerStore:
             "publications": publications,
         }
 
+    def record_history_coverage(
+        self,
+        *,
+        family: str,
+        pre_ledger_refit_count: int,
+        pre_ledger_score_count: int,
+        pre_ledger_latest_decision_timestamp: str | None,
+    ) -> dict[str, Any]:
+        """Record the immutable per-family boundary between legacy and ledger output."""
+
+        if pre_ledger_refit_count < 0 or pre_ledger_score_count < 0:
+            raise PredictionLedgerStorageError("Pre-ledger counts cannot be negative")
+        if not family or any(character in family for character in "/\\"):
+            raise PredictionLedgerStorageError("Invalid history-coverage family")
+        history_incomplete = pre_ledger_score_count > 0
+        coverage = {
+            "family": family,
+            "ledger_history_complete": not history_incomplete,
+            "pre_ledger_refit_count": int(pre_ledger_refit_count),
+            "pre_ledger_score_count": int(pre_ledger_score_count),
+            "pre_ledger_latest_decision_timestamp": (
+                pd.to_datetime(
+                    pre_ledger_latest_decision_timestamp,
+                    utc=True,
+                    errors="raise",
+                ).isoformat()
+                if pre_ledger_latest_decision_timestamp
+                else None
+            ),
+            "first_durable_ledger_timestamp": None,
+            "historical_reconstruction": (
+                "MODEL_RETRAIN_REQUIRED" if history_incomplete else "NOT_REQUIRED"
+            ),
+        }
+        with _manifest_lock(self.root):
+            manifest = self._manifest()
+            histories = dict(manifest.get("history_coverage", {}))
+            existing = histories.get(family)
+            if existing is not None:
+                return dict(existing)
+            family_parts = [
+                part for part in manifest["parts"] if part["family"] == family
+            ]
+            if family_parts:
+                coverage["first_durable_ledger_timestamp"] = min(
+                    str(part["first_decision_timestamp"]) for part in family_parts
+                )
+            histories[family] = coverage
+            manifest["history_coverage"] = dict(sorted(histories.items()))
+            manifest["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+            _atomic_json(self.manifest_path, manifest)
+        return coverage
+
+    def persisted_burn_in_timestamps(self, *, family: str) -> set[str]:
+        """Read only bounded timestamp/eligibility columns, one part at a time."""
+
+        manifest = self._manifest()
+        timestamps: set[str] = set()
+        for part in manifest["parts"]:
+            if part["family"] != family:
+                continue
+            path = self.root / part["path"]
+            if _file_sha256(path) != part["file_sha256"]:
+                raise PredictionLedgerStorageError(
+                    f"Prediction-ledger part hash mismatch: {part['path']}"
+                )
+            rows = pd.read_parquet(
+                path, columns=["decision_timestamp", "evaluation_eligible"]
+            )
+            burn_in = rows[~rows["evaluation_eligible"].astype(bool)]
+            timestamps.update(
+                pd.to_datetime(burn_in["decision_timestamp"], utc=True)
+                .drop_duplicates()
+                .map(lambda timestamp: timestamp.isoformat())
+            )
+        return timestamps
+
     def _append_partition(self, family: str, month: str, rows: pd.DataFrame) -> dict[str, Any]:
         manifest = self._manifest()
         logical_hash = _sha256_bytes(_stable_json(_normalised_for_identity(rows)))
@@ -259,6 +336,17 @@ class PredictionLedgerStore:
             "logical_sha256": logical_hash,
             "file_sha256": file_hash,
         }
+        histories = dict(manifest.get("history_coverage", {}))
+        coverage = histories.get(family)
+        if coverage is not None:
+            coverage = dict(coverage)
+            first_timestamp = timestamp_values.min().isoformat()
+            current_first = coverage.get("first_durable_ledger_timestamp")
+            coverage["first_durable_ledger_timestamp"] = min(
+                value for value in (current_first, first_timestamp) if value
+            )
+            histories[family] = coverage
+            manifest["history_coverage"] = dict(sorted(histories.items()))
         manifest["parts"] = sorted(
             [*manifest["parts"], part], key=lambda item: (item["family"], item["decision_month"], item["path"])
         )

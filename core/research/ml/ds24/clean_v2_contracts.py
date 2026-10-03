@@ -9,6 +9,9 @@ from typing import Any, Mapping
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 CONFIG_ROOT = REPOSITORY_ROOT / "config" / "ds24_clean_v2"
 CLEAN_SOURCE_PATHS = (
+    "application/services/ds24_prediction_ledger_service.py",
+    "config/ds24_clean_v2/evaluation_burn_in_v1.json",
+    "config/ds24_clean_v2/research_output_policy_v2.json",
     "core/research/ml/ds24/clean_v2_certification.py",
     "core/research/ml/ds24/clean_v2_checkpoint_compatibility.py",
     "core/research/ml/ds24/clean_v2_contracts.py",
@@ -18,8 +21,13 @@ CLEAN_SOURCE_PATHS = (
     "core/research/ml/ds24/clean_v2_resources.py",
     "core/research/ml/ds24/clean_v2_runtime.py",
     "core/research/ml/ds24/incremental_evaluator_state.py",
+    "core/research/ml/ds24/evaluation_burn_in.py",
+    "core/research/ml/ds24/prediction_ledger_contract.py",
+    "core/research/ml/ds24/prediction_ledger_queries.py",
+    "core/research/ml/ds24/research_output.py",
     "core/research/ml/ds24_metrics_only_evaluator.py",
     "core/research/ml/stock_level/stock_level_sequence_regressors.py",
+    "infrastructure/data/ds24_prediction_ledger.py",
     "scripts/local/ds24_clean_v2_certify.py",
     "scripts/local/ds24_clean_v2_family_worker.py",
     "scripts/local/ds24_clean_v2_mac_preflight.py",

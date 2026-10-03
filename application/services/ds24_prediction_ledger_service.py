@@ -95,7 +95,40 @@ class DS24PredictionLedgerPublisher:
             )
             for predictions in prediction_batches
         ]
-        return self.store.append(pd.concat(ranked_batches, ignore_index=True))
+        rows = pd.concat(ranked_batches, ignore_index=True)
+        result = self.store.append(rows)
+        eligibility = rows.groupby("decision_timestamp", sort=True)[
+            "evaluation_eligible"
+        ].first()
+        result["evaluation_eligible_timestamps"] = [
+            pd.Timestamp(timestamp).isoformat()
+            for timestamp, eligible in eligibility.items()
+            if bool(eligible)
+        ]
+        result["evaluation_burn_in_timestamps"] = [
+            pd.Timestamp(timestamp).isoformat()
+            for timestamp, eligible in eligibility.items()
+            if not bool(eligible)
+        ]
+        return result
+
+    def record_history_coverage(
+        self,
+        *,
+        family: str,
+        pre_ledger_refit_count: int,
+        pre_ledger_score_count: int,
+        pre_ledger_latest_decision_timestamp: str | None,
+    ) -> dict[str, object]:
+        return self.store.record_history_coverage(
+            family=family,
+            pre_ledger_refit_count=pre_ledger_refit_count,
+            pre_ledger_score_count=pre_ledger_score_count,
+            pre_ledger_latest_decision_timestamp=pre_ledger_latest_decision_timestamp,
+        )
+
+    def persisted_burn_in_timestamps(self, *, family: str) -> set[str]:
+        return self.store.persisted_burn_in_timestamps(family=family)
 
     def _prepare_batch(
         self,
@@ -137,3 +170,35 @@ class DS24PredictionLedgerPublisher:
             provenance=self.provenance,
             burn_in=self.burn_in,
         )
+
+
+def evaluation_batch_indexes(
+    prediction_batches: Sequence[pd.DataFrame],
+    publication: Mapping[str, object],
+) -> tuple[int, ...]:
+    """Map the publisher's authoritative eligibility decision back to batches."""
+
+    input_timestamps: list[str] = []
+    for predictions in prediction_batches:
+        timestamps = pd.to_datetime(
+            predictions["decision_timestamp"], utc=True, errors="raise"
+        ).drop_duplicates()
+        if len(timestamps) != 1:
+            raise DS24PredictionPublicationError(
+                "Each prediction batch must contain exactly one timestamp"
+            )
+        input_timestamps.append(timestamps.iloc[0].isoformat())
+    if len(set(input_timestamps)) != len(input_timestamps):
+        raise DS24PredictionPublicationError("Prediction batch timestamps must be unique")
+
+    eligible = set(publication.get("evaluation_eligible_timestamps", []))
+    burn_in = set(publication.get("evaluation_burn_in_timestamps", []))
+    if eligible & burn_in or eligible | burn_in != set(input_timestamps):
+        raise DS24PredictionPublicationError(
+            "Ledger eligibility result does not exactly cover prediction batches"
+        )
+    return tuple(
+        index
+        for index, timestamp in enumerate(input_timestamps)
+        if timestamp in eligible
+    )

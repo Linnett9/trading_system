@@ -150,6 +150,44 @@ def test_append_is_atomic_partitioned_and_restart_idempotent(tmp_path: Path) -> 
     assert not list(tmp_path.rglob("*.partial"))
 
 
+def test_history_coverage_records_incomplete_boundary_and_first_ledger_timestamp(
+    tmp_path: Path,
+) -> None:
+    store = PredictionLedgerStore(tmp_path)
+    coverage = store.record_history_coverage(
+        family="ridge",
+        pre_ledger_refit_count=7,
+        pre_ledger_score_count=2363,
+        pre_ledger_latest_decision_timestamp="2016-03-23T19:00:00",
+    )
+    store.append(_ranked())
+    store.append(_ranked("2017-12-29T21:00:00Z", evaluation_eligible=False))
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    persisted = manifest["history_coverage"]["ridge"]
+
+    assert not coverage["ledger_history_complete"]
+    assert coverage["historical_reconstruction"] == "MODEL_RETRAIN_REQUIRED"
+    assert persisted["pre_ledger_score_count"] == 2363
+    assert persisted["pre_ledger_latest_decision_timestamp"] == "2016-03-23T19:00:00+00:00"
+    assert persisted["first_durable_ledger_timestamp"] == "2017-12-29T21:00:00+00:00"
+    assert store.persisted_burn_in_timestamps(family="ridge") == {
+        "2017-12-29T21:00:00+00:00"
+    }
+
+
+def test_burn_in_completion_reader_is_family_scoped(tmp_path: Path) -> None:
+    store = PredictionLedgerStore(tmp_path)
+    ridge = _ranked("2017-12-29T21:00:00Z", evaluation_eligible=False)
+    momentum = ridge.copy()
+    momentum["family"] = "momentum"
+    momentum["refit_id"] = "momentum-control"
+    store.append(pd.concat([ridge, momentum], ignore_index=True))
+
+    assert store.persisted_burn_in_timestamps(family="ridge") == {
+        "2017-12-29T21:00:00+00:00"
+    }
+
+
 def test_duplicate_keys_with_different_content_are_rejected(tmp_path: Path) -> None:
     store = PredictionLedgerStore(tmp_path)
     store.append(_ranked())

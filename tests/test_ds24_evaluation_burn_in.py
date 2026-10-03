@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from application.services.ds24_prediction_ledger_service import (
     DS24PredictionLedgerPublisher,
     DS24PredictionPublicationError,
+    evaluation_batch_indexes,
 )
 from core.research.ml.ds24.evaluation_burn_in import (
     DELL_EVALUATION_START,
@@ -152,6 +155,7 @@ def test_application_publisher_accepts_current_worker_timestamp_batches(tmp_path
     loaded = PredictionLedgerReader(tmp_path).read()
 
     assert result["rows"] == 4
+    assert evaluation_batch_indexes(batches, result) == (1,)
     assert loaded.groupby("decision_timestamp")["evaluation_eligible"].first().tolist() == [
         False,
         True,
@@ -175,3 +179,73 @@ def test_application_publisher_fails_closed_on_string_eligibility(tmp_path) -> N
             refit_id="refit",
             refit_timestamp="2018-01-01T20:00:00Z",
         )
+
+
+def test_future_mock_family_automatically_uses_shared_publication(tmp_path) -> None:
+    publisher = DS24PredictionLedgerPublisher(
+        PredictionLedgerStore(tmp_path), _provenance()
+    )
+    predictions = _scores("2018-01-02T14:35:00Z").rename(
+        columns={"raw_prediction": "prediction"}
+    )
+    predictions["family"] = "future_registered_mock"
+    predictions["eligible"] = True
+
+    result = publisher.publish_batches(
+        [predictions],
+        family="future_registered_mock",
+        refit_id="mock-refit",
+        refit_timestamp="2018-01-01T20:00:00Z",
+    )
+    loaded = PredictionLedgerReader(tmp_path).read()
+
+    assert result["rows"] == 2
+    assert set(loaded["family"]) == {"future_registered_mock"}
+    assert evaluation_batch_indexes([predictions], result) == (0,)
+
+
+def test_current_source_multi_family_publication_is_generic_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    publisher = DS24PredictionLedgerPublisher(
+        PredictionLedgerStore(tmp_path), _provenance()
+    )
+    publications = {}
+    for family in ("random_forest", "huber", "future_registered_mock"):
+        predictions = _scores("2017-10-26T13:35:00Z").rename(
+            columns={"raw_prediction": "prediction"}
+        )
+        predictions["family"] = family
+        predictions["eligible"] = True
+        publications[family] = publisher.publish_batches(
+            [predictions],
+            family=family,
+            refit_id=f"{family}-refit",
+            refit_timestamp="2017-10-23T13:35:00Z",
+        )
+
+    retry = publisher.publish_batches(
+        [
+            _scores("2017-10-26T13:35:00Z")
+            .rename(columns={"raw_prediction": "prediction"})
+            .assign(family="random_forest", eligible=True)
+        ],
+        family="random_forest",
+        refit_id="random_forest-refit",
+        refit_timestamp="2017-10-23T13:35:00Z",
+    )
+    loaded = PredictionLedgerReader(tmp_path).read()
+
+    assert {family: result["rows"] for family, result in publications.items()} == {
+        "random_forest": 2,
+        "huber": 2,
+        "future_registered_mock": 2,
+    }
+    assert retry["idempotent_parts"] == 1
+    assert set(loaded["family"]) == {
+        "random_forest",
+        "huber",
+        "future_registered_mock",
+    }
+    assert not loaded["evaluation_eligible"].any()
+    assert "target_value" not in loaded and "realized_return" not in loaded

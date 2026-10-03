@@ -25,6 +25,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from application.services.ds24_prediction_ledger_service import (
+    DS24PredictionLedgerPublisher,
+    evaluation_batch_indexes,
+)
 from core.research.ml.ds24.clean_v2_contracts import (
     authority_bundle,
     clean_source_hash,
@@ -91,6 +95,7 @@ from core.research.ml.ds24_metrics_only_evaluator import (
     read_parquet_log,
     resolved_performance_contract_v3_hash,
 )
+from infrastructure.data.ds24_prediction_ledger import PredictionLedgerStore
 
 
 SEQUENCE_FAMILIES = {
@@ -1675,6 +1680,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         qualifier_years=qualifier_years,
     )
     family_root = ROOT / "research_runs" / "ds24_clean_v2" / RUN_ID / f"family={args.family}"
+    prediction_ledger = DS24PredictionLedgerPublisher.from_authority(
+        store=PredictionLedgerStore(family_root.parent / "prediction_ledger_v1"),
+        authority=authority,
+        run_id=RUN_ID,
+    )
     metrics_root = family_root / "metrics"
     state_path = family_root / "resume_state.json"
     checkpoint_path = family_root / "model_checkpoint.json"
@@ -1688,6 +1698,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         source_hash=str(authority["clean_source_hash"]),
     )
     completed = _completed_timestamps(metrics_root, args.family)
+    pre_ledger_completed = set(completed)
     completed_refits: list[str] = []
     completed_scoring_packages: list[str] = []
     latest_checkpoint_compatibility: dict[str, Any] = (
@@ -1717,6 +1728,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             prior.get("checkpoint_compatibility")
             or latest_checkpoint_compatibility
         )
+    prediction_ledger.record_history_coverage(
+        family=args.family,
+        pre_ledger_refit_count=len(completed_refits),
+        pre_ledger_score_count=len(pre_ledger_completed),
+        pre_ledger_latest_decision_timestamp=(
+            max(pre_ledger_completed) if pre_ledger_completed else None
+        ),
+    )
+    # Burn-in batches deliberately bypass headline evaluator logs. The ledger
+    # is their durable completion authority, so restart does not rescore them.
+    completed.update(
+        prediction_ledger.persisted_burn_in_timestamps(family=args.family)
+    )
     _write_json_atomic(
         state_path,
         _state_payload(
@@ -2073,45 +2097,71 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
 
             commit_started = time.perf_counter()
-            commit_result = writer.commit_prediction_batches(
-                prediction_batches,
-                target_batches=target_batches,
-                expected_assets_by_timestamp=expected_assets_by_timestamp,
-                before_timestamp_evaluation=(
-                    lambda: _checkpoint_safe_pause_boundary(
-                        reservation_client,
-                        boundary=(
-                            "between_in_memory_timestamp_evaluations_"
-                            "before_batch_publication"
-                        ),
-                    )
-                ),
-                metadata={
+            model_vintage_id = stable_hash(
+                {
+                    "family": args.family,
+                    "refit_T": package.refit_T.isoformat(),
                     "model_hash": model_hash,
-                    "model_vintage_id": stable_hash(
-                        {
-                            "family": args.family,
-                            "refit_T": package.refit_T.isoformat(),
-                            "model_hash": model_hash,
-                        }
-                    ),
-                    "preprocessing_hash": preprocessing_hash,
-                    "policy_hash": package.policy_hash,
-                    "training_cutoff": package.refit_T.isoformat(),
-                    "prediction_timestamp": _utc_now(),
-                    "refit_policy": REFIT_POLICY_ID,
-                    "attempt_generation": str(attempt_generation),
-                    "clean_source_hash": authority["clean_source_hash"],
-                    "feature_authority_hash": feature_hash,
-                    "target_authority_hash": target_hash,
-                    "target_contract_hash": data.target_contract[
-                        "resolved_contract_sha256"
-                    ],
-                    "static_authority_bundle_sha256": authority[
-                        "static_authority_bundle_sha256"
-                    ],
-                },
+                }
             )
+            commit_metadata = {
+                "model_hash": model_hash,
+                "model_vintage_id": model_vintage_id,
+                "preprocessing_hash": preprocessing_hash,
+                "policy_hash": package.policy_hash,
+                "training_cutoff": package.refit_T.isoformat(),
+                "prediction_timestamp": _utc_now(),
+                "refit_policy": REFIT_POLICY_ID,
+                "attempt_generation": str(attempt_generation),
+                "clean_source_hash": authority["clean_source_hash"],
+                "feature_authority_hash": feature_hash,
+                "target_authority_hash": target_hash,
+                "target_contract_hash": data.target_contract[
+                    "resolved_contract_sha256"
+                ],
+                "static_authority_bundle_sha256": authority[
+                    "static_authority_bundle_sha256"
+                ],
+            }
+            ledger_result = prediction_ledger.publish_batches(
+                prediction_batches,
+                family=args.family,
+                refit_id=model_vintage_id,
+                refit_timestamp=package.refit_T,
+            )
+            evaluation_timestamps = set(ledger_result["evaluation_eligible_timestamps"])
+            evaluation_indexes = evaluation_batch_indexes(
+                prediction_batches, ledger_result
+            )
+            if evaluation_indexes:
+                evaluation_expected_assets = {
+                    timestamp: assets
+                    for timestamp, assets in expected_assets_by_timestamp.items()
+                    if timestamp in evaluation_timestamps
+                }
+                commit_result = writer.commit_prediction_batches(
+                    [prediction_batches[index] for index in evaluation_indexes],
+                    target_batches=[target_batches[index] for index in evaluation_indexes],
+                    expected_assets_by_timestamp=evaluation_expected_assets,
+                    before_timestamp_evaluation=(
+                        lambda: _checkpoint_safe_pause_boundary(
+                            reservation_client,
+                            boundary=(
+                                "between_in_memory_timestamp_evaluations_"
+                                "before_batch_publication"
+                            ),
+                        )
+                    ),
+                    metadata=commit_metadata,
+                )
+            else:
+                commit_result = {
+                    "committed": True,
+                    "reason": "EVALUATION_BURN_IN_LEDGER_ONLY",
+                    "resolved_performance_v3": {},
+                    "stage_timings_seconds": {},
+                }
+            commit_result["prediction_ledger"] = ledger_result
             commit_wall = time.perf_counter() - commit_started
             if not commit_result.get("committed"):
                 raise CleanV2WorkerError(
