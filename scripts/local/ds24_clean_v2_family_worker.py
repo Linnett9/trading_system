@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from application.services.ds24_prediction_ledger_service import (
+    DS24PredictionLedgerPublisher,
+)
 from core.research.ml.ds24.clean_v2_contracts import (
     authority_bundle,
     clean_source_hash,
@@ -29,6 +32,7 @@ from core.research.ml.ds24.clean_v2_contracts import (
     load_contract,
     stable_hash,
 )
+from infrastructure.data.ds24_prediction_ledger import PredictionLedgerStore
 from core.research.ml.ds24.clean_v2_data import CleanV2CompositeData
 from core.research.ml.ds24.clean_v2_runtime import (
     QUALIFIER_YEARS,
@@ -584,6 +588,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         maximum_refits=args.maximum_refits,
     )
     family_root = ROOT / "research_runs" / "ds24_clean_v2" / RUN_ID / f"family={args.family}"
+    prediction_ledger = DS24PredictionLedgerPublisher.from_authority(
+        store=PredictionLedgerStore(family_root.parent / "ranked_prediction_ledger"),
+        authority=authority,
+        run_id=RUN_ID,
+    )
     metrics_root = family_root / "metrics"
     state_path = family_root / "resume_state.json"
     checkpoint_path = family_root / "model_checkpoint.json"
@@ -738,19 +747,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     "target_available_timestamp",
                 ]
             ]
+            model_vintage_id = stable_hash(
+                {
+                    "family": args.family,
+                    "refit_T": package.refit_T.isoformat(),
+                    "model_hash": model_hash,
+                }
+            )
+            # Publish before the legacy metrics commit. If the process fails after
+            # this point, ledger retry is content-idempotent; the inverse ordering
+            # could leave a metrics-complete timestamp permanently absent here.
+            prediction_ledger.publish(
+                predictions,
+                family=args.family,
+                refit_id=model_vintage_id,
+                refit_timestamp=package.refit_T,
+            )
             writer.commit_predictions(
                 predictions,
                 targets=targets,
                 expected_assets=sorted(score_at_t["asset_id"].astype(str).unique()),
                 metadata={
                     "model_hash": model_hash,
-                    "model_vintage_id": stable_hash(
-                        {
-                            "family": args.family,
-                            "refit_T": package.refit_T.isoformat(),
-                            "model_hash": model_hash,
-                        }
-                    ),
+                    "model_vintage_id": model_vintage_id,
                     "preprocessing_hash": preprocessing_hash,
                     "policy_hash": package.policy_hash,
                     "training_cutoff": package.refit_T.isoformat(),
