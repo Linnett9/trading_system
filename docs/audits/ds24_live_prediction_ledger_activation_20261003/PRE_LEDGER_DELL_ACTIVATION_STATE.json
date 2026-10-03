@@ -1,0 +1,46 @@
+{
+  "schema": "DS24_PRE_LEDGER_DELL_ACTIVATION_STATE_V1",
+  "captured_at_utc": "2026-10-03T14:31:29.4921815Z",
+  "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+  "git_head": "78e1bd97930124feb90e30f265cf60cc835b2425",
+  "clean_source_hash": "f1c1d53928392083c98be39cf04d11727ce31b09c0692382e9a2825a4f09aaf5",
+  "stopped_runtime": {
+    "classification": "DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE",
+    "prior_generation": 1791030552692796600,
+    "prior_supervisor_pid": 21936,
+    "prior_supervisor_process_creation_time_utc": "2026-10-03T12:29:12.694656+00:00",
+    "supervisor_lease_present": false,
+    "active_worker_count": 0,
+    "active_reservation_count": 0,
+    "failures": {},
+    "paper_orders": 0,
+    "live_orders": 0
+  },
+  "random_forest_recovery": {
+    "model_checkpoint_sha256": "d0af8cf08e2d994078c4569d6851d25797d5a8955834d867a64ec1ad83a110f4",
+    "model_path": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/family=random_forest/models/random_forest_20171023T133500Z.pkl",
+    "declared_model_sha256": "92a82c1eabc9bdf5b352301fc910959777db20082d86aceee3b592f2c5c60374",
+    "verified_model_sha256": "92a82c1eabc9bdf5b352301fc910959777db20082d86aceee3b592f2c5c60374",
+    "checkpoint_package_ordinal": 87,
+    "checkpoint_refit_timestamp": "2017-10-23T13:35:00+00:00",
+    "checkpoint_scientific_identity_verified": true,
+    "evaluator_incremental_state_present": true,
+    "pending_scores_present": true,
+    "metrics_checkpoint_present": true,
+    "metrics_manifests_present": true
+  },
+  "families": [
+    {"family": "random_forest", "state_present": true, "terminal_state": "RUNNING", "completed_refits": 87, "metrics_cursor": 28889, "latest_completed_refit": "2017-10-16T13:35:00+00:00", "latest_scored_decision": "2017-10-26T19:00:00+00:00", "resume_state_sha256": "6e23fc36b9c623aa3455a4253195094a42521f5064893acc7a9101fc8e287be3"},
+    {"family": "transformer", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": "b96c9681de801d7081c6272b55e28b05099c2f4a3b98e93f5347a145dbdfda6f"},
+    {"family": "huber", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 40, "metrics_cursor": 13187, "latest_completed_refit": "2016-11-08T14:35:00+00:00", "latest_scored_decision": "2016-11-14T20:00:00+00:00", "resume_state_sha256": "8722b0e5999657d88514ad07f5782cadd6d9dbc2054d17a1a54cc1a34c01d841"},
+    {"family": "ridge_C5", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 7, "metrics_cursor": 2363, "latest_completed_refit": "2016-03-16T13:35:00+00:00", "latest_scored_decision": "2016-03-23T19:00:00+00:00", "resume_state_sha256": "2dd09ec123c8f38fe9371fd1cb5e4b37b178d2b188f3eed93e75ba01175e6cd8"},
+    {"family": "gradient_boosting_C0", "state_present": false, "terminal_state": null, "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": null},
+    {"family": "elastic_net_C5", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 17, "metrics_cursor": 5610, "latest_completed_refit": "2017-04-28T13:35:00+00:00", "latest_scored_decision": "2017-05-04T19:00:00+00:00", "resume_state_sha256": "3e67ea32c91c44ec66cb146116b235c965572b20b0980907531269c4a099a558"},
+    {"family": "elastic_net_C6", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": "12350ba133483908f0af5296462a9d8a82192a051fd0319f52f34198cf3ebd22"},
+    {"family": "gradient_boosting_C0_W20", "state_present": false, "terminal_state": null, "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": null},
+    {"family": "gradient_boosting_C0_W40", "state_present": false, "terminal_state": null, "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": null},
+    {"family": "gradient_boosting_C0_W80", "state_present": false, "terminal_state": null, "completed_refits": 0, "metrics_cursor": 0, "latest_completed_refit": null, "latest_scored_decision": null, "resume_state_sha256": null},
+    {"family": "momentum", "state_present": true, "terminal_state": "DEFERRED_RESOURCE_CAPACITY", "completed_refits": 0, "metrics_cursor": 129636, "latest_completed_refit": null, "latest_scored_decision": "2023-12-04T20:00:00+00:00", "resume_state_sha256": "5b12e4dd757b98b66dd1901482dd878c3ae8dd97499bca545cc6598f7009e67e"},
+    {"family": "equal_weight_no_model", "state_present": true, "terminal_state": "RUNNING", "completed_refits": 0, "metrics_cursor": 2847, "latest_completed_refit": null, "latest_scored_decision": "2016-04-05T15:20:00+00:00", "resume_state_sha256": "0ab6614a3c728edeffa357190f72763fa922fe5cfde43628c6a210fec404778f"}
+  ]
+}

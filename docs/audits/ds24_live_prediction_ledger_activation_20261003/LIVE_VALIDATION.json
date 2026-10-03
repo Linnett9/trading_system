@@ -1,0 +1,75 @@
+{
+  "schema": "DS24_LIVE_PREDICTION_LEDGER_ACTIVATION_VALIDATION_V1",
+  "captured_at_utc": "2026-10-03T14:46:12.4411033Z",
+  "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+  "pre_upgrade_source_hash": "f1c1d53928392083c98be39cf04d11727ce31b09c0692382e9a2825a4f09aaf5",
+  "activated_source_hash": "fc0d3e68b3971fa9773797cde1b5819d12c3f603888bc953a71fb22ffae5a68d",
+  "integration_commit": "2c8bd2ef8117c747f8d677ab4097f0ff79f8fde8",
+  "resume": {
+    "rf_refits_before_stop": 87,
+    "rf_cursor_before_stop": 28889,
+    "rf_latest_decision_before_stop": "2017-10-26T19:00:00+00:00",
+    "rf_refits_after_resume": 87,
+    "rf_cursor_after_resume": 28955,
+    "rf_latest_decision_after_resume": "2017-10-27T19:00:00+00:00",
+    "checkpoint_compatibility": "RESUME_COMPATIBLE_OPERATIONAL_ONLY_CHANGE"
+  },
+  "first_live_rf_part": {
+    "path": "family=random_forest/period=2017-10/part-20171027T133500Z-20171027T190000Z-338fb6b3382a8b29.parquet",
+    "first_timestamp": "2017-10-27T13:35:00+00:00",
+    "last_timestamp": "2017-10-27T19:00:00+00:00",
+    "timestamp_count": 66,
+    "row_count": 32155,
+    "rows_per_timestamp_min": 476,
+    "rows_per_timestamp_mean": 487.1969696969697,
+    "rows_per_timestamp_max": 504,
+    "evaluation_eligible": false,
+    "duplicate_key_count": 0,
+    "compression": "ZSTD",
+    "file_bytes": 147430,
+    "bytes_per_row": 4.584979007930338,
+    "schema_exact": true,
+    "forbidden_columns": [],
+    "raw_prediction_finite": true,
+    "rank_and_percentile_contract_verified": true,
+    "file_sha256_verified": true,
+    "logical_sha256_verified": true,
+    "provenance_verified": true
+  },
+  "storage_projection": {
+    "basis": "first full 66-timestamp RF trading session, including per-part Parquet overhead",
+    "assumed_trading_sessions_per_month": 21,
+    "assumed_trading_sessions_per_year": 252,
+    "rows_per_family_month": 675255,
+    "rows_per_family_year": 8103060,
+    "bytes_per_family_month": 3096030,
+    "bytes_per_family_year": 37152360,
+    "registered_predictive_family_count": 10,
+    "bytes_per_year_all_predictive_families": 371523600,
+    "registered_score_producing_family_count_including_controls": 12,
+    "bytes_per_year_all_score_producing_families": 445828320
+  },
+  "history_coverage": {
+    "random_forest": {
+      "ledger_history_complete": false,
+      "pre_ledger_refit_count": 87,
+      "pre_ledger_score_count": 28889,
+      "pre_ledger_latest_decision_timestamp": "2017-10-26T19:00:00+00:00",
+      "first_durable_ledger_timestamp": "2017-10-27T13:35:00+00:00",
+      "historical_reconstruction": "MODEL_RETRAIN_REQUIRED"
+    }
+  },
+  "runtime": {
+    "classification": "DS24_CLEAN_V2_TOURNAMENT_PROTECTED_LANE_RECLAIM",
+    "generation": 1791038743721575700,
+    "supervisor_pid": 17636,
+    "supervisor_process_creation_time_utc": "2026-10-03T14:45:43.722658+00:00",
+    "active_family": "random_forest",
+    "active_worker_pid": 1664,
+    "active_worker_process_creation_time_utc": "2026-10-03T14:45:48.399195+00:00",
+    "active_reservations": 1,
+    "failures": {},
+    "paper_orders": 0,
+    "live_orders": 0
+  }
+}
