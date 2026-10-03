@@ -23,6 +23,17 @@ Canonical register for maintainability, architecture, testability, reliability, 
 
 ## Completion Updates
 
+- 2026-10-03: DS24 shared prediction-ledger source-only work introduced a pure
+  ranked-row/schema contract, an explicit `EVALUATION_BURN_IN` timestamp
+  authority, and a separate infrastructure Parquet store/reader. The split
+  keeps targets, realized returns, features, filesystem publication, and Dell
+  adaptive-capacity scheduling outside the core contract. Historical metrics-
+  only runs remain readable under their existing policy. Live CLEAN V2 worker
+  integration is isolated behind an application publisher, with a separate
+  thin Dell composition-root commit so Mac resource policy stays independent;
+  audit and handoff evidence is in
+  `docs/audits/ds24_shared_prediction_ledger_20261003/AUDIT_AND_HANDOFF.md`.
+
 - 2026-08-26: `ENG-R1-T01` completed by adding the neutral `core.research.artifact_publication` boundary, preserving `core.research.ml.ticket63_atomic_json` as a compatibility adapter, and migrating the ordered-logit compact package publisher to the neutral boundary. Deferred writer classifications are recorded in `docs/audits/dream_system_codebase_engineering_atomic_json_publication_boundary_r1/atomic_json_writer_inventory.md`.
 - 2026-08-26: `ENG-R1-T02` completed by making `application.cli_modes` the single ownership source for parser mode availability, dispatch service/handler ownership, compatibility aliases, dispatch call shapes, and feed requirements. Closeout is recorded in `docs/audits/dream_system_codebase_engineering_cli_mode_registry_single_ownership_r1/cli_mode_registry_single_ownership_r1_closeout.md`.
 - 2026-08-26: `ENG-R1-T06` completed independently of deferred T03 by adding `core.research.ml.ticket63_campaign_contracts.FullDailyCampaignTask` and compatibility dict adapters for full-daily task inventory/status current-task boundaries. Closeout is recorded in `docs/audits/dream_system_codebase_engineering_typed_campaign_task_status_contracts_r1/typed_campaign_task_status_contracts_r1_closeout.md`. `ENG-R1-T03` remains deferred until active campaign/capture workers are terminal, paused with explicit coordination, or proven independent of the selected status/persistence files.
