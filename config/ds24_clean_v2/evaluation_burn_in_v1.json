@@ -1,0 +1,28 @@
+{
+  "authority_id": "DS24_EVALUATION_BURN_IN_2016_2017_V1",
+  "name": "EVALUATION_BURN_IN",
+  "evaluation_start_decision_timestamp": "2018-01-02T14:35:00Z",
+  "boundary_kind": "decision_timestamp",
+  "historical_implementation": "scripts/local/ds24_p8_r14_e3g_c2_r7_r7_full_burn_in_worker.py:T0",
+  "historical_training_period": {
+    "start": "2016-01-04T14:35:00Z",
+    "end": "2017-12-29T21:00:00Z"
+  },
+  "before_boundary": {
+    "train_under_normal_pit_rules": true,
+    "score": true,
+    "persist_ranked_predictions": true,
+    "evaluation_eligible": false,
+    "headline_portfolio_returns": "excluded",
+    "rank_ic": "excluded_to_preserve_historical_population"
+  },
+  "at_or_after_boundary": {
+    "evaluation_eligible": true,
+    "headline_portfolio_returns": "included",
+    "rank_ic": "included"
+  },
+  "true_holdout": {
+    "relationship": "none",
+    "access": "forbidden"
+  }
+}
