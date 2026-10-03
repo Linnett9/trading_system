@@ -18,12 +18,84 @@ from core.research.ml.ds24.clean_v2_features import (
     SOURCE_TIMESTAMP_SUFFIX,
 )
 from core.research.ml.ds24.clean_v2_runtime import REFIT_POLICY_ID, RUN_ID
+from core.research.ml.ds24.clean_v2_resources import (
+    PAUSE_REQUESTED_RESOURCE_PRESSURE,
+    PROTECTED_LANE_YIELD_REQUESTED,
+    CheckpointSafeResourcePause,
+    FileReservationClient,
+    WorkerReservationOwner,
+    publish_resource_pause_intent,
+    recovery_policy_payload,
+)
 from scripts.local import ds24_clean_v2_family_worker as family_worker
 from scripts.local import ds24_clean_v2_monitor as monitor
 from scripts.local.ds24_clean_v2_reader_preflight import run as reader_preflight
 from scripts.local.ds24_clean_v2_reconcile_failures import (
     reconcile_failure_state,
 )
+
+
+def test_worker_honours_identity_bound_pause_only_at_safe_boundary(
+    tmp_path: Path,
+) -> None:
+    owner = WorkerReservationOwner(
+        "ridge_C5",
+        41,
+        pid=1001,
+        process_creation_time_utc="2026-09-30T00:00:00+00:00",
+    )
+    client = FileReservationClient(tmp_path, owner)
+    publish_resource_pause_intent(
+        tmp_path,
+        owner=owner,
+        classification=PAUSE_REQUESTED_RESOURCE_PRESSURE,
+        emergency=False,
+        resource_decision={"pressure_level": "SOFT_PRESSURE"},
+    )
+
+    noninterruptible_fit_events = ["fit_started"]
+    noninterruptible_fit_events.append("fit_completed")
+    with pytest.raises(CheckpointSafeResourcePause) as captured:
+        family_worker._checkpoint_safe_pause_boundary(
+            client, boundary="after_model_persistence"
+        )
+
+    assert noninterruptible_fit_events == ["fit_started", "fit_completed"]
+    assert captured.value.boundary == "after_model_persistence"
+    assert captured.value.intent.owner == owner
+
+
+def test_fair_turn_yield_waits_for_a_progress_preserving_boundary(
+    tmp_path: Path,
+) -> None:
+    owner = WorkerReservationOwner(
+        "random_forest",
+        42,
+        pid=1002,
+        process_creation_time_utc="2026-10-03T00:00:00+00:00",
+    )
+    client = FileReservationClient(tmp_path, owner)
+    publish_resource_pause_intent(
+        tmp_path,
+        owner=owner,
+        classification=PROTECTED_LANE_YIELD_REQUESTED,
+        emergency=False,
+        resource_decision={"successor_family": "momentum"},
+    )
+
+    family_worker._checkpoint_safe_pause_boundary(
+        client, boundary="after_panel_assembly"
+    )
+    family_worker._checkpoint_safe_pause_boundary(
+        client, boundary="after_model_persistence"
+    )
+    with pytest.raises(CheckpointSafeResourcePause) as captured:
+        family_worker._checkpoint_safe_pause_boundary(
+            client, boundary="after_timestamp_publication"
+        )
+
+    assert captured.value.boundary == "after_timestamp_publication"
+    assert captured.value.intent.owner == owner
 
 
 def _reader_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -306,6 +378,7 @@ def test_legacy_failure_reconciliation_is_identity_checked_and_idempotent(
 
 def test_monitor_ignores_generic_status_retired_families_and_stale_failures(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_root = tmp_path / "research_runs" / "ds24_clean_v2" / RUN_ID
     family_root = run_root / "family=random_forest"
@@ -365,14 +438,145 @@ def test_monitor_ignores_generic_status_retired_families_and_stale_failures(
     )
 
     assert report["legacy_generic_supervisor_status_ignored"] is True
-    assert report["classification"] == "DS24_CLEAN_V2_TOURNAMENT_RUNNING"
-    assert report["families"][0]["state"] == "RUNNING"
+    assert report["classification"] == (
+        "DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE_STALE_RUNTIME_RECONCILED"
+    )
+    assert report["families"][0]["state"] == "RESUMABLE_STALE_PROCESS"
     assert report["families"][0]["error"] is None
-    assert [row["family"] for row in report["active_workers"]] == [
-        "random_forest"
-    ]
-    assert report["queued_families"] == []
+    assert report["families"][0][
+        "historical_failure_not_current_attempt"
+    ]["error"] == "old failure"
+    assert report["active_workers"] == []
+    assert report["queued_families"] == ["random_forest"]
     assert report["failed_families"] == {}
+
+
+def test_monitor_keeps_a_current_failure_during_state_publication_race(
+    tmp_path: Path,
+) -> None:
+    family_root = tmp_path / "family=random_forest"
+    state = {
+        "run_id": RUN_ID,
+        "family": "random_forest",
+        "attempt_generation": 10,
+    }
+    current_failure = {
+        "run_id": RUN_ID,
+        "family": "random_forest",
+        "host": "dell",
+        "attempt_generation": 20,
+        "terminal_state": "FAILED_CLOSED",
+        "error": "current failure",
+    }
+    _write_json(family_root / "worker_failure.json", current_failure)
+
+    assert monitor._matching_failure(
+        family_root,
+        state,
+        host="dell",
+        current_attempt_generation=20,
+    ) == current_failure
+
+
+def test_monitor_supersedes_status_failure_only_with_later_terminal_attempt(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "research_runs" / "ds24_clean_v2" / RUN_ID
+    family_root = run_root / "family=momentum"
+    _write_json(
+        family_root / "resume_state.json",
+        {
+            "run_id": RUN_ID,
+            "family": "momentum",
+            "owner_host": "dell",
+            "attempt_generation": 30,
+            "terminal_state": "DEFERRED_RESOURCE_CAPACITY",
+            "completed_refits": [],
+            "metrics_cursor": 0,
+            "error": None,
+        },
+    )
+    _write_json(
+        family_root / "worker_failure.json",
+        {
+            "run_id": RUN_ID,
+            "family": "momentum",
+            "host": "dell",
+            "attempt_generation": 10,
+            "terminal_state": "FAILED_CLOSED",
+            "error": "historical repaired identity failure",
+        },
+    )
+    _write_json(
+        run_root / "supervisor_status_dell.json",
+        {
+            "run_id": RUN_ID,
+            "host_role": "dell",
+            "classification": "DS24_CLEAN_V2_TOURNAMENT_FAILED_CLOSED",
+            "attempt_generation": 20,
+            "active_workers": [],
+            "queued_families": [],
+            "complete_families": [],
+            "failed_families": {"momentum": 1},
+        },
+    )
+
+    report = monitor.build_report(
+        "dell", repository_root=tmp_path, run_root=run_root
+    )
+
+    assert report["failed_families"] == {}
+    assert report["superseded_historical_status_failures"]["momentum"] == {
+        "exit_code": 1,
+        "status_attempt_generation": 20,
+        "superseding_attempt_generation": 30,
+        "superseding_state": "DEFERRED_RESOURCE_CAPACITY",
+    }
+    assert report["classification"] == (
+        "DS24_CLEAN_V2_TOURNAMENT_STOPPED_RESUMABLE_"
+        "STALE_FAILURE_RECONCILED"
+    )
+
+
+def test_monitor_does_not_hide_same_attempt_worker_exit_behind_running_state(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "research_runs" / "ds24_clean_v2" / RUN_ID
+    family_root = run_root / "family=momentum"
+    _write_json(
+        family_root / "resume_state.json",
+        {
+            "run_id": RUN_ID,
+            "family": "momentum",
+            "owner_host": "dell",
+            "attempt_generation": 20,
+            "terminal_state": "RUNNING",
+            "completed_refits": [],
+            "metrics_cursor": 0,
+            "error": None,
+        },
+    )
+    _write_json(
+        run_root / "supervisor_status_dell.json",
+        {
+            "run_id": RUN_ID,
+            "host_role": "dell",
+            "classification": "DS24_CLEAN_V2_TOURNAMENT_FAILED_CLOSED",
+            "attempt_generation": 20,
+            "active_workers": [],
+            "queued_families": [],
+            "complete_families": [],
+            "failed_families": {"momentum": 3221225786},
+        },
+    )
+
+    report = monitor.build_report(
+        "dell", repository_root=tmp_path, run_root=run_root
+    )
+
+    assert report["failed_families"] == {"momentum": 3221225786}
+    assert report["superseded_historical_status_failures"] == {}
+    assert report["classification"] == "DS24_CLEAN_V2_TOURNAMENT_FAILED_CLOSED"
 
 
 def test_worker_admission_requires_the_current_clean_source_hash(
@@ -391,12 +595,37 @@ def test_worker_admission_requires_the_current_clean_source_hash(
         / RUN_ID
         / "manual_admission_dell.json"
     )
+    tournament = family_worker.load_contract("tournament_contract.json")
+    ownership = family_worker.load_contract("cross_host_ownership.json")
+    lane_order = [
+        *tournament["lanes"]["FULL_CLEAN"],
+        *tournament["lanes"]["SHORT_REQUALIFICATION"],
+        *tournament["lanes"]["UNSCORED_DISCOVERY"],
+        *tournament["lanes"]["CONTROLS"],
+    ]
+    owned = set(ownership["hosts"]["dell"])
+    scope = family_worker.operational_scope_policy(
+        host="dell",
+        run_id=RUN_ID,
+        ordered_owned_families=[family for family in lane_order if family in owned],
+        configured_maximum_workers=int(
+            tournament["runtime"]["dell_max_model_workers"]
+        ),
+    ).payload()
     admission_core = {
         "run_id": RUN_ID,
         "host_role": "dell",
         "refit_policy": REFIT_POLICY_ID,
         "static_authority_bundle_sha256": "bundle",
-        "launch_families": ["random_forest"],
+        "launch_families": scope["launch_families"],
+        "maximum_model_workers": scope["maximum_model_workers"],
+        "operational_scope_policy": scope,
+        "resource_policy": recovery_policy_payload(),
+        "disk_admission_policy": family_worker.disk_admission_policy(
+            host="dell",
+            storage_contract=tournament["storage"],
+            sidecar_complete=True,
+        ).payload(),
     }
     _write_json(
         admission_path,
@@ -404,6 +633,10 @@ def test_worker_admission_requires_the_current_clean_source_hash(
     )
     monkeypatch.setenv(
         "DS24_CLEAN_V2_ADMISSION_TOKEN", stable_hash(admission_core)
+    )
+    monkeypatch.setenv(
+        "DS24_CLEAN_V2_RESOURCE_POLICY_ID",
+        recovery_policy_payload()["resource_policy_id"],
     )
 
     with pytest.raises(family_worker.CleanV2WorkerError, match="source hash"):
@@ -416,3 +649,13 @@ def test_worker_admission_requires_the_current_clean_source_hash(
     assert family_worker._validate_worker_admission("dell")[
         "clean_source_hash"
     ] == "source"
+
+    admission_core["resource_policy"] = {
+        **recovery_policy_payload(),
+        "target_available_physical_gib": 4,
+    }
+    token = stable_hash(admission_core)
+    _write_json(admission_path, {**admission_core, "admission_token": token})
+    monkeypatch.setenv("DS24_CLEAN_V2_ADMISSION_TOKEN", token)
+    with pytest.raises(family_worker.CleanV2WorkerError, match="resource policy"):
+        family_worker._validate_worker_admission("dell")

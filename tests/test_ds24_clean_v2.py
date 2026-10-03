@@ -46,10 +46,24 @@ from scripts.local.ds24_clean_v2_mac_preflight import (
     partition_file_hashes_match,
 )
 from scripts.local.ds24_clean_v2_supervisor import (
+    _admission_capacity_class,
+    _apply_capacity_deferral_queue_policy,
+    _capacity_deferred_family_rotates_to_back,
+    _is_protected_capacity_reconsideration,
     _launch_families,
+    _launched_family_requires_admission_barrier,
+    _opportunistic_lane_yield_target,
     _partition_inventory_matches,
+    _partition_pinned_primary_pairing_candidates,
+    _pressure_drain_target,
+    _primary_family_capacity_deferred,
+    _protected_lane_invariant_violation,
+    _reported_pending_families,
 )
-from scripts.local import ds24_clean_v2_build_target_delta as target_delta_builder
+from scripts.local import (
+    ds24_clean_v2_build_target_delta as target_delta_builder,
+    ds24_clean_v2_supervisor as clean_supervisor,
+)
 
 
 def test_ordered_101_predictor_contract_is_exact_and_target_free() -> None:
@@ -508,15 +522,286 @@ def test_clean_worker_schedule_uses_five_score_sessions_and_frozen_years() -> No
 
 def test_supervisor_binds_only_clean_v2_workers() -> None:
     tournament = load_contract("tournament_contract.json")
+    lane_order = [
+        *tournament["lanes"]["FULL_CLEAN"],
+        *tournament["lanes"]["SHORT_REQUALIFICATION"],
+        *tournament["lanes"]["UNSCORED_DISCOVERY"],
+        *tournament["lanes"]["CONTROLS"],
+    ]
     for host in ("dell", "mac"):
         commands = tournament["worker_commands"][host]
-        assert set(commands) == set(_launch_families(host))
+        assert set(_launch_families(host)).issubset(commands)
         assert all(
             "ds24_clean_v2_family_worker.py" in " ".join(command)
             for command in commands.values()
         )
+    assert _launch_families("dell") == [
+        "random_forest",
+        "momentum",
+    ]
+    mac_owned = set(load_contract("cross_host_ownership.json")["hosts"]["mac"])
+    assert _launch_families("mac") == [
+        family for family in lane_order if family in mac_owned
+    ]
     assert isinstance(clean_source_hash(), str)
     assert len(clean_source_hash()) == 64
+
+
+def test_dell_primary_capacity_deferral_blocks_replacement_workers() -> None:
+    assert _primary_family_capacity_deferred(
+        "dell", {"random_forest": {"classification": "deferred"}}, set()
+    )
+    assert not _primary_family_capacity_deferred(
+        "dell",
+        {"random_forest": {"classification": "deferred"}},
+        {"random_forest"},
+    )
+    assert not _primary_family_capacity_deferred(
+        "mac", {"random_forest": {"classification": "deferred"}}, set()
+    )
+    assert _primary_family_capacity_deferred(
+        "dell", {"momentum": {"classification": "deferred"}}, set()
+    )
+    assert not _capacity_deferred_family_rotates_to_back(
+        "dell", "random_forest"
+    )
+    assert _capacity_deferred_family_rotates_to_back("dell", "ridge_C5")
+    assert _capacity_deferred_family_rotates_to_back("mac", "random_forest")
+
+    dell_queue = ["random_forest", "ridge_C5", "momentum"]
+    assert _apply_capacity_deferral_queue_policy(
+        queue=dell_queue,
+        host="dell",
+        family="random_forest",
+    )
+    assert dell_queue == ["random_forest", "ridge_C5", "momentum"]
+
+    assert not _apply_capacity_deferral_queue_policy(
+        queue=dell_queue,
+        host="dell",
+        family="ridge_C5",
+    )
+    assert dell_queue == ["random_forest", "momentum", "ridge_C5"]
+    assert _launched_family_requires_admission_barrier(
+        "dell", "random_forest", set()
+    )
+    assert not _launched_family_requires_admission_barrier(
+        "dell", "ridge_C5", set()
+    )
+    assert not _launched_family_requires_admission_barrier(
+        "dell", "random_forest", {"random_forest"}
+    )
+    assert _launched_family_requires_admission_barrier(
+        "dell",
+        "momentum",
+        set(),
+        active={"random_forest": object(), "momentum": object()},
+    )
+    assert not _launched_family_requires_admission_barrier(
+        "dell",
+        "ridge_C5",
+        set(),
+        active={
+            "random_forest": object(),
+            "momentum": object(),
+            "ridge_C5": object(),
+        },
+    )
+
+    compatible, blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["ridge_C5", "momentum", "equal_weight_no_model"],
+        active={"random_forest": object()},
+        complete=set(),
+    )
+    assert compatible == ["momentum"]
+    assert blocked == ["ridge_C5", "equal_weight_no_model"]
+
+    unrestricted, blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["ridge_C5", "momentum"],
+        active={},
+        complete=set(),
+    )
+    assert unrestricted == ["ridge_C5", "momentum"]
+    assert blocked == []
+
+    third_lane, third_blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["elastic_net_C5", "transformer", "ridge_C5", "huber"],
+        active={"random_forest": object(), "momentum": object()},
+        complete=set(),
+    )
+    assert third_lane == ["huber", "elastic_net_C5", "ridge_C5"]
+    assert third_blocked == ["transformer"]
+    reclaimed_companion, companion_blocked = (
+        _partition_pinned_primary_pairing_candidates(
+            host="dell",
+            pending=["huber", "momentum", "transformer"],
+            active={"random_forest": object(), "ridge_C5": object()},
+            complete=set(),
+        )
+    )
+    assert reclaimed_companion == ["momentum"]
+    assert companion_blocked == ["huber", "transformer"]
+    assert _admission_capacity_class(
+        host="dell",
+        family="momentum",
+        active={"random_forest": object(), "ridge_C5": object()},
+    ) == "PROTECTED_CAPACITY"
+    assert _admission_capacity_class(
+        host="dell",
+        family="huber",
+        active={"random_forest": object(), "momentum": object()},
+    ) == "OPPORTUNISTIC_CAPACITY"
+    assert _reported_pending_families(
+        queue=["random_forest", "momentum", "ridge_C5", "transformer"],
+        active={
+            "random_forest": object(),
+            "momentum": object(),
+            "ridge_C5": object(),
+        },
+        complete=set(),
+        failed={},
+        paused={},
+        deferred={},
+    ) == ["transformer"]
+
+
+def test_protected_rf_reconsideration_preempts_opportunistic_candidates() -> None:
+    active = {"momentum": object(), "elastic_net_C5": object()}
+    pending, blocked = _partition_pinned_primary_pairing_candidates(
+        host="dell",
+        pending=["random_forest", "ridge_C5", "huber"],
+        active=active,
+        complete=set(),
+    )
+
+    assert pending == ["random_forest"]
+    assert blocked == ["ridge_C5", "huber"]
+    assert _is_protected_capacity_reconsideration(
+        host="dell",
+        family="random_forest",
+        state={"terminal_state": "DEFERRED_RESOURCE_CAPACITY"},
+    )
+    assert _admission_capacity_class(
+        host="dell", family="random_forest", active=active
+    ) == "PROTECTED_CAPACITY"
+
+
+def test_full_worker_set_yields_lowest_priority_opportunistic_for_rf() -> None:
+    class Ledger:
+        @staticmethod
+        def status_payload() -> dict[str, object]:
+            return {
+                "workers": [
+                    {
+                        "owner": {"family": "momentum"},
+                        "capacity_class": "PROTECTED_CAPACITY",
+                    },
+                    {
+                        "owner": {"family": "huber"},
+                        "capacity_class": "OPPORTUNISTIC_CAPACITY",
+                    },
+                    {
+                        "owner": {"family": "elastic_net_C5"},
+                        "capacity_class": "OPPORTUNISTIC_CAPACITY",
+                    },
+                ]
+            }
+
+    active = {
+        "momentum": object(),
+        "huber": object(),
+        "elastic_net_C5": object(),
+    }
+    target = _opportunistic_lane_yield_target(active, Ledger())
+
+    assert target is not None
+    assert target[0] == "elastic_net_C5"
+
+
+def test_rf_free_slot_invariant_is_observable_and_hard_guards_take_priority() -> None:
+    violation = _protected_lane_invariant_violation(
+        host="dell",
+        active={"momentum": object(), "elastic_net_C5": object()},
+        pending=["random_forest", "ridge_C5"],
+        complete=set(),
+        maximum_workers=3,
+        available_physical_bytes=8 * 1024**3,
+        queued_reason={"classification": "UNEXPECTED_WAIT"},
+        scientifically_resumable=True,
+    )
+    hard_blocked = _protected_lane_invariant_violation(
+        host="dell",
+        active={"momentum": object(), "elastic_net_C5": object()},
+        pending=["random_forest"],
+        complete=set(),
+        maximum_workers=3,
+        available_physical_bytes=8 * 1024**3,
+        queued_reason={
+            "blocking_reasons": [
+                "PROJECTED_WINDOWS_JOB_COMMIT_ABOVE_24_GIB_LIMIT"
+            ]
+        },
+        scientifically_resumable=True,
+    )
+
+    assert violation is not None
+    assert violation["classification"] == "PROTECTED_LANE_INVARIANT_VIOLATION"
+    assert hard_blocked is None
+
+
+def test_pressure_priority_yields_opportunistic_then_control_before_rf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Ledger:
+        def __init__(self, rows: list[dict[str, object]]) -> None:
+            self.rows = rows
+
+        def status_payload(self) -> dict[str, object]:
+            return {"workers": self.rows}
+
+    monkeypatch.setattr(
+        clean_supervisor,
+        "_family_state",
+        lambda family: {
+            "metrics_cursor": 16_000 if family == "random_forest" else 300,
+            "completed_refits": ["x"] * (49 if family == "random_forest" else 1),
+        },
+    )
+    active = {
+        "random_forest": object(),
+        "momentum": object(),
+        "ridge_C5": object(),
+    }
+    rows = [
+        {
+            "owner": {"family": "random_forest"},
+            "capacity_class": "PROTECTED_CAPACITY",
+            "current_memory": {"resident_bytes": int(4.6 * 1024**3)},
+            "active_stage": "random_forest_score_matrix",
+        },
+        {
+            "owner": {"family": "momentum"},
+            "capacity_class": "PROTECTED_CAPACITY",
+            "current_memory": {"resident_bytes": int(1.3 * 1024**3)},
+            "active_stage": "momentum_score_matrix",
+        },
+        {
+            "owner": {"family": "ridge_C5"},
+            "capacity_class": "OPPORTUNISTIC_CAPACITY",
+            "current_memory": {"resident_bytes": int(0.8 * 1024**3)},
+            "active_stage": "ridge_C5_fit",
+        },
+    ]
+    assert list(_pressure_drain_target(active, Ledger(rows))) == ["ridge_C5"]
+    assert list(
+        _pressure_drain_target(
+            {"random_forest": object(), "momentum": object()},
+            Ledger(rows[:2]),
+        )
+    ) == ["momentum"]
 
 
 def test_resume_and_metric_keys_are_deterministic_and_idempotent() -> None:
