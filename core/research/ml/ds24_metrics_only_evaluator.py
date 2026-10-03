@@ -10,13 +10,19 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 
+from core.research.ml.ds24.incremental_evaluator_state import (
+    IncrementalV3SummaryState,
+    build_summary_state,
+    numerical_differences,
+)
 from core.research.ml.ds24.windows_safe_io import write_json_atomic
 
 
@@ -43,16 +49,19 @@ TRANSIENT_STORAGE_CONTRACT_V1_VERSION = "V1"
 MAX_TEMPORARY_DISK_BYTES_PER_WORKER = 1 * 1024**3
 PREFERRED_TEMPORARY_DISK_BYTES_PER_WORKER = 512 * 1024**2
 MAX_AGGREGATE_TOURNAMENT_TEMPORARY_DISK_BYTES = 3 * 1024**3
-MIN_EXECUTION_FREE_DISK_BYTES = 12 * 1024**3
-CLEAN_ADMISSION_FREE_DISK_BYTES = 15 * 1024**3
-THREE_WORKER_REACTIVATION_FREE_DISK_BYTES = 18 * 1024**3
-MIN_PROJECTED_POST_LAUNCH_FREE_DISK_BYTES = 15 * 1024**3
+MIN_EXECUTION_FREE_DISK_BYTES = 3 * 1024**3
+CLEAN_ADMISSION_FREE_DISK_BYTES = 4 * 1024**3
+THREE_WORKER_REACTIVATION_FREE_DISK_BYTES = 4 * 1024**3
+MIN_PROJECTED_POST_LAUNCH_FREE_DISK_BYTES = 4 * 1024**3
 TOP_N_COST_BPS_PER_UNIT_TURNOVER = 0.0
 TRADING_SESSIONS_PER_YEAR = 252
 NAMESPACE_WRITER_LEASE_NAME = "namespace_writer_lease.json"
 NAMESPACE_WRITER_ACQUIRE_LOCK_NAME = "namespace_writer_lease.acquire.lock.json"
 APPEND_COMMIT_LOCK_NAME = "append_commit.lock.json"
 CURRENT_PROCESS_CREATION_TIME = pd.Timestamp.now("UTC").isoformat()
+INCREMENTAL_EVALUATOR_STATE_VERSION = "DS24_INCREMENTAL_EVALUATOR_STATE_V1"
+INCREMENTAL_EVALUATOR_STATE_NAME = "evaluator_incremental_state_v1.json"
+INCREMENTAL_SUMMARY_ABSOLUTE_TOLERANCE = 1e-12
 
 
 PREDICTIVE_METRICS = [
@@ -285,7 +294,9 @@ class AtomicJsonProcessLock:
         self.purpose = purpose
         self.namespace = namespace
         self.timeout_seconds = float(timeout_seconds)
-        self.token = _lease_hash_parts(os.getpid(), time.time_ns(), path, purpose)
+        self.token = _lease_hash_parts(
+            os.getpid(), time.time_ns(), uuid4().hex, path, purpose
+        )
         self.payload: dict[str, Any] = {}
 
     def acquire(self) -> dict[str, Any]:
@@ -372,7 +383,13 @@ class NamespaceWriterLease:
         self.namespace = namespace or str(self.root.resolve())
         self.path = self.root / NAMESPACE_WRITER_LEASE_NAME
         self._acquire_lock_path = self.root / NAMESPACE_WRITER_ACQUIRE_LOCK_NAME
-        self.token = _lease_hash_parts(self.family, os.getpid(), time.time_ns(), self.namespace)
+        self.token = _lease_hash_parts(
+            self.family,
+            os.getpid(),
+            time.time_ns(),
+            uuid4().hex,
+            self.namespace,
+        )
         self.payload: dict[str, Any] = {}
 
     def acquire(self) -> dict[str, Any]:
@@ -1143,7 +1160,22 @@ def compute_per_t_metrics(
     *,
     top_n: int = 20,
     expected_assets: Sequence[str] | None = None,
+    expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if expected_assets is not None and expected_assets_by_timestamp is not None:
+        raise ValueError(
+            "Specify either expected_assets or expected_assets_by_timestamp, not both"
+        )
+    canonical_expected_assets = (
+        {
+            _canonical_pending_timestamp(timestamp, field="decision_timestamp"): tuple(
+                str(asset) for asset in assets
+            )
+            for timestamp, assets in expected_assets_by_timestamp.items()
+        }
+        if expected_assets_by_timestamp is not None
+        else None
+    )
     if predictions.empty:
         return pd.DataFrame(), pd.DataFrame()
     frame = predictions.copy()
@@ -1160,7 +1192,21 @@ def compute_per_t_metrics(
     metric_rows: list[dict[str, Any]] = []
     decision_rows: list[dict[str, Any]] = []
     for (family, timestamp), group in frame.groupby(["family", "decision_timestamp"], sort=True):
-        validation = validate_prediction_frame(group, expected_timestamp=timestamp, expected_assets=expected_assets)
+        timestamp_expected_assets = expected_assets
+        if canonical_expected_assets is not None:
+            timestamp_key = _canonical_pending_timestamp(
+                timestamp, field="decision_timestamp"
+            )
+            if timestamp_key not in canonical_expected_assets:
+                raise ValueError(
+                    f"Missing expected assets for prediction timestamp: {timestamp_key}"
+                )
+            timestamp_expected_assets = canonical_expected_assets[timestamp_key]
+        validation = validate_prediction_frame(
+            group,
+            expected_timestamp=timestamp,
+            expected_assets=timestamp_expected_assets,
+        )
         dist = score_distribution(group["prediction"])
         metric: dict[str, Any] = {
             "policy_id": POLICY_ID,
@@ -1168,8 +1214,16 @@ def compute_per_t_metrics(
             "family": family,
             "decision_timestamp": pd.Timestamp(timestamp).isoformat(),
             "prediction_rows_generated": int(len(group)),
-            "eligible_assets": int(len(expected_assets) if expected_assets is not None else group["asset_id"].nunique()),
-            "prediction_coverage": float(len(group) / len(expected_assets)) if expected_assets else 1.0,
+            "eligible_assets": int(
+                len(timestamp_expected_assets)
+                if timestamp_expected_assets is not None
+                else group["asset_id"].nunique()
+            ),
+            "prediction_coverage": (
+                float(len(group) / len(timestamp_expected_assets))
+                if timestamp_expected_assets
+                else 1.0
+            ),
             "missing_prediction_count": validation["missing_prediction_count"],
             "duplicate_prediction_count": validation["duplicate_prediction_count"],
             **dist,
@@ -1289,6 +1343,8 @@ def resolved_v2_expected_columns() -> list[str]:
         "expected_target_available_timestamp",
         "evaluation_contract_id",
         "evaluation_contract_hash",
+        "attempt_generation",
+        "clean_source_hash",
     ]
 
 
@@ -1351,6 +1407,8 @@ def build_pending_score_frame(
             "expected_target_available_timestamp": expected.map(lambda ts: ts.isoformat()),
             "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V2_ID,
             "evaluation_contract_hash": resolved_performance_contract_v2_hash(),
+            "attempt_generation": str((metadata or {}).get("attempt_generation", "") or ""),
+            "clean_source_hash": str((metadata or {}).get("clean_source_hash", "") or ""),
         }
     )
     return out[resolved_v2_expected_columns()]
@@ -1374,20 +1432,165 @@ def build_pending_score_frame_v3(
     return out[resolved_v3_expected_columns()]
 
 
+def _canonical_pending_boolean(value: Any) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"true", "1"}:
+        return True
+    if text in {"false", "0"}:
+        return False
+    raise ValueError("RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_BOOLEAN")
+
+
+def _canonical_pending_integer(value: Any, *, field: str) -> int:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_{field.upper()}"
+        ) from exc
+    if not math.isfinite(numeric) or not numeric.is_integer():
+        raise ValueError(
+            f"RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_{field.upper()}"
+        )
+    return int(numeric)
+
+
+def _canonical_pending_timestamp(value: Any, *, field: str) -> str:
+    timestamp = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(timestamp):
+        raise ValueError(
+            f"RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_{field.upper()}"
+        )
+    return pd.Timestamp(timestamp).isoformat()
+
+
+def _canonical_pending_payload(group: pd.DataFrame) -> pd.DataFrame:
+    """Return the complete scientific payload used for replay comparison."""
+
+    required = {
+        "score",
+        "score_rank",
+        "eligible",
+        "model_vintage_id",
+        "model_hash",
+        "preprocessing_hash",
+        "policy_hash",
+        "training_cutoff",
+        "target_id",
+        "target_horizon_minutes",
+        "expected_target_available_timestamp",
+        "evaluation_contract_id",
+        "evaluation_contract_hash",
+    }
+    missing = sorted(required - set(group.columns))
+    if missing:
+        raise ValueError(
+            f"RESOLVED_PERFORMANCE_V2_MISSING_PENDING_SCORE_COLUMNS:{missing}"
+        )
+    scores = pd.to_numeric(group["score"], errors="coerce")
+    if scores.isna().any() or not np.isfinite(scores.to_numpy(dtype=float)).all():
+        raise ValueError("RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_SCORE")
+    canonical = pd.DataFrame(index=group.index)
+    canonical["score"] = scores.astype(float)
+    canonical["score_rank"] = group["score_rank"].map(
+        lambda value: _canonical_pending_integer(value, field="score_rank")
+    )
+    canonical["eligible"] = group["eligible"].map(_canonical_pending_boolean)
+    for field in (
+        "model_vintage_id",
+        "model_hash",
+        "preprocessing_hash",
+        "policy_hash",
+        "target_id",
+        "evaluation_contract_id",
+        "evaluation_contract_hash",
+    ):
+        canonical[field] = group[field].fillna("").astype(str)
+    canonical["training_cutoff"] = group["training_cutoff"].map(
+        lambda value: _canonical_pending_timestamp(value, field="training_cutoff")
+    )
+    canonical["target_horizon_minutes"] = group["target_horizon_minutes"].map(
+        lambda value: _canonical_pending_integer(
+            value, field="target_horizon_minutes"
+        )
+    )
+    canonical["expected_target_available_timestamp"] = group[
+        "expected_target_available_timestamp"
+    ].map(
+        lambda value: _canonical_pending_timestamp(
+            value, field="expected_target_available_timestamp"
+        )
+    )
+    return canonical
+
+
+def _attempt_generation_order(value: Any) -> int:
+    text = "" if value is None or pd.isna(value) else str(value).strip()
+    if not text:
+        return -1
+    try:
+        generation = int(text)
+    except ValueError as exc:
+        raise ValueError(
+            "RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_ATTEMPT_GENERATION"
+        ) from exc
+    if generation < 0:
+        raise ValueError(
+            "RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_ATTEMPT_GENERATION"
+        )
+    return generation
+
+
 def deduplicate_pending_scores(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame
     work = frame.copy()
     key_cols = ["family", "decision_timestamp", "asset_id"]
+    # Parquet restores timestamps as Timestamp values while a replayed batch is
+    # built with ISO strings.  Canonicalise before key comparison so an
+    # interrupted commit cannot reintroduce the same prediction under a
+    # representation-only difference.
+    work["family"] = work["family"].astype(str)
+    work["decision_timestamp"] = _normalise_timestamp_series(
+        work["decision_timestamp"]
+    )
+    work["asset_id"] = work["asset_id"].astype(str)
+    if work["decision_timestamp"].isna().any():
+        raise ValueError(
+            "RESOLVED_PERFORMANCE_V2_INVALID_PENDING_SCORE_DECISION_TIMESTAMP"
+        )
+    if "attempt_generation" not in work:
+        work["attempt_generation"] = ""
+    else:
+        work["attempt_generation"] = work["attempt_generation"].map(
+            lambda value: "" if value is None or pd.isna(value) else str(value)
+        )
+    if "clean_source_hash" not in work:
+        work["clean_source_hash"] = ""
+    else:
+        work["clean_source_hash"] = work["clean_source_hash"].fillna("").astype(str)
     duplicated = work.duplicated(key_cols, keep=False)
     if not duplicated.any():
         return work
-    value_cols = ["score", "model_hash", "preprocessing_hash", "policy_hash", "training_cutoff", "target_id"]
     for _, group in work[duplicated].groupby(key_cols, sort=False):
-        comparable = group[value_cols].astype(str).drop_duplicates()
+        comparable = _canonical_pending_payload(group).drop_duplicates()
         if len(comparable) > 1:
             raise ValueError("RESOLVED_PERFORMANCE_V2_CONFLICTING_DUPLICATE_PENDING_SCORE_KEYS")
-    return work.drop_duplicates(key_cols, keep="last").copy()
+    work["_attempt_generation_order"] = work["attempt_generation"].map(
+        _attempt_generation_order
+    )
+    work["_pending_input_order"] = np.arange(len(work), dtype=np.int64)
+    work = work.sort_values(
+        [*key_cols, "_attempt_generation_order", "_pending_input_order"],
+        kind="mergesort",
+    )
+    work = work.drop_duplicates(key_cols, keep="last")
+    work = work.sort_values("_pending_input_order", kind="mergesort")
+    return work.drop(
+        columns=["_attempt_generation_order", "_pending_input_order"]
+    ).copy()
 
 
 def _target_identity_checked(targets: pd.DataFrame) -> pd.DataFrame:
@@ -1481,8 +1684,109 @@ def _ic_values(resolved: pd.DataFrame) -> dict[str, Any]:
 def _turnover(new_weights: Mapping[str, float], previous_weights: Mapping[str, float]) -> float:
     if not previous_weights:
         return 0.0
-    assets = set(new_weights) | set(previous_weights)
-    return float(0.5 * sum(abs(float(new_weights.get(asset, 0.0)) - float(previous_weights.get(asset, 0.0))) for asset in assets))
+    assets = sorted(set(new_weights) | set(previous_weights))
+    return float(
+        0.5
+        * math.fsum(
+            abs(
+                float(new_weights.get(asset, 0.0))
+                - float(previous_weights.get(asset, 0.0))
+            )
+            for asset in assets
+        )
+    )
+
+
+def _reconcile_legacy_orphaned_sleeve_replay(
+    sleeves: pd.DataFrame,
+    transaction_costs: pd.DataFrame,
+    *,
+    existing_sleeves: pd.DataFrame,
+    committed_timestamps: set[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    """Reuse a scientifically equal legacy side row after a partial commit.
+
+    Legacy turnover used unordered set summation, so a different Python hash
+    seed could change its final bits across processes. Durable orphaned rows
+    remain authoritative when turnover-derived fields are the only differences
+    and each is within a strict floating-point rounding tolerance. All other
+    fields still require exact equality and therefore fail closed downstream.
+    """
+
+    if sleeves.empty or existing_sleeves.empty:
+        return sleeves, transaction_costs, 0
+    existing = existing_sleeves.copy()
+    existing_decisions = _normalise_timestamp_series(
+        existing["decision_timestamp"]
+    ).map(lambda value: value.isoformat())
+    existing = existing[~existing_decisions.isin(committed_timestamps)].copy()
+    if existing.empty:
+        return sleeves, transaction_costs, 0
+    keys = ("family", "decision_timestamp", "sleeve_id")
+    existing_by_key = {
+        _canonical_parquet_log_key(row, keys): row
+        for row in existing.to_dict(orient="records")
+    }
+    replay = sleeves.copy()
+    costs = transaction_costs.copy()
+    rounding_fields = {
+        "turnover",
+        "transaction_cost_contribution",
+        "net_return_contribution",
+    }
+    reconciled = 0
+    for index, incoming in replay.iterrows():
+        payload = incoming.to_dict()
+        key = _canonical_parquet_log_key(payload, keys)
+        prior = existing_by_key.get(key)
+        if prior is None or str(prior.get("row_hash")) == str(payload.get("row_hash")):
+            continue
+        differing = {
+            column
+            for column in set(prior) | set(payload)
+            if column != "row_hash"
+            and not (
+                pd.isna(prior.get(column))
+                and pd.isna(payload.get(column))
+            )
+            and prior.get(column) != payload.get(column)
+        }
+        if not differing or not differing <= rounding_fields:
+            continue
+        if any(
+            not math.isclose(
+                float(prior[column]),
+                float(payload[column]),
+                rel_tol=0.0,
+                abs_tol=1e-15,
+            )
+            for column in differing
+        ):
+            continue
+        for column, value in prior.items():
+            if column in replay.columns:
+                replay.at[index, column] = value
+        if not costs.empty:
+            cost_match = (
+                (costs["family"].astype(str) == key[0])
+                & (
+                    _normalise_timestamp_series(costs["decision_timestamp"]).map(
+                        lambda value: value.isoformat()
+                    )
+                    == key[1]
+                )
+                & (costs["sleeve_id"].astype(str) == key[2])
+            )
+            for cost_index in costs.index[cost_match]:
+                costs.at[cost_index, "turnover"] = prior["turnover"]
+                costs.at[cost_index, "transaction_cost_contribution"] = prior[
+                    "transaction_cost_contribution"
+                ]
+                cost_payload = costs.loc[cost_index].to_dict()
+                cost_payload.pop("row_hash", None)
+                costs.at[cost_index, "row_hash"] = stable_hash(cost_payload)
+        reconciled += 1
+    return replay, costs, reconciled
 
 
 def resolve_pending_score_frame(
@@ -1839,6 +2143,8 @@ def resolve_pending_score_frame_v3(
     top_n: int = 20,
     existing_rank_ic: pd.DataFrame | None = None,
     existing_sleeves: pd.DataFrame | None = None,
+    existing_rank_hashes: Mapping[str, str] | None = None,
+    initial_sleeve_weights: Mapping[int, Mapping[str, float]] | None = None,
     terminal_timestamp: pd.Timestamp | str | None = None,
     min_rank_ic_cross_section: int = DEFAULT_V3_MIN_RANK_IC_CROSS_SECTION,
     audit_sample_rows: int = DEFAULT_V3_AUDIT_SAMPLE_ROWS_PER_TIMESTAMP,
@@ -1876,15 +2182,24 @@ def resolve_pending_score_frame_v3(
     if bool(chronology.any()):
         raise ValueError(f"RESOLVED_PERFORMANCE_V3_TARGET_CHRONOLOGY_VIOLATION:{int(chronology.sum())}")
 
-    existing_hashes: dict[str, str] = {}
-    if existing_rank_ic is not None and not existing_rank_ic.empty and "decision_timestamp" in existing_rank_ic:
+    existing_hashes: dict[str, str] = dict(existing_rank_hashes or {})
+    if not existing_hashes and existing_rank_ic is not None and not existing_rank_ic.empty and "decision_timestamp" in existing_rank_ic:
         existing_hashes = dict(
             zip(
                 _normalise_timestamp_series(existing_rank_ic["decision_timestamp"]).map(lambda ts: ts.isoformat()),
                 existing_rank_ic.get("row_hash", pd.Series([""] * len(existing_rank_ic))).astype(str),
             )
         )
-    sleeve_weights = _latest_sleeve_weights(existing_sleeves, sleeve_count=sleeve_count)
+    sleeve_weights = (
+        {
+            int(sleeve_id): {str(asset): float(weight) for asset, weight in weights.items()}
+            for sleeve_id, weights in initial_sleeve_weights.items()
+        }
+        if initial_sleeve_weights is not None
+        else _latest_sleeve_weights(existing_sleeves, sleeve_count=sleeve_count)
+    )
+    for sleeve_id in range(int(sleeve_count)):
+        sleeve_weights.setdefault(sleeve_id, {})
     rank_rows: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
     sleeve_rows: list[dict[str, Any]] = []
@@ -1905,17 +2220,17 @@ def resolve_pending_score_frame_v3(
             remaining_parts.append(original_pending)
             continue
         if should_censor:
-            terminal_rows.append(
-                {
-                    "family": str(family),
-                    "decision_timestamp": decision.isoformat(),
-                    "resolution_timestamp": resolution.isoformat(),
-                    "terminal_censored_count": int(len(group)),
-                    "pending_score_hash": stable_hash(original_pending[resolved_v3_expected_columns()].to_dict(orient="split")),
-                    "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
-                    "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
-                }
-            )
+            terminal_row = {
+                "family": str(family),
+                "decision_timestamp": decision.isoformat(),
+                "resolution_timestamp": resolution.isoformat(),
+                "terminal_censored_count": int(len(group)),
+                "pending_score_hash": stable_hash(original_pending[resolved_v3_expected_columns()].to_dict(orient="split")),
+                "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
+                "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
+            }
+            terminal_row["row_hash"] = stable_hash(terminal_row)
+            terminal_rows.append(terminal_row)
             continue
         trainable = group["target_is_trainable"].fillna(False).astype(bool)
         available = group["target_available_timestamp"].notna() & (group["target_available_timestamp"] <= resolution)
@@ -1937,7 +2252,6 @@ def resolve_pending_score_frame_v3(
         sleeve_id = _sleeve_id_for_timestamp(decision, sleeve_count=sleeve_count)
         selected_weights = {asset: 1.0 / len(top_assets) for asset in top_assets} if top_assets else {}
         turnover = _turnover(selected_weights, sleeve_weights.get(sleeve_id, {}))
-        sleeve_weights[sleeve_id] = selected_weights
         sleeve_capital = 1.0 / int(sleeve_count)
         transaction_cost = turnover * (float(transaction_cost_bps_per_unit_turnover) / 10000.0) * sleeve_capital
         gross_contribution = top_gross * sleeve_capital if top_gross is not None else None
@@ -1970,6 +2284,7 @@ def resolve_pending_score_frame_v3(
                 raise RuntimeError("RESOLVED_PERFORMANCE_V3_DUPLICATE_TIMESTAMP_HASH_MISMATCH")
             skipped_existing += 1
             continue
+        sleeve_weights[sleeve_id] = selected_weights
         rank_rows.append(rank_row)
         for side, selected in (("TOP", top), ("BOTTOM", bottom)):
             weight = (1.0 / len(selected)) if len(selected) else 0.0
@@ -2376,11 +2691,68 @@ class ResolvedPerformanceV3Writer:
     sleeve_count: int = DEFAULT_V3_SLEEVE_COUNT
     audit_sample_rows: int = DEFAULT_V3_AUDIT_SAMPLE_ROWS_PER_TIMESTAMP
     transaction_cost_bps_per_unit_turnover: float = TOP_N_COST_BPS_PER_UNIT_TURNOVER
+    _log_cache: ParquetLogHistoryCache = field(init=False, repr=False)
+    _bootstrapped: bool = field(default=False, init=False, repr=False)
+    _summary_state: IncrementalV3SummaryState = field(init=False, repr=False)
+    _committed_rank_hashes: dict[str, str] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _latest_sleeve_weights: dict[int, dict[str, float]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _unpublished_daily_sleeves: pd.DataFrame = field(
+        default_factory=pd.DataFrame, init=False, repr=False
+    )
+    _orphaned_sleeves: pd.DataFrame = field(
+        default_factory=pd.DataFrame, init=False, repr=False
+    )
+    _pending_ledger_resolutions: set[str] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _bootstrap_disposition: str = field(default="", init=False, repr=False)
+    _bootstrap_duration_seconds: float = field(default=0.0, init=False, repr=False)
+    _persisted_authority_identity: dict[str, str] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _batch_log_frames: dict[str, list[pd.DataFrame]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_pending_after: pd.DataFrame | None = field(
+        default=None, init=False, repr=False
+    )
+    _batch_failed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
+        self._log_cache = ParquetLogHistoryCache(self.root)
         publish_resolved_performance_contract_v3(self.contract_path)
         publish_transient_storage_contract_v1(self.transient_storage_contract_path)
+
+    @property
+    def incremental_state_path(self) -> Path:
+        return self.root / INCREMENTAL_EVALUATOR_STATE_NAME
+
+    @property
+    def incremental_identity(self) -> dict[str, Any]:
+        run_id = next(
+            (
+                part
+                for part in self.root.resolve().parts
+                if part.startswith("DS24_CLEAN_V2_TOURNAMENT_")
+            ),
+            self.root.parent.name,
+        )
+        return {
+            "run_id": run_id,
+            "family": self.family,
+            "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
+            "top_n": int(self.top_n),
+            "sleeve_count": int(self.sleeve_count),
+            "minimum_rank_ic_cross_section": int(self.min_rank_ic_cross_section),
+            "transaction_cost_bps_per_unit_turnover": float(
+                self.transaction_cost_bps_per_unit_turnover
+            ),
+        }
 
     @property
     def contract_path(self) -> Path:
@@ -2412,7 +2784,490 @@ class ResolvedPerformanceV3Writer:
         return pd.DataFrame()
 
     def _read_log(self, stem: str) -> pd.DataFrame:
-        return read_parquet_log(self.root, stem)
+        return self._log_cache.read(stem)
+
+    @staticmethod
+    def _indexed_log_contracts() -> dict[
+        str, tuple[tuple[str, ...], str, tuple[str, ...]]
+    ]:
+        return {
+            "rank_ic_v3": (
+                ("family", "decision_timestamp"),
+                "row_hash",
+                ("family", "decision_timestamp"),
+            ),
+            "decision_trace_v3": (
+                ("family", "decision_timestamp", "side", "rank", "asset_id"),
+                "row_hash",
+                ("family", "decision_timestamp"),
+            ),
+            "sleeve_maturity_ledger_v3": (
+                ("family", "decision_timestamp", "sleeve_id"),
+                "row_hash",
+                ("family", "decision_timestamp", "sleeve_id"),
+            ),
+            "transaction_costs_v3": (
+                ("family", "decision_timestamp", "sleeve_id"),
+                "row_hash",
+                ("family", "decision_timestamp", "sleeve_id"),
+            ),
+            "rank_ic_audit_sample_v3": (
+                (
+                    "family",
+                    "decision_timestamp",
+                    "audit_sample_ordinal",
+                    "asset_id",
+                ),
+                "pair_hash",
+                ("family", "decision_timestamp"),
+            ),
+            "terminal_censored_v3": (
+                ("family", "decision_timestamp"),
+                "row_hash",
+                ("family", "decision_timestamp"),
+            ),
+            "daily_portfolio_returns_v3": (
+                ("session_date",),
+                "daily_return_hash",
+                ("session_date",),
+            ),
+            "refit_events_v3": (
+                ("family", "training_cutoff", "model_hash"),
+                "row_hash",
+                ("family", "training_cutoff", "model_hash"),
+            ),
+        }
+
+    @classmethod
+    def _all_log_stems(cls) -> tuple[str, ...]:
+        return (
+            *cls._indexed_log_contracts(),
+            "pending_outcome_ledger_v3",
+        )
+
+    def _bootstrap_incremental_state(self, *, force_rebuild: bool = False) -> None:
+        if self._bootstrapped:
+            return
+        bootstrap_started = time.perf_counter()
+        frames = {
+            stem: self._read_log(stem)
+            for stem in self._all_log_stems()
+        }
+        for stem, (
+            key_cols,
+            hash_col,
+            group_cols,
+        ) in self._indexed_log_contracts().items():
+            self._log_cache.ensure_key_index(
+                stem,
+                key_cols=key_cols,
+                hash_col=hash_col,
+                group_cols=group_cols,
+                frame=frames[stem],
+            )
+
+        rank = frames["rank_ic_v3"]
+        committed_timestamps: set[str] = set()
+        self._committed_rank_hashes = {}
+        if not rank.empty:
+            timestamps = _normalise_timestamp_series(rank["decision_timestamp"])
+            for timestamp, row_hash in zip(
+                timestamps, rank["row_hash"].astype(str), strict=True
+            ):
+                timestamp_text = timestamp.isoformat()
+                committed_timestamps.add(timestamp_text)
+                self._committed_rank_hashes[timestamp_text] = row_hash
+
+        sleeves = frames["sleeve_maturity_ledger_v3"]
+        committed_sleeves = sleeves
+        if not sleeves.empty:
+            sleeve_timestamps = _normalise_timestamp_series(
+                sleeves["decision_timestamp"]
+            ).map(lambda value: value.isoformat())
+            committed_sleeves = sleeves[
+                sleeve_timestamps.isin(committed_timestamps)
+            ].copy()
+            self._orphaned_sleeves = sleeves[
+                ~sleeve_timestamps.isin(committed_timestamps)
+            ].copy()
+        self._latest_sleeve_weights = _latest_sleeve_weights(
+            committed_sleeves, sleeve_count=self.sleeve_count
+        )
+
+        daily = frames["daily_portfolio_returns_v3"]
+        published_daily_dates = (
+            set(daily["session_date"].astype(str))
+            if not daily.empty and "session_date" in daily
+            else set()
+        )
+        self._unpublished_daily_sleeves = pd.DataFrame()
+        if not committed_sleeves.empty:
+            maturity_dates = committed_sleeves.get(
+                "maturity_session_date",
+                _normalise_timestamp_series(
+                    committed_sleeves["maturity_timestamp"]
+                ).dt.date.astype(str),
+            ).astype(str)
+            self._unpublished_daily_sleeves = committed_sleeves[
+                ~maturity_dates.isin(published_daily_dates)
+            ].copy()
+
+        terminal = frames["terminal_censored_v3"]
+        pending_ledger = frames["pending_outcome_ledger_v3"]
+        if not pending_ledger.empty and "resolution_timestamp" in pending_ledger:
+            self._pending_ledger_resolutions = set(
+                _normalise_timestamp_series(
+                    pending_ledger["resolution_timestamp"]
+                )
+                .dropna()
+                .map(lambda value: value.isoformat())
+            )
+        self._summary_state = build_summary_state(
+            rank,
+            daily,
+            committed_sleeves,
+            terminal,
+        )
+        durable_cursors = {
+            stem: self._log_cache.row_count(stem)
+            for stem in self._all_log_stems()
+        }
+        prior = _read_json_mapping(self.incremental_state_path)
+        self._persisted_authority_identity = {
+            str(key): str(value)
+            for key, value in dict(
+                prior.get("authority_identity", {}) if prior else {}
+            ).items()
+        }
+        self._bootstrap_disposition = "BOOTSTRAPPED_FROM_DURABLE_LOGS"
+        if prior and not force_rebuild:
+            if prior.get("schema_version") != INCREMENTAL_EVALUATOR_STATE_VERSION:
+                self._bootstrap_disposition = "REBUILT_SCHEMA_MISMATCH"
+            elif prior.get("identity") != self.incremental_identity:
+                raise RuntimeError("INCREMENTAL_EVALUATOR_STATE_IDENTITY_MISMATCH")
+            else:
+                prior_cursors = {
+                    str(key): int(value)
+                    for key, value in dict(prior.get("durable_log_rows", {})).items()
+                }
+                if any(
+                    prior_cursors.get(stem, 0) > count
+                    for stem, count in durable_cursors.items()
+                ):
+                    raise RuntimeError("INCREMENTAL_EVALUATOR_STATE_AHEAD_OF_DURABLE_LOGS")
+                cursors_equal = all(
+                    prior_cursors.get(stem, 0) == count
+                    for stem, count in durable_cursors.items()
+                )
+                if cursors_equal:
+                    if str(prior.get("summary_state_hash", "")) != self._summary_state.state_identity():
+                        raise RuntimeError(
+                            "INCREMENTAL_EVALUATOR_STATE_HASH_CONFLICT"
+                        )
+                    self._bootstrap_disposition = "VALIDATED_DURABLE_STATE"
+                else:
+                    self._bootstrap_disposition = (
+                        "REBUILT_AFTER_INTERRUPTED_COMMIT"
+                    )
+        for stem in frames:
+            self._log_cache.release_frame(stem)
+        self._bootstrap_duration_seconds = time.perf_counter() - bootstrap_started
+        self._bootstrapped = True
+
+    def verify_or_rebuild_incremental_state(
+        self, *, rebuild: bool = False
+    ) -> dict[str, Any]:
+        """Deep-scan durable logs and optionally republish derived state.
+
+        This method is intentionally outside the scoring hot path.  It is the
+        manual repair/verification surface for manifests, summaries and the
+        restart state after an operator has isolated the namespace writer.
+        """
+
+        self._bootstrap_incremental_state(force_rebuild=rebuild)
+        published_summary = _read_json_mapping(self.summary_path)
+        created_at = str(
+            published_summary.get("created_at_utc", "") or _utc_now_iso()
+        )
+        rebuilt_summary = self._summary_state.to_summary(
+            evaluation_contract_id=RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
+            evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+            evaluation_contract_version=RESOLVED_PERFORMANCE_CONTRACT_V3_VERSION,
+            sleeve_count=self.sleeve_count,
+            pending_rows=int(len(self._read_existing(self.pending_scores_path))),
+            created_at_utc=created_at,
+        )
+        summary_differences = numerical_differences(
+            published_summary,
+            rebuilt_summary,
+            absolute_tolerance=INCREMENTAL_SUMMARY_ABSOLUTE_TOLERANCE,
+        ) if published_summary else []
+        manifest_differences: list[dict[str, Any]] = []
+        for stem in self._all_log_stems():
+            paths = parquet_log_part_paths(self.root, stem)
+            actual_rows = sum(parquet_rows(path) for path in paths)
+            actual_bytes = sum(
+                int(os.path.getsize(openable_path(path))) for path in paths
+            )
+            manifest = _read_parquet_log_manifest(self.root, stem)
+            expected = {
+                "part_count": int(manifest.get("part_count", 0) or 0),
+                "total_rows": int(manifest.get("total_rows", 0) or 0),
+                "total_bytes": int(manifest.get("total_bytes", 0) or 0),
+            }
+            actual = {
+                "part_count": len(paths),
+                "total_rows": actual_rows,
+                "total_bytes": actual_bytes,
+            }
+            if expected != actual:
+                manifest_differences.append(
+                    {"stem": stem, "manifest": expected, "durable": actual}
+                )
+        if rebuild:
+            for stem in self._all_log_stems():
+                self._log_cache.rebuild_compact_manifest(stem)
+            pending = self._read_existing(self.pending_scores_path)
+            resolution = (
+                pd.Timestamp(max(self._committed_rank_hashes)).tz_convert("UTC")
+                if self._committed_rank_hashes
+                else pd.Timestamp.now("UTC")
+            )
+            self._persist_incremental_state(
+                metadata=self._persisted_authority_identity,
+                resolution_timestamp=resolution,
+                pending_after=pending,
+            )
+            write_json_atomic(self.summary_path, rebuilt_summary, advisory=False)
+        return {
+            "status": (
+                "REBUILT"
+                if rebuild
+                else (
+                    "VALID"
+                    if not summary_differences and not manifest_differences
+                    else "INVALID"
+                )
+            ),
+            "rebuild_performed": bool(rebuild),
+            "summary_differences": summary_differences,
+            "manifest_differences": manifest_differences,
+            "durable_log_rows": {
+                stem: self._log_cache.row_count(stem)
+                for stem in self._all_log_stems()
+            },
+            "summary_state_hash": self._summary_state.state_identity(),
+            "bootstrap_part_reads": self._log_cache.bootstrap_part_reads,
+            "bootstrap_rows_read": self._log_cache.bootstrap_rows_read,
+            "bootstrap_duration_seconds": self._bootstrap_duration_seconds,
+        }
+
+    def _append_indexed_log(
+        self,
+        stem: str,
+        frame: pd.DataFrame,
+        *,
+        timestamp_col: str = "decision_timestamp",
+    ) -> tuple[dict[str, Any], pd.DataFrame]:
+        key_cols, hash_col, group_cols = self._indexed_log_contracts()[stem]
+        retained = self._log_cache.retain_new_rows(
+            stem,
+            frame,
+            key_cols=key_cols,
+            hash_col=hash_col,
+            group_cols=group_cols,
+        )
+        if retained.empty:
+            return (
+                {"appended": False, "rows": 0, "bytes": 0, "parts": []},
+                retained,
+            )
+        if self._batch_log_frames is not None:
+            # Batch mode retains the same row-level idempotency indexes as the
+            # single-timestamp writer, but delays physical publication until
+            # the session boundary.  Subsequent timestamps therefore observe
+            # the exact state they would have seen after a durable append.
+            self._log_cache.record_key_rows(stem, retained)
+            self._batch_log_frames.setdefault(stem, []).append(retained.copy())
+            return (
+                {
+                    "appended": True,
+                    "rows": int(len(retained)),
+                    "bytes": 0,
+                    "parts": [],
+                    "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+                },
+                retained,
+            )
+        publication = append_parquet_log_idempotent(
+            self.root,
+            stem,
+            retained,
+            key_cols=key_cols,
+            hash_col=hash_col,
+            group_cols=group_cols,
+            timestamp_col=timestamp_col,
+            temp_root=self.transient_root,
+            history_cache=self._log_cache,
+        )
+        return publication, retained
+
+    def _append_pending_ledger_log(
+        self, frame: pd.DataFrame
+    ) -> dict[str, Any]:
+        if frame.empty:
+            return {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+        if self._batch_log_frames is not None:
+            self._batch_log_frames.setdefault(
+                "pending_outcome_ledger_v3", []
+            ).append(frame.copy())
+            return {
+                "appended": True,
+                "rows": int(len(frame)),
+                "bytes": 0,
+                "parts": [],
+                "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+            }
+        publication = append_parquet_log(
+            self.root,
+            "pending_outcome_ledger_v3",
+            frame,
+            timestamp_col="resolution_timestamp",
+            temp_root=self.transient_root,
+            history_cache=self._log_cache,
+        )
+        self._log_cache.record_publication(
+            "pending_outcome_ledger_v3", publication
+        )
+        return publication
+
+    def _flush_batch_logs(self) -> dict[str, dict[str, Any]]:
+        if self._batch_log_frames is None:
+            return {}
+        # Every timestamp was evaluated sequentially before reaching here.
+        # Side evidence is durable before the rank-IC marker.  A restart can
+        # consequently distinguish a complete batch from orphaned side rows.
+        publication_order = (
+            "decision_trace_v3",
+            "sleeve_maturity_ledger_v3",
+            "transaction_costs_v3",
+            "rank_ic_audit_sample_v3",
+            "terminal_censored_v3",
+            "rank_ic_v3",
+            "pending_outcome_ledger_v3",
+            "refit_events_v3",
+            "daily_portfolio_returns_v3",
+        )
+        publications: dict[str, dict[str, Any]] = {}
+        for stem in publication_order:
+            frames = self._batch_log_frames.get(stem, [])
+            if not frames:
+                publications[stem] = {
+                    "appended": False,
+                    "rows": 0,
+                    "bytes": 0,
+                    "parts": [],
+                }
+                continue
+            frame = pd.concat(frames, ignore_index=True)
+            timestamp_col = (
+                "resolution_timestamp"
+                if stem == "pending_outcome_ledger_v3"
+                else (
+                    "session_date"
+                    if stem == "daily_portfolio_returns_v3"
+                    else "decision_timestamp"
+                )
+            )
+            publication = append_parquet_log(
+                self.root,
+                stem,
+                frame,
+                timestamp_col=timestamp_col,
+                temp_root=self.transient_root,
+                history_cache=self._log_cache,
+            )
+            # Indexed keys were recorded when each timestamp was evaluated.
+            # Only durable counters and the evidence chain advance here.
+            self._log_cache.record_publication(stem, publication)
+            publications[stem] = publication
+        return publications
+
+    def _persist_incremental_state(
+        self,
+        *,
+        metadata: Mapping[str, Any] | None,
+        resolution_timestamp: pd.Timestamp,
+        pending_after: pd.DataFrame,
+    ) -> None:
+        metadata = metadata or {}
+        identity_fields = {
+            key: str(metadata.get(key, "") or "")
+            for key in (
+                "feature_authority_hash",
+                "target_authority_hash",
+                "target_contract_hash",
+                "static_authority_bundle_sha256",
+                "clean_source_hash",
+                "attempt_generation",
+            )
+        }
+        for key in (
+            "feature_authority_hash",
+            "target_authority_hash",
+            "target_contract_hash",
+            "static_authority_bundle_sha256",
+        ):
+            previous = self._persisted_authority_identity.get(key, "")
+            current = identity_fields.get(key, "")
+            if previous and current and previous != current:
+                raise RuntimeError(
+                    f"INCREMENTAL_EVALUATOR_AUTHORITY_IDENTITY_MISMATCH:{key}"
+                )
+        payload = {
+            "schema_version": INCREMENTAL_EVALUATOR_STATE_VERSION,
+            "identity": self.incremental_identity,
+            "authority_identity": identity_fields,
+            "durable_log_rows": {
+                stem: self._log_cache.row_count(stem)
+                for stem in self._all_log_stems()
+            },
+            "durable_log_manifest_state": {
+                stem: self._log_cache.manifest_state(stem)
+                for stem in self._all_log_stems()
+            },
+            "committed_timestamp_count": len(self._committed_rank_hashes),
+            "last_committed_timestamp": max(self._committed_rank_hashes, default=""),
+            "pending_score_rows": int(len(pending_after)),
+            "pending_score_hash": stable_hash(
+                pending_after.to_dict(orient="split")
+            ),
+            "summary_state_hash": self._summary_state.state_identity(),
+            "summary_checkpoint": {
+                "rank_rows": self._summary_state.rank_rows,
+                "rank_ic_valid_rows": self._summary_state.rank_ic.count,
+                "daily_return_rows": self._summary_state.daily_rows,
+                "terminal_censored_rows": (
+                    self._summary_state.terminal_censored_rows
+                ),
+                "first_resolved_decision_timestamp": (
+                    self._summary_state.first_resolved_decision_timestamp
+                ),
+                "last_resolved_decision_timestamp": (
+                    self._summary_state.last_resolved_decision_timestamp
+                ),
+            },
+            "bootstrap_disposition": self._bootstrap_disposition,
+            "bootstrap_part_reads": self._log_cache.bootstrap_part_reads,
+            "bootstrap_rows_read": self._log_cache.bootstrap_rows_read,
+            "bootstrap_duration_seconds": self._bootstrap_duration_seconds,
+            "last_resolution_timestamp": pd.Timestamp(resolution_timestamp)
+            .tz_convert("UTC")
+            .isoformat(),
+            "updated_at_utc": _utc_now_iso(),
+        }
+        write_json_atomic(self.incremental_state_path, payload, advisory=False)
+        self._persisted_authority_identity = identity_fields
 
     def _append_refit_event(self, predictions: pd.DataFrame, metadata: Mapping[str, Any] | None) -> dict[str, Any]:
         metadata = metadata or {}
@@ -2422,20 +3277,16 @@ class ResolvedPerformanceV3Writer:
         diffs = timestamps.drop_duplicates().diff().dropna().dt.total_seconds().astype(int)
         five_minute = bool(diffs.empty or (diffs % (DEFAULT_DECISION_CADENCE_MINUTES * 60) == 0).all())
         training_cutoff = str(metadata.get("training_cutoff") or metadata.get("refit_T") or "")
-        existing = self._read_log("refit_events_v3")
         key = {
             "family": self.family,
             "training_cutoff": training_cutoff,
             "model_hash": str(metadata.get("model_hash", "")),
         }
-        if not existing.empty:
-            duplicates = existing[
-                (existing.get("family", pd.Series(dtype=str)).astype(str) == key["family"])
-                & (existing.get("training_cutoff", pd.Series(dtype=str)).astype(str) == key["training_cutoff"])
-                & (existing.get("model_hash", pd.Series(dtype=str)).astype(str) == key["model_hash"])
-            ]
-            if not duplicates.empty:
-                return {"appended": False, "reason": "DUPLICATE_REFIT_EVENT"}
+        index_key = tuple(str(key[column]) for column in (
+            "family", "training_cutoff", "model_hash"
+        ))
+        if index_key in self._log_cache.key_hashes("refit_events_v3"):
+            return {"appended": False, "reason": "DUPLICATE_REFIT_EVENT"}
         row = {
             **key,
             "refit_session_date": pd.Timestamp(training_cutoff).date().isoformat() if training_cutoff else "",
@@ -2449,7 +3300,10 @@ class ResolvedPerformanceV3Writer:
             "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
         }
         row["row_hash"] = stable_hash(row)
-        return append_parquet_log(self.root, "refit_events_v3", pd.DataFrame([row]), temp_root=self.transient_root)
+        publication, _retained = self._append_indexed_log(
+            "refit_events_v3", pd.DataFrame([row])
+        )
+        return publication
 
     def _pending_ledger_row(self, *, resolution_timestamp: pd.Timestamp, pending_after: pd.DataFrame, terminal_new: pd.DataFrame, meta: Mapping[str, Any]) -> dict[str, Any]:
         horizon = pending_score_horizon_state(pending_after)
@@ -2467,6 +3321,94 @@ class ResolvedPerformanceV3Writer:
         row["row_hash"] = stable_hash(row)
         return row
 
+    def commit_prediction_batches(
+        self,
+        prediction_batches: Sequence[pd.DataFrame],
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        before_timestamp_evaluation: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Commit ordered timestamp frames with one physical publication.
+
+        Resolution remains timestamp-by-timestamp.  Only immutable Parquet
+        parts and replaceable checkpoints are coalesced, so portfolio state,
+        maturity chronology, hashes, and idempotent replay match the legacy
+        single-timestamp path.  ``before_timestamp_evaluation`` may abort at
+        the rollback-safe boundary between timestamp evaluations.  Earlier
+        work in the batch is still memory-only at that boundary, so an abort
+        preserves the prior durable cursor and publishes no partial batch.
+        """
+
+        if self._batch_failed:
+            raise RuntimeError("RESOLVED_PERFORMANCE_V3_BATCH_WRITER_RESTART_REQUIRED")
+        batches = [frame.copy() for frame in prediction_batches if not frame.empty]
+        if not batches:
+            return {
+                "committed": False,
+                "reason": "empty_predictions",
+                "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
+            }
+        timestamps: list[pd.Timestamp] = []
+        for frame in batches:
+            if "decision_timestamp" not in frame:
+                raise ValueError("RESOLVED_PERFORMANCE_V3_BATCH_TIMESTAMP_MISSING")
+            frame_timestamps = _normalise_timestamp_series(
+                frame["decision_timestamp"]
+            ).drop_duplicates()
+            if len(frame_timestamps) != 1:
+                raise ValueError(
+                    "RESOLVED_PERFORMANCE_V3_BATCH_REQUIRES_ONE_TIMESTAMP_PER_FRAME"
+                )
+            timestamps.append(pd.Timestamp(frame_timestamps.iloc[0]))
+        if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+            raise ValueError(
+                "RESOLVED_PERFORMANCE_V3_BATCH_TIMESTAMPS_MUST_BE_STRICTLY_INCREASING"
+            )
+
+        with AtomicJsonProcessLock(
+            self.root / APPEND_COMMIT_LOCK_NAME,
+            family=self.family,
+            purpose="resolved_performance_v3_batch_commit",
+            namespace=str(self.root.resolve()),
+            timeout_seconds=0.0,
+        ):
+            self._batch_log_frames = {}
+            self._batch_pending_after = None
+            results: list[dict[str, Any]] = []
+            try:
+                for index, frame in enumerate(batches):
+                    if before_timestamp_evaluation is not None:
+                        before_timestamp_evaluation()
+                    results.append(
+                        self._commit_predictions_unlocked(
+                            frame,
+                            metadata=metadata,
+                            finalize_batch=index == len(batches) - 1,
+                        )
+                    )
+            except Exception:
+                # In-memory indexes may already include buffered rows.  A new
+                # writer must bootstrap from the durable logs before retrying.
+                self._batch_failed = True
+                raise
+            finally:
+                self._batch_log_frames = None
+                self._batch_pending_after = None
+
+        result = dict(results[-1])
+        combined_timings: dict[str, float] = {}
+        for item in results:
+            for name, value in dict(
+                item.get("stage_timings_seconds", {})
+            ).items():
+                combined_timings[name] = combined_timings.get(name, 0.0) + float(
+                    value
+                )
+        result["stage_timings_seconds"] = combined_timings
+        result["batched_timestamp_count"] = len(batches)
+        result["publication_disposition"] = "BATCHED_TIMESTAMP_EQUIVALENT"
+        return result
+
     def commit_predictions(self, predictions: pd.DataFrame, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
         with AtomicJsonProcessLock(
             self.root / APPEND_COMMIT_LOCK_NAME,
@@ -2477,23 +3419,39 @@ class ResolvedPerformanceV3Writer:
         ):
             return self._commit_predictions_unlocked(predictions, metadata=metadata)
 
-    def _commit_predictions_unlocked(self, predictions: pd.DataFrame, *, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def _commit_predictions_unlocked(
+        self,
+        predictions: pd.DataFrame,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        finalize_batch: bool = False,
+    ) -> dict[str, Any]:
+        commit_started = time.perf_counter()
+        stage_timings: dict[str, float] = {}
         if predictions.empty:
             return {"committed": False, "reason": "empty_predictions", "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID}
-        existing_rank_ic = self._read_log("rank_ic_v3")
-        existing_sleeves = self._read_log("sleeve_maturity_ledger_v3")
-        existing_daily = self._read_log("daily_portfolio_returns_v3")
-        existing_terminal = self._read_log("terminal_censored_v3")
-        existing_timestamps: set[str] = set()
-        if not existing_rank_ic.empty and "decision_timestamp" in existing_rank_ic:
-            existing_timestamps = set(_normalise_timestamp_series(existing_rank_ic["decision_timestamp"]).map(lambda ts: ts.isoformat()))
+        stage_started = time.perf_counter()
+        self._bootstrap_incremental_state()
+        stage_timings["historical_log_reads"] = time.perf_counter() - stage_started
+        hot_path_rows_before = self._log_cache.hot_path_rows_considered
+        stage_started = time.perf_counter()
+        existing_timestamps = set(self._committed_rank_hashes)
         new_pending = build_pending_score_frame_v3(predictions, family=self.family, metadata=metadata)
         new_pending = new_pending[~_normalise_timestamp_series(new_pending["decision_timestamp"]).map(lambda ts: ts.isoformat()).isin(existing_timestamps)].copy()
-        existing_pending = self._read_existing(self.pending_scores_path)
+        existing_pending = (
+            self._batch_pending_after.copy()
+            if self._batch_log_frames is not None
+            and self._batch_pending_after is not None
+            else self._read_existing(self.pending_scores_path)
+        )
         combined_pending = pd.concat([existing_pending, new_pending], ignore_index=True) if not existing_pending.empty else new_pending
         combined_pending = deduplicate_pending_scores(combined_pending)
         if len(combined_pending) > self.pending_score_limit_rows:
             raise RuntimeError(f"RESOLVED_PERFORMANCE_V3_PENDING_SCORE_LIMIT_EXCEEDED:{len(combined_pending)}>{self.pending_score_limit_rows}")
+        stage_timings["pending_ledger_operations"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_started = time.perf_counter()
         if combined_pending.empty:
             targets = pd.DataFrame()
             target_meta = {"target_files_read": 0, "target_rows_loaded": 0}
@@ -2502,20 +3460,43 @@ class ResolvedPerformanceV3Writer:
         else:
             targets = pd.DataFrame()
             target_meta = {"target_loader": "ABSENT_PENDING_RETAINED_UNTIL_RESUME"}
+        stage_timings["target_resolution"] = time.perf_counter() - stage_started
         timestamps = _normalise_timestamp_series(predictions["decision_timestamp"])
         resolution_timestamp = timestamps.max()
+        # A rank-IC row is the durable per-timestamp commit marker.  Side
+        # evidence is published before that marker.  If a prior process died
+        # while publishing side evidence, exclude only those uncommitted
+        # sleeves from the state used to reconstruct the transaction.
+        committed_timestamps = set(self._committed_rank_hashes)
+        stage_started = time.perf_counter()
         resolved = resolve_pending_score_frame_v3(
             combined_pending,
             targets,
             resolution_timestamp=resolution_timestamp,
             top_n=self.top_n,
-            existing_rank_ic=existing_rank_ic,
-            existing_sleeves=existing_sleeves,
+            existing_rank_hashes=self._committed_rank_hashes,
+            initial_sleeve_weights=self._latest_sleeve_weights,
             terminal_timestamp=self.terminal_timestamp,
             min_rank_ic_cross_section=self.min_rank_ic_cross_section,
             audit_sample_rows=self.audit_sample_rows,
             sleeve_count=self.sleeve_count,
             transaction_cost_bps_per_unit_turnover=self.transaction_cost_bps_per_unit_turnover,
+        )
+        (
+            resolved["sleeves"],
+            resolved["transaction_costs"],
+            legacy_sleeve_replays,
+        ) = _reconcile_legacy_orphaned_sleeve_replay(
+            resolved["sleeves"],
+            resolved["transaction_costs"],
+            existing_sleeves=self._orphaned_sleeves,
+            committed_timestamps=committed_timestamps,
+        )
+        resolved["meta"]["legacy_orphaned_sleeve_replays"] = int(
+            legacy_sleeve_replays
+        )
+        stage_timings["rank_selection_and_metrics_evaluation"] = (
+            time.perf_counter() - stage_started
         )
         pending_after = resolved["remaining"]
         terminal_new = resolved["terminal_censored"]
@@ -2528,36 +3509,182 @@ class ResolvedPerformanceV3Writer:
             horizon_state["within_contract"] = False
             horizon_state["retention_exception"] = "PENDING_HORIZON_OVERFLOW_RETAINED_BOUNDED_UNTIL_TARGET_MATURITY"
             horizon_state["retention_exception_detail"] = str(exc)
-        rank_pub = append_parquet_log(self.root, "rank_ic_v3", resolved["rank_ic"], temp_root=self.transient_root) if not resolved["rank_ic"].empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        trace_pub = append_parquet_log(self.root, "decision_trace_v3", resolved["decision_trace"], temp_root=self.transient_root) if not resolved["decision_trace"].empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        sleeve_pub = append_parquet_log(self.root, "sleeve_maturity_ledger_v3", resolved["sleeves"], temp_root=self.transient_root) if not resolved["sleeves"].empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        cost_pub = append_parquet_log(self.root, "transaction_costs_v3", resolved["transaction_costs"], temp_root=self.transient_root) if not resolved["transaction_costs"].empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        sample_pub = append_parquet_log(self.root, "rank_ic_audit_sample_v3", resolved["audit_sample"], temp_root=self.transient_root) if not resolved["audit_sample"].empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        terminal_pub = append_parquet_log(self.root, "terminal_censored_v3", terminal_new, temp_root=self.transient_root) if not terminal_new.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        pending_pub = publish_parquet_atomic(self.pending_scores_path, pending_after, temp_root=self.transient_root)
-        pending_ledger_pub = append_parquet_log(
-            self.root,
-            "pending_outcome_ledger_v3",
-            pd.DataFrame([self._pending_ledger_row(resolution_timestamp=resolution_timestamp, pending_after=pending_after, terminal_new=terminal_new, meta=resolved["meta"])]),
-            timestamp_col="resolution_timestamp",
-            temp_root=self.transient_root,
+        stage_started = time.perf_counter()
+        trace_pub, _trace_retained = self._append_indexed_log(
+            "decision_trace_v3", resolved["decision_trace"]
         )
+        sleeve_pub, _sleeve_retained = self._append_indexed_log(
+            "sleeve_maturity_ledger_v3", resolved["sleeves"]
+        )
+        cost_pub, _cost_retained = self._append_indexed_log(
+            "transaction_costs_v3", resolved["transaction_costs"]
+        )
+        sample_pub, _sample_retained = self._append_indexed_log(
+            "rank_ic_audit_sample_v3", resolved["audit_sample"]
+        )
+        terminal_pub, terminal_retained = self._append_indexed_log(
+            "terminal_censored_v3", terminal_new
+        )
+        # Publish the rank row last.  Its presence means all side evidence for
+        # the timestamp is durable, allowing a restart to retire stale pending
+        # rows without reconstructing a half-committed transaction.
+        rank_pub, rank_retained = self._append_indexed_log(
+            "rank_ic_v3", resolved["rank_ic"]
+        )
+        if self._batch_log_frames is not None:
+            self._batch_pending_after = pending_after.copy()
+            pending_pub = {
+                "published": False,
+                "bytes": 0,
+                "publication_disposition": "BUFFERED_UNTIL_BATCH_COMMIT",
+            }
+        else:
+            pending_pub = publish_parquet_atomic(
+                self.pending_scores_path,
+                pending_after,
+                temp_root=self.transient_root,
+            )
+        pending_ledger_row = self._pending_ledger_row(
+            resolution_timestamp=resolution_timestamp,
+            pending_after=pending_after,
+            terminal_new=terminal_new,
+            meta=resolved["meta"],
+        )
+        pending_ledger_resolution = _canonical_pending_timestamp(
+            pending_ledger_row["resolution_timestamp"],
+            field="resolution_timestamp",
+        )
+        if pending_ledger_resolution in self._pending_ledger_resolutions:
+            pending_ledger_pub = {
+                "appended": False,
+                "rows": 0,
+                "bytes": 0,
+                "parts": [],
+                "reason": "DUPLICATE_RESOLUTION_TIMESTAMP",
+            }
+        else:
+            pending_ledger_pub = self._append_pending_ledger_log(
+                pd.DataFrame([pending_ledger_row])
+            )
+            self._pending_ledger_resolutions.add(pending_ledger_resolution)
         refit_pub = self._append_refit_event(predictions, metadata)
-        all_sleeves = self._read_log("sleeve_maturity_ledger_v3")
-        all_daily = self._read_log("daily_portfolio_returns_v3")
-        daily_new = _daily_rows_from_sleeves(all_sleeves, existing_daily=all_daily, resolution_timestamp=resolution_timestamp)
-        daily_pub = append_parquet_log(self.root, "daily_portfolio_returns_v3", daily_new, timestamp_col="session_date", temp_root=self.transient_root) if not daily_new.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-        all_rank_ic = self._read_log("rank_ic_v3")
-        all_daily = self._read_log("daily_portfolio_returns_v3")
-        all_terminal = self._read_log("terminal_censored_v3")
-        summary = resolved_v3_summary(
-            all_rank_ic,
-            all_daily,
-            all_sleeves,
-            pending_rows=int(len(pending_after)),
-            terminal_censored_rows=int(len(all_terminal)),
+        stage_timings["parquet_and_pending_publication"] = (
+            time.perf_counter() - stage_started
         )
-        write_json_atomic(self.summary_path, summary, advisory=False)
+        stage_started = time.perf_counter()
+        newly_committed_timestamps = set(
+            _normalise_timestamp_series(rank_retained.get(
+                "decision_timestamp", pd.Series(dtype=object)
+            )).dropna().map(lambda value: value.isoformat())
+        )
+        newly_committed_sleeves = resolved["sleeves"]
+        if not newly_committed_sleeves.empty:
+            sleeve_timestamps = _normalise_timestamp_series(
+                newly_committed_sleeves["decision_timestamp"]
+            ).map(lambda value: value.isoformat())
+            newly_committed_sleeves = newly_committed_sleeves[
+                sleeve_timestamps.isin(newly_committed_timestamps)
+            ].copy()
+        for row in rank_retained.to_dict(orient="records"):
+            self._committed_rank_hashes[
+                _canonical_pending_timestamp(
+                    row["decision_timestamp"], field="decision_timestamp"
+                )
+            ] = str(row["row_hash"])
+        if not newly_committed_sleeves.empty:
+            ordered_sleeves = newly_committed_sleeves.copy()
+            ordered_sleeves["decision_timestamp"] = _normalise_timestamp_series(
+                ordered_sleeves["decision_timestamp"]
+            )
+            for row in ordered_sleeves.sort_values(
+                "decision_timestamp", kind="mergesort"
+            ).itertuples(index=False):
+                self._latest_sleeve_weights[int(row.sleeve_id)] = (
+                    _weights_from_asset_json(row.top_selected_assets_json)
+                )
+            self._unpublished_daily_sleeves = pd.concat(
+                [self._unpublished_daily_sleeves, newly_committed_sleeves],
+                ignore_index=True,
+            )
+        self._orphaned_sleeves = pd.DataFrame()
+
+        daily_hashes = self._log_cache.key_hashes(
+            "daily_portfolio_returns_v3"
+        )
+        existing_daily_index = pd.DataFrame(
+            [
+                {"session_date": key[0], "daily_return_hash": row_hash}
+                for key, row_hash in daily_hashes.items()
+            ]
+        )
+        daily_new = _daily_rows_from_sleeves(
+            self._unpublished_daily_sleeves,
+            existing_daily=existing_daily_index,
+            resolution_timestamp=resolution_timestamp,
+        )
+        daily_pub, daily_retained = self._append_indexed_log(
+            "daily_portfolio_returns_v3",
+            daily_new,
+            timestamp_col="session_date",
+        )
+        published_daily_dates = {
+            key[0]
+            for key in self._log_cache.key_hashes(
+                "daily_portfolio_returns_v3"
+            )
+        }
+        if not self._unpublished_daily_sleeves.empty:
+            maturity_dates = self._unpublished_daily_sleeves.get(
+                "maturity_session_date",
+                _normalise_timestamp_series(
+                    self._unpublished_daily_sleeves["maturity_timestamp"]
+                ).dt.date.astype(str),
+            ).astype(str)
+            self._unpublished_daily_sleeves = self._unpublished_daily_sleeves[
+                ~maturity_dates.isin(published_daily_dates)
+            ].copy()
+
+        if self._batch_log_frames is not None and finalize_batch:
+            flush_started = time.perf_counter()
+            batch_publications = self._flush_batch_logs()
+            trace_pub = batch_publications["decision_trace_v3"]
+            sleeve_pub = batch_publications["sleeve_maturity_ledger_v3"]
+            cost_pub = batch_publications["transaction_costs_v3"]
+            sample_pub = batch_publications["rank_ic_audit_sample_v3"]
+            terminal_pub = batch_publications["terminal_censored_v3"]
+            rank_pub = batch_publications["rank_ic_v3"]
+            pending_ledger_pub = batch_publications[
+                "pending_outcome_ledger_v3"
+            ]
+            refit_pub = batch_publications["refit_events_v3"]
+            daily_pub = batch_publications["daily_portfolio_returns_v3"]
+            pending_pub = publish_parquet_atomic(
+                self.pending_scores_path,
+                pending_after,
+                temp_root=self.transient_root,
+            )
+            stage_timings["parquet_and_pending_publication"] += (
+                time.perf_counter() - flush_started
+            )
+
+        self._summary_state.add_rank_rows(rank_retained)
+        self._summary_state.add_sleeve_rows(newly_committed_sleeves)
+        self._summary_state.add_daily_rows(daily_retained)
+        self._summary_state.add_terminal_rows(terminal_retained)
+        summary = self._summary_state.to_summary(
+            evaluation_contract_id=RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
+            evaluation_contract_hash=resolved_performance_contract_v3_hash(),
+            evaluation_contract_version=RESOLVED_PERFORMANCE_CONTRACT_V3_VERSION,
+            sleeve_count=self.sleeve_count,
+            pending_rows=int(len(pending_after)),
+            created_at_utc=_utc_now_iso(),
+        )
+        if self._batch_log_frames is None or finalize_batch:
+            write_json_atomic(self.summary_path, summary, advisory=False)
+        stage_timings["summary_evaluation_and_publication"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_started = time.perf_counter()
         temp_inventory = temporary_file_inventory(self.transient_root)
         prior_checkpoint = {}
         try:
@@ -2576,15 +3703,25 @@ class ResolvedPerformanceV3Writer:
             "terminal_censored_v3",
             "refit_events_v3",
         ]
-        partition_count = sum(len(parquet_log_part_paths(self.root, stem)) for stem in stems)
+        partition_count = sum(
+            self._log_cache.partition_count(stem) for stem in stems
+        )
         duplicate_count = 0
-        if not all_rank_ic.empty and "decision_timestamp" in all_rank_ic:
-            duplicate_count = int(all_rank_ic.duplicated(["family", "decision_timestamp"]).sum())
-        durable_bytes = sum(directory_size_bytes(parquet_log_parts_dir(self.root, stem)) for stem in stems) + int(os.stat(openable_path(self.pending_scores_path)).st_size if openable_exists(self.pending_scores_path) else 0)
+        durable_bytes = sum(
+            self._log_cache.durable_bytes(stem) for stem in stems
+        ) + int(
+            os.stat(openable_path(self.pending_scores_path)).st_size
+            if openable_exists(self.pending_scores_path)
+            else 0
+        )
         first_uncommitted = ""
         if not pending_after.empty:
             first_uncommitted = _normalise_timestamp_series(pending_after["decision_timestamp"]).min().isoformat()
-        refits = self._read_log("refit_events_v3")
+        refit_count = self._log_cache.row_count("refit_events_v3")
+        training_cutoff = str((metadata or {}).get("training_cutoff", "") or "")
+        last_refit_session = str(prior_checkpoint.get("last_refit_session", "") or "")
+        if refit_pub.get("appended") and training_cutoff:
+            last_refit_session = pd.Timestamp(training_cutoff).date().isoformat()
         checkpoint = {
             "family": self.family,
             "evaluation_contract_version": RESOLVED_PERFORMANCE_CONTRACT_V3_VERSION,
@@ -2601,11 +3738,11 @@ class ResolvedPerformanceV3Writer:
             "pending_retention_exception": horizon_state.get("retention_exception", ""),
             "pending_retention_exception_detail": horizon_state.get("retention_exception_detail", ""),
             "first_uncommitted_timestamp": first_uncommitted,
-            "resolved_performance_rows": int(len(all_rank_ic)),
+            "resolved_performance_rows": int(self._summary_state.rank_rows),
             "rank_ic_valid_rows": int(summary.get("rank_ic", {}).get("valid_timestamps") or 0),
             "daily_return_rows": int(summary.get("returns", {}).get("daily_return_rows") or 0),
             "return_valid_rows": int(summary.get("returns", {}).get("daily_return_rows") or 0),
-            "terminal_censored_rows": int(len(all_terminal)),
+            "terminal_censored_rows": int(self._summary_state.terminal_censored_rows),
             "bounded_pending_storage_bytes": int(pending_pub.get("bytes", 0) or 0),
             "pending_buffer_bytes": int(pending_pub.get("bytes", 0) or 0),
             "durable_metrics_bytes": int(durable_bytes),
@@ -2618,20 +3755,42 @@ class ResolvedPerformanceV3Writer:
             "last_resolution_timestamp": pd.Timestamp(resolution_timestamp).tz_convert("UTC").isoformat(),
             "target_load": target_meta,
             "resolution_meta": resolved["meta"],
-            "daily_refit_count": int(len(refits)),
-            "last_refit_session": str(refits["refit_session_date"].iloc[-1]) if not refits.empty and "refit_session_date" in refits else "",
-            "daily_refit_with_five_minute_scoring": bool(refits["daily_refit_with_five_minute_scoring"].all()) if not refits.empty and "daily_refit_with_five_minute_scoring" in refits else False,
-            "no_five_minute_retraining": bool(refits["no_five_minute_retraining"].all()) if not refits.empty and "no_five_minute_retraining" in refits else False,
+            "daily_refit_count": int(refit_count),
+            "last_refit_session": last_refit_session,
+            "daily_refit_with_five_minute_scoring": bool(refit_count),
+            "no_five_minute_retraining": bool(refit_count),
+            "incremental_evaluator_state_version": INCREMENTAL_EVALUATOR_STATE_VERSION,
+            "incremental_bootstrap_disposition": self._bootstrap_disposition,
+            "incremental_bootstrap_part_reads": self._log_cache.bootstrap_part_reads,
+            "incremental_bootstrap_rows_read": self._log_cache.bootstrap_rows_read,
+            "incremental_bootstrap_duration_seconds": (
+                self._bootstrap_duration_seconds
+            ),
+            "incremental_hot_path_historical_rows_read": 0,
+            "incremental_hot_path_new_rows_considered": (
+                self._log_cache.hot_path_rows_considered
+                - hot_path_rows_before
+            ),
             "checkpoint_utc": pd.Timestamp.now("UTC").isoformat(),
         }
-        write_json_atomic(self.checkpoint_path, checkpoint, advisory=False)
+        if self._batch_log_frames is None or finalize_batch:
+            write_json_atomic(self.checkpoint_path, checkpoint, advisory=False)
+            self._persist_incremental_state(
+                metadata=metadata,
+                resolution_timestamp=resolution_timestamp,
+                pending_after=pending_after,
+            )
+        stage_timings["checkpoint_publication"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_timings["resolved_v3_total"] = time.perf_counter() - commit_started
         return {
             "committed": True,
             "evaluation_contract_id": RESOLVED_PERFORMANCE_CONTRACT_V3_ID,
             "evaluation_contract_hash": resolved_performance_contract_v3_hash(),
             "pending_score_rows": int(len(pending_after)),
-            "resolved_rows_added": int(len(resolved["rank_ic"])),
-            "resolved_performance_rows": int(len(all_rank_ic)),
+            "resolved_rows_added": int(len(rank_retained)),
+            "resolved_performance_rows": int(self._summary_state.rank_rows),
             "rank_ic_valid_rows": checkpoint["rank_ic_valid_rows"],
             "return_valid_rows": checkpoint["return_valid_rows"],
             "terminal_censored_rows": checkpoint["terminal_censored_rows"],
@@ -2651,6 +3810,7 @@ class ResolvedPerformanceV3Writer:
             "audit_sample_publication": sample_pub,
             "terminal_censored_publication": terminal_pub,
             "refit_event_publication": refit_pub,
+            "stage_timings_seconds": stage_timings,
             "summary": summary,
             "checkpoint": checkpoint,
         }
@@ -2740,6 +3900,9 @@ def _read_parquet_log_manifest(root: Path, stem: str) -> dict[str, Any]:
         "parts": parts,
         "total_rows": int(payload.get("total_rows", 0) or 0),
         "total_bytes": int(payload.get("total_bytes", 0) or 0),
+        "part_count": int(payload.get("part_count", len(parts)) or 0),
+        "evidence_chain_hash": str(payload.get("evidence_chain_hash", "") or ""),
+        "latest_part": payload.get("latest_part", {}),
         "updated_at_utc": payload.get("updated_at_utc", ""),
     }
 
@@ -2747,7 +3910,7 @@ def _read_parquet_log_manifest(root: Path, stem: str) -> dict[str, Any]:
 def _write_parquet_log_manifest(root: Path, stem: str, manifest: Mapping[str, Any]) -> None:
     path = parquet_log_manifest_path(root, stem)
     payload = dict(manifest)
-    payload["schema_version"] = "DS24_APPEND_ONLY_PARQUET_LOG_V1"
+    payload.setdefault("schema_version", "DS24_APPEND_ONLY_PARQUET_LOG_V1")
     payload["stem"] = stem
     payload["updated_at_utc"] = pd.Timestamp.now("UTC").isoformat()
     write_json_atomic(path, payload, advisory=False)
@@ -2804,6 +3967,343 @@ def read_parquet_log(root: Path, stem: str, *, legacy_path: Path | None = None, 
     return pd.concat(frames, ignore_index=True)
 
 
+@dataclass
+class ParquetLogHistoryCache:
+    """One-bootstrap view and bounded append indexes for immutable logs.
+
+    A process reads durable history once.  Hot commits never concatenate the
+    historical frames: key indexes, row/byte counters and the compact manifest
+    evidence chain are extended only by rows published in that commit.
+    """
+
+    root: Path
+    _frames: dict[str, pd.DataFrame] = field(default_factory=dict, init=False)
+    _part_counts: dict[str, int] = field(default_factory=dict, init=False)
+    _part_bytes: dict[str, int] = field(default_factory=dict, init=False)
+    _row_counts: dict[str, int] = field(default_factory=dict, init=False)
+    _evidence_chains: dict[str, str] = field(default_factory=dict, init=False)
+    _key_hashes: dict[str, dict[tuple[str, ...], str]] = field(
+        default_factory=dict, init=False
+    )
+    _key_contracts: dict[
+        str, tuple[tuple[str, ...], str, tuple[str, ...]]
+    ] = field(
+        default_factory=dict, init=False
+    )
+    bootstrap_part_reads: int = field(default=0, init=False)
+    bootstrap_rows_read: int = field(default=0, init=False)
+    hot_path_rows_considered: int = field(default=0, init=False)
+
+    def read(
+        self,
+        stem: str,
+        *,
+        legacy_path: Path | None = None,
+    ) -> pd.DataFrame:
+        if stem not in self._frames:
+            paths = parquet_log_part_paths(self.root, stem)
+            frames: list[pd.DataFrame] = []
+            if legacy_path is not None and openable_exists(legacy_path):
+                frames.append(pd.read_parquet(openable_path(legacy_path)))
+            frames.extend(
+                pd.read_parquet(openable_path(path)) for path in paths
+            )
+            self._frames[stem] = (
+                pd.concat(frames, ignore_index=True)
+                if frames
+                else pd.DataFrame()
+            )
+            self._part_counts[stem] = len(paths)
+            self._part_bytes[stem] = sum(
+                int(os.path.getsize(openable_path(path))) for path in paths
+            )
+            self._row_counts[stem] = int(len(self._frames[stem]))
+            manifest = _read_parquet_log_manifest(self.root, stem)
+            self._evidence_chains[stem] = str(
+                manifest.get("evidence_chain_hash")
+                or stable_hash(
+                    {
+                        "stem": stem,
+                        "parts": [str(path.relative_to(self.root)).replace("\\", "/") for path in paths],
+                        "rows": self._row_counts[stem],
+                        "bytes": self._part_bytes[stem],
+                    }
+                )
+            )
+            self.bootstrap_part_reads += len(paths)
+            self.bootstrap_rows_read += self._row_counts[stem]
+        return self._frames[stem]
+
+    def ensure_key_index(
+        self,
+        stem: str,
+        *,
+        key_cols: Sequence[str],
+        hash_col: str,
+        group_cols: Sequence[str] | None = None,
+        frame: pd.DataFrame | None = None,
+    ) -> dict[tuple[str, ...], str]:
+        group_columns = tuple(group_cols or key_cols)
+        contract = (tuple(key_cols), str(hash_col), group_columns)
+        previous_contract = self._key_contracts.get(stem)
+        if previous_contract is not None and previous_contract != contract:
+            raise RuntimeError(f"PARQUET_LOG_KEY_INDEX_CONTRACT_MISMATCH:{stem}")
+        if stem in self._key_hashes:
+            return self._key_hashes[stem]
+        history = self.read(stem) if frame is None else frame
+        required = {*key_cols, hash_col}
+        if not history.empty:
+            missing = sorted(required - set(history.columns))
+            if missing:
+                raise ValueError(
+                    f"PARQUET_LOG_IDEMPOTENCY_EXISTING_COLUMNS_MISSING:{stem}:{missing}"
+                )
+        hashes: dict[tuple[str, ...], str] = {}
+        grouped_entries: dict[
+            tuple[str, ...], list[tuple[tuple[str, ...], str]]
+        ] = {}
+        individual_hashes: dict[tuple[str, ...], str] = {}
+        for row in history.to_dict(orient="records"):
+            key = _canonical_parquet_log_key(row, key_cols)
+            row_hash = str(row[hash_col])
+            prior = individual_hashes.get(key)
+            if prior is not None and prior != row_hash:
+                raise RuntimeError(
+                    f"PARQUET_LOG_IDEMPOTENCY_EXISTING_HASH_CONFLICT:{stem}:{key}"
+                )
+            if prior is not None:
+                raise RuntimeError(
+                    f"PARQUET_LOG_IDEMPOTENCY_EXISTING_DUPLICATE_KEY:{stem}:{key}"
+                )
+            individual_hashes[key] = row_hash
+            group_key = _canonical_parquet_log_key(row, group_columns)
+            grouped_entries.setdefault(group_key, []).append((key, row_hash))
+        compact_groups = group_columns != tuple(key_cols)
+        for group_key, entries in grouped_entries.items():
+            hashes[group_key] = (
+                stable_hash(sorted(entries))
+                if compact_groups
+                else entries[0][1]
+            )
+        self._key_contracts[stem] = contract
+        self._key_hashes[stem] = hashes
+        return hashes
+
+    def retain_new_rows(
+        self,
+        stem: str,
+        frame: pd.DataFrame,
+        *,
+        key_cols: Sequence[str],
+        hash_col: str,
+        group_cols: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        if frame.empty:
+            return frame.copy()
+        self.hot_path_rows_considered += int(len(frame))
+        required = {*key_cols, hash_col}
+        missing = sorted(required - set(frame.columns))
+        if missing:
+            raise ValueError(f"PARQUET_LOG_IDEMPOTENCY_COLUMNS_MISSING:{stem}:{missing}")
+        hashes = self.ensure_key_index(
+            stem,
+            key_cols=key_cols,
+            hash_col=hash_col,
+            group_cols=group_cols,
+        )
+        group_columns = tuple(group_cols or key_cols)
+        if group_columns != tuple(key_cols):
+            grouped_indexes: dict[tuple[str, ...], list[Any]] = {}
+            grouped_entries: dict[
+                tuple[str, ...], list[tuple[tuple[str, ...], str]]
+            ] = {}
+            individual: dict[tuple[str, ...], str] = {}
+            for index, row in frame.iterrows():
+                payload = row.to_dict()
+                key = _canonical_parquet_log_key(payload, key_cols)
+                row_hash = str(payload[hash_col])
+                prior_row_hash = individual.get(key)
+                if prior_row_hash is not None:
+                    if prior_row_hash != row_hash:
+                        raise RuntimeError(
+                            f"PARQUET_LOG_IDEMPOTENCY_HASH_CONFLICT:{stem}:{key}"
+                        )
+                    raise RuntimeError(
+                        f"PARQUET_LOG_IDEMPOTENCY_DUPLICATE_INCOMING_KEY:{stem}:{key}"
+                    )
+                individual[key] = row_hash
+                group_key = _canonical_parquet_log_key(payload, group_columns)
+                grouped_indexes.setdefault(group_key, []).append(index)
+                grouped_entries.setdefault(group_key, []).append((key, row_hash))
+            retained_groups: list[tuple[str, ...]] = []
+            for group_key, entries in grouped_entries.items():
+                group_hash = stable_hash(sorted(entries))
+                prior_group_hash = hashes.get(group_key)
+                if prior_group_hash is not None:
+                    if prior_group_hash != group_hash:
+                        raise RuntimeError(
+                            f"PARQUET_LOG_IDEMPOTENCY_GROUP_HASH_CONFLICT:{stem}:{group_key}"
+                        )
+                    continue
+                retained_groups.append(group_key)
+            retained_indexes = [
+                index
+                for group_key in retained_groups
+                for index in grouped_indexes[group_key]
+            ]
+            return frame.loc[retained_indexes].copy()
+        proposed: dict[tuple[str, ...], str] = {}
+        retained: list[Any] = []
+        for index, row in frame.iterrows():
+            payload = row.to_dict()
+            key = _canonical_parquet_log_key(payload, key_cols)
+            row_hash = str(payload[hash_col])
+            prior = proposed.get(key, hashes.get(key))
+            if prior is not None:
+                if prior != row_hash:
+                    raise RuntimeError(
+                        f"PARQUET_LOG_IDEMPOTENCY_HASH_CONFLICT:{stem}:{key}"
+                    )
+                continue
+            proposed[key] = row_hash
+            retained.append(index)
+        return frame.loc[retained].copy()
+
+    def record_key_rows(
+        self,
+        stem: str,
+        frame: pd.DataFrame,
+    ) -> None:
+        if frame.empty:
+            return
+        key_cols, hash_col, group_cols = self._key_contracts[stem]
+        hashes = self._key_hashes[stem]
+        records = frame.to_dict(orient="records")
+        if group_cols == key_cols:
+            for row in records:
+                hashes[_canonical_parquet_log_key(row, key_cols)] = str(
+                    row[hash_col]
+                )
+            return
+        grouped_entries: dict[
+            tuple[str, ...], list[tuple[tuple[str, ...], str]]
+        ] = {}
+        for row in records:
+            group_key = _canonical_parquet_log_key(row, group_cols)
+            grouped_entries.setdefault(group_key, []).append(
+                (
+                    _canonical_parquet_log_key(row, key_cols),
+                    str(row[hash_col]),
+                )
+            )
+        for group_key, entries in grouped_entries.items():
+            hashes[group_key] = stable_hash(sorted(entries))
+
+    def key_hashes(self, stem: str) -> Mapping[tuple[str, ...], str]:
+        return self._key_hashes.get(stem, {})
+
+    def release_frame(self, stem: str) -> None:
+        self._frames.pop(stem, None)
+
+    def record_publication(
+        self,
+        stem: str,
+        publication: Mapping[str, Any],
+        *,
+        frame: pd.DataFrame | None = None,
+    ) -> None:
+        if publication.get("appended") is not True:
+            return
+        records = list(publication.get("parts") or [])
+        # Keeping a concatenated historical DataFrame would make every append
+        # O(history).  Callers that need a view after publication must use the
+        # maintained indexes or explicitly perform a new bootstrap scan.
+        self.release_frame(stem)
+        if stem in self._part_counts:
+            self._part_counts[stem] += len(records)
+            self._part_bytes[stem] += sum(
+                int(record.get("bytes", 0) or 0) for record in records
+            )
+            self._row_counts[stem] += int(publication.get("rows", 0) or 0)
+            for record in records:
+                self._evidence_chains[stem] = stable_hash(
+                    {
+                        "prior_evidence_chain_hash": self._evidence_chains[stem],
+                        "part": record,
+                    }
+                )
+        if frame is not None and stem in self._key_hashes:
+            self.record_key_rows(stem, frame)
+
+    def partition_count(self, stem: str) -> int:
+        if stem not in self._part_counts:
+            self.read(stem)
+        return self._part_counts[stem]
+
+    def durable_bytes(self, stem: str) -> int:
+        if stem not in self._part_bytes:
+            self.read(stem)
+        return self._part_bytes[stem]
+
+    def row_count(self, stem: str) -> int:
+        if stem not in self._row_counts:
+            self.read(stem)
+        return self._row_counts[stem]
+
+    def manifest_state(self, stem: str) -> dict[str, Any]:
+        if stem not in self._part_counts:
+            self.read(stem)
+        return {
+            "part_count": self._part_counts[stem],
+            "total_rows": self._row_counts[stem],
+            "total_bytes": self._part_bytes[stem],
+            "evidence_chain_hash": self._evidence_chains[stem],
+        }
+
+    def rebuild_compact_manifest(self, stem: str) -> dict[str, Any]:
+        """Deep-scan and replace a manifest without retaining its part list."""
+
+        paths = parquet_log_part_paths(self.root, stem)
+        evidence_chain = stable_hash(
+            {"stem": stem, "schema_version": "DS24_APPEND_ONLY_PARQUET_LOG_V2"}
+        )
+        total_rows = 0
+        total_bytes = 0
+        latest_part: dict[str, Any] = {}
+        for path in paths:
+            rows = parquet_rows(path)
+            size = int(os.path.getsize(openable_path(path)))
+            record = {
+                "path": str(path.relative_to(self.root)).replace("\\", "/"),
+                "rows": rows,
+                "bytes": size,
+                "sha256": sha256_file(path),
+            }
+            evidence_chain = stable_hash(
+                {
+                    "prior_evidence_chain_hash": evidence_chain,
+                    "part": record,
+                }
+            )
+            total_rows += rows
+            total_bytes += size
+            latest_part = record
+        manifest = {
+            "schema_version": "DS24_APPEND_ONLY_PARQUET_LOG_V2",
+            "part_count": len(paths),
+            "total_rows": total_rows,
+            "total_bytes": total_bytes,
+            "evidence_chain_hash": evidence_chain,
+            "latest_part": latest_part,
+        }
+        _write_parquet_log_manifest(self.root, stem, manifest)
+        self._part_counts[stem] = len(paths)
+        self._row_counts[stem] = total_rows
+        self._part_bytes[stem] = total_bytes
+        self._evidence_chains[stem] = evidence_chain
+        return manifest
+
+
 def append_parquet_log(
     root: Path,
     stem: str,
@@ -2811,6 +4311,7 @@ def append_parquet_log(
     *,
     timestamp_col: str = "decision_timestamp",
     temp_root: Path | None = None,
+    history_cache: ParquetLogHistoryCache | None = None,
 ) -> dict[str, Any]:
     if frame.empty:
         return {"appended": False, "rows": 0, "bytes": 0, "parts": []}
@@ -2841,12 +4342,151 @@ def append_parquet_log(
         "max_decision_timestamp": max_text,
         "created_at_utc": pd.Timestamp.now("UTC").isoformat(),
     }
-    parts = list(manifest.get("parts", [])) + [part_record]
-    manifest["parts"] = parts
-    manifest["total_rows"] = int(sum(int(part.get("rows", 0) or 0) for part in parts))
-    manifest["total_bytes"] = int(sum(int(part.get("bytes", 0) or 0) for part in parts))
+    if history_cache is None:
+        parts = list(manifest.get("parts", [])) + [part_record]
+        manifest["parts"] = parts
+        manifest["total_rows"] = int(sum(int(part.get("rows", 0) or 0) for part in parts))
+        manifest["total_bytes"] = int(sum(int(part.get("bytes", 0) or 0) for part in parts))
+    else:
+        prior = history_cache.manifest_state(stem)
+        manifest = {
+            "schema_version": "DS24_APPEND_ONLY_PARQUET_LOG_V2",
+            "part_count": int(prior["part_count"]) + 1,
+            "total_rows": int(prior["total_rows"]) + int(len(work)),
+            "total_bytes": int(prior["total_bytes"])
+            + int(pub.get("bytes", 0) or 0),
+            "evidence_chain_hash": stable_hash(
+                {
+                    "prior_evidence_chain_hash": prior["evidence_chain_hash"],
+                    "part": part_record,
+                }
+            ),
+            "latest_part": part_record,
+        }
     _write_parquet_log_manifest(root, stem, manifest)
     return {"appended": True, "rows": int(len(work)), "bytes": int(pub.get("bytes", 0) or 0), "parts": [part_record], "manifest_path": str(parquet_log_manifest_path(root, stem))}
+
+
+def _canonical_parquet_log_key(
+    row: Mapping[str, Any], key_cols: Sequence[str]
+) -> tuple[str, ...]:
+    values: list[str] = []
+    for column in key_cols:
+        value = row[column]
+        if "timestamp" in column:
+            values.append(_canonical_pending_timestamp(value, field=column))
+        else:
+            values.append(str(value))
+    return tuple(values)
+
+
+def append_parquet_log_idempotent(
+    root: Path,
+    stem: str,
+    frame: pd.DataFrame,
+    *,
+    key_cols: Sequence[str],
+    hash_col: str = "row_hash",
+    group_cols: Sequence[str] | None = None,
+    timestamp_col: str = "decision_timestamp",
+    temp_root: Path | None = None,
+    existing: pd.DataFrame | None = None,
+    history_cache: ParquetLogHistoryCache | None = None,
+) -> dict[str, Any]:
+    """Append only rows not already durably represented by the same hash."""
+
+    empty_result = {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+    if frame.empty:
+        return empty_result
+    required = {*key_cols, hash_col}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"PARQUET_LOG_IDEMPOTENCY_COLUMNS_MISSING:{stem}:{missing}")
+    if history_cache is not None:
+        retained = history_cache.retain_new_rows(
+            stem,
+            frame,
+            key_cols=key_cols,
+            hash_col=hash_col,
+            group_cols=group_cols,
+        )
+        if retained.empty:
+            return empty_result
+        publication = append_parquet_log(
+            root,
+            stem,
+            retained,
+            timestamp_col=timestamp_col,
+            temp_root=temp_root,
+            history_cache=history_cache,
+        )
+        history_cache.record_publication(stem, publication, frame=retained)
+        return publication
+    existing = read_parquet_log(root, stem) if existing is None else existing
+    hashes_by_key: dict[tuple[str, ...], str] = {}
+    rows_by_key: dict[tuple[str, ...], dict[str, Any]] = {}
+    if not existing.empty:
+        existing_missing = sorted(required - set(existing.columns))
+        if existing_missing:
+            raise ValueError(
+                f"PARQUET_LOG_IDEMPOTENCY_EXISTING_COLUMNS_MISSING:"
+                f"{stem}:{existing_missing}"
+            )
+        for row in existing.to_dict(orient="records"):
+            key = _canonical_parquet_log_key(row, key_cols)
+            row_hash = str(row[hash_col])
+            previous = hashes_by_key.get(key)
+            if previous is not None and previous != row_hash:
+                raise RuntimeError(
+                    f"PARQUET_LOG_IDEMPOTENCY_EXISTING_HASH_CONFLICT:{stem}:{key}"
+                )
+            hashes_by_key[key] = row_hash
+            rows_by_key[key] = row
+    retained_indexes: list[Any] = []
+    for index, row in frame.iterrows():
+        payload = row.to_dict()
+        key = _canonical_parquet_log_key(payload, key_cols)
+        row_hash = str(payload[hash_col])
+        previous = hashes_by_key.get(key)
+        if previous is not None:
+            if previous != row_hash:
+                existing_row = rows_by_key[key]
+
+                def diagnostic_value(value: Any) -> str:
+                    try:
+                        if bool(pd.isna(value)):
+                            return "<NA>"
+                    except (TypeError, ValueError):
+                        pass
+                    text = str(value)
+                    return text if len(text) <= 160 else text[:157] + "..."
+
+                differing_columns = {
+                    column: {
+                        "existing": diagnostic_value(existing_row.get(column)),
+                        "incoming": diagnostic_value(payload.get(column)),
+                    }
+                    for column in sorted(set(existing_row) | set(payload))
+                    if column != hash_col
+                    and diagnostic_value(existing_row.get(column))
+                    != diagnostic_value(payload.get(column))
+                }
+                raise RuntimeError(
+                    f"PARQUET_LOG_IDEMPOTENCY_HASH_CONFLICT:{stem}:{key}:"
+                    f"DIFFERING_COLUMNS={json.dumps(differing_columns, sort_keys=True)}"
+                )
+            continue
+        hashes_by_key[key] = row_hash
+        retained_indexes.append(index)
+    if not retained_indexes:
+        return empty_result
+    return append_parquet_log(
+        root,
+        stem,
+        frame.loc[retained_indexes].copy(),
+        timestamp_col=timestamp_col,
+        temp_root=temp_root,
+    )
 
 
 def temporary_file_inventory(root: Path) -> dict[str, Any]:
@@ -2894,6 +4534,13 @@ class MetricsOnlyEvidenceWriter:
     command_hash: str | None = None
     configuration_hash: str | None = None
     evaluation_contract_hash: str | None = None
+    _history_cache: ParquetLogHistoryCache = field(init=False, repr=False)
+    _metrics_keys: set[tuple[str, str]] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _decision_keys: set[tuple[str, str]] = field(
+        default_factory=set, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self._resolved_v2_writer: ResolvedPerformanceV2Writer | None = None
@@ -2904,6 +4551,7 @@ class MetricsOnlyEvidenceWriter:
         if self.namespace_lease_enabled and not self.enable_resolved_performance_v3:
             raise ValueError("DS24_R37_NAMESPACE_LEASE_REQUIRES_RESOLVED_PERFORMANCE_V3")
         self.root.mkdir(parents=True, exist_ok=True)
+        self._history_cache = ParquetLogHistoryCache(self.root)
         if self.namespace_lease_enabled:
             self._namespace_lease = NamespaceWriterLease(
                 self.root,
@@ -2933,6 +4581,43 @@ class MetricsOnlyEvidenceWriter:
                 pending_score_limit_rows=self.pending_score_limit_rows,
                 terminal_timestamp=self.terminal_timestamp,
             )
+        if self.enable_resolved_performance_v2 or self.enable_resolved_performance_v3:
+            metrics_history = self._read_metrics_history()
+            decisions_history = self._read_decision_history()
+            if not metrics_history.empty:
+                self._metrics_keys = {
+                    (
+                        str(row.family),
+                        _canonical_pending_timestamp(
+                            row.decision_timestamp, field="decision_timestamp"
+                        ),
+                    )
+                    for row in metrics_history.itertuples(index=False)
+                }
+            if not decisions_history.empty:
+                self._decision_keys = {
+                    (
+                        str(row.family),
+                        _canonical_pending_timestamp(
+                            row.decision_timestamp, field="decision_timestamp"
+                        ),
+                    )
+                    for row in decisions_history.itertuples(index=False)
+                }
+            self._history_cache.release_frame("per_t_metrics")
+            self._history_cache.release_frame("decision_trace")
+
+    def set_target_loader(
+        self,
+        loader: Callable[[pd.DataFrame], tuple[pd.DataFrame, dict[str, Any]]] | None,
+    ) -> None:
+        """Replace only the package-scoped target adapter, retaining indexes."""
+
+        self.target_loader = loader
+        if self._resolved_v3_writer is not None:
+            self._resolved_v3_writer.target_loader = loader
+        if self._resolved_v2_writer is not None:
+            self._resolved_v2_writer.target_loader = loader
 
     @property
     def namespace_lease_path(self) -> Path:
@@ -2952,6 +4637,55 @@ class MetricsOnlyEvidenceWriter:
         if self._namespace_lease is None:
             return False
         return self._namespace_lease.release()
+
+    def commit_prediction_batches(
+        self,
+        prediction_batches: Sequence[pd.DataFrame],
+        *,
+        target_batches: Sequence[pd.DataFrame] | None = None,
+        expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        before_timestamp_evaluation: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Commit a chronological score batch with timestamp-equivalent rows.
+
+        The optional callback is evaluated only at rollback-safe, pre-
+        publication boundaries inside the resolved-performance batch.
+        """
+
+        batches = [frame.copy() for frame in prediction_batches if not frame.empty]
+        if not batches:
+            return {"committed": False, "reason": "empty_predictions"}
+        if self._resolved_v2_writer is not None:
+            raise RuntimeError(
+                "METRICS_ONLY_BATCH_COMMIT_REQUIRES_RESOLVED_PERFORMANCE_V3"
+            )
+        predictions = pd.concat(batches, ignore_index=True)
+        targets = None
+        if target_batches is not None:
+            nonempty_targets = [frame.copy() for frame in target_batches if not frame.empty]
+            targets = (
+                pd.concat(nonempty_targets, ignore_index=True)
+                if nonempty_targets
+                else pd.DataFrame()
+            )
+        v3_result: dict[str, Any] = {}
+        if self._resolved_v3_writer is not None:
+            v3_result = self._resolved_v3_writer.commit_prediction_batches(
+                batches,
+                metadata=metadata,
+                before_timestamp_evaluation=before_timestamp_evaluation,
+            )
+        result = self.commit_predictions(
+            predictions,
+            targets=targets,
+            expected_assets_by_timestamp=expected_assets_by_timestamp,
+            metadata=metadata,
+            _resolved_v3_result=v3_result,
+        )
+        result["batched_timestamp_count"] = len(batches)
+        result["publication_disposition"] = "BATCHED_TIMESTAMP_EQUIVALENT"
+        return result
 
     @property
     def metrics_path(self) -> Path:
@@ -2984,12 +4718,16 @@ class MetricsOnlyEvidenceWriter:
 
     def _read_metrics_history(self) -> pd.DataFrame:
         if self.enable_resolved_performance_v2 or self.enable_resolved_performance_v3:
-            return read_parquet_log(self.root, "per_t_metrics", legacy_path=self.metrics_path)
+            return self._history_cache.read(
+                "per_t_metrics", legacy_path=self.metrics_path
+            )
         return self._read_existing(self.metrics_path)
 
     def _read_decision_history(self) -> pd.DataFrame:
         if self.enable_resolved_performance_v2 or self.enable_resolved_performance_v3:
-            return read_parquet_log(self.root, "decision_trace", legacy_path=self.decisions_path)
+            return self._history_cache.read(
+                "decision_trace", legacy_path=self.decisions_path
+            )
         return self._read_existing(self.decisions_path)
 
     def commit_predictions(
@@ -2998,8 +4736,12 @@ class MetricsOnlyEvidenceWriter:
         *,
         targets: pd.DataFrame | None = None,
         expected_assets: Sequence[str] | None = None,
+        expected_assets_by_timestamp: Mapping[str, Sequence[str]] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        _resolved_v3_result: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        commit_started = time.perf_counter()
+        stage_timings: dict[str, float] = {}
         if predictions.empty:
             return {"committed": False, "reason": "empty_predictions"}
         if self._namespace_lease is not None:
@@ -3014,31 +4756,133 @@ class MetricsOnlyEvidenceWriter:
         predictions["family"] = predictions.get("family", self.family)
         v2_result: dict[str, Any] = {}
         v3_result: dict[str, Any] = {}
+        stage_started = time.perf_counter()
         if self._resolved_v2_writer is not None:
             v2_result = self._resolved_v2_writer.commit_predictions(predictions, metadata=metadata)
         if self._resolved_v3_writer is not None:
-            v3_result = self._resolved_v3_writer.commit_predictions(predictions, metadata=metadata)
-        metrics, decisions = compute_per_t_metrics(predictions, targets, top_n=self.top_n, expected_assets=expected_assets)
-        existing_metrics = self._read_metrics_history()
-        existing_decisions = self._read_decision_history()
-        if not existing_metrics.empty:
-            key = set(zip(existing_metrics["family"], existing_metrics["decision_timestamp"].astype(str)))
-            metrics = metrics[~metrics.apply(lambda row: (row["family"], str(row["decision_timestamp"])) in key, axis=1)]
-        if not existing_decisions.empty:
-            key = set(zip(existing_decisions["family"], existing_decisions["decision_timestamp"].astype(str), existing_decisions["asset_id"].astype(str)))
-            decisions = decisions[~decisions.apply(lambda row: (row["family"], str(row["decision_timestamp"]), str(row["asset_id"])) in key, axis=1)]
-        combined_metrics = pd.concat([existing_metrics, metrics], ignore_index=True) if not existing_metrics.empty else metrics
-        combined_decisions = pd.concat([existing_decisions, decisions], ignore_index=True) if not existing_decisions.empty else decisions
+            v3_result = (
+                dict(_resolved_v3_result)
+                if _resolved_v3_result is not None
+                else self._resolved_v3_writer.commit_predictions(
+                    predictions, metadata=metadata
+                )
+            )
+        stage_timings["resolved_performance_commit"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_started = time.perf_counter()
+        metrics, decisions = compute_per_t_metrics(
+            predictions,
+            targets,
+            top_n=self.top_n,
+            expected_assets=expected_assets,
+            expected_assets_by_timestamp=expected_assets_by_timestamp,
+        )
+        stage_timings["per_timestamp_metrics_evaluation"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_started = time.perf_counter()
+        incremental_logs = bool(
+            self.enable_resolved_performance_v2
+            or self.enable_resolved_performance_v3
+        )
+        if incremental_logs:
+            metric_keys = [
+                (
+                    str(row.family),
+                    _canonical_pending_timestamp(
+                        row.decision_timestamp, field="decision_timestamp"
+                    ),
+                )
+                for row in metrics.itertuples(index=False)
+            ]
+            decision_keys = [
+                (
+                    str(row.family),
+                    _canonical_pending_timestamp(
+                        row.decision_timestamp, field="decision_timestamp"
+                    ),
+                )
+                for row in decisions.itertuples(index=False)
+            ]
+            metrics = metrics.loc[
+                [key not in self._metrics_keys for key in metric_keys]
+            ].copy()
+            decisions = decisions.loc[
+                [key not in self._decision_keys for key in decision_keys]
+            ].copy()
+            combined_metrics = metrics
+            combined_decisions = decisions
+        else:
+            existing_metrics = self._read_metrics_history()
+            existing_decisions = self._read_decision_history()
+            combined_metrics = pd.concat(
+                [existing_metrics, metrics], ignore_index=True
+            ) if not existing_metrics.empty else metrics
+            combined_decisions = pd.concat(
+                [existing_decisions, decisions], ignore_index=True
+            ) if not existing_decisions.empty else decisions
+        stage_timings["metrics_history_and_deduplication"] = (
+            time.perf_counter() - stage_started
+        )
         resolved_writer = self._resolved_v3_writer or self._resolved_v2_writer
         resolved_result = v3_result or v2_result
         transient_root = resolved_writer.transient_root if resolved_writer is not None else None
-        if self.enable_resolved_performance_v2 or self.enable_resolved_performance_v3:
-            metric_pub = append_parquet_log(self.root, "per_t_metrics", metrics, temp_root=transient_root) if not metrics.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
-            decision_pub = append_parquet_log(self.root, "decision_trace", decisions, temp_root=transient_root) if not decisions.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+        stage_started = time.perf_counter()
+        if incremental_logs:
+            # Decision rows are side evidence.  The single per-timestamp metric
+            # row is deliberately published last as the outer commit marker.
+            decision_pub = append_parquet_log(
+                self.root,
+                "decision_trace",
+                decisions,
+                temp_root=transient_root,
+                history_cache=self._history_cache,
+            ) if not decisions.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+            self._history_cache.record_publication(
+                "decision_trace", decision_pub
+            )
+            if decision_pub.get("appended"):
+                self._decision_keys.update(
+                    (
+                        str(row.family),
+                        _canonical_pending_timestamp(
+                            row.decision_timestamp,
+                            field="decision_timestamp",
+                        ),
+                    )
+                    for row in decisions.itertuples(index=False)
+                )
+            metric_pub = append_parquet_log(
+                self.root,
+                "per_t_metrics",
+                metrics,
+                temp_root=transient_root,
+                history_cache=self._history_cache,
+            ) if not metrics.empty else {"appended": False, "rows": 0, "bytes": 0, "parts": []}
+            self._history_cache.record_publication("per_t_metrics", metric_pub)
+            if metric_pub.get("appended"):
+                self._metrics_keys.update(
+                    (
+                        str(row.family),
+                        _canonical_pending_timestamp(
+                            row.decision_timestamp,
+                            field="decision_timestamp",
+                        ),
+                    )
+                    for row in metrics.itertuples(index=False)
+                )
         else:
             metric_pub = publish_parquet_atomic(self.metrics_path, combined_metrics) if not combined_metrics.empty else {}
             decision_pub = publish_parquet_atomic(self.decisions_path, combined_decisions) if not combined_decisions.empty else {}
         pending = predictions.copy()
+        if _resolved_v3_result is not None:
+            pending_timestamps = _normalise_timestamp_series(
+                pending["decision_timestamp"]
+            )
+            pending = pending[
+                pending_timestamps == pending_timestamps.max()
+            ].copy()
         pending["committed_at_utc"] = pd.Timestamp.now("UTC").isoformat()
         pending["policy_id"] = POLICY_ID
         pending["policy_hash"] = policy_hash()
@@ -3048,6 +4892,10 @@ class MetricsOnlyEvidenceWriter:
         pending["decision_timestamp"] = pd.to_datetime(pending["decision_timestamp"], utc=True).map(lambda ts: ts.isoformat())
         pending = pending[pending["decision_timestamp"].isin(keep)].copy()
         pending_pub = publish_parquet_atomic(self.pending_path, pending, temp_root=transient_root)
+        stage_timings["metrics_parquet_publication"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_started = time.perf_counter()
         temp_inventory = temporary_file_inventory(transient_root) if transient_root is not None else {"bytes": 0, "file_count": 0}
         prior_checkpoint = {}
         try:
@@ -3098,6 +4946,10 @@ class MetricsOnlyEvidenceWriter:
         write_json_atomic(self.checkpoint_path, checkpoint, advisory=False)
         if self._namespace_lease is not None:
             self._namespace_lease.heartbeat(phase="COMMIT_PREDICTIONS_COMPLETE", cursor=checkpoint["last_completed_T"])
+        stage_timings["metrics_checkpoint_publication"] = (
+            time.perf_counter() - stage_started
+        )
+        stage_timings["metrics_writer_total"] = time.perf_counter() - commit_started
         return {
             "committed": True,
             "policy_id": POLICY_ID,
@@ -3112,6 +4964,7 @@ class MetricsOnlyEvidenceWriter:
             "pending_publication": pending_pub,
             "checkpoint": checkpoint,
             "namespace_writer_lease": self.namespace_lease_payload(),
+            "stage_timings_seconds": stage_timings,
             "resolved_performance_v2": v2_result,
             "resolved_performance_v3": v3_result,
         }

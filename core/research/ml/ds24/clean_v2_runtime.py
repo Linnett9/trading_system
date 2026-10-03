@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping
 import pandas as pd
 
 from core.research.ml.ds24.clean_v2_contracts import stable_hash
+from core.research.ml.ds24.clean_v2_resources import RESOURCE_POLICY
 from core.research.ml.ds24.comparable_policy import (
     REFIT_SCORE_SESSION_CADENCE,
     build_refit_schedule,
@@ -16,7 +17,10 @@ from core.research.ml.ds24.comparable_policy import (
 RUN_ID = "DS24_CLEAN_V2_TOURNAMENT_R1_20260926"
 REFIT_POLICY_ID = "REFIT_EVERY_5_TRADING_SESSIONS_V1"
 QUALIFIER_YEARS = (2017, 2019, 2020, 2022, 2024)
-MAX_DELL_MODEL_WORKERS = 2
+# Post-crash Dell recovery is deliberately serialized.  This is an execution
+# control only; it does not alter any model, sample, refit, feature, or target
+# authority.
+MAX_DELL_MODEL_WORKERS = RESOURCE_POLICY.maximum_dell_model_workers
 PAPER_ORDERS_ALLOWED = False
 LIVE_ORDERS_ALLOWED = False
 
