@@ -1,0 +1,79 @@
+{
+  "schema": "DS24_V11X_A_DELL_BOUNDED_BENCHMARK_SCORECARD_V1",
+  "classification": "V11X_A_MATERIAL_RF_CANDIDATE_DEPLOYMENT_DEFERRED_FULL_PACKAGE_REQUIRED",
+  "authority": {
+    "clean_source_hash": "6313ffa04a359a88a9172ac1812ca003b7a4f1601fd0a0d5a19e1470663a139c",
+    "maximum_assets": 8,
+    "maximum_score_timestamps": 18,
+    "production_state_mutated": false
+  },
+  "family_baselines": [
+    {
+      "family": "huber",
+      "package_seconds": 2.937,
+      "fit_seconds": 0.471,
+      "evaluation_publication_seconds": 4.172,
+      "peak_resident_bytes": 336338944
+    },
+    {
+      "family": "elastic_net_C5",
+      "package_seconds": 3.034,
+      "fit_seconds": 0.118,
+      "evaluation_publication_seconds": 3.275,
+      "peak_resident_bytes": 340766720
+    }
+  ],
+  "random_forest_threading": [
+    {
+      "n_jobs": 1,
+      "fit_seconds": 21.879628999973647,
+      "package_seconds": 23.281191800022498,
+      "measured_wall_seconds": 27.100750799989328,
+      "cpu_seconds": 26.65625,
+      "peak_resident_bytes": 347234304,
+      "peak_private_commit_bytes": 325066752,
+      "package_speedup_vs_n_jobs_1": 1.0,
+      "package_reduction_percent": 0.0
+    },
+    {
+      "n_jobs": 2,
+      "fit_seconds": 11.436120499973185,
+      "package_seconds": 12.886988499900326,
+      "cpu_seconds": 29.609,
+      "peak_resident_bytes": 347693056,
+      "peak_private_commit_bytes": 325656576,
+      "package_speedup_vs_n_jobs_1": 1.8066,
+      "package_reduction_percent": 44.65,
+      "maximum_absolute_prediction_delta": 8.673617379884035e-19,
+      "mean_absolute_prediction_delta": 1.7040093247589772e-19
+    },
+    {
+      "n_jobs": 3,
+      "fit_seconds": 8.065914200036786,
+      "package_seconds": 9.545600000070408,
+      "cpu_seconds": 27.938,
+      "peak_resident_bytes": 348995584,
+      "peak_private_commit_bytes": 326688768,
+      "package_speedup_vs_n_jobs_1": 2.4390,
+      "package_reduction_percent": 59.0,
+      "maximum_absolute_prediction_delta": 8.673617379884035e-19,
+      "mean_absolute_prediction_delta": 1.9047193057388007e-19
+    }
+  ],
+  "parity": {
+    "prediction_keys_exact": true,
+    "panel_fingerprint_exact": true,
+    "rank_fingerprint_exact": true,
+    "rank_ic_fingerprint_exact": true,
+    "sleeve_maturity_fingerprint_exact": true,
+    "transaction_cost_fingerprint_exact": true,
+    "raw_prediction_fingerprint_exact": false,
+    "raw_prediction_difference_classification": "BOUNDED_FLOATING_POINT_REDUCTION_ORDER_DELTA"
+  },
+  "deployment": {
+    "approved": false,
+    "reason": "The material result is bounded to eight assets. Full production-package resource and concurrent Huber/Elastic availability evidence is required before a checkpoint-safe Dell transition.",
+    "live_dell_stopped": false,
+    "live_dell_restarted": false
+  }
+}
