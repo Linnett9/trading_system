@@ -10,6 +10,22 @@
 - Dell runtime source hash used for the bounded benchmark evidence:
   `6313ffa04a359a88a9172ac1812ca003b7a4f1601fd0a0d5a19e1470663a139c`
 
+## Confirmed remote publication
+
+- Remote: `https://github.com/Linnett9/trading_system.git`
+- Remote branch: `refs/heads/codex/ds24-v11x-throughput`
+- Verified remote commit:
+  `d29f52bfbcb6cae3f0b2869aaa0f603497e4389e`
+- Verified at: `2026-10-05T16:54:08Z`
+- Verification: `git ls-remote --heads origin refs/heads/codex/ds24-v11x-throughput`
+  returned the exact commit above, matching the local branch tip before this
+  documentation-only confirmation commit.
+
+The confirmation commit that adds this section is a documentation-only
+descendant.  The immutable V11X source commit remains
+`695eda3d6fed75d981de21813ddcee73d740ead9` and its normalized source hash
+remains unchanged.
+
 The source commit is intentionally separate from this handoff commit.  Mac
 validation must check out the exact source commit above, or a descendant whose
 additional changes have been independently reviewed.
