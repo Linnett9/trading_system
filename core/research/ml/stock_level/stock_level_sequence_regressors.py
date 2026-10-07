@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Any, Mapping
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,8 @@ class TorchSequenceReturnRegressor:
     Existing classification model classes and checkpoints remain untouched.
     """
 
+    CHECKPOINT_SCHEMA = "TORCH_SEQUENCE_RETURN_REGRESSOR_CHECKPOINT_V1"
+
     def __init__(self, config: SequenceRegressorConfig):
         self.config = config
         self.model: Any = None
@@ -51,20 +53,20 @@ class TorchSequenceReturnRegressor:
 
     def fit(
         self,
-        sequences: list[list[list[float]]],
+        sequences: Any,
         targets: list[float],
         auxiliary_targets: list[list[float]] | None = None,
     ) -> None:
         if len(sequences) != len(targets):
             raise ValueError("Sequence features and targets must have the same length")
-        if not sequences:
+        if len(sequences) == 0:
             return
         torch, nn = _torch_dependencies()
         if self.config.torch_num_threads is not None:
             torch.set_num_threads(max(1, self.config.torch_num_threads))
         device = self._fit_device(torch)
         torch.manual_seed(self.config.random_seed)
-        x = torch.tensor(sequences, dtype=torch.float32)
+        x = torch.as_tensor(sequences, dtype=torch.float32)
         y = torch.tensor(targets, dtype=torch.float32)
         self.diagnostics = _tensor_quality(torch, x, y, prefix="train")
         x = self._preprocess_fit_features(torch, x)
@@ -145,14 +147,14 @@ class TorchSequenceReturnRegressor:
             }
         )
 
-    def predict(self, sequences: list[list[list[float]]]) -> list[float]:
-        if not sequences:
+    def predict(self, sequences: Any) -> list[float]:
+        if len(sequences) == 0:
             return []
         if self.model is None:
             return [self.target_mean for _ in sequences]
         torch, _ = _torch_dependencies()
         device = self._fit_device(torch)
-        x = torch.tensor(sequences, dtype=torch.float32, device=device)
+        x = torch.as_tensor(sequences, dtype=torch.float32, device=device)
         prediction_quality = _tensor_quality(torch, x, None, prefix="test")
         x = self._preprocess_predict_features(torch, x)
         prediction_quality.update(_post_preprocess_quality(torch, x, prefix="test"))
@@ -175,6 +177,85 @@ class TorchSequenceReturnRegressor:
         )
         self.diagnostics.update(prediction_quality)
         return values
+
+    def checkpoint_payload(self) -> dict[str, Any]:
+        """Return a portable state-dict checkpoint without pickling local classes."""
+
+        feature_count = 0
+        for value in (
+            self.feature_impute_values,
+            self.feature_means,
+            self.feature_stds,
+        ):
+            if value is not None:
+                feature_count = int(value.shape[-1])
+                break
+        if self.model is not None and feature_count <= 0:
+            raise ValueError("Sequence checkpoint feature count is unavailable")
+        return {
+            "schema": self.CHECKPOINT_SCHEMA,
+            "config": asdict(self.config),
+            "feature_count": feature_count,
+            "model_state_dict": (
+                {
+                    str(name): tensor.detach().cpu()
+                    for name, tensor in self.model.state_dict().items()
+                }
+                if self.model is not None
+                else None
+            ),
+            "feature_impute_values": self._checkpoint_tensor(
+                self.feature_impute_values
+            ),
+            "feature_means": self._checkpoint_tensor(self.feature_means),
+            "feature_stds": self._checkpoint_tensor(self.feature_stds),
+            "target_mean": float(self.target_mean),
+            "target_std": float(self.target_std),
+            "auxiliary_means": self._checkpoint_tensor(self.auxiliary_means),
+            "auxiliary_stds": self._checkpoint_tensor(self.auxiliary_stds),
+            "diagnostics": dict(self.diagnostics),
+        }
+
+    @classmethod
+    def from_checkpoint_payload(
+        cls,
+        payload: Mapping[str, Any],
+    ) -> TorchSequenceReturnRegressor:
+        """Reconstruct a fitted regressor from a validated portable payload."""
+
+        if payload.get("schema") != cls.CHECKPOINT_SCHEMA:
+            raise ValueError("Unsupported sequence checkpoint schema")
+        config_payload = payload.get("config")
+        if not isinstance(config_payload, Mapping):
+            raise ValueError("Sequence checkpoint config is missing")
+        owner = cls(SequenceRegressorConfig(**dict(config_payload)))
+        owner.feature_impute_values = payload.get("feature_impute_values")
+        owner.feature_means = payload.get("feature_means")
+        owner.feature_stds = payload.get("feature_stds")
+        owner.target_mean = float(payload.get("target_mean", 0.0))
+        owner.target_std = float(payload.get("target_std", 1.0))
+        owner.auxiliary_means = payload.get("auxiliary_means")
+        owner.auxiliary_stds = payload.get("auxiliary_stds")
+        diagnostics = payload.get("diagnostics")
+        owner.diagnostics = dict(diagnostics) if isinstance(diagnostics, Mapping) else {}
+        state_dict = payload.get("model_state_dict")
+        if state_dict is None:
+            owner.model = None
+            return owner
+        if not isinstance(state_dict, Mapping):
+            raise ValueError("Sequence checkpoint state_dict is invalid")
+        feature_count = int(payload.get("feature_count", 0) or 0)
+        if feature_count <= 0:
+            raise ValueError("Sequence checkpoint feature count is invalid")
+        torch, nn = _torch_dependencies()
+        model = owner._build_model(torch, nn, feature_count=feature_count)
+        model.load_state_dict(dict(state_dict), strict=True)
+        owner.model = model.cpu()
+        return owner
+
+    @staticmethod
+    def _checkpoint_tensor(value: Any) -> Any:
+        return value.detach().cpu() if value is not None else None
 
     def _preprocess_fit_features(self, torch: Any, x: Any) -> Any:
         finite = torch.isfinite(x)

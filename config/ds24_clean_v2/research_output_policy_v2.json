@@ -1,0 +1,26 @@
+{
+  "authority_id": "DS24_RESEARCH_OUTPUT_POLICY_V2",
+  "previous_authority_id": "DS24_CLEAN_V2_TOURNAMENT_CONTRACT_V3.storage",
+  "historical_policy_remains_readable": true,
+  "default_output": "compact_ranked_prediction_ledger",
+  "authorised_artifact": {
+    "schema": "DS24_RANKED_PREDICTION_LEDGER_V1",
+    "purpose": "deliberate reusable research artifact for post-training portfolio-policy analysis",
+    "format": "zstd compressed Parquet",
+    "partitioning": ["family", "decision_month"],
+    "append_only": true,
+    "immutable_completed_partitions": true,
+    "atomic_publication": true,
+    "full_eligible_cross_section": true
+  },
+  "forbidden_content": [
+    "future target values",
+    "realized or realised returns",
+    "model feature matrices"
+  ],
+  "historical_metrics_only_policy": {
+    "status": "SUPPORTED_READ_ONLY",
+    "permanent_full_prediction_matrices": false,
+    "reason_for_version_change": "Ranked predictions are now an intentional compact reusable research artifact, not an accidental unbounded diagnostic matrix."
+  }
+}

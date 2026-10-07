@@ -1,0 +1,25 @@
+{
+  "artifact_identity_verification": "VERIFIED",
+  "assessed_at_utc": "2026-10-07T19:48:16.635304+00:00",
+  "checkpoint_path": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/family=random_forest/model_checkpoint.json",
+  "checkpoint_source_hash": "46088c818989f4af3637fb36cfa738daf47f999c2e3164834c49aa40ec22bc08",
+  "classification": "RESUME_COMPATIBLE_OPERATIONAL_ONLY_CHANGE",
+  "current_source_hash": "46088c818989f4af3637fb36cfa738daf47f999c2e3164834c49aa40ec22bc08",
+  "legacy_clean_v2_checkpoint": false,
+  "model_hash": "a2f3a515579d3ababc8b9db9dc3c8be5ad93a7f9f1a4af60916fbc1f91045512",
+  "model_path": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/family=random_forest/models/random_forest_20190408T133500Z.pkl",
+  "operational_differences": {
+    "pid": {
+      "checkpoint": 23692,
+      "current": 20464
+    },
+    "process_creation_time_utc": {
+      "checkpoint": "2026-10-07T17:22:05.376747+00:00",
+      "current": "2026-10-07T19:47:18.578635+00:00"
+    }
+  },
+  "prior_completed_package": false,
+  "reusable": true,
+  "scientific_identity_hash": "e493a35aa0fa0f11a3e7086c0e2d268307b111e25e31bb3dfe65ab66bd54fb46",
+  "verified_at_utc": "2026-10-07T19:48:16.650457+00:00"
+}

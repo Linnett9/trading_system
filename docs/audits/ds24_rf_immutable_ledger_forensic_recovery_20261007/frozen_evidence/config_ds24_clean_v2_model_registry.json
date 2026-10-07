@@ -1,0 +1,175 @@
+{
+  "authority_id": "DS24_CLEAN_V2_MODEL_REGISTRY_V3",
+  "selection_rule": "Results Ledger evidence preregisters configuration hypotheses only; historical metrics are never model inputs, clean performance evidence, or tuning feedback",
+  "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1",
+  "families": {
+    "random_forest": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_RECOVERED",
+      "implementation": "scripts.local.ds24_classical_tree_adapters:classical_tree_estimator",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.RandomForestRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"n_estimators": 100, "max_depth": 6, "min_samples_leaf": 20, "max_features": 0.8, "n_jobs": 1, "random_state": 23}
+    },
+    "transformer": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "core.research.ml.stock_level.stock_level_sequence_regressors:TorchSequenceReturnRegressor",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "transformer", "sequence_length": 32, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 32, "nhead": 4, "num_layers": 2, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "huber": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_CURRENT_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='mean')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.HuberRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"alpha": 0.0001, "max_iter": 35}
+    },
+    "ridge_C5": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_FINALIST_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.Ridge",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"alpha": 500.0},
+      "frozen_config_hash": "31afb5ff925fa1599f8ebf0667d198d7e800d011c3acc5503b21849e39f6631f"
+    },
+    "gradient_boosting_C0": {
+      "lane": "FULL_CLEAN",
+      "status": "EXACT_FINALIST_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"learning_rate": 0.05, "max_depth": 2, "n_estimators": 50, "random_state": 240803},
+      "frozen_config_hash": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345"
+    },
+    "elastic_net_C5": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_FINALIST_PARAMS_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.ElasticNet",
+      "parameters": {"alpha": 0.001, "l1_ratio": 0.85},
+      "execution_parameters": {"max_iter": 3000, "random_state": 240803},
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "frozen_config_hash": "be121d6484103c69c8fd10bcaa873b01808e8894f3b902fb0e4a1e5f5ece9f69",
+      "continuation_rule": "qualify before full history; at most one of C5/C6 continues unless clean common-sample evidence retains both"
+    },
+    "elastic_net_C6": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_FINALIST_PARAMS_RECOVERED",
+      "preprocessing": ["SimpleImputer(strategy='median')", "StandardScaler()"],
+      "estimator": "sklearn.linear_model.ElasticNet",
+      "parameters": {"alpha": 0.01, "l1_ratio": 0.15},
+      "execution_parameters": {"max_iter": 3000, "random_state": 240803},
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "frozen_config_hash": "759b0b0eb6254d03545901dc889ae3c556aa7516e95e4d51aa6ed8811e85a29e",
+      "continuation_rule": "qualify before full history; at most one of C5/C6 continues unless clean common-sample evidence retains both"
+    },
+    "gradient_boosting_C0_W20": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_C0_PARAMETERS_WITH_PREREGISTERED_LOOKBACK",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "training": {"lookback_sessions": 20, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"learning_rate": 0.05, "max_depth": 2, "n_estimators": 50, "random_state": 240803},
+      "parent_frozen_config_hash": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345"
+    },
+    "gradient_boosting_C0_W40": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_C0_PARAMETERS_WITH_PREREGISTERED_LOOKBACK",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "training": {"lookback_sessions": 40, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"learning_rate": 0.05, "max_depth": 2, "n_estimators": 50, "random_state": 240803},
+      "parent_frozen_config_hash": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345"
+    },
+    "gradient_boosting_C0_W80": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_C0_PARAMETERS_WITH_PREREGISTERED_LOOKBACK",
+      "preprocessing": ["SimpleImputer(strategy='median')"],
+      "estimator": "sklearn.ensemble.GradientBoostingRegressor",
+      "training": {"lookback_sessions": 80, "sample_cap": null, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"learning_rate": 0.05, "max_depth": 2, "n_estimators": 50, "random_state": 240803},
+      "parent_frozen_config_hash": "681ac5611061752300b9c662a75922d5ba96ad6179ca554410750b45d7273345"
+    },
+    "lightgbm_rank_xendcg": {
+      "lane": "SHORT_REQUALIFICATION",
+      "status": "EXACT_RECOVERED_MAC_PRODUCER_PORT",
+      "implementation": "scripts.local.ds24_clean_v2_family_worker:_fit_xendcg",
+      "recovered_producer_authority": {
+        "classification": "MAC_WORKTREE_UNCOMMITTED_SOURCE_OVER_ADVERTISED_HEAD",
+        "advertised_mac_head": "b2ffdf0966c0424c82632ea21f83cefb29905cc1",
+        "producer_function": "core.research.ml.ds24.mac_aux_queue_r44f2._fit_lightgbm",
+        "producer_source_sha256": "5c5e8ff1486d870f8c2d3b1ceb2c406f5544e38a34e5a768a816abc06076b17d",
+        "source_manifest_file_sha256": "5cb30e9629d681e86b44bf301af50b328b8d0f9e71929f1f9d00d9f98d0d4d7c",
+        "three_refit_parity_file_sha256": "c2f8df6db8c491135e72d4a71a983fe33ead8d538b510af73506626573f88e39",
+        "parity_classification": "XENDCG_PRODUCTION_PARITY_PASS",
+        "parity_refit_ordinals": [2, 1132, 2263],
+        "ordered_predictor_sha256": "22db0fcfe1219a30e0f6926dd8f0af11b4cd8ead2a6462a0df278549fadeb5a0",
+        "discrepancy_resolution": "The rejected 24/0.08/7/2 payload came from the generic daily stock-level fixed_rank_xendcg_configuration and was never the recovered DS24 Mac producer. This candidate is the single carry-forward XENDCG entry and ports the frozen Mac producer semantics."
+      },
+      "preprocessing": [
+        "sort rows by decision_timestamp then asset_id",
+        "apply tail(max_training_rows) at row level; the oldest query group may be partial",
+        "replace positive and negative infinity with NaN",
+        "fill NaN with 0.0 without a fitted imputer"
+      ],
+      "grouping": {
+        "query_key": "decision_timestamp",
+        "query_order": "ascending decision_timestamp after stable asset_id tie-break",
+        "group_sizes": "ordered row counts per decision_timestamp after the row-level training cap"
+      },
+      "rank_labels": {
+        "source": "target_value",
+        "within": "decision_timestamp",
+        "rank_method": "first",
+        "percentile": true,
+        "transform": "floor(percentile_rank * 4.999)",
+        "relevance_values": [0, 1, 2, 3, 4]
+      },
+      "training": {"lookback_sessions": 20, "max_training_rows": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"objective": "rank_xendcg", "n_estimators": 25, "learning_rate": 0.05, "num_leaves": 15, "min_child_samples": 10, "n_jobs": 4, "num_threads": 4, "random_state": 1729, "verbose": -1}
+    },
+    "momentum_transformer": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "core.research.ml.stock_level.stock_level_sequence_regressors:TorchSequenceReturnRegressor",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "momentum_transformer", "sequence_length": 64, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 64, "nhead": 4, "num_layers": 2, "dim_feedforward": 128, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "market_context_encoder": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "core.research.ml.stock_level.stock_level_sequence_regressors:TorchSequenceReturnRegressor",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "market_context_encoder", "sequence_length": 32, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0001, "random_seed": 63, "d_model": 32, "nhead": 4, "num_layers": 1, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    },
+    "temporal_fusion_transformer": {
+      "lane": "UNSCORED_DISCOVERY",
+      "status": "EXACT_CURRENT_EFFECTIVE_WORKER_CONFIG_RECOVERED",
+      "implementation": "core.research.ml.stock_level.stock_level_sequence_regressors:TorchSequenceReturnRegressor",
+      "training": {"lookback_sessions": 20, "max_training_examples": 24000, "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1"},
+      "parameters": {"architecture": "temporal_fusion_transformer", "sequence_length": 64, "epochs": 1, "batch_size": 8, "learning_rate": 0.001, "weight_decay": 0.0005, "random_seed": 63, "d_model": 64, "nhead": 4, "num_layers": 1, "dim_feedforward": 64, "dropout": 0.0, "device": "cpu", "torch_num_threads": 1, "dataloader_num_workers": 0, "dataloader_pin_memory": false, "dataloader_prefetch_factor": 2, "dataloader_persistent_workers": false, "cuda_required": false, "patch_length": 4, "patch_stride": 2}
+    }
+  },
+  "controls": ["momentum", "equal_weight_no_model"],
+  "preregistered_unresolved_hypotheses": {
+    "gradient_boosting_C7": {
+      "intended_lane": "SHORT_REQUALIFICATION",
+      "status": "UNRESOLVED_NO_EXACT_REPOSITORY_PARAMETER_AUTHORITY",
+      "automatic_admission": false,
+      "reason": "The Results Ledger name and independent-confirmation outcome are known, but the exact frozen C7 parameter payload is not present in repository authority and must not be invented"
+    },
+    "ordered_logit": {
+      "intended_lane": "SHORT_REQUALIFICATION",
+      "status": "UNRESOLVED_NO_EXACT_DS24_5M_IMPLEMENTATION",
+      "automatic_admission": false,
+      "reason": "No exact admitted continuous-60m DS24 five-minute implementation was recovered; creating a new model is prohibited"
+    }
+  },
+  "preserved_but_not_scheduled": ["elastic_net", "itransformer", "dlinear", "patchtst", "mlp", "lightgbm_lambdarank", "rff_ridge", "pca_ridge", "spline_additive_ridge", "extra_trees"],
+  "source_repairs_preserved": ["DLinear sequence-window repairs", "Temporal Fusion Transformer sequence-window repairs"],
+  "retirement_rule": "Preserved implementations remain importable source but receive no lane, queue ownership, worker command, or automatic continuation"
+}

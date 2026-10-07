@@ -1,0 +1,171 @@
+{
+  "families": {
+    "elastic_net_C5": {
+      "active_stage": null,
+      "capacity_class": "OPPORTUNISTIC_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-10-07T19:25:18.300656+00:00",
+        "peak_private_commit_bytes": 2333589504,
+        "peak_resident_bytes": 2340524032,
+        "pid": 1740,
+        "private_commit_bytes": 1066885120,
+        "resident_bytes": 1069613056,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "elastic_net_C5",
+      "guarded_stage": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "last_observed_at_utc": "2026-10-07T19:25:18.306963+00:00",
+      "outstanding": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "peak_private_commit_bytes": 4841054208,
+      "peak_resident_bytes": 4768890880,
+      "stage_baseline_memory": null
+    },
+    "equal_weight_no_model": {
+      "active_stage": null,
+      "capacity_class": "OPPORTUNISTIC_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-09-30T18:09:32.802328+00:00",
+        "peak_private_commit_bytes": 262529024,
+        "peak_resident_bytes": 276140032,
+        "pid": 10380,
+        "private_commit_bytes": 248590336,
+        "resident_bytes": 276140032,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "equal_weight_no_model",
+      "guarded_stage": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "last_observed_at_utc": "2026-09-30T18:09:32.802328+00:00",
+      "outstanding": {
+        "commit_bytes": 4583632896,
+        "physical_bytes": 2947219456
+      },
+      "peak_private_commit_bytes": 262529024,
+      "peak_resident_bytes": 276140032,
+      "stage_baseline_memory": null
+    },
+    "huber": {
+      "active_stage": null,
+      "capacity_class": "OPPORTUNISTIC_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-10-07T19:57:18.314970+00:00",
+        "peak_private_commit_bytes": 2161721344,
+        "peak_resident_bytes": 2066939904,
+        "pid": 3524,
+        "private_commit_bytes": 2109722624,
+        "resident_bytes": 1992957952,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "huber",
+      "guarded_stage": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "last_observed_at_utc": "2026-10-07T19:57:18.314970+00:00",
+      "outstanding": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "peak_private_commit_bytes": 6780837888,
+      "peak_resident_bytes": 6681579520,
+      "stage_baseline_memory": null
+    },
+    "momentum": {
+      "active_stage": null,
+      "capacity_class": "PROTECTED_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-10-03T17:25:39.667639+00:00",
+        "peak_private_commit_bytes": 13461590016,
+        "peak_resident_bytes": 12646744064,
+        "pid": 23196,
+        "private_commit_bytes": 13260787712,
+        "resident_bytes": 12449902592,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "momentum",
+      "guarded_stage": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "last_observed_at_utc": "2026-10-03T17:25:39.667639+00:00",
+      "outstanding": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "peak_private_commit_bytes": 13461590016,
+      "peak_resident_bytes": 12646744064,
+      "stage_baseline_memory": null
+    },
+    "random_forest": {
+      "active_stage": "random_forest_scoring_publication",
+      "capacity_class": "PROTECTED_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-10-07T19:57:13.920575+00:00",
+        "peak_private_commit_bytes": 2224943104,
+        "peak_resident_bytes": 2164387840,
+        "pid": 20464,
+        "private_commit_bytes": 2195070976,
+        "resident_bytes": 2138062848,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "random_forest",
+      "guarded_stage": {
+        "commit_bytes": 5310365697,
+        "physical_bytes": 5025976320
+      },
+      "last_observed_at_utc": "2026-10-07T19:57:13.927581+00:00",
+      "outstanding": {
+        "commit_bytes": 5257240577,
+        "physical_bytes": 4967464960
+      },
+      "peak_private_commit_bytes": 7458017280,
+      "peak_resident_bytes": 7455469568,
+      "stage_baseline_memory": {
+        "checked_at_utc": "2026-10-07T19:57:07.234203+00:00",
+        "peak_private_commit_bytes": 2216165376,
+        "peak_resident_bytes": 2153250816,
+        "pid": 20464,
+        "private_commit_bytes": 2141945856,
+        "resident_bytes": 2079551488,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      }
+    },
+    "ridge_C5": {
+      "active_stage": null,
+      "capacity_class": "OPPORTUNISTIC_CAPACITY",
+      "current_memory": {
+        "checked_at_utc": "2026-10-01T01:07:58.123912+00:00",
+        "peak_private_commit_bytes": 265474048,
+        "peak_resident_bytes": 277954560,
+        "pid": 13196,
+        "private_commit_bytes": 239185920,
+        "resident_bytes": 267747328,
+        "source": "aggregate_process_tree:psapi.GetProcessMemoryInfo"
+      },
+      "family": "ridge_C5",
+      "guarded_stage": {
+        "commit_bytes": 0,
+        "physical_bytes": 0
+      },
+      "last_observed_at_utc": "2026-10-01T01:07:58.125418+00:00",
+      "outstanding": {
+        "commit_bytes": 6103932928,
+        "physical_bytes": 5975150593
+      },
+      "peak_private_commit_bytes": 5268992000,
+      "peak_resident_bytes": 5167022080,
+      "stage_baseline_memory": null
+    }
+  },
+  "resource_policy_id": "DS24_CLEAN_V2_STAGE_AWARE_UTILISATION_POLICY_V10",
+  "schema_version": "DS24_CLEAN_V2_FAMILY_RESOURCE_HIGH_WATER_V1",
+  "updated_at_utc": "2026-10-07T19:57:18.314970+00:00"
+}

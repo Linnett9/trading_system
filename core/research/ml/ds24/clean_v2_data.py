@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -29,6 +31,128 @@ class CleanV2Partition:
     base_feature_path: Path
     sidecar_path: Path
     target_paths: tuple[Path, ...]
+
+
+TARGET_LOOKUP_COLUMNS = (
+    "target_id",
+    "target_value",
+    "target_is_trainable",
+    "target_available_timestamp",
+)
+
+
+@dataclass(frozen=True)
+class CleanV2PanelTargetLookup:
+    """Immutable package-scoped target index for evaluator resolution."""
+
+    targets: pd.DataFrame
+
+    @classmethod
+    def from_panel(cls, panel: pd.DataFrame) -> CleanV2PanelTargetLookup:
+        required = {*IDENTITY_COLUMNS, *TARGET_LOOKUP_COLUMNS}
+        missing = sorted(required - set(panel.columns))
+        if missing:
+            raise CleanV2DataError(
+                f"Composite panel target lookup is missing columns: {missing}"
+            )
+        targets = panel[[*IDENTITY_COLUMNS, *TARGET_LOOKUP_COLUMNS]].copy()
+        targets["asset_id"] = targets["asset_id"].astype(str)
+        targets["decision_timestamp"] = pd.to_datetime(
+            targets["decision_timestamp"], utc=True, errors="raise"
+        )
+        duplicate_count = int(targets.duplicated(list(IDENTITY_COLUMNS)).sum())
+        if duplicate_count:
+            raise CleanV2DataError(
+                "Composite panel target lookup has duplicate identity keys: "
+                f"{duplicate_count}"
+            )
+        return cls(targets=targets.set_index(list(IDENTITY_COLUMNS), drop=True))
+
+    def load(self, request: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
+        missing = sorted(set(IDENTITY_COLUMNS) - set(request.columns))
+        if missing:
+            raise CleanV2DataError(
+                f"Target lookup request is missing identity columns: {missing}"
+            )
+        keys = request[list(IDENTITY_COLUMNS)].copy()
+        keys["asset_id"] = keys["asset_id"].astype(str)
+        keys["decision_timestamp"] = pd.to_datetime(
+            keys["decision_timestamp"], utc=True, errors="raise"
+        )
+        duplicate_count = int(keys.duplicated(list(IDENTITY_COLUMNS)).sum())
+        if duplicate_count:
+            raise CleanV2DataError(
+                "Target lookup request has duplicate identity keys: "
+                f"{duplicate_count}"
+            )
+        request_index = pd.MultiIndex.from_frame(keys)
+        matched_targets = self.targets.reindex(request_index).reset_index()
+        matched_targets.columns = [*IDENTITY_COLUMNS, *TARGET_LOOKUP_COLUMNS]
+        return matched_targets, {
+            "target_loader": "DS24_CLEAN_V2_COMPOSITE_PANEL",
+            "target_rows_loaded": int(
+                matched_targets["target_value"].notna().sum()
+            ),
+        }
+
+
+@dataclass
+class DataAssemblyProfiler:
+    """Collect bounded, process-local timings for immutable data assembly.
+
+    The profiler is deliberately optional and has no persistence or authority
+    role. It lets benchmark and operational callers distinguish physical reads
+    from joins and final panel materialisation without duplicating the
+    production reader.
+    """
+
+    elapsed_seconds: dict[str, float] = field(default_factory=dict)
+    calls: dict[str, int] = field(default_factory=dict)
+    output_rows: dict[str, int] = field(default_factory=dict)
+    source_partition_bytes_opened: dict[str, int] = field(default_factory=dict)
+    partitions_opened: dict[str, int] = field(default_factory=dict)
+
+    @contextmanager
+    def measure(self, stage: str) -> Iterator[None]:
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.elapsed_seconds[stage] = self.elapsed_seconds.get(stage, 0.0) + (
+                time.perf_counter() - started
+            )
+            self.calls[stage] = self.calls.get(stage, 0) + 1
+
+    def record_rows(self, stage: str, row_count: int) -> None:
+        self.output_rows[stage] = self.output_rows.get(stage, 0) + int(row_count)
+
+    def record_partition_open(self, stage: str, path: Path) -> None:
+        self.partitions_opened[stage] = self.partitions_opened.get(stage, 0) + 1
+        self.source_partition_bytes_opened[stage] = (
+            self.source_partition_bytes_opened.get(stage, 0) + path.stat().st_size
+        )
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "elapsed_seconds": {
+                name: float(value)
+                for name, value in sorted(self.elapsed_seconds.items())
+            },
+            "calls": {name: int(value) for name, value in sorted(self.calls.items())},
+            "output_rows": {
+                name: int(value) for name, value in sorted(self.output_rows.items())
+            },
+            "source_partition_bytes_opened": {
+                name: int(value)
+                for name, value in sorted(
+                    self.source_partition_bytes_opened.items()
+                )
+            },
+            "partitions_opened": {
+                name: int(value)
+                for name, value in sorted(self.partitions_opened.items())
+            },
+        }
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -329,8 +453,14 @@ def _join_repaired_features(
 class CleanV2CompositeData:
     """Read-only composition of immutable V1 features, V2 repairs, and targets."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        profiler: DataAssemblyProfiler | None = None,
+    ) -> None:
         self.root = root.resolve()
+        self.profiler = profiler
         self.feature_contract = load_contract("feature_authority.json")
         self.target_contract = load_contract("target_contract.json")
         self.predictor_contract = load_contract("predictor_manifest.json")
@@ -352,7 +482,25 @@ class CleanV2CompositeData:
         self.sidecar_manifest = _read_json(self.sidecar_root / "authority_manifest.json")
         self.delta_target_manifest = _read_json(self.delta_target_root / "authority_manifest.json")
         self._validate_manifests()
-        self.partitions = self._partition_inventory()
+        with self._profile("partition_enumeration"):
+            self.partitions = self._partition_inventory()
+        self._record_rows("partition_enumeration", len(self.partitions))
+
+    @contextmanager
+    def _profile(self, stage: str) -> Iterator[None]:
+        if self.profiler is None:
+            yield
+            return
+        with self.profiler.measure(stage):
+            yield
+
+    def _record_rows(self, stage: str, row_count: int) -> None:
+        if self.profiler is not None:
+            self.profiler.record_rows(stage, row_count)
+
+    def _record_partition_open(self, stage: str, path: Path) -> None:
+        if self.profiler is not None:
+            self.profiler.record_partition_open(stage, path)
 
     def _validate_manifests(self) -> None:
         feature = self.feature_contract
@@ -467,20 +615,23 @@ class CleanV2CompositeData:
             "session_type",
             *self.stock_predictors,
         ]
-        try:
-            base = pd.read_parquet(
-                partition.base_feature_path,
-                columns=base_columns,
-                filters=[("session_date", "in", list(session_dates))],
-            )
-        except (
-            TypeError,
-            ValueError,
-            pa.ArrowInvalid,
-            pa.ArrowNotImplementedError,
-        ):
-            base = pd.read_parquet(partition.base_feature_path, columns=base_columns)
-            base = base[base["session_date"].astype(str).isin(session_dates)].copy()
+        with self._profile("feature_reads"):
+            self._record_partition_open("feature_reads", partition.base_feature_path)
+            try:
+                base = pd.read_parquet(
+                    partition.base_feature_path,
+                    columns=base_columns,
+                    filters=[("session_date", "in", list(session_dates))],
+                )
+            except (
+                TypeError,
+                ValueError,
+                pa.ArrowInvalid,
+                pa.ArrowNotImplementedError,
+            ):
+                base = pd.read_parquet(partition.base_feature_path, columns=base_columns)
+                base = base[base["session_date"].astype(str).isin(session_dates)].copy()
+        self._record_rows("feature_reads", len(base))
         return base
 
     def _feature_partition_inputs(
@@ -507,12 +658,15 @@ class CleanV2CompositeData:
             pd.Timestamp(base["decision_timestamp"].max()).tz_convert("UTC")
             + pd.Timedelta(microseconds=1)
         )
-        sidecar = self._read_timestamp_slice(
-            partition.sidecar_path,
-            columns=["asset_id", "decision_timestamp", *repaired, *provenance],
-            start=start,
-            end=end,
-        )
+        with self._profile("sidecar_reads"):
+            self._record_partition_open("sidecar_reads", partition.sidecar_path)
+            sidecar = self._read_timestamp_slice(
+                partition.sidecar_path,
+                columns=["asset_id", "decision_timestamp", *repaired, *provenance],
+                start=start,
+                end=end,
+            )
+        self._record_rows("sidecar_reads", len(sidecar))
         return base, sidecar, repaired, provenance
 
     def _read_feature_partition(
@@ -523,15 +677,17 @@ class CleanV2CompositeData:
         )
         if base.empty:
             return base
-        joined, _report = _join_repaired_features(
-            base,
-            sidecar,
-            repaired=repaired,
-            source_timestamp_suffix=self.feature_contract["sidecar"][
-                "source_timestamp_suffix"
-            ],
-            partition_label=f"{partition.asset_id}/{partition.year}",
-        )
+        with self._profile("feature_sidecar_joins"):
+            joined, _report = _join_repaired_features(
+                base,
+                sidecar,
+                repaired=repaired,
+                source_timestamp_suffix=self.feature_contract["sidecar"][
+                    "source_timestamp_suffix"
+                ],
+                partition_label=f"{partition.asset_id}/{partition.year}",
+            )
+        self._record_rows("feature_sidecar_joins", len(joined))
         return joined
 
     def diagnose_feature_partition(
@@ -674,10 +830,16 @@ class CleanV2CompositeData:
             "target_is_trainable",
             "target_available_timestamp",
         ]
-        frames = [
-            self._read_timestamp_slice(path, columns=columns, start=start, end=end)
-            for path in partition.target_paths
-        ]
+        with self._profile("target_reads"):
+            frames = []
+            for path in partition.target_paths:
+                self._record_partition_open("target_reads", path)
+                frames.append(
+                    self._read_timestamp_slice(
+                        path, columns=columns, start=start, end=end
+                    )
+                )
+        self._record_rows("target_reads", sum(len(frame) for frame in frames))
         frames = [frame for frame in frames if not frame.empty]
         if not frames:
             return pd.DataFrame(columns=columns)
@@ -731,18 +893,21 @@ class CleanV2CompositeData:
             targets = self._read_targets(partition, dates)
             if targets.empty:
                 continue
-            joined = features.merge(
-                targets,
-                on=["asset_id", "decision_timestamp"],
-                how="inner",
-                validate="one_to_one",
-            )
+            with self._profile("feature_target_joins"):
+                joined = features.merge(
+                    targets,
+                    on=["asset_id", "decision_timestamp"],
+                    how="inner",
+                    validate="one_to_one",
+                )
+            self._record_rows("feature_target_joins", len(joined))
             if not joined.empty:
                 frames.append(joined)
         if not frames:
             return pd.DataFrame()
 
-        panel = pd.concat(frames, ignore_index=True)
+        with self._profile("panel_concatenation"):
+            panel = pd.concat(frames, ignore_index=True)
         panel["decision_timestamp"] = pd.to_datetime(
             panel["decision_timestamp"], utc=True
         )
@@ -761,38 +926,46 @@ class CleanV2CompositeData:
                 set(panel.loc[positions, "session_date"].astype(str))
             )
             start, end = self._date_bounds(subset_dates)
-            context = self._read_timestamp_slice(
-                context_path,
-                columns=["decision_timestamp", *self.context_predictors],
-                start=start,
-                end=end,
-            )
+            with self._profile("context_reads"):
+                self._record_partition_open("context_reads", context_path)
+                context = self._read_timestamp_slice(
+                    context_path,
+                    columns=["decision_timestamp", *self.context_predictors],
+                    start=start,
+                    end=end,
+                )
+            self._record_rows("context_reads", len(context))
             context["decision_timestamp"] = pd.to_datetime(
                 context["decision_timestamp"], utc=True
             )
             context = context.drop_duplicates("decision_timestamp")
-            mapped = panel.loc[positions, ["decision_timestamp"]].merge(
-                context,
-                on="decision_timestamp",
-                how="left",
-                validate="many_to_one",
-            )
-            numeric_context = mapped[list(self.context_predictors)].apply(
-                pd.to_numeric, errors="coerce"
-            )
-            panel.loc[positions, list(self.context_predictors)] = (
-                numeric_context.to_numpy(dtype="float64")
-            )
+            with self._profile("context_joins"):
+                mapped = panel.loc[positions, ["decision_timestamp"]].merge(
+                    context,
+                    on="decision_timestamp",
+                    how="left",
+                    validate="many_to_one",
+                )
+                numeric_context = mapped[list(self.context_predictors)].apply(
+                    pd.to_numeric, errors="coerce"
+                )
+                panel.loc[positions, list(self.context_predictors)] = (
+                    numeric_context.to_numpy(dtype="float64")
+                )
+            self._record_rows("context_joins", len(mapped))
 
         missing = sorted(set(self.predictors) - set(panel.columns))
         if missing:
             raise CleanV2DataError(f"Composite panel missing predictors: {missing}")
-        panel[list(self.predictors)] = panel[list(self.predictors)].replace(
-            [np.inf, -np.inf], np.nan
-        )
-        return panel.sort_values(
-            ["decision_timestamp", "asset_id"], kind="mergesort"
-        ).reset_index(drop=True)
+        with self._profile("panel_finalization"):
+            panel[list(self.predictors)] = panel[list(self.predictors)].replace(
+                [np.inf, -np.inf], np.nan
+            )
+            result = panel.sort_values(
+                ["decision_timestamp", "asset_id"], kind="mergesort"
+            ).reset_index(drop=True)
+        self._record_rows("panel_finalization", len(result))
+        return result
 
     def decision_spine(self, reference_asset: str = "SPY") -> list[pd.Timestamp]:
         frames: list[pd.DataFrame] = []
@@ -805,6 +978,7 @@ class CleanV2CompositeData:
                 "target_is_trainable",
             ]
             for path in partition.target_paths:
+                self._record_partition_open("decision_spine_reads", path)
                 target = pd.read_parquet(path, columns=target_columns)
                 target = target[
                     target["target_is_trainable"].astype(bool)
@@ -827,32 +1001,10 @@ class CleanV2CompositeData:
         panel: pd.DataFrame,
         request: pd.DataFrame,
     ) -> tuple[pd.DataFrame, dict[str, Any]]:
-        keys = request[["asset_id", "decision_timestamp"]].copy()
-        keys["asset_id"] = keys["asset_id"].astype(str)
-        keys["decision_timestamp"] = pd.to_datetime(
-            keys["decision_timestamp"], utc=True
-        )
-        targets = panel[
-            [
-                "asset_id",
-                "decision_timestamp",
-                "target_id",
-                "target_value",
-                "target_is_trainable",
-                "target_available_timestamp",
-            ]
-        ].copy()
-        targets["asset_id"] = targets["asset_id"].astype(str)
-        targets["decision_timestamp"] = pd.to_datetime(
-            targets["decision_timestamp"], utc=True
-        )
-        matched = keys.merge(
-            targets,
-            on=["asset_id", "decision_timestamp"],
-            how="left",
-            validate="one_to_one",
-        )
-        return matched, {
-            "target_loader": "DS24_CLEAN_V2_COMPOSITE_PANEL",
-            "target_rows_loaded": int(matched["target_value"].notna().sum()),
-        }
+        return CleanV2PanelTargetLookup.from_panel(panel).load(request)
+
+    @staticmethod
+    def panel_target_lookup(panel: pd.DataFrame) -> CleanV2PanelTargetLookup:
+        """Build one reusable target adapter for an immutable package panel."""
+
+        return CleanV2PanelTargetLookup.from_panel(panel)

@@ -1,0 +1,88 @@
+{
+  "bounded_conflict_sample": [
+    {
+      "asset_id": "asset_000d3ca6dd8e2e1f",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_0029bafed161f6cb",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_004bd7f15af59c7d",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_0091853ea50b8dd6",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_00c60cbefbe3354e",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_00c6667008fb3e4e",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_0261e60ed1192c6b",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_02b1b9c59323f7bd",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_03ffc20710ca117a",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    },
+    {
+      "asset_id": "asset_0400008b46d03528",
+      "raw_prediction_existing": -0.001842215050195308,
+      "raw_prediction_incoming": -0.0018422150501953077
+    }
+  ],
+  "cache_path": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/shared_panel_package_cache/source=46088c818989f4af/89ff1b7145e3a93f9a348e5a5815e432.parquet",
+  "cache_sha256": "29284f4372074feec4219cbc372ad3eff3468287c0567da84680a58a678cd41e",
+  "classification": "RF_IMMUTABLE_LEDGER_GENUINE_SCIENTIFIC_CONFLICT",
+  "conflicting_payload_count": 470,
+  "exact_payload_match_count": 12,
+  "existing_only_key_count": 0,
+  "existing_part": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/prediction_ledger_v1/family=random_forest/period=2019-04/part-20190408T133500Z-20190408T190000Z-ffcee8b95df79c60.parquet",
+  "existing_part_sha256": "d5d2e304f56b0c1eb8b77b913069134219e4dcec6144f8e65d9919f7c898ebf5",
+  "existing_row_count": 482,
+  "failed_scoring_batch_first_timestamp": "2019-04-08T13:35:00+00:00",
+  "failed_scoring_batch_last_timestamp": "2019-04-08T20:00:00+00:00",
+  "failed_scoring_batch_timestamp_count": 78,
+  "field_disagreement_counts": {
+    "cross_section_rank": 0,
+    "eligible_universe_size": 0,
+    "evaluation_eligible": 0,
+    "feature_authority_hash": 0,
+    "rank_percentile": 0,
+    "raw_prediction": 470,
+    "refit_id": 0,
+    "refit_timestamp": 0,
+    "run_id": 0,
+    "static_bundle_hash": 0,
+    "target_authority_hash": 0
+  },
+  "incoming_only_key_count": 0,
+  "incoming_row_count": 482,
+  "intersecting_key_count": 482,
+  "max_absolute_prediction_delta": 4.336808689942018e-19,
+  "max_relative_prediction_delta": 2.354127271668005e-16,
+  "model_path": "research_runs/ds24_clean_v2/DS24_CLEAN_V2_TOURNAMENT_R1_20260926/family=random_forest/models/random_forest_20190408T133500Z.pkl",
+  "model_sha256": "a2f3a515579d3ababc8b9db9dc3c8be5ad93a7f9f1a4af60916fbc1f91045512",
+  "model_vintage_id": "c7ac67d60f66833a514d2b2846e00a05035feb110c392fc0b92a120fbf3158cf",
+  "timestamp": "2019-04-08T13:40:00+00:00"
+}

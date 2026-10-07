@@ -1,0 +1,556 @@
+{
+  "admission_token": "bb75973c84aa74cc278021f6231add986477f2b46519e55555641a9cb4b60b53",
+  "clean_source_hash": "46088c818989f4af3637fb36cfa738daf47f999c2e3164834c49aa40ec22bc08",
+  "disk_admission_policy": {
+    "authorization": "DELL_OPERATOR_AUTHORISED_2026-10-02",
+    "declared_campaign_growth_bytes": 8589934592,
+    "declared_sidecar_growth_bytes": 0,
+    "growth_forecasts_added_to_required_free_bytes": false,
+    "host": "dell",
+    "minimum_floor_bytes": 10737418240,
+    "policy_id": "DS24_CLEAN_V2_DELL_DISK_ADMISSION_10_GIB_V1",
+    "previous_policy_id": "DS24_CLEAN_V2_CONTRACT_PLUS_CAMPAIGN_GROWTH_DISK_ADMISSION_V1",
+    "required_free_disk_bytes": 10737418240
+  },
+  "feature_authority_hash": "ac2be1f9aeea31a9767ed69c9fd84bad82c59deaaa8ce3e945d4cb756b01029d",
+  "host_role": "dell",
+  "hostname": "DESKTOP-TQOVNB7",
+  "issued_at_utc": "2026-10-07T14:36:20.657260+00:00",
+  "launch_families": [
+    "random_forest",
+    "huber",
+    "elastic_net_C5"
+  ],
+  "maximum_model_workers": 3,
+  "operational_scope_policy": {
+    "authorization": "DELL_OPERATOR_AUTHORISED_2026-10-05_V10",
+    "excluded_owned_families": [
+      "elastic_net_C6",
+      "equal_weight_no_model",
+      "gradient_boosting_C0",
+      "gradient_boosting_C0_W20",
+      "gradient_boosting_C0_W40",
+      "gradient_boosting_C0_W80",
+      "momentum",
+      "ridge_C5",
+      "transformer"
+    ],
+    "host": "dell",
+    "launch_families": [
+      "random_forest",
+      "huber",
+      "elastic_net_C5"
+    ],
+    "maximum_model_workers": 3,
+    "policy_id": "DS24_CLEAN_V2_DELL_R1_RF_HUBER_ELASTIC_V10",
+    "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926"
+  },
+  "refit_policy": "REFIT_EVERY_5_TRADING_SESSIONS_V1",
+  "resource_policy": {
+    "admission_available_physical_gib": 6,
+    "allocation_request_poll_seconds": 0.25,
+    "allocation_request_timeout_seconds": 35,
+    "allocation_safety_factor": 1.5,
+    "automatic_pressure_readmission_allowed": true,
+    "automatic_protected_capacity_reconsideration_allowed": true,
+    "automatic_retry_allowed": true,
+    "checkpoint_safe_pause_boundaries": [
+      "before_panel_assembly",
+      "after_panel_assembly",
+      "after_population_slicing",
+      "before_fit",
+      "after_model_persistence",
+      "before_session_scoring_batch",
+      "between_in_memory_timestamp_evaluations_before_batch_publication",
+      "after_timestamp_publication",
+      "after_refit_package_completion"
+    ],
+    "cpu_idle_reconsideration_percent": 60.0,
+    "cpu_idle_reconsideration_seconds": 120,
+    "dell_canary_active_worker_limit": 3,
+    "dell_worker_thread_environment": {
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "VECLIB_MAXIMUM_THREADS": "1"
+    },
+    "durable_status_publish_seconds": 5.0,
+    "emergency_available_physical_gib": 3,
+    "fair_turn_wait_seconds": 60,
+    "family_resource_profiles": {
+      "default_sequence": {
+        "evidence": "STATIC_FAMILY_FLOOR",
+        "evidence_run_id": null,
+        "evidence_source_hash": null,
+        "evidence_timestamp_utc": null,
+        "fallback_behavior": "STATIC_FAMILY_FLOOR",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": false,
+        "guarded_peak": {
+          "commit_bytes": 16106127360,
+          "physical_bytes": 9663676416
+        },
+        "high_water_cushion": {
+          "commit_bytes": 0,
+          "physical_bytes": 0
+        },
+        "measured_high_water": null,
+        "profile_id": "SEQUENCE_STATIC_V1",
+        "requested_floor": {
+          "commit_bytes": 10737418240,
+          "physical_bytes": 6442450944
+        },
+        "requested_peak": {
+          "commit_bytes": 10737418240,
+          "physical_bytes": 6442450944
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": null,
+          "score_timestamps": null
+        }
+      },
+      "default_tabular": {
+        "evidence": "STATIC_FAMILY_FLOOR",
+        "evidence_run_id": null,
+        "evidence_source_hash": null,
+        "evidence_timestamp_utc": null,
+        "fallback_behavior": "STATIC_FAMILY_FLOOR",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": false,
+        "guarded_peak": {
+          "commit_bytes": 9663676416,
+          "physical_bytes": 6442450944
+        },
+        "high_water_cushion": {
+          "commit_bytes": 0,
+          "physical_bytes": 0
+        },
+        "measured_high_water": null,
+        "profile_id": "ORDINARY_TABULAR_STATIC_V1",
+        "requested_floor": {
+          "commit_bytes": 6442450944,
+          "physical_bytes": 4294967296
+        },
+        "requested_peak": {
+          "commit_bytes": 6442450944,
+          "physical_bytes": 4294967296
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": null,
+          "score_timestamps": null
+        }
+      },
+      "elastic_net_C5": {
+        "evidence": "Dell production process-tree lifetime peak across 17 completed full-authority refits; the 1GiB cushion is 22% above the observed resident/private-commit peaks",
+        "evidence_run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+        "evidence_source_hash": "dd05849270c4a968524535cfd9fe7b222211dbfde84d0a0d7cdf15bfc17f54f4",
+        "evidence_timestamp_utc": "2026-10-01T10:31:12.367869+00:00",
+        "fallback_behavior": "EMBEDDED_PRODUCTION_HIGH_WATER_PLUS_1_GIB_CUSHION",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": true,
+        "guarded_peak": {
+          "commit_bytes": 5914796033,
+          "physical_bytes": 5842632705
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 4841054208,
+          "physical_bytes": 4768890880
+        },
+        "profile_id": "ELASTIC_NET_C5_DELL_EMPIRICAL_FULL_WORKER_V1",
+        "requested_floor": {
+          "commit_bytes": 2147483648,
+          "physical_bytes": 2147483648
+        },
+        "requested_peak": {
+          "commit_bytes": 3943197355,
+          "physical_bytes": 3895088470
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": 17,
+          "score_timestamps": 5610
+        }
+      },
+      "elastic_net_C6": {
+        "evidence": "Conservative Elastic C5 production upper bound: C5 and C6 use the same full-authority panel, 20-session lookback, imputer, scaler, ElasticNet implementation and matrix shapes; exact C6 bounded evidence covers 8,325 training rows",
+        "evidence_run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+        "evidence_source_hash": "dd05849270c4a968524535cfd9fe7b222211dbfde84d0a0d7cdf15bfc17f54f4",
+        "evidence_timestamp_utc": "2026-10-01T10:31:12.367869+00:00",
+        "fallback_behavior": "ELASTIC_C5_PRODUCTION_UPPER_BOUND_PLUS_1_GIB_CUSHION",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": true,
+        "guarded_peak": {
+          "commit_bytes": 5914796033,
+          "physical_bytes": 5842632705
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 4841054208,
+          "physical_bytes": 4768890880
+        },
+        "profile_id": "ELASTIC_NET_C6_DELL_SIBLING_BOUND_V1",
+        "requested_floor": {
+          "commit_bytes": 2147483648,
+          "physical_bytes": 2147483648
+        },
+        "requested_peak": {
+          "commit_bytes": 3943197355,
+          "physical_bytes": 3895088470
+        },
+        "sample_size": {
+          "bounded_training_rows": 8325,
+          "completed_refits": 17,
+          "score_timestamps": 5610
+        }
+      },
+      "equal_weight_no_model": {
+        "evidence": "NO_ESTIMATOR_FIT;PANEL_AND_SCORE_STAGES_REMAIN_SEPARATELY_GUARDED",
+        "evidence_run_id": null,
+        "evidence_source_hash": null,
+        "evidence_timestamp_utc": null,
+        "fallback_behavior": "STATIC_FAMILY_FLOOR",
+        "fit_required": false,
+        "full_worker_high_water_authoritative": false,
+        "guarded_peak": {
+          "commit_bytes": 4831838208,
+          "physical_bytes": 3221225472
+        },
+        "high_water_cushion": {
+          "commit_bytes": 0,
+          "physical_bytes": 0
+        },
+        "measured_high_water": null,
+        "profile_id": "NO_MODEL_CONTROL_STATIC_V1",
+        "requested_floor": {
+          "commit_bytes": 3221225472,
+          "physical_bytes": 2147483648
+        },
+        "requested_peak": {
+          "commit_bytes": 3221225472,
+          "physical_bytes": 2147483648
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": null,
+          "score_timestamps": null
+        }
+      },
+      "huber": {
+        "evidence": "Dell production process-tree lifetime peak across 39 completed full-authority refits; the 1GiB cushion is 23-24% above the observed resident/private-commit peaks",
+        "evidence_run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+        "evidence_source_hash": "dd05849270c4a968524535cfd9fe7b222211dbfde84d0a0d7cdf15bfc17f54f4",
+        "evidence_timestamp_utc": "2026-10-01T10:31:05.999733+00:00",
+        "fallback_behavior": "EMBEDDED_PRODUCTION_HIGH_WATER_PLUS_1_GIB_CUSHION",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": true,
+        "guarded_peak": {
+          "commit_bytes": 5673295872,
+          "physical_bytes": 5540773889
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 4599554048,
+          "physical_bytes": 4467032064
+        },
+        "profile_id": "HUBER_DELL_EMPIRICAL_FULL_WORKER_V1",
+        "requested_floor": {
+          "commit_bytes": 2147483648,
+          "physical_bytes": 2147483648
+        },
+        "requested_peak": {
+          "commit_bytes": 3782197248,
+          "physical_bytes": 3693849259
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": 39,
+          "score_timestamps": 12857
+        }
+      },
+      "momentum": {
+        "evidence": "Dell live aggregate process-tree peak observed 2026-09-30;resident=1.31GiB;private_commit=1.35GiB;NO_ESTIMATOR_FIT",
+        "evidence_run_id": null,
+        "evidence_source_hash": null,
+        "evidence_timestamp_utc": null,
+        "fallback_behavior": "STATIC_FAMILY_FLOOR",
+        "fit_required": false,
+        "full_worker_high_water_authoritative": false,
+        "guarded_peak": {
+          "commit_bytes": 2523293286,
+          "physical_bytes": 2480343614
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 1449551462,
+          "physical_bytes": 1406601789
+        },
+        "profile_id": "MOMENTUM_CONTROL_DELL_EMPIRICAL_V1",
+        "requested_floor": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "requested_peak": {
+          "commit_bytes": 1682195524,
+          "physical_bytes": 1653562409
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": null,
+          "score_timestamps": null
+        }
+      },
+      "random_forest": {
+        "evidence": "Dell live aggregate process-tree peak observed 2026-09-30;resident=4.58GiB;private_commit=4.64GiB",
+        "evidence_run_id": null,
+        "evidence_source_hash": null,
+        "evidence_timestamp_utc": null,
+        "fallback_behavior": "STATIC_FAMILY_FLOOR",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": false,
+        "guarded_peak": {
+          "commit_bytes": 6055903887,
+          "physical_bytes": 5991479378
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 4982162063,
+          "physical_bytes": 4917737553
+        },
+        "profile_id": "RANDOM_FOREST_DELL_EMPIRICAL_V2",
+        "requested_floor": {
+          "commit_bytes": 3221225472,
+          "physical_bytes": 3221225472
+        },
+        "requested_peak": {
+          "commit_bytes": 4037269258,
+          "physical_bytes": 3994319585
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": null,
+          "score_timestamps": null
+        }
+      },
+      "ridge_C5": {
+        "evidence": "Dell production process-tree lifetime peak across 7 completed full-authority refits; the 1GiB cushion is 20-21% above the observed resident/private-commit peaks",
+        "evidence_run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+        "evidence_source_hash": "dd05849270c4a968524535cfd9fe7b222211dbfde84d0a0d7cdf15bfc17f54f4",
+        "evidence_timestamp_utc": "2026-10-01T01:07:58.125418+00:00",
+        "fallback_behavior": "EMBEDDED_PRODUCTION_HIGH_WATER_PLUS_1_GIB_CUSHION",
+        "fit_required": true,
+        "full_worker_high_water_authoritative": true,
+        "guarded_peak": {
+          "commit_bytes": 6342733824,
+          "physical_bytes": 6240763905
+        },
+        "high_water_cushion": {
+          "commit_bytes": 1073741824,
+          "physical_bytes": 1073741824
+        },
+        "measured_high_water": {
+          "commit_bytes": 5268992000,
+          "physical_bytes": 5167022080
+        },
+        "profile_id": "RIDGE_C5_DELL_EMPIRICAL_FULL_WORKER_V1",
+        "requested_floor": {
+          "commit_bytes": 2147483648,
+          "physical_bytes": 2147483648
+        },
+        "requested_peak": {
+          "commit_bytes": 4228489216,
+          "physical_bytes": 4160509270
+        },
+        "sample_size": {
+          "bounded_training_rows": null,
+          "completed_refits": 7,
+          "score_timestamps": 2363
+        }
+      }
+    },
+    "family_scheduling_profiles": {
+      "elastic_net_C5": {
+        "bounded_fit_wall_seconds": 0.085,
+        "evidence": "20260929 bounded real-authority benchmark; 8,325 training rows",
+        "workload_class": "LIGHT_PREDICTIVE"
+      },
+      "elastic_net_C6": {
+        "bounded_fit_wall_seconds": 0.093,
+        "evidence": "20260929 bounded real-authority benchmark; 8,325 training rows",
+        "workload_class": "LIGHT_PREDICTIVE"
+      },
+      "equal_weight_no_model": {
+        "bounded_fit_wall_seconds": 0.0,
+        "evidence": "NO_ESTIMATOR_FIT",
+        "workload_class": "CONTROL"
+      },
+      "gradient_boosting_C0": {
+        "bounded_fit_wall_seconds": 7.522,
+        "evidence": "20260929 bounded real-authority benchmark",
+        "workload_class": "TREE_PREDICTIVE"
+      },
+      "gradient_boosting_C0_W20": {
+        "bounded_fit_wall_seconds": 6.892,
+        "evidence": "20260929 bounded real-authority benchmark",
+        "workload_class": "TREE_PREDICTIVE"
+      },
+      "gradient_boosting_C0_W40": {
+        "bounded_fit_wall_seconds": 14.24,
+        "evidence": "20260929 bounded real-authority benchmark",
+        "workload_class": "TREE_PREDICTIVE"
+      },
+      "gradient_boosting_C0_W80": {
+        "bounded_fit_wall_seconds": 28.661,
+        "evidence": "20260929 bounded real-authority benchmark",
+        "workload_class": "TREE_PREDICTIVE"
+      },
+      "huber": {
+        "bounded_fit_wall_seconds": 0.29,
+        "evidence": "20260929 bounded real-authority benchmark; convergence warning retained",
+        "workload_class": "LIGHT_PREDICTIVE"
+      },
+      "momentum": {
+        "bounded_fit_wall_seconds": 0.0,
+        "evidence": "NO_ESTIMATOR_FIT",
+        "workload_class": "CONTROL"
+      },
+      "random_forest": {
+        "bounded_fit_wall_seconds": 21.639,
+        "evidence": "20260929 bounded benchmark; progressed worker pinned",
+        "workload_class": "TREE_PREDICTIVE"
+      },
+      "ridge_C5": {
+        "bounded_fit_wall_seconds": 0.093,
+        "evidence": "20260929 bounded real-authority benchmark; 9,332 training rows",
+        "workload_class": "LIGHT_PREDICTIVE"
+      },
+      "transformer": {
+        "bounded_fit_wall_seconds": 5.287,
+        "evidence": "20260929 one-asset checkpoint smoke; not cross-family throughput comparable",
+        "workload_class": "SEQUENCE_PREDICTIVE"
+      }
+    },
+    "material_capacity_change_gib": 1,
+    "maximum_admission_bypasses": 12,
+    "maximum_dell_model_workers": 3,
+    "maximum_mac_model_workers": 1,
+    "maximum_opportunistic_workers": 2,
+    "noninterruptible_stages": [
+      "panel_assembly",
+      "population_slicing",
+      "preprocessing",
+      "estimator_fit",
+      "model_persistence",
+      "session_scoring_batch",
+      "timestamp_publication"
+    ],
+    "opportunistic_capacity": {
+      "capacity_class": "OPPORTUNISTIC_CAPACITY",
+      "dedicated_canary_required": [
+        "transformer"
+      ],
+      "first_worker_ordinal": 2,
+      "initial_family_priority": [
+        "huber",
+        "elastic_net_C5",
+        "ridge_C5",
+        "elastic_net_C6",
+        "gradient_boosting_C0",
+        "gradient_boosting_C0_W20",
+        "gradient_boosting_C0_W40",
+        "gradient_boosting_C0_W80"
+      ],
+      "job_commit_guard_bypassed": false,
+      "maximum_workers": 2,
+      "physical_projection_may_overbook": false,
+      "protected_physical_projection_excludes_opportunistic_reservation": true,
+      "stage_priority": [
+        "random_forest",
+        "huber",
+        "elastic_net_C5"
+      ],
+      "system_commit_guard_bypassed": false
+    },
+    "pressure_checkpoint_grace_seconds": 30,
+    "pressure_sample_seconds": 1.0,
+    "previous_resource_policy": {
+      "admission_available_physical_gib": 6,
+      "dell_canary_active_worker_limit": 3,
+      "emergency_available_physical_gib": 3,
+      "protected_overlap_minimum_projected_available_physical_gib": 5,
+      "protected_overlap_stage_gated_startup_floor": true,
+      "readmission_available_physical_gib": 7,
+      "resource_policy_id": "DS24_CLEAN_V2_DELL_UTILISATION_GOVERNOR_POLICY_V9",
+      "soft_pause_available_physical_gib": 4,
+      "status": "HISTORICAL_REPRODUCIBILITY_AUTHORITY",
+      "system_commit_headroom_gib": 5,
+      "target_available_physical_gib": 5,
+      "windows_job_aggregate_commit_limit_gib": 24
+    },
+    "protected_capacity": {
+      "families": [
+        "random_forest",
+        "momentum"
+      ],
+      "lane_yield": "CHECKPOINT_SAFE_FAIR_TURN_YIELD",
+      "overlap_minimum_projected_available_physical_gib": 5,
+      "projected_physical_reserve_applies_to_admission_and_allocation": true,
+      "reconsideration_classification": "PROTECTED_CAPACITY_RECONSIDERATION",
+      "runtime_stage_continuation": "ACTUAL_PRESSURE_AND_HARD_COMMIT_GUARDS",
+      "system_commit_reserve_gib": 5
+    },
+    "protected_overlap_minimum_projected_available_physical_gib": 5,
+    "protected_overlap_stage_gated_startup_floor": true,
+    "protected_reconsideration_seconds": 30,
+    "readmission_available_physical_gib": 7,
+    "readmission_stable_observation_seconds": 30,
+    "resource_deferral_cooldown_seconds": 30,
+    "resource_pause_cooldown_seconds": 30,
+    "resource_policy_id": "DS24_CLEAN_V2_STAGE_AWARE_UTILISATION_POLICY_V10",
+    "soft_pause_available_physical_gib": 4,
+    "stage_capacity_calibration": {
+      "guarded_high_water_cushion_bytes": 536870912,
+      "minimum_comparable_successful_samples": 3,
+      "minimum_requested_floor_bytes": 536870912,
+      "policy_id": "DS24_CLEAN_V2_STAGE_CALIBRATION_POLICY_V1",
+      "upward_calibration_immediate": true,
+      "workload_shape_bucket_bytes": 536870912
+    },
+    "supervisor_reserved_allocation_stages": [
+      "panel_assembly",
+      "preprocessing",
+      "sequence_materialization",
+      "fit",
+      "score",
+      "cache_growth"
+    ],
+    "system_commit_headroom_gib": 5,
+    "target_available_physical_gib": 5,
+    "units": "GiB (1 GiB = 1024^3 bytes)",
+    "unsafe_pressure_action": "STOP_ADMISSIONS_CHECKPOINT_AT_SAFE_BOUNDARY_THEN_TERMINATE_ONLY_IDENTITY_VERIFIED_OWNED_WORKERS_IF_EMERGENCY_OR_GRACE_EXPIRES",
+    "windows_job_aggregate_commit_limit_gib": 24,
+    "windows_job_limit_scope": "ONE_AGGREGATE_COMMITTED_MEMORY_LIMIT_FOR_ALL_OWNED_WORKERS_AND_DESCENDANTS"
+  },
+  "run_id": "DS24_CLEAN_V2_TOURNAMENT_R1_20260926",
+  "static_authority_bundle_sha256": "4952431d7a6ec781a861d196a5d27b63128d80bad693e56bcafd8d7d420981dc",
+  "target_authority_hash": "41dd1fd36d7081dc2aeaf39bd74a4228d17fbf56f3e1a7b2ea987499bf923eb1",
+  "target_contract_hash": "8e2d5458044c17cf60bc1d8e46b71357599f3837ddb53d64d9b00d322d17f419"
+}
