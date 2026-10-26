@@ -10,8 +10,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence
-from urllib.error import HTTPError
+from typing import Any, Callable, ClassVar, Mapping, Protocol, Sequence
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -50,6 +50,45 @@ class HistoricalBarRequest:
     raw_chunk_id: str | None = None
     canonical_symbols: tuple[str, ...] | None = None
     provider_symbol_by_canonical: tuple[tuple[str, str], ...] = ()
+    currency: str = "USD"
+    asof: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionChunkStatus:
+    value: str
+
+    VALID_VALUES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "planned",
+            "in_progress",
+            "completed",
+            "empty_valid_response",
+            "retryable_failure",
+            "permanent_authentication_failure",
+            "entitlement_failure",
+            "validation_failure",
+        }
+    )
+    COMPLETED_VALUES: ClassVar[frozenset[str]] = frozenset({"completed", "empty_valid_response"})
+    PRESERVED_ON_INITIALIZE_VALUES: ClassVar[frozenset[str]] = VALID_VALUES - frozenset({"planned"})
+
+    def __post_init__(self) -> None:
+        if self.value not in self.VALID_VALUES:
+            raise ValueError(f"unsupported chunk status: {self.value}")
+
+    @classmethod
+    def from_persisted(cls, value: Any) -> "CollectionChunkStatus | None":
+        text = str(value)
+        if text not in cls.VALID_VALUES:
+            return None
+        return cls(text)
+
+    def is_completed(self) -> bool:
+        return self.value in self.COMPLETED_VALUES
+
+    def is_preserved_on_initialize(self) -> bool:
+        return self.value in self.PRESERVED_ON_INITIALIZE_VALUES
 
 
 @dataclass(frozen=True)
@@ -67,6 +106,9 @@ class HistoricalBarMetrics:
     requests_failed: int = 0
     requests_retried: int = 0
     http_429_count: int = 0
+    http_5xx_count: int = 0
+    transport_error_count: int = 0
+    tls_eof_count: int = 0
     pages_downloaded: int = 0
     rows_downloaded: int = 0
     throttle_sleep_time_seconds: float = 0.0
@@ -83,6 +125,9 @@ class HistoricalBarMetrics:
             "requests_failed": self.requests_failed,
             "requests_retried": self.requests_retried,
             "http_429_count": self.http_429_count,
+            "http_5xx_count": self.http_5xx_count,
+            "transport_error_count": self.transport_error_count,
+            "tls_eof_count": self.tls_eof_count,
             "effective_requests_per_minute": self.requests_attempted / elapsed * 60.0,
             "configured_requests_per_minute": self.configured_requests_per_minute,
             "current_requests_per_minute": self.current_requests_per_minute,
@@ -182,6 +227,7 @@ class SharedRateLimiter:
         self,
         *,
         requests_per_minute: int = 180,
+        pacing_requests_per_minute: int | None = None,
         max_in_flight_requests: int = 4,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -190,8 +236,11 @@ class SharedRateLimiter:
             raise ValueError("requests_per_minute must be positive")
         if max_in_flight_requests < 1:
             raise ValueError("max_in_flight_requests must be positive")
+        if pacing_requests_per_minute is not None and not 1 <= pacing_requests_per_minute <= requests_per_minute:
+            raise ValueError("pacing_requests_per_minute must be positive and no greater than the ceiling")
         self.requests_per_minute = int(requests_per_minute)
         self.configured_requests_per_minute = int(requests_per_minute)
+        self.pacing_requests_per_minute = int(pacing_requests_per_minute or requests_per_minute)
         self.max_in_flight_requests = int(max_in_flight_requests)
         self._sleeper = sleeper
         self._clock = clock
@@ -210,7 +259,8 @@ class SharedRateLimiter:
             sleep_for_window = 0.0
             if len(self._request_times) >= self.requests_per_minute:
                 sleep_for_window = max(0.0, 60.0 - (now - self._request_times[0]))
-            min_interval_seconds = 60.0 / float(self.requests_per_minute)
+            effective_pacing = min(self.requests_per_minute, self.pacing_requests_per_minute)
+            min_interval_seconds = 60.0 / float(effective_pacing)
             sleep_for_pacing = max(0.0, self._next_allowed_request_time - now)
             sleep_for = max(sleep_for_window, sleep_for_pacing)
             if sleep_for:
@@ -308,7 +358,10 @@ class AlpacaBasicHistoricalBarProvider:
             "adjustment": request.adjustment,
             "limit": int(request.limit),
             "sort": "asc",
+            "currency": request.currency,
         }
+        if request.asof:
+            params["asof"] = request.asof
         if request.page_token:
             params["page_token"] = request.page_token
         url = "https://data.alpaca.markets/v2/stocks/bars?" + urlencode(params)
@@ -330,12 +383,23 @@ class AlpacaBasicHistoricalBarProvider:
         except HTTPError as exc:
             with self._metrics_lock:
                 self.metrics.requests_failed += 1
-            if exc.code == 429:
-                self.metrics.http_429_count += 1
+                if exc.code == 429:
+                    self.metrics.http_429_count += 1
+                if 500 <= exc.code <= 599:
+                    self.metrics.http_5xx_count += 1
             if exc.code == 429:
                 self.rate_limiter.reduce_pressure_after_429()
                 self.metrics.current_requests_per_minute = self.rate_limiter.requests_per_minute
             raise AlpacaHistoricalBarError.from_http_error(exc) from exc
+        except URLError as exc:
+            with self._metrics_lock:
+                self.metrics.requests_failed += 1
+                self.metrics.transport_error_count += 1
+                if "unexpected_eof" in str(exc).casefold() or "eof occurred" in str(exc).casefold():
+                    self.metrics.tls_eof_count += 1
+            raise AlpacaHistoricalBarTransportError(
+                f"Alpaca historical bars transport failure: {exc}"
+            ) from exc
         finally:
             self.rate_limiter.release()
         latency = time.monotonic() - started
@@ -385,7 +449,7 @@ class AlpacaHistoricalBarError(RuntimeError):
 
     @property
     def retryable(self) -> bool:
-        return self.classification == "retryable_failure"
+        return self.classification in {"retryable_failure", "transient_network_failure"}
 
     @classmethod
     def from_http_error(cls, error: HTTPError) -> "AlpacaHistoricalBarError":
@@ -413,6 +477,14 @@ class AlpacaHistoricalBarError(RuntimeError):
         )
 
 
+class AlpacaHistoricalBarTransportError(AlpacaHistoricalBarError):
+    """A retryable network/TLS failure before an HTTP response was received."""
+
+    @property
+    def classification(self) -> str:
+        return "transient_network_failure"
+
+
 class BackfillChunkStateStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -436,18 +508,8 @@ class BackfillChunkStateStore:
 
 
 class CollectionManifest:
-    VALID_STATUSES = {
-        "planned",
-        "in_progress",
-        "completed",
-        "empty_valid_response",
-        "retryable_failure",
-        "permanent_authentication_failure",
-        "entitlement_failure",
-        "validation_failure",
-    }
-
-    PRESERVED_INITIALIZE_STATUSES = VALID_STATUSES - {"planned"}
+    VALID_STATUSES = CollectionChunkStatus.VALID_VALUES
+    PRESERVED_INITIALIZE_STATUSES = CollectionChunkStatus.PRESERVED_ON_INITIALIZE_VALUES
 
     def __init__(
         self,
@@ -469,12 +531,11 @@ class CollectionManifest:
             return {**state, "chunks": dict(state.get("chunks", {}))}
 
     def update(self, chunk_id: str, status: str, metadata: Mapping[str, Any] | None = None) -> None:
-        if status not in self.VALID_STATUSES:
-            raise ValueError(f"unsupported chunk status: {status}")
+        chunk_status = CollectionChunkStatus(status)
         event = {
             **dict(metadata or {}),
             "chunk_id": chunk_id,
-            "status": status,
+            "status": chunk_status.value,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._lock:
@@ -508,8 +569,8 @@ class CollectionManifest:
             for request in requests:
                 chunk_id = request.raw_chunk_id or _chunk_id(request)
                 current = dict(chunks.get(chunk_id, {}))
-                status = current.get("status")
-                if status in self.PRESERVED_INITIALIZE_STATUSES:
+                status = CollectionChunkStatus.from_persisted(current.get("status"))
+                if status is not None and status.is_preserved_on_initialize():
                     preserved += 1
                     continue
                 planned = {
@@ -543,7 +604,8 @@ class CollectionManifest:
         return self.load().get("chunks", {}).get(chunk_id, {}).get("status")
 
     def is_completed(self, chunk_id: str) -> bool:
-        return self.status(chunk_id) in {"completed", "empty_valid_response"}
+        status = CollectionChunkStatus.from_persisted(self.status(chunk_id))
+        return status.is_completed() if status is not None else False
 
     def checkpoint(self) -> None:
         with self._lock:
@@ -575,9 +637,10 @@ class CollectionManifest:
                         continue
                     raise
                 chunk_id = str(event.get("chunk_id", ""))
-                status = str(event.get("status", ""))
-                if not chunk_id or status not in self.VALID_STATUSES:
+                status = CollectionChunkStatus.from_persisted(event.get("status"))
+                if not chunk_id or status is None:
                     continue
+                event["status"] = status.value
                 chunks[chunk_id] = {**dict(chunks.get(chunk_id, {})), **event}
         state["chunks"] = chunks
         self._state_cache = state
@@ -649,6 +712,9 @@ class ImmutableRawChunkStore:
             "http_429_count": int(metrics.get("http_429_count", 0)),
             "collection_timestamp": datetime.now(timezone.utc).isoformat(),
             "adjustment_mode": request.adjustment,
+            "currency": request.currency,
+            "asof": request.asof,
+            "raw_page_sha256": list(metrics.get("raw_page_sha256", [])),
             "session_policy": "regular_session_default" if not request.extended_hours else "extended_hours_requested",
             "normalizer_version": NORMALIZER_VERSION,
             "completion_state": "completed" if rows else "empty_valid_response",
@@ -684,12 +750,14 @@ def fetch_chunk_with_retries(
     base_backoff_seconds: float = 1.0,
     jitter_seconds: float = 0.25,
     sleeper: Callable[[float], None] = time.sleep,
+    retain_raw_pages: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     chunk_id = request.raw_chunk_id or _chunk_id(request)
     if state_store and state_store.is_completed(chunk_id):
         return [], {"chunk_id": chunk_id, "skipped_completed": True}
     rows: list[dict[str, Any]] = []
     raw_pages: list[dict[str, Any]] = []
+    raw_page_sha256: list[str] = []
     next_token = request.page_token
     pages = 0
     while True:
@@ -706,6 +774,8 @@ def fetch_chunk_with_retries(
             raw_chunk_id=chunk_id,
             canonical_symbols=request.canonical_symbols,
             provider_symbol_by_canonical=request.provider_symbol_by_canonical,
+            currency=request.currency,
+            asof=request.asof,
         )
         attempt = 0
         while True:
@@ -728,7 +798,18 @@ def fetch_chunk_with_retries(
                 )
                 sleeper(float(sleep_for))
         rows.extend(page.bars)
-        raw_pages.append(page.raw_payload)
+        raw_page_sha256.append(
+            hashlib.sha256(
+                json.dumps(
+                    page.raw_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode("utf-8")
+            ).hexdigest()
+        )
+        if retain_raw_pages:
+            raw_pages.append(page.raw_payload)
         pages += 1
         next_token = page.next_page_token
         if not next_token:
@@ -753,6 +834,7 @@ def fetch_chunk_with_retries(
         "rows": len(rows),
         "skipped_completed": False,
         "raw_pages": raw_pages,
+        "raw_page_sha256": raw_page_sha256,
     }
 
 

@@ -4,9 +4,10 @@ import json
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 from infrastructure.data.historical_bar_providers import (
     AlpacaBasicHistoricalBarProvider,
@@ -31,23 +32,241 @@ import pyarrow.parquet as pq
 from infrastructure.data.market_sessions import is_rth_timestamp
 
 
-def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
-    settings = dict((config.get("ml", {}) or {}).get("historical_bar_backfill", {}) or {})
-    symbols = tuple(str(symbol).upper() for symbol in settings.get("symbols", ["SPY"])[: int(settings.get("max_symbols", 2))])
-    timeframe = str(settings.get("timeframe", "5m"))
-    feed = str(settings.get("feed", "iex"))
-    adjustment = str(settings.get("adjustment", "all"))
-    end = _parse_datetime(settings.get("end")) or datetime.now(timezone.utc) - timedelta(minutes=20)
-    start = _parse_datetime(settings.get("start")) or end - timedelta(days=int(settings.get("probe_days", 2)))
-    output_root = Path(settings.get("output_root", "reports/market_data/historical_bar_backfill"))
-    output_root.mkdir(parents=True, exist_ok=True)
-    report_path = output_root / "free_provider_probe_report.json"
-    provider = AlpacaBasicHistoricalBarProvider(
-        feed=feed,
-        config=config,
-        rate_limiter=SharedRateLimiter(
+@dataclass(frozen=True, slots=True)
+class HistoricalBarProbeRequest:
+    symbols: tuple[str, ...]
+    timeframe: str
+    feed: str
+    adjustment: str
+    start: datetime
+    end: datetime
+    output_root: Path
+    requests_per_minute: int
+    max_in_flight_requests: int
+    limit: int
+    max_retries: int
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> "HistoricalBarProbeRequest":
+        settings = dict((config.get("ml", {}) or {}).get("historical_bar_backfill", {}) or {})
+        symbols = tuple(
+            str(symbol).upper()
+            for symbol in settings.get("symbols", ["SPY"])[: int(settings.get("max_symbols", 2))]
+        )
+        effective_now = now or datetime.now(timezone.utc)
+        end = _parse_datetime(settings.get("end")) or effective_now - timedelta(minutes=20)
+        start = _parse_datetime(settings.get("start")) or end - timedelta(days=int(settings.get("probe_days", 2)))
+        return cls(
+            symbols=symbols,
+            timeframe=str(settings.get("timeframe", "5m")),
+            feed=str(settings.get("feed", "iex")),
+            adjustment=str(settings.get("adjustment", "all")),
+            start=start,
+            end=end,
+            output_root=Path(settings.get("output_root", "reports/market_data/historical_bar_backfill")),
             requests_per_minute=int(settings.get("requests_per_minute", 180)),
             max_in_flight_requests=int(settings.get("max_in_flight_requests", 4)),
+            limit=int(settings.get("limit", 10_000)),
+            max_retries=int(settings.get("max_retries", 3)),
+        )
+
+    @property
+    def report_path(self) -> Path:
+        return self.output_root / "free_provider_probe_report.json"
+
+    @property
+    def raw_chunk_id(self) -> str:
+        return f"probe-{self.feed}-{self.timeframe}-{self.start:%Y%m%d%H%M}-{self.end:%Y%m%d%H%M}"
+
+    def historical_bar_request(self) -> HistoricalBarRequest:
+        return HistoricalBarRequest(
+            symbols=self.symbols,
+            timeframe=self.timeframe,
+            start=self.start,
+            end=self.end,
+            feed=self.feed,
+            adjustment=self.adjustment,
+            limit=self.limit,
+            raw_chunk_id=self.raw_chunk_id,
+        )
+
+    def report_payload(self) -> dict[str, Any]:
+        return {
+            "symbols": list(self.symbols),
+            "timeframe": self.timeframe,
+            "feed": self.feed,
+            "adjustment": self.adjustment,
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "bounded_symbol_batch": True,
+            "bounded_date_window": True,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalBarCollectRequest:
+    symbols: tuple[str, ...]
+    timeframe: str
+    feed: str
+    adjustment: str
+    start: datetime
+    end: datetime
+    output_root: Path
+    raw_root: Path
+    symbol_batch_size: int
+    date_window_days: int
+    dry_run: bool
+    resume: bool
+    force_refresh: bool
+    write_raw: bool
+    write_staging: bool
+    collection_workers: int
+    max_collect_chunks: int
+    collect_statuses: frozenset[str] | None
+    provider_symbol_pairs: tuple[tuple[str, str], ...]
+    progress_interval_seconds: float
+    requests_per_minute: int
+    max_in_flight_requests: int
+    max_retries: int
+    allow_bounded_consolidation: bool
+    allow_conflicting_duplicates: bool
+    daily_archive_root: Path | None
+    asset_registry: Path
+    alias_registry: Path
+    dataset_version: str
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any]) -> "HistoricalBarCollectRequest":
+        settings = dict((config.get("ml", {}) or {}).get("historical_bar_backfill", {}) or {})
+        if str(settings.get("provider", "alpaca")).lower() != "alpaca":
+            raise ValueError("historical_bar_backfill currently implements provider=alpaca only")
+        feed = str(settings.get("feed", "iex"))
+        if feed.lower() not in {"iex", "sip"}:
+            raise ValueError("historical-bar collection currently supports Alpaca feed=iex or feed=sip only")
+        start = _parse_datetime(settings.get("start"))
+        end = _parse_datetime(settings.get("end"))
+        if start is None or end is None:
+            raise ValueError("historical_bar_backfill collect requires explicit start and end")
+        return cls(
+            symbols=_symbols(settings),
+            timeframe=str(settings.get("timeframe", "5m")),
+            feed=feed,
+            adjustment=str(settings.get("adjustment", "all")),
+            start=start,
+            end=end,
+            output_root=Path(settings.get("output_root", "reports/market_data/historical_bar_backfill")),
+            raw_root=Path(settings.get("raw_root", "data/raw/alpaca/stock_bars")),
+            symbol_batch_size=int(settings.get("symbol_batch_size", settings.get("max_symbols", 2))),
+            date_window_days=int(settings.get("date_window_days", 5)),
+            dry_run=bool(settings.get("dry_run", True)),
+            resume=bool(settings.get("resume", True)),
+            force_refresh=bool(settings.get("force_refresh", False)),
+            write_raw=bool(settings.get("write_raw", settings.get("raw_write", True))),
+            write_staging=bool(settings.get("write_normalized_staging", settings.get("staging_write", True))),
+            collection_workers=max(1, int(settings.get("collection_workers", 1))),
+            max_collect_chunks=int(settings.get("max_collect_chunks", 0) or 0),
+            collect_statuses=_freeze_optional_set(_collect_statuses(settings)),
+            provider_symbol_pairs=_freeze_mapping_items(_provider_symbol_map(settings)),
+            progress_interval_seconds=float(settings.get("progress_report_interval_seconds", 60.0) or 0.0),
+            requests_per_minute=int(settings.get("requests_per_minute", 180)),
+            max_in_flight_requests=int(settings.get("max_in_flight_requests", 4)),
+            max_retries=int(settings.get("max_retries", 3)),
+            allow_bounded_consolidation=bool(settings.get("allow_bounded_consolidation", False)),
+            allow_conflicting_duplicates=bool(settings.get("allow_conflicting_duplicates", False)),
+            daily_archive_root=Path(str(settings["daily_archive_root"])) if settings.get("daily_archive_root") else None,
+            asset_registry=Path(str(settings.get("asset_registry", "data/reference/assets/canonical_asset_registry.csv"))),
+            alias_registry=Path(str(settings.get("alias_registry", "data/reference/assets/provider_symbol_aliases.csv"))),
+            dataset_version=str(settings.get("dataset_version", "alpaca_daily_bars_v1")),
+        )
+
+    def plan(self) -> list[HistoricalBarRequest]:
+        return _plan(
+            self.symbols,
+            self.start,
+            self.end,
+            timeframe=self.timeframe,
+            feed=self.feed,
+            adjustment=self.adjustment,
+            symbol_batch_size=self.symbol_batch_size,
+            date_window_days=self.date_window_days,
+            provider_symbol_map=self.provider_symbol_map(),
+        )
+
+    def provider_symbol_map(self) -> dict[str, str]:
+        return dict(self.provider_symbol_pairs)
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.output_root / "collection_manifest.json"
+
+    def staging_path(self) -> Path:
+        return self.output_root / "staging" / self.feed / self.timeframe / "bars.parquet"
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalBarCollectionSelectionPolicy:
+    resume: bool
+    force_refresh: bool
+    max_collect_chunks: int
+    collect_statuses: Collection[str] | None
+    write_staging: bool
+    completed_chunks_count_toward_limit: bool = False
+
+    def select(
+        self,
+        *,
+        plan: Sequence[HistoricalBarRequest],
+        manifest: CollectionManifest,
+    ) -> tuple[list[HistoricalBarRequest], list[dict[str, Any]], list[HistoricalBarRequest]]:
+        state = manifest.load()
+        chunks = state.get("chunks", {})
+        pending_requests: list[HistoricalBarRequest] = []
+        skipped_completed: list[dict[str, Any]] = []
+        selected_requests: list[HistoricalBarRequest] = []
+        for request in plan:
+            chunk_id = request.raw_chunk_id or ""
+            current_status = chunks.get(chunk_id, {}).get("status")
+            if self.resume and not self.force_refresh and manifest.is_completed(chunk_id):
+                if self.collect_statuses is None:
+                    if self.completed_chunks_count_toward_limit:
+                        if self._selection_limit_reached(selected_requests):
+                            break
+                        selected_requests.append(request)
+                    skipped_completed.append(
+                        {
+                            "chunk_id": chunk_id,
+                            "status": "skipped_completed",
+                            "rows": 0,
+                            "raw_reload_deferred": bool(self.write_staging),
+                        }
+                    )
+                continue
+            if self.collect_statuses is not None and current_status not in self.collect_statuses:
+                continue
+            if self._selection_limit_reached(selected_requests):
+                break
+            selected_requests.append(request)
+            pending_requests.append(request)
+        return pending_requests, skipped_completed, selected_requests
+
+    def _selection_limit_reached(self, selected_requests: Sequence[HistoricalBarRequest]) -> bool:
+        return self.max_collect_chunks > 0 and len(selected_requests) >= self.max_collect_chunks
+
+
+def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
+    probe_request = HistoricalBarProbeRequest.from_config(config)
+    probe_request.output_root.mkdir(parents=True, exist_ok=True)
+    provider = AlpacaBasicHistoricalBarProvider(
+        feed=probe_request.feed,
+        config=config,
+        rate_limiter=SharedRateLimiter(
+            requests_per_minute=probe_request.requests_per_minute,
+            max_in_flight_requests=probe_request.max_in_flight_requests,
         ),
     )
     auth = provider.check_authentication()
@@ -58,34 +277,16 @@ def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
         "provider_inventory": free_historical_bar_source_inventory(),
         "alpaca_authentication": auth,
         "alpaca_capabilities": provider.capabilities().__dict__,
-        "probe_request": {
-            "symbols": list(symbols),
-            "timeframe": timeframe,
-            "feed": feed,
-            "adjustment": adjustment,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "bounded_symbol_batch": True,
-            "bounded_date_window": True,
-        },
+        "probe_request": probe_request.report_payload(),
     }
     if auth["can_attempt_authenticated_request"]:
-        state_store = BackfillChunkStateStore(output_root / "chunk_state.json")
+        state_store = BackfillChunkStateStore(probe_request.output_root / "chunk_state.json")
         try:
             rows, chunk = fetch_chunk_with_retries(
                 provider,
-                HistoricalBarRequest(
-                    symbols=symbols,
-                    timeframe=timeframe,
-                    start=start,
-                    end=end,
-                    feed=feed,
-                    adjustment=adjustment,
-                    limit=int(settings.get("limit", 10_000)),
-                    raw_chunk_id=f"probe-{feed}-{timeframe}-{start:%Y%m%d%H%M}-{end:%Y%m%d%H%M}",
-                ),
+                probe_request.historical_bar_request(),
                 state_store=state_store,
-                max_retries=int(settings.get("max_retries", 3)),
+                max_retries=probe_request.max_retries,
             )
             report.update(
                 {
@@ -94,17 +295,17 @@ def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
                     "http_status": 200,
                     "entitlement_classification": "available",
                     "historical_depth_observed": _coverage(rows),
-                    "feed_actually_available": feed if rows else None,
+                    "feed_actually_available": probe_request.feed if rows else None,
                     "successful_5m_probe_ranges": [
                         {
-                            "start": start.isoformat(),
-                            "end": end.isoformat(),
+                            "start": probe_request.start.isoformat(),
+                            "end": probe_request.end.isoformat(),
                             "row_count": len(rows),
                         }
                     ]
-                    if timeframe in {"5m", "5Min"}
+                    if probe_request.timeframe in {"5m", "5Min"}
                     else [],
-                    "successful_symbol_coverage": _symbol_coverage(rows, symbols),
+                    "successful_symbol_coverage": _symbol_coverage(rows, probe_request.symbols),
                     "observed_pagination_behavior": {
                         "pages": chunk.get("pages", 0),
                         "next_page_token_handled": chunk.get("pages", 0) > 1,
@@ -112,7 +313,7 @@ def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
                     "observed_metrics": provider.metrics.as_dict(),
                     "one_hour_recommendation": (
                         "derive locally from validated 5m bars before collecting independent 1h bars"
-                        if timeframe in {"5m", "5Min"}
+                        if probe_request.timeframe in {"5m", "5Min"}
                         else "validate 5m first before deciding whether to collect independent 1h bars"
                     ),
                 }
@@ -148,94 +349,61 @@ def run_historical_bar_backfill_probe(config: Mapping[str, Any]) -> None:
                 "blocked_reason": "Alpaca credentials unavailable through config.alpaca or accepted environment aliases",
             }
         )
-    report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    probe_request.report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     print("HISTORICAL BAR FREE-PROVIDER PROBE")
     print("canonical_market_data_modified=false")
-    print(f"Report: {report_path}")
+    print(f"Report: {probe_request.report_path}")
     print(f"Alpaca probe executed: {report['alpaca_probe_executed']}")
     print(f"Observed metrics: {report['observed_metrics']}")
 
 
 def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     collect_started = time.monotonic()
-    settings = dict((config.get("ml", {}) or {}).get("historical_bar_backfill", {}) or {})
-    if str(settings.get("provider", "alpaca")).lower() != "alpaca":
-        raise ValueError("historical_bar_backfill currently implements provider=alpaca only")
-    feed = str(settings.get("feed", "iex")).lower()
-    if feed not in {"iex", "sip"}:
-        raise ValueError("historical-bar collection currently supports Alpaca feed=iex or feed=sip only")
-    output_root = Path(settings.get("output_root", "reports/market_data/historical_bar_backfill"))
-    output_root.mkdir(parents=True, exist_ok=True)
-    symbols = _symbols(settings)
-    timeframe = str(settings.get("timeframe", "5m"))
-    start = _parse_datetime(settings.get("start"))
-    end = _parse_datetime(settings.get("end"))
-    if start is None or end is None:
-        raise ValueError("historical_bar_backfill collect requires explicit start and end")
-    symbol_batch_size = int(settings.get("symbol_batch_size", settings.get("max_symbols", 2)))
-    date_window_days = int(settings.get("date_window_days", 5))
-    dry_run = bool(settings.get("dry_run", True))
-    resume = bool(settings.get("resume", True))
-    force_refresh = bool(settings.get("force_refresh", False))
-    write_raw = bool(settings.get("write_raw", settings.get("raw_write", True)))
-    write_staging = bool(settings.get("write_normalized_staging", settings.get("staging_write", True)))
-    collection_workers = max(1, int(settings.get("collection_workers", 1)))
-    max_collect_chunks = int(settings.get("max_collect_chunks", 0) or 0)
-    collect_statuses = _collect_statuses(settings)
-    provider_symbol_map = _provider_symbol_map(settings)
-    progress_interval_seconds = float(settings.get("progress_report_interval_seconds", 60.0) or 0.0)
+    collect_request = HistoricalBarCollectRequest.from_config(config)
+    collect_request.output_root.mkdir(parents=True, exist_ok=True)
     provider = AlpacaBasicHistoricalBarProvider(
-        feed=str(settings.get("feed", "iex")),
+        feed=collect_request.feed,
         config=config,
         rate_limiter=SharedRateLimiter(
-            requests_per_minute=int(settings.get("requests_per_minute", 180)),
-            max_in_flight_requests=int(settings.get("max_in_flight_requests", 4)),
+            requests_per_minute=collect_request.requests_per_minute,
+            max_in_flight_requests=collect_request.max_in_flight_requests,
         ),
     )
     auth = provider.check_authentication()
-    plan = _plan(
-        symbols,
-        start,
-        end,
-        timeframe=timeframe,
-        feed=str(settings.get("feed", "iex")),
-        adjustment=str(settings.get("adjustment", "all")),
-        symbol_batch_size=symbol_batch_size,
-        date_window_days=date_window_days,
-        provider_symbol_map=provider_symbol_map,
-    )
-    manifest = CollectionManifest(output_root / "collection_manifest.json")
-    raw_store = ImmutableRawChunkStore(settings.get("raw_root", "data/raw/alpaca/stock_bars"))
+    plan = collect_request.plan()
+    manifest = CollectionManifest(collect_request.manifest_path)
+    raw_store = ImmutableRawChunkStore(collect_request.raw_root)
     all_rows: list[dict[str, Any]] = []
     chunks = []
-    if dry_run:
-        plan_initialization = manifest.initialize_plan(plan, dry_run=dry_run)
+    if collect_request.dry_run:
+        plan_initialization = manifest.initialize_plan(plan, dry_run=collect_request.dry_run)
         report = {
             "mode": "historical_bar_backfill_collect",
-            "dry_run": dry_run,
+            "dry_run": collect_request.dry_run,
             "canonical_market_data_modified": False,
             "feed_domain_shift_note": _feed_domain_shift_note(),
             "credentials": auth,
             "planned_chunk_count": len(plan),
             "manifest_plan_initialization": plan_initialization,
-            "planned_symbol_count": len(symbols),
+            "planned_symbol_count": len(collect_request.symbols),
             "observed_metrics": provider.metrics.as_dict(),
             "blocked_reason": None,
         }
-        _write_collect_report(output_root, report)
-        _print_collect_report(output_root, report)
+        _write_collect_report(collect_request.output_root, report)
+        _print_collect_report(collect_request.output_root, report)
         return
     plan_initialization = manifest.initialize_plan(plan, dry_run=False)
-    bounded_consolidation_configured = _bounded_consolidation_enabled(settings, output_root)
-    pending_requests, skipped_completed, selected_requests = _select_collect_requests(
+    bounded_consolidation_configured = _bounded_consolidation_enabled_from_request(collect_request)
+    pending_requests, skipped_completed, selected_requests = HistoricalBarCollectionSelectionPolicy(
+        resume=collect_request.resume,
+        force_refresh=collect_request.force_refresh,
+        max_collect_chunks=collect_request.max_collect_chunks,
+        collect_statuses=collect_request.collect_statuses,
+        write_staging=collect_request.write_staging,
+        completed_chunks_count_toward_limit=bounded_consolidation_configured,
+    ).select(
         plan=plan,
         manifest=manifest,
-        resume=resume,
-        force_refresh=force_refresh,
-        max_collect_chunks=max_collect_chunks,
-        collect_statuses=collect_statuses,
-        write_staging=write_staging,
-        completed_chunks_count_toward_limit=bounded_consolidation_configured,
     )
     chunks.extend(skipped_completed)
     if not auth["can_attempt_authenticated_request"] and pending_requests:
@@ -247,32 +415,32 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             "credentials": auth,
             "planned_chunk_count": len(plan),
             "manifest_plan_initialization": plan_initialization,
-            "planned_symbol_count": len(symbols),
+            "planned_symbol_count": len(collect_request.symbols),
             "chunk_results": chunks,
             "observed_metrics": provider.metrics.as_dict(),
             "blocked_reason": "Alpaca credentials unavailable",
         }
-        _write_collect_report(output_root, report)
-        _print_collect_report(output_root, report)
+        _write_collect_report(collect_request.output_root, report)
+        _print_collect_report(collect_request.output_root, report)
         return
     selected_chunk_count = len(pending_requests)
     work_chunk_count = selected_chunk_count + len([row for row in chunks if row.get("status") == "skipped_completed"])
     progress = _CollectionProgress(
         total=work_chunk_count,
         already_completed=len([row for row in chunks if row.get("status") == "skipped_completed"]),
-        workers=collection_workers,
-        report_interval_seconds=progress_interval_seconds,
+        workers=collect_request.collection_workers,
+        report_interval_seconds=collect_request.progress_interval_seconds,
     )
-    if collection_workers == 1:
+    if collect_request.collection_workers == 1:
         for request in pending_requests:
             result = _collect_one_chunk(
                 provider=provider,
                 manifest=manifest,
                 raw_store=raw_store,
                 request=request,
-                max_retries=int(settings.get("max_retries", 3)),
-                write_raw=write_raw,
-                force_refresh=force_refresh,
+                max_retries=collect_request.max_retries,
+                write_raw=collect_request.write_raw,
+                force_refresh=collect_request.force_refresh,
             )
             all_rows.extend(result.pop("rows_data", []))
             chunks.append(result)
@@ -280,7 +448,7 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             if result.get("status") in {"permanent_authentication_failure", "entitlement_failure"}:
                 break
     else:
-        with ThreadPoolExecutor(max_workers=collection_workers) as executor:
+        with ThreadPoolExecutor(max_workers=collect_request.collection_workers) as executor:
             futures = {
                 executor.submit(
                     _collect_one_chunk,
@@ -288,9 +456,9 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
                     manifest=manifest,
                     raw_store=raw_store,
                     request=request,
-                    max_retries=int(settings.get("max_retries", 3)),
-                    write_raw=write_raw,
-                    force_refresh=force_refresh,
+                    max_retries=collect_request.max_retries,
+                    write_raw=collect_request.write_raw,
+                    force_refresh=collect_request.force_refresh,
                 ): request
                 for request in pending_requests
             }
@@ -302,8 +470,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     staging_deferred_reason = None
     bounded_consolidation_performed = False
     bounded_consolidation_eligible = False
-    if write_staging:
-        if max_collect_chunks > 0:
+    if collect_request.write_staging:
+        if collect_request.max_collect_chunks > 0:
             bounded_consolidation_eligible = bounded_consolidation_configured
             if bounded_consolidation_eligible and selected_requests and _selected_collection_complete(manifest, selected_requests, chunks):
                 all_rows = _load_completed_raw_rows_for_staging(
@@ -334,31 +502,36 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
     staging_path = None
     daily_archive_report = None
     coverage_report = []
-    if write_staging and staging_deferred_reason is None and all_rows:
+    if collect_request.write_staging and staging_deferred_reason is None and all_rows:
         consolidated_rows, consolidation_report = consolidate_staging_chunks(
             all_rows,
-            allow_conflicting_duplicates=bool(settings.get("allow_conflicting_duplicates", False)),
+            allow_conflicting_duplicates=collect_request.allow_conflicting_duplicates,
         )
         post_validation = validate_normalized_bars(consolidated_rows)
-        staging_path = output_root / "staging" / str(settings.get("feed", "iex")) / timeframe / "bars.parquet"
+        staging_path = collect_request.staging_path()
         write_staging_parquet(consolidated_rows, staging_path)
-        if timeframe == "1Day" and settings.get("daily_archive_root"):
+        if collect_request.timeframe == "1Day" and collect_request.daily_archive_root:
             daily_archive_report = write_daily_archive(
                 consolidated_rows,
-                archive_root=Path(str(settings["daily_archive_root"])),
-                asset_registry=Path(str(settings.get("asset_registry", "data/reference/assets/canonical_asset_registry.csv"))),
-                alias_registry=Path(str(settings.get("alias_registry", "data/reference/assets/provider_symbol_aliases.csv"))),
-                dataset_version=str(settings.get("dataset_version", "alpaca_daily_bars_v1")),
+                archive_root=collect_request.daily_archive_root,
+                asset_registry=collect_request.asset_registry,
+                alias_registry=collect_request.alias_registry,
+                dataset_version=collect_request.dataset_version,
             )
         coverage_report = coverage_gap_audit(
             consolidated_rows,
-            timeframe=timeframe,
-            requested_start=start,
-            requested_end=end,
+            timeframe=collect_request.timeframe,
+            requested_start=collect_request.start,
+            requested_end=collect_request.end,
             provider="alpaca",
-            feed=str(settings.get("feed", "iex")),
+            feed=collect_request.feed,
         )
-    research_view_audit = _research_view_audit(consolidated_rows or all_rows, post_validation or pre_validation, coverage_report, timeframe=timeframe)
+    research_view_audit = _research_view_audit(
+        consolidated_rows or all_rows,
+        post_validation or pre_validation,
+        coverage_report,
+        timeframe=collect_request.timeframe,
+    )
     collection_elapsed_seconds = time.monotonic() - collect_started
     report = {
         "mode": "historical_bar_backfill_collect",
@@ -372,12 +545,12 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "credentials": auth,
         "planned_chunk_count": len(plan),
         "collected_plan_chunk_count": work_chunk_count,
-        "max_collect_chunks": max_collect_chunks,
-        "collect_statuses": sorted(collect_statuses) if collect_statuses else None,
-        "provider_symbol_map": provider_symbol_map,
+        "max_collect_chunks": collect_request.max_collect_chunks,
+        "collect_statuses": sorted(collect_request.collect_statuses) if collect_request.collect_statuses else None,
+        "provider_symbol_map": collect_request.provider_symbol_map(),
         "manifest_plan_initialization": plan_initialization,
         "chunk_results": chunks,
-        "collection_workers": collection_workers,
+        "collection_workers": collect_request.collection_workers,
         "collection_elapsed_seconds": collection_elapsed_seconds,
         "completed_chunks_per_hour": (
             len([row for row in chunks if row.get("status") in {"completed", "empty_valid_response"}])
@@ -386,8 +559,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
             if collection_elapsed_seconds > 0
             else 0.0
         ),
-        "raw_write_enabled": write_raw,
-        "staging_write_enabled": write_staging,
+        "raw_write_enabled": collect_request.write_raw,
+        "staging_write_enabled": collect_request.write_staging,
         "staging_deferred_reason": staging_deferred_reason,
         "bounded_consolidation_eligible": bounded_consolidation_eligible,
         "bounded_consolidation_performed": bounded_consolidation_performed,
@@ -414,8 +587,8 @@ def run_historical_bar_backfill_collect(config: Mapping[str, Any]) -> None:
         "coverage_report": coverage_report,
         "observed_metrics": provider.metrics.as_dict(),
     }
-    _write_collect_report(output_root, report)
-    _print_collect_report(output_root, report)
+    _write_collect_report(collect_request.output_root, report)
+    _print_collect_report(collect_request.output_root, report)
 
 
 def run_historical_bar_backfill_benchmark(config: Mapping[str, Any]) -> None:
@@ -700,49 +873,6 @@ def _load_completed_raw_rows_for_staging(
     return rows
 
 
-def _select_collect_requests(
-    *,
-    plan: Sequence[HistoricalBarRequest],
-    manifest: CollectionManifest,
-    resume: bool,
-    force_refresh: bool,
-    max_collect_chunks: int,
-    collect_statuses: set[str] | None,
-    write_staging: bool,
-    completed_chunks_count_toward_limit: bool = False,
-) -> tuple[list[HistoricalBarRequest], list[dict[str, Any]], list[HistoricalBarRequest]]:
-    state = manifest.load()
-    chunks = state.get("chunks", {})
-    pending_requests: list[HistoricalBarRequest] = []
-    skipped_completed: list[dict[str, Any]] = []
-    selected_requests: list[HistoricalBarRequest] = []
-    for request in plan:
-        chunk_id = request.raw_chunk_id or ""
-        current_status = chunks.get(chunk_id, {}).get("status")
-        if resume and not force_refresh and manifest.is_completed(chunk_id):
-            if collect_statuses is None:
-                if completed_chunks_count_toward_limit:
-                    if max_collect_chunks > 0 and len(selected_requests) >= max_collect_chunks:
-                        break
-                    selected_requests.append(request)
-                skipped_completed.append(
-                    {
-                        "chunk_id": chunk_id,
-                        "status": "skipped_completed",
-                        "rows": 0,
-                        "raw_reload_deferred": bool(write_staging),
-                    }
-                )
-            continue
-        if collect_statuses is not None and current_status not in collect_statuses:
-            continue
-        if max_collect_chunks > 0 and len(selected_requests) >= max_collect_chunks:
-            break
-        selected_requests.append(request)
-        pending_requests.append(request)
-    return pending_requests, skipped_completed, selected_requests
-
-
 def _bounded_consolidation_enabled(settings: Mapping[str, Any], output_root: Path) -> bool:
     if not bool(settings.get("allow_bounded_consolidation", False)):
         return False
@@ -757,6 +887,23 @@ def _bounded_consolidation_enabled(settings: Mapping[str, Any], output_root: Pat
         if not any(token in archive_text for token in ("smoke", "test", "tmp")):
             return False
     return True
+
+
+def _bounded_consolidation_enabled_from_request(request: HistoricalBarCollectRequest) -> bool:
+    settings: dict[str, Any] = {
+        "allow_bounded_consolidation": request.allow_bounded_consolidation,
+    }
+    if request.daily_archive_root:
+        settings["daily_archive_root"] = request.daily_archive_root
+    return _bounded_consolidation_enabled(settings, request.output_root)
+
+
+def _freeze_optional_set(values: set[str] | None) -> frozenset[str] | None:
+    return None if values is None else frozenset(values)
+
+
+def _freeze_mapping_items(values: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((str(key), str(value)) for key, value in values.items()))
 
 
 def _selected_collection_complete(

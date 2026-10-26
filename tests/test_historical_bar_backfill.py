@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -13,12 +13,19 @@ import pytest
 import application.services.historical_bar_backfill_commands as backfill_commands
 import infrastructure.data.historical_bar_providers as historical_bar_providers
 from application.cli_runtime import FEEDLESS_MODES
-from application.services.historical_bar_backfill_commands import _plan, run_historical_bar_backfill_collect
+from application.services.historical_bar_backfill_commands import (
+    HistoricalBarCollectionSelectionPolicy,
+    HistoricalBarCollectRequest,
+    HistoricalBarProbeRequest,
+    _plan,
+    run_historical_bar_backfill_collect,
+)
 from infrastructure.data.historical_bar_overlap import audit_historical_bar_overlap
 from infrastructure.data.historical_bar_providers import (
     AlpacaBasicHistoricalBarProvider,
     AlpacaHistoricalBarError,
     BackfillChunkStateStore,
+    CollectionChunkStatus,
     CollectionManifest,
     HistoricalBarMetrics,
     HistoricalBarPage,
@@ -103,13 +110,17 @@ def test_alpaca_provider_records_provenance_and_pagination_metrics():
             end=datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
             feed="iex",
             raw_chunk_id="chunk-a",
+            asof="2026-01-02",
         ),
         max_retries=0,
+        retain_raw_pages=False,
     )
 
     assert len(requests) == 2
     assert requests[0]["feed"] == ["iex"]
     assert requests[0]["timeframe"] == ["5Min"]
+    assert requests[0]["currency"] == ["USD"]
+    assert requests[0]["asof"] == ["2026-01-02"]
     assert requests[1]["page_token"] == ["two"]
     assert {key: chunk[key] for key in ("chunk_id", "pages", "rows", "skipped_completed")} == {
         "chunk_id": "chunk-a",
@@ -117,7 +128,9 @@ def test_alpaca_provider_records_provenance_and_pagination_metrics():
         "rows": 2,
         "skipped_completed": False,
     }
-    assert len(chunk["raw_pages"]) == 2
+    assert chunk["raw_pages"] == []
+    assert len(chunk["raw_page_sha256"]) == 2
+    assert all(len(value) == 64 for value in chunk["raw_page_sha256"])
     assert rows[0]["provider"] == "alpaca"
     assert rows[0]["feed"] == "iex"
     assert rows[0]["requested_timeframe"] == "5m"
@@ -190,6 +203,31 @@ def test_shared_rate_limiter_budget_is_global_not_per_worker():
 
     assert sleeps == [30.0, 30.0]
     assert limiter.sleep_time_seconds == 60.0
+
+
+def test_shared_rate_limiter_can_pace_below_its_hard_ceiling():
+    now = {"value": 0.0}
+    sleeps = []
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        now["value"] += seconds
+
+    limiter = SharedRateLimiter(
+        requests_per_minute=150,
+        pacing_requests_per_minute=60,
+        max_in_flight_requests=8,
+        sleeper=sleeper,
+        clock=lambda: now["value"],
+    )
+    limiter.acquire()
+    limiter.release()
+    limiter.acquire()
+    limiter.release()
+
+    assert limiter.configured_requests_per_minute == 150
+    assert limiter.pacing_requests_per_minute == 60
+    assert sleeps == [1.0]
 
 
 def test_fetch_chunk_retries_429_honors_retry_after_and_persists_state(tmp_path):
@@ -291,6 +329,42 @@ def test_repeated_429_reduces_pressure_and_eventually_fails():
 
     assert provider.metrics.http_429_count == 3
     assert limiter.requests_per_minute < 100
+
+
+def test_transient_tls_urlerror_is_classified_and_retried_without_changing_limiter():
+    calls = {"count": 0}
+
+    def opener(request, timeout):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise URLError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol")
+        return _Response({"bars": {}, "next_page_token": None})
+
+    limiter = SharedRateLimiter(requests_per_minute=150, max_in_flight_requests=32, sleeper=lambda _: None)
+    provider = AlpacaBasicHistoricalBarProvider(
+        api_key="key",
+        secret_key="secret",
+        opener=opener,
+        rate_limiter=limiter,
+    )
+    rows, _chunk = fetch_chunk_with_retries(
+        provider,
+        HistoricalBarRequest(
+            symbols=("AAPL",),
+            timeframe="5m",
+            start=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+            end=datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
+            feed="iex",
+        ),
+        max_retries=2,
+        sleeper=lambda _: None,
+    )
+    assert rows == []
+    assert calls["count"] == 3
+    assert provider.metrics.requests_retried == 2
+    assert provider.metrics.requests_failed == 2
+    assert provider.metrics.http_429_count == 0
+    assert limiter.requests_per_minute == 150
 
 
 def test_permanent_401_and_entitlement_403_are_classified_without_retry():
@@ -729,6 +803,23 @@ def test_manifest_initialize_plan_preserves_partial_meaningful_states(tmp_path):
     assert chunks["chunk-planned"]["status"] == "planned"
     assert chunks["chunk-planned"]["dry_run"] is True
     assert chunks["chunk-new"]["status"] == "planned"
+
+
+def test_collection_chunk_status_owns_lifecycle_sets():
+    completed = CollectionChunkStatus("completed")
+    empty = CollectionChunkStatus("empty_valid_response")
+    planned = CollectionChunkStatus("planned")
+    retryable = CollectionChunkStatus("retryable_failure")
+
+    assert completed.is_completed()
+    assert empty.is_completed()
+    assert not planned.is_completed()
+    assert not planned.is_preserved_on_initialize()
+    assert retryable.is_preserved_on_initialize()
+    assert CollectionChunkStatus.from_persisted("entitlement_failure") == CollectionChunkStatus("entitlement_failure")
+    assert CollectionChunkStatus.from_persisted("unknown") is None
+    with pytest.raises(ValueError, match="unsupported chunk status"):
+        CollectionChunkStatus("unknown")
 
 
 def test_manifest_updates_append_journal_without_rewriting_large_snapshot(tmp_path):
@@ -1658,6 +1749,186 @@ def test_free_source_inventory_rejects_paid_sources_and_keeps_stooq_as_overlap_s
 def test_historical_bar_probe_mode_is_feedless():
     assert "ml-historical-bar-backfill-probe" in FEEDLESS_MODES
     assert "ml-historical-bar-backfill-collect" in FEEDLESS_MODES
+
+
+def test_historical_bar_probe_request_owns_defaults_and_provider_request(tmp_path):
+    now = datetime(2026, 8, 26, 12, 30, tzinfo=timezone.utc)
+    request = HistoricalBarProbeRequest.from_config(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "symbols": ["spy", "aapl", "msft"],
+                    "max_symbols": 2,
+                    "timeframe": "5m",
+                    "feed": "iex",
+                    "adjustment": "all",
+                    "probe_days": 3,
+                    "output_root": str(tmp_path),
+                    "requests_per_minute": 90,
+                    "max_in_flight_requests": 2,
+                    "limit": 123,
+                    "max_retries": 5,
+                }
+            }
+        },
+        now=now,
+    )
+
+    assert request.symbols == ("SPY", "AAPL")
+    assert request.end == now - timedelta(minutes=20)
+    assert request.start == request.end - timedelta(days=3)
+    assert request.report_path == tmp_path / "free_provider_probe_report.json"
+    assert request.raw_chunk_id == "probe-iex-5m-202608231210-202608261210"
+    assert request.report_payload() == {
+        "symbols": ["SPY", "AAPL"],
+        "timeframe": "5m",
+        "feed": "iex",
+        "adjustment": "all",
+        "start": "2026-08-23T12:10:00+00:00",
+        "end": "2026-08-26T12:10:00+00:00",
+        "bounded_symbol_batch": True,
+        "bounded_date_window": True,
+    }
+
+    provider_request = request.historical_bar_request()
+    assert provider_request.symbols == ("SPY", "AAPL")
+    assert provider_request.limit == 123
+    assert provider_request.raw_chunk_id == request.raw_chunk_id
+
+
+def test_historical_bar_probe_without_credentials_writes_compatible_report(tmp_path, monkeypatch):
+    for name in [
+        "ALPACA_API_KEY",
+        "APCA_API_KEY_ID",
+        "ALPACA_SECRET_KEY",
+        "ALPACA_SECRET",
+        "APCA_API_SECRET_KEY",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
+    backfill_commands.run_historical_bar_backfill_probe(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "symbols": ["spy", "aapl"],
+                    "start": "2026-08-20T14:30:00+00:00",
+                    "end": "2026-08-20T15:30:00+00:00",
+                    "output_root": str(tmp_path),
+                }
+            }
+        }
+    )
+
+    report = json.loads((tmp_path / "free_provider_probe_report.json").read_text(encoding="utf-8"))
+    assert report["mode"] == "historical_bar_backfill_free_provider_probe"
+    assert report["canonical_market_data_modified"] is False
+    assert report["alpaca_probe_executed"] is False
+    assert report["probe_request"] == {
+        "symbols": ["SPY", "AAPL"],
+        "timeframe": "5m",
+        "feed": "iex",
+        "adjustment": "all",
+        "start": "2026-08-20T14:30:00+00:00",
+        "end": "2026-08-20T15:30:00+00:00",
+        "bounded_symbol_batch": True,
+        "bounded_date_window": True,
+    }
+
+
+def test_historical_bar_collect_request_owns_plan_and_storage_contracts(tmp_path):
+    request = HistoricalBarCollectRequest.from_config(
+        {
+            "ml": {
+                "historical_bar_backfill": {
+                    "provider": "alpaca",
+                    "feed": "sip",
+                    "symbols": ["spy", "brk-b"],
+                    "provider_symbol_map": {"BRK-B": "BRK.B"},
+                    "timeframe": "1Day",
+                    "start": "2026-08-20T00:00:00+00:00",
+                    "end": "2026-08-22T00:00:00+00:00",
+                    "symbol_batch_size": 2,
+                    "date_window_days": 1,
+                    "output_root": str(tmp_path / "smoke-output"),
+                    "raw_root": str(tmp_path / "raw"),
+                    "dry_run": False,
+                    "collection_workers": 0,
+                    "max_collect_chunks": 1,
+                    "collect_statuses": ["validation_failure"],
+                    "allow_bounded_consolidation": True,
+                    "daily_archive_root": str(tmp_path / "smoke-archive"),
+                    "asset_registry": str(tmp_path / "assets.csv"),
+                    "alias_registry": str(tmp_path / "aliases.csv"),
+                    "dataset_version": "unit",
+                }
+            }
+        }
+    )
+
+    assert request.symbols == ("SPY", "BRK-B")
+    assert request.feed == "sip"
+    assert request.collection_workers == 1
+    assert request.collect_statuses == frozenset({"validation_failure"})
+    assert request.provider_symbol_pairs == (("BRK-B", "BRK.B"),)
+    assert request.provider_symbol_map() == {"BRK-B": "BRK.B"}
+    assert request.staging_path() == tmp_path / "smoke-output" / "staging" / "sip" / "1Day" / "bars.parquet"
+    plan = request.plan()
+    assert [row.raw_chunk_id for row in plan] == [
+        "alpaca-sip-1Day-SPY-BRK-B-20260820T000000Z-20260820T000000Z",
+        "alpaca-sip-1Day-SPY-BRK-B-20260821T000000Z-20260822T000000Z",
+    ]
+    assert plan[0].symbols == ("SPY", "BRK.B")
+    assert plan[0].canonical_symbols == ("SPY", "BRK-B")
+    assert plan[0].provider_symbol_by_canonical == (("BRK-B", "BRK.B"),)
+
+
+def test_collection_selection_policy_owns_resume_retry_and_limit_decisions(tmp_path):
+    start = datetime(2026, 8, 20, 14, 30, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=20)
+    plan = [
+        HistoricalBarRequest(symbols=("SPY",), timeframe="5m", start=start, end=end, feed="iex", raw_chunk_id="done"),
+        HistoricalBarRequest(symbols=("AAPL",), timeframe="5m", start=start, end=end, feed="iex", raw_chunk_id="retry"),
+        HistoricalBarRequest(symbols=("MSFT",), timeframe="5m", start=start, end=end, feed="iex", raw_chunk_id="new"),
+    ]
+    manifest = CollectionManifest(tmp_path / "collection_manifest.json")
+    manifest.initialize_plan(plan, dry_run=False)
+    manifest.update("done", "completed", {"rows": 10})
+    manifest.update("retry", "retryable_failure", {"error_message": "transport"})
+
+    pending, skipped, selected = HistoricalBarCollectionSelectionPolicy(
+        resume=True,
+        force_refresh=False,
+        max_collect_chunks=0,
+        collect_statuses=None,
+        write_staging=True,
+    ).select(plan=plan, manifest=manifest)
+
+    assert [row.raw_chunk_id for row in pending] == ["retry", "new"]
+    assert skipped == [{"chunk_id": "done", "status": "skipped_completed", "rows": 0, "raw_reload_deferred": True}]
+    assert [row.raw_chunk_id for row in selected] == ["retry", "new"]
+
+    retry_pending, retry_skipped, retry_selected = HistoricalBarCollectionSelectionPolicy(
+        resume=True,
+        force_refresh=False,
+        max_collect_chunks=1,
+        collect_statuses={"retryable_failure"},
+        write_staging=False,
+    ).select(plan=plan, manifest=manifest)
+
+    assert [row.raw_chunk_id for row in retry_pending] == ["retry"]
+    assert retry_skipped == []
+    assert [row.raw_chunk_id for row in retry_selected] == ["retry"]
+
+    force_pending, force_skipped, _ = HistoricalBarCollectionSelectionPolicy(
+        resume=True,
+        force_refresh=True,
+        max_collect_chunks=1,
+        collect_statuses=None,
+        write_staging=False,
+    ).select(plan=plan, manifest=manifest)
+
+    assert [row.raw_chunk_id for row in force_pending] == ["done"]
+    assert force_skipped == []
 
 
 def _daily_registry(tmp_path):
